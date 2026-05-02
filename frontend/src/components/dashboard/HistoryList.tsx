@@ -103,6 +103,9 @@ export function HistoryList() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold font-mono">{item.ticker}</span>
+                        {item.asset_type === "crypto" && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">CRYPTO</span>
+                        )}
                         <span className="text-xs text-muted-foreground">{item.analysis_date}</span>
                       </div>
                       <p className="text-xs text-muted-foreground truncate font-mono">

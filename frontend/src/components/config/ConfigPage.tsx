@@ -77,6 +77,36 @@ export function ConfigPage() {
             </CardContent>
           </Card>
 
+          {/* Bybit Credentials Info */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Crypto Futures (Bybit)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm space-y-2">
+                <p className="text-muted-foreground">
+                  Crypto analysis uses the Bybit public API for market data. No API key is required for analysis.
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-muted-foreground w-36">BYBIT_API_KEY</span>
+                  {String(data.resolved.exchange_credentials ?? "").includes("***") || data.resolved.exchange_credentials ? (
+                    <Badge variant="secondary" className="text-xs">Optional</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs">Not set</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Set <code className="font-mono bg-muted px-1 rounded">BYBIT_API_KEY</code> and <code className="font-mono bg-muted px-1 rounded">BYBIT_API_SECRET</code> environment variables for private endpoints (optional).
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           {Object.keys(data.overrides).length > 0 && (
             <Card>
               <CardHeader className="pb-3">
