@@ -68,14 +68,20 @@ async def test_list_analyses(client):
 
 
 @pytest.mark.asyncio
-async def test_get_analysis_not_found(client):
+async def test_get_analysis_invalid_run_id(client):
     resp = await client.get("/api/v1/analysis/nonexistent-id")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_analysis_not_found(client):
+    resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_cancel_analysis_csrf_required(client):
-    resp = await client.post("/api/v1/analysis/some-id/cancel")
+    resp = await client.post("/api/v1/analysis/00000000-0000-0000-0000-000000000000/cancel")
     assert resp.status_code == 403
 
 

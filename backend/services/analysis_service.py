@@ -16,7 +16,7 @@ from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
 from backend.persistence import AnalysisDB
 from backend.services.config_service import ConfigService
-from backend.stream_parser import parse_stream_chunk, AgentStatusEvent, ProgressEvent
+from backend.stream_parser import parse_stream_chunk, make_seq_counter, AgentStatusEvent, ProgressEvent
 from backend.validators import validate_backend_url
 from backend.ws_manager import WSManager
 
@@ -180,7 +180,8 @@ class AnalysisService:
                 if decision:
                     await asyncio.to_thread(self._db.save_report_section, run_id, "final_trade_decision", str(decision))
 
-            self._bus.emit(run_id, ProgressEvent(phase="completed", detail="Analysis complete"))
+            if updated:
+                self._bus.emit(run_id, ProgressEvent(phase="completed", detail="Analysis complete"))
 
         except asyncio.CancelledError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -236,11 +237,12 @@ class AnalysisService:
         args = graph.propagator.get_graph_args(callbacks=[callback])
 
         last_chunk = None
+        seq = make_seq_counter()
         for chunk in graph.graph.stream(init_state, **args):
             if cancel_event.is_set():
                 break
 
-            events = parse_stream_chunk(chunk)
+            events = parse_stream_chunk(chunk, seq=seq)
             for event in events:
                 self._bus.emit_threadsafe(run_id, event)
 

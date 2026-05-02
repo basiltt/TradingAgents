@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
@@ -10,6 +11,13 @@ from backend.schemas import AnalysisRequest, AnalysisCreateResponse, ErrorRespon
 from backend.services.analysis_service import ConcurrencyLimitError
 
 router = APIRouter(tags=["analysis"])
+
+
+def _validate_run_id(run_id: str) -> None:
+    try:
+        uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run_id format")
 
 _PROVIDER_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
@@ -61,6 +69,7 @@ async def list_analyses(
 
 @router.get("/analysis/{run_id}")
 async def get_analysis(request: Request, run_id: str):
+    _validate_run_id(run_id)
     run = await request.app.state.analysis_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -69,6 +78,7 @@ async def get_analysis(request: Request, run_id: str):
 
 @router.get("/analysis/{run_id}/report")
 async def get_report(request: Request, run_id: str):
+    _validate_run_id(run_id)
     run = await request.app.state.analysis_service.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -87,6 +97,7 @@ async def get_report(request: Request, run_id: str):
 
 @router.post("/analysis/{run_id}/cancel")
 async def cancel_analysis(request: Request, run_id: str):
+    _validate_run_id(run_id)
     result = await request.app.state.analysis_service.cancel_analysis(run_id)
     if not result:
         raise HTTPException(status_code=404, detail="Run not found")

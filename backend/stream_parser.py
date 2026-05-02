@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 
 class EventType(str, Enum):
@@ -88,19 +89,19 @@ _RISK_FIELD_MAP = {
 }
 
 
-_message_seq = 0
+def make_seq_counter() -> Iterator[int]:
+    return itertools.count(1)
 
 
-def parse_stream_chunk(chunk: Dict[str, Any]) -> List[DomainEvent]:
-    global _message_seq
+def parse_stream_chunk(chunk: Dict[str, Any], seq: Optional[Iterator[int]] = None) -> List[DomainEvent]:
     events: List[DomainEvent] = []
 
     for message in chunk.get("messages", []):
         content = getattr(message, "content", None) or ""
         if isinstance(content, str) and content.strip():
             sender = getattr(message, "name", None) or getattr(message, "type", "Unknown")
-            _message_seq += 1
-            events.append(MessageEvent(sender=str(sender), content=content.strip(), seq=_message_seq))
+            seq_val = next(seq) if seq else 0
+            events.append(MessageEvent(sender=str(sender), content=content.strip(), seq=seq_val))
 
         tool_calls = getattr(message, "tool_calls", None) or []
         for tc in tool_calls:
