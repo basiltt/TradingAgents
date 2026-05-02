@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import uuid
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -68,7 +69,7 @@ class AnalysisService:
 
             self._active_runs[run_id] = {
                 "status": "running",
-                "cancel": False,
+                "cancel_event": threading.Event(),
                 "task": None,
             }
 
@@ -93,7 +94,7 @@ class AnalysisService:
             if run["status"] != "running":
                 return True
 
-            run["cancel"] = True
+            run["cancel_event"].set()
             task = run.get("task")
 
         if task and not task.done():
@@ -146,13 +147,16 @@ class AnalysisService:
     async def _run_analysis(
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any]
     ) -> None:
+        async with self._lock:
+            cancel_event = self._active_runs.get(run_id, {}).get("cancel_event", threading.Event())
+
         try:
             self._bus.emit(run_id, ProgressEvent(phase="starting", detail="Initializing analysis"))
 
             callback = WebCallbackHandler(run_id=run_id, event_bus=self._bus)
 
             result = await asyncio.wait_for(
-                asyncio.to_thread(self._execute_graph, run_id, request, config, callback),
+                asyncio.to_thread(self._execute_graph, run_id, request, config, callback, cancel_event),
                 timeout=_WALL_TIMEOUT,
             )
 
@@ -194,9 +198,11 @@ class AnalysisService:
                     run_data["status"] = "terminal"
 
             await asyncio.to_thread(self._db.checkpoint)
+            self._bus.cleanup_run(run_id)
 
     def _execute_graph(
-        self, run_id: str, request: Dict[str, Any], config: Dict[str, Any], callback: Any
+        self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
+        callback: Any, cancel_event: threading.Event,
     ) -> Optional[Dict[str, Any]]:
         try:
             from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -216,8 +222,7 @@ class AnalysisService:
 
         trace = []
         for chunk in graph.graph.stream(init_state, **args):
-            async_with = self._active_runs.get(run_id, {})
-            if async_with.get("cancel"):
+            if cancel_event.is_set():
                 break
 
             events = parse_stream_chunk(chunk)

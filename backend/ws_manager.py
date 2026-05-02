@@ -147,4 +147,5 @@ class WSManager:
         await self.disconnect(conn)
 
     def get_connection_count(self, run_id: str) -> int:
+        # Note: callers needing atomicity with mutations should hold _lock externally
         return len(self._connections.get(run_id, set()))

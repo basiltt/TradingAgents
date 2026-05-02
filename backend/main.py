@@ -83,9 +83,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
+    cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[cors_origin],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-Requested-With"],

@@ -153,6 +153,7 @@ export function useAnalysisWebSocket(runId: string) {
 
     ws.onclose = (ev: CloseEvent) => {
       if (!mountedRef.current) return;
+      if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
       if (ev.code === 1000 || ev.code === 4404) {

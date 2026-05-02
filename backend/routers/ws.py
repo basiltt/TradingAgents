@@ -24,7 +24,9 @@ async def _ensure_consumer(event_bus, run_id: str, ws_manager) -> None:
 
 async def _remove_consumer_if_empty(run_id: str, ws_manager) -> None:
     async with ws_manager._consumer_lock:
-        if ws_manager.get_connection_count(run_id) == 0:
+        async with ws_manager._lock:
+            count = len(ws_manager._connections.get(run_id, set()))
+        if count == 0:
             task = ws_manager._consumers.pop(run_id, None)
             if task and not task.done():
                 task.cancel()
