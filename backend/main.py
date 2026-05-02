@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health(request: Request):
-        db_status = request.app.state.db.health_check()
+        db_status = await asyncio.to_thread(request.app.state.db.health_check)
         return {"status": "ok", "db": db_status}
 
     return app

@@ -51,20 +51,19 @@ class EventBus:
             if event_dict.get("type") != "report_chunk":
                 self._add_to_ring(run_id, event_dict)
 
-        try:
-            queue.put_nowait(event_dict)
-        except asyncio.QueueFull:
-            try:
-                queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            logger.warning("Event bus queue full for run %s, dropping oldest", run_id)
-            with self._lock:
-                self._add_to_ring(run_id, {"type": "events_dropped", "run_id": run_id})
             try:
                 queue.put_nowait(event_dict)
             except asyncio.QueueFull:
-                pass
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                logger.warning("Event bus queue full for run %s, dropping oldest", run_id)
+                self._add_to_ring(run_id, {"type": "events_dropped", "run_id": run_id})
+                try:
+                    queue.put_nowait(event_dict)
+                except asyncio.QueueFull:
+                    pass
 
     def emit_threadsafe(self, run_id: str, event: Any) -> None:
         asyncio.run_coroutine_threadsafe(
