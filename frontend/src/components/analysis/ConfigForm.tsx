@@ -60,20 +60,21 @@ export function ConfigForm() {
             <Input
               id="ticker"
               placeholder="SPY"
+              aria-invalid={!!errors.ticker}
+              aria-describedby={errors.ticker ? "ticker-error" : undefined}
               {...register("ticker", {
                 required: "Ticker is required",
                 pattern: {
                   value: TICKER_REGEX,
                   message: "Enter a valid ticker (1-5 uppercase letters)",
                 },
+                onChange: (e) => {
+                  setValue("ticker", e.target.value.toUpperCase(), { shouldValidate: false });
+                },
               })}
-              onChange={(e) => {
-                const val = e.target.value.toUpperCase();
-                setValue("ticker", val, { shouldValidate: false });
-              }}
             />
             {errors.ticker && (
-              <p className="text-sm text-destructive">{errors.ticker.message}</p>
+              <p id="ticker-error" className="text-sm text-destructive">{errors.ticker.message}</p>
             )}
           </div>
 
@@ -82,12 +83,14 @@ export function ConfigForm() {
             <Input
               id="analysis_date"
               type="date"
+              aria-invalid={!!errors.analysis_date}
+              aria-describedby={errors.analysis_date ? "date-error" : undefined}
               {...register("analysis_date", {
                 required: "Date is required",
               })}
             />
             {errors.analysis_date && (
-              <p className="text-sm text-destructive">{errors.analysis_date.message}</p>
+              <p id="date-error" className="text-sm text-destructive">{errors.analysis_date.message}</p>
             )}
           </div>
 

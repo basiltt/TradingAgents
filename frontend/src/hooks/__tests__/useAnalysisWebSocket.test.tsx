@@ -203,7 +203,7 @@ describe("useAnalysisWebSocket", () => {
     expect(data!.reports).toBeDefined();
   });
 
-  it("returns connection status", () => {
+  it("returns connection status and attempt", () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useAnalysisWebSocket("run-1"), { wrapper });
     expect(result.current.status).toBe("connecting");

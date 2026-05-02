@@ -28,7 +28,7 @@ export function MessagesPanel({ messages }: MessagesPanelProps) {
         {messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet</p>
         ) : (
-          <ScrollArea className="h-64">
+          <ScrollArea className="h-64" role="log" aria-live="polite">
             <div className="space-y-1 pr-4">
               {messages.map((msg) => (
                 <div key={msg.seq} className="text-sm">

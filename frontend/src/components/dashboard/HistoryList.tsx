@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function HistoryList() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["analyses"],
     queryFn: ({ signal }) => apiClient.listAnalyses(undefined, signal),
     staleTime: 30_000,
@@ -19,6 +19,15 @@ export function HistoryList() {
         <p className="text-sm text-muted-foreground">Loading…</p>
         <Skeleton className="h-16 w-full" />
         <Skeleton className="h-16 w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-xl font-bold">History</h2>
+        <p className="text-sm text-destructive">Error loading analysis history.</p>
       </div>
     );
   }

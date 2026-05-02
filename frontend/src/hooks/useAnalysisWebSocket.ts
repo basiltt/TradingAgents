@@ -6,8 +6,9 @@ import { updateRunStatus } from "@/store/analysis-slice";
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY = 1000;
 const MAX_DELAY = 30000;
+const MAX_MESSAGES = 500;
 
-interface WsState {
+export interface WsState {
   agents: Record<string, string>;
   reports: Record<string, string>;
   messages: Array<{ sender: string; content: string; seq: number }>;
@@ -15,7 +16,7 @@ interface WsState {
   progress: { phase: string; detail: string } | null;
 }
 
-function emptyState(): WsState {
+export function emptyWsState(): WsState {
   return { agents: {}, reports: {}, messages: [], stats: null, progress: null };
 }
 
@@ -39,14 +40,20 @@ export function useAnalysisWebSocket(runId: string) {
     (updater: (prev: WsState) => WsState) => {
       queryClient.setQueryData<WsState>(
         ["analysis", runId, "ws-state"],
-        (prev) => updater(prev ?? emptyState()),
+        (prev) => updater(prev ?? emptyWsState()),
       );
     },
     [queryClient, runId],
   );
 
+  const [attempt, setAttempt] = useState(0);
+
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     const ws = new WebSocket(getWsUrl(runId));
     wsRef.current = ws;
 
@@ -102,17 +109,20 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "message") {
-        updateCache((prev) => ({
-          ...prev,
-          messages: [
+        updateCache((prev) => {
+          const next = [
             ...prev.messages,
             {
               sender: data.sender as string,
               content: data.content as string,
               seq: data.seq as number,
             },
-          ],
-        }));
+          ];
+          return {
+            ...prev,
+            messages: next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next,
+          };
+        });
         return;
       }
 
@@ -155,6 +165,7 @@ export function useAnalysisWebSocket(runId: string) {
       setStatus("reconnecting");
       const delay = Math.min(BASE_DELAY * 2 ** attemptRef.current, MAX_DELAY);
       attemptRef.current += 1;
+      setAttempt(attemptRef.current);
       reconnectTimerRef.current = setTimeout(connect, delay);
     };
 
@@ -178,5 +189,5 @@ export function useAnalysisWebSocket(runId: string) {
     };
   }, [connect]);
 
-  return { status };
+  return { status, attempt };
 }

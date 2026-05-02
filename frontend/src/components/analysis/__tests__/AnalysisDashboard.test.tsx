@@ -8,7 +8,8 @@ import { uiSlice } from "@/store/ui-slice";
 import { AnalysisDashboard } from "../AnalysisDashboard";
 
 vi.mock("@/hooks/useAnalysisWebSocket", () => ({
-  useAnalysisWebSocket: () => ({ status: "connected" as const }),
+  useAnalysisWebSocket: () => ({ status: "connected" as const, attempt: 0 }),
+  emptyWsState: () => ({ agents: {}, reports: {}, messages: [], stats: null, progress: null }),
 }));
 
 function createWrapper(runId: string, status = "running") {
