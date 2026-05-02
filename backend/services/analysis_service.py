@@ -80,10 +80,8 @@ class AnalysisService:
                 "task": None,
             }
 
-        task = asyncio.create_task(self._run_analysis(run_id, request, config_snapshot))
-        async with self._lock:
-            if run_id in self._active_runs:
-                self._active_runs[run_id]["task"] = task
+            task = asyncio.create_task(self._run_analysis(run_id, request, config_snapshot))
+            self._active_runs[run_id]["task"] = task
 
         return run_id
 
@@ -192,6 +190,7 @@ class AnalysisService:
             self._bus.emit(run_id, ProgressEvent(phase="cancelled", detail="Cancelled"))
 
         except asyncio.TimeoutError:
+            cancel_event.set()
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))

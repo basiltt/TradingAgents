@@ -38,6 +38,12 @@ class EventBus:
 
     def emit(self, run_id: str, event: Any) -> None:
         """Must only be called from the event loop thread. Use emit_threadsafe() from other threads."""
+        if __debug__:
+            try:
+                running = asyncio.get_running_loop()
+                assert running is self._loop, "emit() must be called from the event loop thread"
+            except RuntimeError:
+                pass
         event_dict = asdict(event) if hasattr(event, "__dataclass_fields__") else event
 
         with self._lock:
