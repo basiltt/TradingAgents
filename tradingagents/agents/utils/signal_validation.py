@@ -28,11 +28,11 @@ def validate_signal(signal: dict, max_leverage: int = 20) -> tuple[bool, list[st
         return False, errors
 
     confidence = signal.get("confidence")
-    if not isinstance(confidence, (int, float)) or confidence < 1 or confidence > 10:
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or confidence < 1 or confidence > 10:
         errors.append(f"Confidence must be in [1, 10], got {confidence}")
 
     leverage = signal.get("leverage")
-    if not isinstance(leverage, (int, float)) or leverage < 1 or leverage > max_leverage:
+    if not isinstance(leverage, (int, float)) or isinstance(leverage, bool) or leverage < 1 or leverage > max_leverage:
         errors.append(f"Leverage must be in [1, {max_leverage}], got {leverage}")
 
     if trade_type == "No Trade":

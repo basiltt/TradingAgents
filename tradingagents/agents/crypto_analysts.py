@@ -31,6 +31,8 @@ _ANALYST_SYSTEM_PREFIX = (
     " Use the provided tools to progress towards answering the question."
     " If you are unable to fully answer, that's OK; another assistant with different tools"
     " will help where you left off. Execute what you can to make progress."
+    " If you or any other assistant has the FINAL ANALYSIS or deliverable,"
+    " prefix your response with FINAL ANALYSIS so the team knows to stop."
     " You have access to the following tools: {tool_names}.\n{system_message}"
     "For your reference, the current date is {current_date}. {instrument_context}"
 )
@@ -41,6 +43,7 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
         tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
+        assert tools, "No technical analysis tools found in crypto_tools"
 
         system_message = (
             "You are a crypto futures technical analyst. Analyze OHLCV price data and "
@@ -77,6 +80,7 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
         tools = [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
+        assert tools, "No derivatives tools found in crypto_tools"
 
         system_message = (
             "You are a crypto derivatives analyst. Analyze funding rates, open interest "

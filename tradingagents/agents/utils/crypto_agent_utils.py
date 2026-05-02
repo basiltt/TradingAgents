@@ -29,9 +29,9 @@ _MAX_OUTPUT_BYTES = 50 * 1024
 
 
 def _sanitize(raw: str) -> str:
+    if len(raw) > _MAX_OUTPUT_BYTES:
+        raw = raw[:_MAX_OUTPUT_BYTES] + "\n[truncated]"
     escaped = html.escape(raw, quote=False)
-    if len(escaped) > _MAX_OUTPUT_BYTES:
-        escaped = escaped[:_MAX_OUTPUT_BYTES] + "\n[truncated]"
     return f"<data>{escaped}</data>"
 
 
@@ -97,7 +97,7 @@ def make_crypto_tools(
             return _sanitize(raw)
         except Exception as exc:
             logger.warning("Funding rates unavailable for %s: %s", symbol, exc)
-            return _sanitize(f"Data unavailable: {exc}")
+            return _sanitize("Data unavailable: funding rate data could not be retrieved")
 
     @tool
     def get_open_interest(
@@ -117,7 +117,7 @@ def make_crypto_tools(
             return _sanitize(raw)
         except Exception as exc:
             logger.warning("Open interest unavailable for %s: %s", symbol, exc)
-            return _sanitize(f"Data unavailable: {exc}")
+            return _sanitize("Data unavailable: open interest data could not be retrieved")
 
     @tool
     def get_crypto_ticker(
@@ -133,6 +133,6 @@ def make_crypto_tools(
             return _sanitize(raw)
         except Exception as exc:
             logger.warning("Ticker unavailable for %s: %s", symbol, exc)
-            return _sanitize(f"Data unavailable: {exc}")
+            return _sanitize("Data unavailable: ticker data could not be retrieved")
 
     return [get_crypto_klines, get_crypto_indicators, get_funding_rates, get_open_interest, get_crypto_ticker]

@@ -35,6 +35,17 @@ DEFAULT_CONFIG = {
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,
+    # Asset type: "stock" (default) or "crypto"
+    "asset_type": "stock",
+    # Crypto-specific settings
+    "crypto_interval": "60",
+    "crypto_max_leverage": 20,
+    "exchange_credentials": {
+        "bybit": {
+            "api_key": os.getenv("BYBIT_API_KEY") or None,
+            "api_secret": os.getenv("BYBIT_API_SECRET") or None,
+        },
+    },
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
     "data_vendors": {
