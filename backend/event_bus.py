@@ -54,8 +54,7 @@ class EventBus:
                 self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
                 queue = self._queues[run_id]
 
-            if event_dict.get("type") != "report_chunk":
-                self._add_to_ring(run_id, event_dict)
+            self._add_to_ring(run_id, event_dict)
 
             try:
                 queue.put_nowait(event_dict)

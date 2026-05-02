@@ -66,6 +66,10 @@ class ConfigService:
                 raise ValueError(
                     f"invalid type for '{key}': expected {type(default_val).__name__}"
                 )
+            if isinstance(default_val, int) and not isinstance(default_val, bool) and isinstance(value, bool):
+                raise ValueError(
+                    f"invalid type for '{key}': expected int, got bool"
+                )
             if isinstance(value, (int, float)) and value > 1_000_000:
                 raise ValueError(f"value for '{key}' exceeds maximum allowed")
             if isinstance(value, str) and len(value) > 1024:

@@ -42,12 +42,13 @@ def test_queue_full_drops_oldest(bus, event_loop):
     event_loop.run_until_complete(_test())
 
 
-def test_ring_buffer_excludes_report_chunk(bus, event_loop):
+def test_ring_buffer_includes_report_chunk(bus, event_loop):
     bus.emit("run1", {"type": "report_chunk", "content": "data"})
     bus.emit("run1", {"type": "message", "content": "hello"})
     snapshot = bus.get_snapshot("run1")
-    assert len(snapshot) == 1
-    assert snapshot[0]["type"] == "message"
+    assert len(snapshot) == 2
+    assert snapshot[0]["type"] == "report_chunk"
+    assert snapshot[1]["type"] == "message"
 
 
 def test_ring_buffer_count_overflow(bus, event_loop):
