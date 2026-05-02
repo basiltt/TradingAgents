@@ -7,7 +7,7 @@ import logging
 import threading
 from collections import deque, OrderedDict
 from dataclasses import asdict
-from typing import Any, Callable, Deque, Dict, List, Set, Tuple
+from typing import Any, Deque, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ class EventBus:
         self._queues: Dict[str, asyncio.Queue] = {}
         self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = {}
         self._ring_bytes: Dict[str, int] = {}
-        self._subscribers: Dict[str, Set[Callable]] = {}
         self._cleaned: OrderedDict[str, None] = OrderedDict()
         self._lock = threading.Lock()
 
@@ -102,17 +101,6 @@ class EventBus:
             raise StopAsyncIteration(f"Run {run_id} cleaned up")
         return event
 
-    def subscribe(self, run_id: str, callback: Callable) -> None:
-        with self._lock:
-            if run_id not in self._subscribers:
-                self._subscribers[run_id] = set()
-            self._subscribers[run_id].add(callback)
-
-    def unsubscribe(self, run_id: str, callback: Callable) -> None:
-        with self._lock:
-            if run_id in self._subscribers:
-                self._subscribers[run_id].discard(callback)
-
     def get_snapshot(self, run_id: str) -> List[Dict[str, Any]]:
         with self._lock:
             buf = self._ring_buffers.get(run_id, [])
@@ -126,7 +114,6 @@ class EventBus:
             queue = self._queues.pop(run_id, None)
             self._ring_buffers.pop(run_id, None)
             self._ring_bytes.pop(run_id, None)
-            self._subscribers.pop(run_id, None)
         if queue:
             try:
                 queue.put_nowait(_POISON)

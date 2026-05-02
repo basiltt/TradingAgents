@@ -198,7 +198,8 @@ class AnalysisService:
             async with self._lock:
                 self._zombie_count += 1
             asyncio.get_running_loop().call_later(
-                _HARD_TIMEOUT - _WALL_TIMEOUT, self._reclaim_zombie, run_id
+                _HARD_TIMEOUT - _WALL_TIMEOUT,
+                lambda rid=run_id: asyncio.create_task(self._reclaim_zombie_async(rid)),
             )
 
         except Exception as e:
@@ -249,9 +250,6 @@ class AnalysisService:
             last_chunk = chunk
 
         return last_chunk
-
-    def _reclaim_zombie(self, run_id: str) -> None:
-        asyncio.ensure_future(self._reclaim_zombie_async(run_id))
 
     async def _reclaim_zombie_async(self, run_id: str) -> None:
         async with self._lock:
