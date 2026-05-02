@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -11,7 +12,7 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
   failed: "destructive",
 };
 
-export function AgentStatusTable({ agents }: AgentStatusTableProps) {
+export const AgentStatusTable = memo(function AgentStatusTable({ agents }: AgentStatusTableProps) {
   const entries = Object.entries(agents);
 
   return (
@@ -34,4 +35,4 @@ export function AgentStatusTable({ agents }: AgentStatusTableProps) {
       </CardContent>
     </Card>
   );
-}
+});

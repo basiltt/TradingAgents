@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface Stats {
@@ -15,7 +16,7 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-export function StatsBar({ stats }: StatsBarProps) {
+export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
   return (
     <Card>
       <CardContent className="pt-4" aria-live="polite">
@@ -32,4 +33,4 @@ export function StatsBar({ stats }: StatsBarProps) {
       </CardContent>
     </Card>
   );
-}
+});

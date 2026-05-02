@@ -44,6 +44,12 @@ export function HomeDashboard() {
         </div>
       ) : null}
 
+      {entries.length === 0 && (
+        <p className="text-muted-foreground">
+          No active analyses. Start one to see real-time agent progress here.
+        </p>
+      )}
+
       <div>
         <Button asChild>
           <Link to="/analysis/new">New Analysis</Link>

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 
@@ -20,7 +21,7 @@ const SECTION_LABELS: Record<string, string> = {
   portfolio_manager: "Portfolio Manager",
 };
 
-export function ReportPanel({ reports }: ReportPanelProps) {
+export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelProps) {
   const entries = Object.entries(reports);
 
   return (
@@ -47,4 +48,4 @@ export function ReportPanel({ reports }: ReportPanelProps) {
       </CardContent>
     </Card>
   );
-}
+});

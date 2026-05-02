@@ -46,6 +46,9 @@ export function useAnalysisWebSocket(runId: string) {
     [queryClient, runId],
   );
 
+  const updateCacheRef = useRef(updateCache);
+  updateCacheRef.current = updateCache;
+
   const [attempt, setAttempt] = useState(0);
 
   const connect = useCallback(() => {
@@ -88,7 +91,7 @@ export function useAnalysisWebSocket(runId: string) {
             currentAgent: data.phase as string,
           }),
         );
-        updateCache((prev) => ({
+        updateCacheRef.current((prev) => ({
           ...prev,
           progress: { phase: data.phase as string, detail: data.detail as string },
         }));
@@ -96,7 +99,7 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "stats") {
-        updateCache((prev) => ({
+        updateCacheRef.current((prev) => ({
           ...prev,
           stats: {
             tokens_in: data.tokens_in as number,
@@ -109,7 +112,7 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "message") {
-        updateCache((prev) => {
+        updateCacheRef.current((prev) => {
           const next = [
             ...prev.messages,
             {
@@ -127,7 +130,7 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "agent_status") {
-        updateCache((prev) => ({
+        updateCacheRef.current((prev) => ({
           ...prev,
           agents: { ...prev.agents, [data.agent as string]: data.status as string },
         }));
@@ -135,7 +138,7 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "report_chunk") {
-        updateCache((prev) => ({
+        updateCacheRef.current((prev) => ({
           ...prev,
           reports: {
             ...prev.reports,
@@ -170,7 +173,7 @@ export function useAnalysisWebSocket(runId: string) {
     };
 
     ws.onerror = () => {};
-  }, [runId, dispatch, updateCache]);
+  }, [runId, dispatch]);
 
   useEffect(() => {
     mountedRef.current = true;

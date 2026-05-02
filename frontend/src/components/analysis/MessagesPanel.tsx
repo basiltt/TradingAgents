@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { memo, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -12,7 +12,7 @@ interface MessagesPanelProps {
   messages: Message[];
 }
 
-export function MessagesPanel({ messages }: MessagesPanelProps) {
+export const MessagesPanel = memo(function MessagesPanel({ messages }: MessagesPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,4 +43,4 @@ export function MessagesPanel({ messages }: MessagesPanelProps) {
       </CardContent>
     </Card>
   );
-}
+});

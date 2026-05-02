@@ -117,9 +117,18 @@ export function ConfigForm() {
             <p className="text-sm text-destructive" role="alert">{submitError}</p>
           )}
 
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Starting…" : "Start Analysis"}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={isSubmitting} className="flex-1">
+              {isSubmitting ? "Starting…" : "Start Analysis"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate({ to: "/" })}
+            >
+              Cancel
+            </Button>
+          </div>
         </form>
       </CardContent>
     </Card>

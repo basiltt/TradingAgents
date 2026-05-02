@@ -116,4 +116,13 @@ describe("ConfigForm", () => {
     await user.click(screen.getByRole("button", { name: /start analysis/i }));
     expect(await screen.findByText(/network error/i)).toBeInTheDocument();
   });
+
+  it("rejects path-traversal ticker attempts", async () => {
+    const user = userEvent.setup();
+    render(<ConfigForm />, { wrapper: createWrapper() });
+    await user.type(screen.getByLabelText(/ticker/i), "../etc");
+    await user.click(screen.getByRole("button", { name: /start analysis/i }));
+    expect(await screen.findByText(/valid ticker/i)).toBeInTheDocument();
+    expect(mockStartAnalysis).not.toHaveBeenCalled();
+  });
 });
