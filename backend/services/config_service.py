@@ -54,8 +54,13 @@ class ConfigService:
             else:
                 masked_resolved[k] = v
 
+        masked_defaults = {
+            k: "***" if k in _SECRET_KEYS and isinstance(v, str) and v else v
+            for k, v in defaults.items()
+        }
+
         return {
-            "defaults": defaults,
+            "defaults": masked_defaults,
             "overrides": dict(self._overrides),
             "resolved": masked_resolved,
         }

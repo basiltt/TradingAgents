@@ -80,8 +80,10 @@ class AnalysisService:
                 "task": None,
             }
 
-            task = asyncio.create_task(self._run_analysis(run_id, request, config_snapshot))
-            self._active_runs[run_id]["task"] = task
+        task = asyncio.create_task(self._run_analysis(run_id, request, config_snapshot))
+        async with self._lock:
+            if run_id in self._active_runs:
+                self._active_runs[run_id]["task"] = task
 
         return run_id
 
