@@ -83,10 +83,12 @@ export function ConfigForm() {
             <Input
               id="analysis_date"
               type="date"
+              max={new Date().toISOString().split("T")[0]}
               aria-invalid={!!errors.analysis_date}
               aria-describedby={errors.analysis_date ? "date-error" : undefined}
               {...register("analysis_date", {
                 required: "Date is required",
+                validate: (v) => v <= new Date().toISOString().split("T")[0] || "Date cannot be in the future",
               })}
             />
             {errors.analysis_date && (
