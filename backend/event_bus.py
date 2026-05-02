@@ -61,14 +61,14 @@ class EventBus:
         event_bytes = len(serialized)
 
         buf = self._ring_buffers[run_id]
-        buf.append(event_dict)
+        buf.append((event_dict, event_bytes))
         self._ring_bytes[run_id] += event_bytes
 
         while len(buf) > _MAX_RING_EVENTS or self._ring_bytes[run_id] > _MAX_RING_BYTES:
             if not buf:
                 break
-            removed = buf.popleft()
-            self._ring_bytes[run_id] -= len(json.dumps(removed))
+            _, removed_bytes = buf.popleft()
+            self._ring_bytes[run_id] -= removed_bytes
 
     async def drain(self, run_id: str) -> Any:
         return await self._queues[run_id].get()
@@ -80,7 +80,7 @@ class EventBus:
         self._subscribers[run_id].discard(callback)
 
     def get_snapshot(self, run_id: str) -> List[Dict[str, Any]]:
-        return list(self._ring_buffers.get(run_id, []))
+        return [ev for ev, _ in self._ring_buffers.get(run_id, [])]
 
     def cleanup_run(self, run_id: str) -> None:
         self._queues.pop(run_id, None)

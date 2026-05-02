@@ -86,3 +86,28 @@ def test_invalid_json_handled(ws_manager, event_loop):
         await ws_manager.disconnect(conn)
 
     event_loop.run_until_complete(_test())
+
+
+def test_rate_limiting(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+        for _ in range(10):
+            result = await ws_manager.handle_message(conn, '{"type": "pong"}')
+            assert result != "rate_limited"
+        result = await ws_manager.handle_message(conn, '{"type": "pong"}')
+        assert result == "rate_limited"
+        await ws_manager.disconnect(conn)
+
+    event_loop.run_until_complete(_test())
+
+
+def test_replay_returns_type(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+        result = await ws_manager.handle_message(conn, '{"type": "replay"}')
+        assert result == "replay"
+        await ws_manager.disconnect(conn)
+
+    event_loop.run_until_complete(_test())

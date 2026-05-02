@@ -211,4 +211,19 @@ describe("useAnalysisWebSocket", () => {
     act(() => ws.simulateOpen());
     expect(result.current.status).toBe("connected");
   });
+
+  it("caps messages at 500", () => {
+    const { wrapper, queryClient } = createWrapper();
+    renderHook(() => useAnalysisWebSocket("run-1"), { wrapper });
+    const ws = MockWebSocket.instances[0];
+    act(() => ws.simulateOpen());
+    for (let i = 1; i <= 510; i++) {
+      act(() => ws.simulateMessage({ type: "message", seq: i, sender: "Bot", content: `msg-${i}` }));
+    }
+    const data = queryClient.getQueryData<Record<string, unknown>>(["analysis", "run-1", "ws-state"]);
+    const msgs = data!.messages as Array<{ seq: number }>;
+    expect(msgs.length).toBe(500);
+    expect(msgs[0].seq).toBe(11);
+    expect(msgs[499].seq).toBe(510);
+  });
 });
