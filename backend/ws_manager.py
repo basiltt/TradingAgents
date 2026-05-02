@@ -157,11 +157,21 @@ class WSManager:
             self._consumers[run_id] = asyncio.create_task(consume_fn())
 
     async def remove_consumer_if_empty(self, run_id: str) -> None:
+        async with self._lock:
+            count = len(self._connections.get(run_id, set()))
+        if count > 0:
+            return
         async with self._consumer_lock:
-            async with self._lock:
-                count = len(self._connections.get(run_id, set()))
-                if count > 0:
-                    return
-                task = self._consumers.pop(run_id, None)
-            if task and not task.done():
+            task = self._consumers.pop(run_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def shutdown(self) -> None:
+        async with self._consumer_lock:
+            tasks = list(self._consumers.values())
+            self._consumers.clear()
+        for task in tasks:
+            if not task.done():
                 task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

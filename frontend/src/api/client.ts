@@ -50,7 +50,7 @@ async function requestText(
 ): Promise<string> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: DEFAULT_HEADERS,
-    signal,
+    signal: signal ?? AbortSignal.timeout(_DEFAULT_TIMEOUT),
   });
   if (!res.ok) return throwApiError(res);
   return res.text();

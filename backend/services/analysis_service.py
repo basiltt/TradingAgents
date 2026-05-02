@@ -174,23 +174,23 @@ class AnalysisService:
             )
 
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            updated = self._db.update_run_status(run_id, "completed", None, now)
+            updated = await asyncio.to_thread(self._db.update_run_status, run_id, "completed", None, now)
 
             if updated and isinstance(result, dict):
                 decision = result.get("final_trade_decision", "")
                 if decision:
-                    self._db.save_report_section(run_id, "final_trade_decision", str(decision))
+                    await asyncio.to_thread(self._db.save_report_section, run_id, "final_trade_decision", str(decision))
 
             self._bus.emit(run_id, ProgressEvent(phase="completed", detail="Analysis complete"))
 
         except asyncio.CancelledError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._db.update_run_status(run_id, "cancelled", "Cancelled by user", now)
+            await asyncio.to_thread(self._db.update_run_status, run_id, "cancelled", "Cancelled by user", now)
             self._bus.emit(run_id, ProgressEvent(phase="cancelled", detail="Cancelled"))
 
         except asyncio.TimeoutError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._db.update_run_status(run_id, "failed", "Wall-clock timeout (30min)", now)
+            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
             async with self._lock:
                 self._zombie_count += 1
@@ -201,7 +201,7 @@ class AnalysisService:
         except Exception as e:
             logger.error("Analysis %s failed: %s", run_id, e, exc_info=True)
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._db.update_run_status(run_id, "failed", "Internal error occurred", now)
+            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Internal error occurred", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
 
         finally:

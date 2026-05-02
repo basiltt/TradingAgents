@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import threading
-from collections import deque
+from collections import deque, OrderedDict
 from dataclasses import asdict
 from typing import Any, Callable, Deque, Dict, List, Set, Tuple
 
@@ -27,7 +27,7 @@ class EventBus:
         self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = {}
         self._ring_bytes: Dict[str, int] = {}
         self._subscribers: Dict[str, Set[Callable]] = {}
-        self._cleaned: Set[str] = set()
+        self._cleaned: OrderedDict[str, None] = OrderedDict()
         self._lock = threading.Lock()
 
     def _get_queue(self, run_id: str) -> asyncio.Queue:
@@ -119,12 +119,9 @@ class EventBus:
 
     def cleanup_run(self, run_id: str) -> None:
         with self._lock:
-            self._cleaned.add(run_id)
+            self._cleaned[run_id] = None
             if len(self._cleaned) > _MAX_CLEANED_IDS:
-                try:
-                    self._cleaned.pop()
-                except KeyError:
-                    pass
+                self._cleaned.popitem(last=False)
             queue = self._queues.pop(run_id, None)
             self._ring_buffers.pop(run_id, None)
             self._ring_bytes.pop(run_id, None)

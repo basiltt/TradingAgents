@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -25,6 +26,12 @@ def _check_origin(websocket: WebSocket) -> bool:
 
 @router.websocket("/ws/v1/analysis/{run_id}")
 async def analysis_ws(websocket: WebSocket, run_id: str):
+    try:
+        uuid.UUID(run_id)
+    except ValueError:
+        await websocket.close(code=4400, reason="Invalid run_id")
+        return
+
     app = websocket.app
     ws_manager = app.state.ws_manager
     event_bus = app.state.event_bus

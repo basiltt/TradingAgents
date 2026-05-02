@@ -164,6 +164,7 @@ class AnalysisDB:
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
     ) -> Dict[str, Any]:
+        limit = min(max(limit, 1), 100)
         conditions: list[str] = []
         params: list[Any] = []
 

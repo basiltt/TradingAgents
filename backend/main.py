@@ -27,6 +27,7 @@ class CSPMiddleware(BaseHTTPMiddleware):
             "WEB_CSP_CONNECT_SRC",
             "'self' ws://localhost:* wss://localhost:*",
         )
+        csp_connect = csp_connect.replace("\n", "").replace("\r", "").replace(";", "")
         response.headers["Content-Security-Policy"] = (
             f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             f"img-src 'self' data:; font-src 'self'; connect-src {csp_connect}; "
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
         )
         yield
         await app.state.analysis_service.shutdown()
+        await ws_manager.shutdown()
         db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
