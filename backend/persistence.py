@@ -101,8 +101,8 @@ class AnalysisDB:
                     except Exception:
                         self._conn.execute(f"ROLLBACK TO SAVEPOINT migration_v{version}")
                         raise
-                self._conn.commit()
                 self._conn.execute(f"PRAGMA user_version = {max_version}")
+                self._conn.commit()
             except Exception:
                 self._conn.rollback()
                 raise

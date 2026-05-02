@@ -64,6 +64,7 @@ export function useAnalysisWebSocket(runId: string) {
       if (!mountedRef.current) return;
       setStatus("connected");
       attemptRef.current = 0;
+      updateCacheRef.current(() => emptyWsState());
       ws.send(JSON.stringify({ type: "replay" }));
     };
 

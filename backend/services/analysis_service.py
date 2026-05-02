@@ -185,13 +185,13 @@ class AnalysisService:
 
         except asyncio.CancelledError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            await asyncio.to_thread(self._db.update_run_status, run_id, "cancelled", "Cancelled by user", now)
+            self._db.update_run_status(run_id, "cancelled", "Cancelled by user", now)
             self._bus.emit(run_id, ProgressEvent(phase="cancelled", detail="Cancelled"))
 
         except asyncio.TimeoutError:
             cancel_event.set()
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Wall-clock timeout (30min)", now)
+            self._db.update_run_status(run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
             async with self._lock:
                 self._zombie_count += 1
@@ -203,7 +203,7 @@ class AnalysisService:
         except Exception as e:
             logger.error("Analysis %s failed: %s", run_id, e, exc_info=True)
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Internal error occurred", now)
+            self._db.update_run_status(run_id, "failed", "Internal error occurred", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
 
         finally:
@@ -212,7 +212,6 @@ class AnalysisService:
                 if run_data:
                     run_data["status"] = "terminal"
 
-            await asyncio.sleep(0.1)
             self._bus.cleanup_run(run_id)
 
     def _execute_graph(
