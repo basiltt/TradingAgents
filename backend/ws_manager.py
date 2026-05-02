@@ -40,6 +40,8 @@ class WSManager:
         self._connections: Dict[str, Set[WSConnection]] = {}
         self._event_bus = event_bus
         self._lock = asyncio.Lock()
+        self._consumers: Dict[str, asyncio.Task] = {}
+        self._consumer_lock = asyncio.Lock()
 
     async def connect(self, ws: WebSocket, run_id: str) -> WSConnection:
         conn = WSConnection(ws, run_id)
@@ -95,10 +97,9 @@ class WSManager:
         try:
             while True:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL)
-                hb = {"type": "heartbeat", "seq": conn.next_seq()}
                 try:
-                    await conn.ws.send_json(hb)
-                except Exception:
+                    conn.outbound.put_nowait({"type": "heartbeat"})
+                except asyncio.QueueFull:
                     break
                 if time.monotonic() - conn.last_pong > _PONG_TIMEOUT:
                     logger.warning("Pong timeout for run %s", conn.run_id)

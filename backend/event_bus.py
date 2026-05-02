@@ -8,7 +8,7 @@ import logging
 import threading
 from collections import defaultdict, deque
 from dataclasses import asdict
-from typing import Any, Callable, Deque, Dict, List, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,13 @@ class EventBus:
     def __init__(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
         self._queues: Dict[str, asyncio.Queue] = defaultdict(lambda: asyncio.Queue(maxsize=1000))
-        self._ring_buffers: Dict[str, Deque[Dict[str, Any]]] = defaultdict(deque)
+        self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = defaultdict(deque)
         self._ring_bytes: Dict[str, int] = defaultdict(int)
         self._subscribers: Dict[str, Set[Callable]] = defaultdict(set)
         self._lock = threading.Lock()
 
     def emit(self, run_id: str, event: Any) -> None:
+        """Must only be called from the event loop thread. Use emit_threadsafe() from other threads."""
         event_dict = asdict(event) if hasattr(event, "__dataclass_fields__") else event
         queue = self._queues[run_id]
 

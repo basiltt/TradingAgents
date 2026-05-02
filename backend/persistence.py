@@ -218,6 +218,14 @@ class AnalysisDB:
         with self._lock:
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
+    def health_check(self) -> str:
+        try:
+            with self._lock:
+                self._conn.execute("SELECT 1")
+            return "ok"
+        except Exception:
+            return "degraded"
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

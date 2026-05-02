@@ -20,17 +20,25 @@ from backend.ws_manager import WSManager
 
 class CSPMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if request.scope.get("type") == "websocket":
+            return await call_next(request)
         response = await call_next(request)
+        csp_connect = os.environ.get(
+            "WEB_CSP_CONNECT_SRC",
+            "'self' ws://localhost:* wss://localhost:*",
+        )
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; font-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:*; "
-            "frame-ancestors 'none'"
+            f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            f"img-src 'self' data:; font-src 'self'; connect-src {csp_connect}; "
+            f"frame-ancestors 'none'"
         )
         return response
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if request.scope.get("type") == "websocket":
+            return await call_next(request)
         if request.method in ("POST", "PATCH", "PUT", "DELETE"):
             if request.headers.get("X-Requested-With") != "XMLHttpRequest":
                 return Response(
@@ -101,12 +109,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health(request: Request):
-        db_ok = "ok"
-        try:
-            with request.app.state.db._lock:
-                request.app.state.db._conn.execute("SELECT 1")
-        except Exception:
-            db_ok = "degraded"
-        return {"status": "ok", "db": db_ok}
+        db_status = request.app.state.db.health_check()
+        return {"status": "ok", "db": db_status}
 
     return app

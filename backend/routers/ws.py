@@ -13,22 +13,19 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-_consumers: dict[str, asyncio.Task] = {}
-_consumer_lock = asyncio.Lock()
-
 
 async def _ensure_consumer(event_bus, run_id: str, ws_manager) -> None:
-    async with _consumer_lock:
-        task = _consumers.get(run_id)
+    async with ws_manager._consumer_lock:
+        task = ws_manager._consumers.get(run_id)
         if task and not task.done():
             return
-        _consumers[run_id] = asyncio.create_task(_consume_events(event_bus, run_id, ws_manager))
+        ws_manager._consumers[run_id] = asyncio.create_task(_consume_events(event_bus, run_id, ws_manager))
 
 
 async def _remove_consumer_if_empty(run_id: str, ws_manager) -> None:
-    async with _consumer_lock:
+    async with ws_manager._consumer_lock:
         if ws_manager.get_connection_count(run_id) == 0:
-            task = _consumers.pop(run_id, None)
+            task = ws_manager._consumers.pop(run_id, None)
             if task and not task.done():
                 task.cancel()
 
@@ -38,7 +35,10 @@ def _check_origin(websocket: WebSocket) -> bool:
     if not origin:
         return False
     allowed = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
-    return origin == allowed
+    if origin == allowed:
+        return True
+    host = websocket.headers.get("host", "")
+    return origin in (f"http://{host}", f"https://{host}")
 
 
 @router.websocket("/ws/v1/analysis/{run_id}")
