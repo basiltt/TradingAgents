@@ -61,12 +61,13 @@ async def list_analyses(
     limit: int = Query(20, ge=1, le=100),
     ticker: str = Query(None),
     status: str = Query(None),
+    asset_type: str = Query(None),
     from_date: str = Query(None),
     to_date: str = Query(None),
 ):
     return await request.app.state.analysis_service.list_runs(
         page=page, limit=limit, ticker=ticker, status=status,
-        from_date=from_date, to_date=to_date,
+        asset_type=asset_type, from_date=from_date, to_date=to_date,
     )
 
 

@@ -236,8 +236,9 @@ export function ConfigForm() {
     });
   }, [watchedAssetType, selectedProvider, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
 
-  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(watchedBackendUrl?.trim() || undefined);
-  const backendConn = useConnectivityCheck(watchedBackendUrl?.trim() || undefined);
+  const trimmedBackendUrl = useMemo(() => watchedBackendUrl?.trim() || undefined, [watchedBackendUrl]);
+  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl);
+  const backendConn = useConnectivityCheck(trimmedBackendUrl);
 
   const deepOptions = useMemo(() => {
     if (proxyModels?.length) return proxyModels.map((m) => ({ label: m.name ?? m.id, value: m.id }));

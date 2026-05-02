@@ -189,6 +189,7 @@ class AnalysisResponse(BaseModel):
     started_at: str
     completed_at: Optional[str] = None
     error: Optional[str] = None
+    asset_type: Optional[str] = None
 
 
 class AnalysisListItem(BaseModel):
@@ -198,6 +199,7 @@ class AnalysisListItem(BaseModel):
     status: str
     started_at: str
     completed_at: Optional[str] = None
+    asset_type: Optional[str] = None
 
 
 class AnalysisListResponse(BaseModel):
