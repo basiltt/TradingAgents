@@ -68,5 +68,7 @@ class ConfigService:
                 )
             if isinstance(value, (int, float)) and value > 1_000_000:
                 raise ValueError(f"value for '{key}' exceeds maximum allowed")
+            if isinstance(value, str) and len(value) > 1024:
+                raise ValueError(f"value for '{key}' exceeds maximum length")
 
         self._overrides.update(patch)
