@@ -149,6 +149,17 @@ export function useAnalysisWebSocket(runId: string) {
         }));
         return;
       }
+
+      if (type === "complete" || type === "error") {
+        dispatch(
+          updateRunStatus({
+            runId,
+            status: type === "complete" ? "completed" : "failed",
+            currentAgent: undefined,
+          }),
+        );
+        return;
+      }
     };
 
     ws.onclose = (ev: CloseEvent) => {
@@ -156,7 +167,8 @@ export function useAnalysisWebSocket(runId: string) {
       if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
-      if (ev.code === 1000 || ev.code === 4404) {
+      const NON_RETRIABLE = [1000, 4404, 4403, 1008, 1009];
+      if (NON_RETRIABLE.includes(ev.code)) {
         setStatus("disconnected");
         return;
       }

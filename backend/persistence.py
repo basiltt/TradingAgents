@@ -16,7 +16,7 @@ CREATE TABLE analysis_runs (
     run_id TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
     analysis_date TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed','cancelled')),
     config TEXT NOT NULL DEFAULT '{}',
     started_at TEXT NOT NULL CHECK(started_at GLOB '????-??-??T??:??:??*'),
     completed_at TEXT CHECK(completed_at IS NULL OR completed_at GLOB '????-??-??T??:??:??*'),
@@ -29,7 +29,7 @@ CREATE INDEX idx_runs_status_started ON analysis_runs(status, started_at DESC);
 
 CREATE TABLE report_sections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id TEXT NOT NULL REFERENCES analysis_runs(run_id),
+    run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
     section TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -56,6 +56,7 @@ class AnalysisDB:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._apply_migrations()
 
     def _apply_migrations(self) -> None:
@@ -99,20 +100,24 @@ class AnalysisDB:
 
     def insert_run(self, run: Dict[str, Any]) -> None:
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO analysis_runs (run_id, ticker, analysis_date, status, config, started_at, instance_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    run["run_id"],
-                    run["ticker"],
-                    run["analysis_date"],
-                    run["status"],
-                    run.get("config", "{}"),
-                    run["started_at"],
-                    self._instance_id,
-                ),
-            )
-            self._conn.commit()
+            try:
+                self._conn.execute(
+                    "INSERT INTO analysis_runs (run_id, ticker, analysis_date, status, config, started_at, instance_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        run["run_id"],
+                        run["ticker"],
+                        run["analysis_date"],
+                        run["status"],
+                        run.get("config", "{}"),
+                        run["started_at"],
+                        self._instance_id,
+                    ),
+                )
+                self._conn.commit()
+            except sqlite3.IntegrityError:
+                self._conn.rollback()
+                raise ValueError(f"Run {run['run_id']} already exists")
 
     def update_run_status(
         self,

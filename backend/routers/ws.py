@@ -26,10 +26,11 @@ async def _remove_consumer_if_empty(run_id: str, ws_manager) -> None:
     async with ws_manager._consumer_lock:
         async with ws_manager._lock:
             count = len(ws_manager._connections.get(run_id, set()))
-        if count == 0:
+            if count > 0:
+                return
             task = ws_manager._consumers.pop(run_id, None)
-            if task and not task.done():
-                task.cancel()
+        if task and not task.done():
+            task.cancel()
 
 
 def _check_origin(websocket: WebSocket) -> bool:

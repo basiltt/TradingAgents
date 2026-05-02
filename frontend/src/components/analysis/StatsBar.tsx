@@ -19,7 +19,7 @@ function formatNumber(n: number): string {
 export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
   return (
     <Card>
-      <CardContent className="pt-4" aria-live="polite">
+      <CardContent className="pt-4">
         {stats === null ? (
           <p className="text-sm text-muted-foreground">Waiting for stats…</p>
         ) : (

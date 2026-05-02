@@ -27,6 +27,8 @@ async function throwApiError(res: Response): Promise<never> {
   throw new ApiError(res.status, detail);
 }
 
+const _DEFAULT_TIMEOUT = 30_000;
+
 async function request<T>(
   path: string,
   init?: RequestInit,
@@ -34,7 +36,7 @@ async function request<T>(
 ): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    signal: signal ?? init?.signal,
+    signal: signal ?? init?.signal ?? AbortSignal.timeout(_DEFAULT_TIMEOUT),
     headers: { ...DEFAULT_HEADERS, ...init?.headers },
   });
   if (!res.ok) return throwApiError(res);
@@ -57,7 +59,7 @@ async function requestText(
 function mutate<T>(method: string, path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...DEFAULT_HEADERS, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
 }

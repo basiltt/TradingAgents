@@ -58,7 +58,7 @@ class AnalysisService:
 
             config_snapshot = self._build_config(request)
 
-            self._db.insert_run({
+            await asyncio.to_thread(self._db.insert_run, {
                 "run_id": run_id,
                 "ticker": request["ticker"],
                 "analysis_date": request["analysis_date"],

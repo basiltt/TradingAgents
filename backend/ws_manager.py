@@ -93,8 +93,8 @@ class WSManager:
         try:
             while True:
                 event = await conn.outbound.get()
-                event["seq"] = conn.next_seq()
-                await conn.ws.send_json(event)
+                out = {**event, "seq": conn.next_seq()}
+                await conn.ws.send_json(out)
         except Exception:
             await self.disconnect(conn)
 
