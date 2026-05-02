@@ -312,11 +312,13 @@ export function ConfigForm() {
                 name="asset_type"
                 control={control}
                 render={({ field }) => (
-                  <div className="flex rounded-lg border overflow-hidden">
+                  <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Asset type">
                     {(["stock", "crypto"] as const).map((t) => (
                       <button
                         key={t}
                         type="button"
+                        role="radio"
+                        aria-checked={field.value === t}
                         className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                           field.value === t
                             ? "bg-primary text-primary-foreground"
@@ -347,11 +349,14 @@ export function ConfigForm() {
                 aria-invalid={!!errors.ticker}
                 {...register("ticker", {
                   required: isCrypto ? "Trading pair is required" : "Ticker is required",
-                  pattern: {
-                    value: isCrypto ? CRYPTO_TICKER_REGEX : TICKER_REGEX,
-                    message: isCrypto
-                      ? "Enter a valid pair (2-20 chars: A-Z, 0-9)"
-                      : "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)",
+                  validate: (v) => {
+                    const regex = isCrypto ? CRYPTO_TICKER_REGEX : TICKER_REGEX;
+                    if (!regex.test(v)) {
+                      return isCrypto
+                        ? "Enter a valid pair (2-20 chars: A-Z, 0-9)"
+                        : "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)";
+                    }
+                    return true;
                   },
                   onChange: (e) => setValue("ticker", e.target.value.toUpperCase(), { shouldValidate: false }),
                 })}
@@ -417,6 +422,7 @@ export function ConfigForm() {
                 <Controller
                   name="analysts"
                   control={control}
+                  rules={{ validate: (v) => v.length > 0 || "Select at least one analyst" }}
                   render={({ field }) => (
                     <>
                       {activeAnalysts.map((a) => (
@@ -438,6 +444,9 @@ export function ConfigForm() {
                 />
               </div>
               <p className="text-xs text-muted-foreground">Select which analyst agents to include ({watchedAnalysts.length}/{activeAnalysts.length})</p>
+              {errors.analysts && (
+                <p className="text-sm text-destructive">{errors.analysts.message}</p>
+              )}
             </div>
 
             {/* Research Depth */}

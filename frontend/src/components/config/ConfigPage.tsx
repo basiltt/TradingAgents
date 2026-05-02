@@ -94,11 +94,7 @@ export function ConfigPage() {
                 </p>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground w-36">BYBIT_API_KEY</span>
-                  {String(data.resolved.exchange_credentials ?? "").includes("***") || data.resolved.exchange_credentials ? (
-                    <Badge variant="secondary" className="text-xs">Optional</Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-xs">Not set</Badge>
-                  )}
+                  <Badge variant="outline" className="text-xs">Optional — public API</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Set <code className="font-mono bg-muted px-1 rounded">BYBIT_API_KEY</code> and <code className="font-mono bg-muted px-1 rounded">BYBIT_API_SECRET</code> environment variables for private endpoints (optional).

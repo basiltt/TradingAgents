@@ -186,5 +186,15 @@ describe("ConfigForm", () => {
       await user.click(screen.getByText("Crypto Futures"));
       expect(screen.getByLabelText(/trading pair/i)).toHaveValue("");
     });
+
+    it("rejects invalid crypto ticker format", async () => {
+      const user = userEvent.setup();
+      render(<ConfigForm />, { wrapper: createWrapper() });
+      await user.click(screen.getByText("Crypto Futures"));
+      await user.type(screen.getByLabelText(/trading pair/i), "X");
+      fireEvent.change(screen.getByLabelText(/date/i), { target: { value: "2025-06-01" } });
+      await user.click(screen.getByRole("button", { name: /start analysis/i }));
+      expect(await screen.findByText(/valid pair/i)).toBeInTheDocument();
+    });
   });
 });
