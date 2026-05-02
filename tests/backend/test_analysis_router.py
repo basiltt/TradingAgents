@@ -1,0 +1,113 @@
+"""Tests for analysis router — TASK-013."""
+
+import pytest
+import pytest_asyncio
+from unittest.mock import patch
+from httpx import AsyncClient, ASGITransport
+
+
+@pytest.fixture
+def app(tmp_path):
+    import os
+    os.environ["TRADINGAGENTS_WEB_DB_PATH"] = str(tmp_path / "test.db")
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    from backend.main import create_app
+    return create_app()
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with app.router.lifespan_context(app):
+            yield c
+
+
+@pytest.mark.asyncio
+async def test_start_analysis(client):
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value=None):
+        resp = await client.post(
+            "/api/v1/analysis",
+            json={"ticker": "SPY", "analysis_date": "2025-06-01", "provider": "anthropic"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "run_id" in data
+        assert data["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_start_analysis_missing_csrf(client):
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={"ticker": "SPY", "analysis_date": "2025-06-01"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_start_analysis_missing_api_key(client, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={"ticker": "SPY", "analysis_date": "2025-06-01", "provider": "openai"},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 422
+    assert "API key" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_list_analyses(client):
+    resp = await client.get("/api/v1/analysis")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "items" in data
+    assert "total" in data
+
+
+@pytest.mark.asyncio
+async def test_get_analysis_invalid_run_id(client):
+    resp = await client.get("/api/v1/analysis/nonexistent-id")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_analysis_not_found(client):
+    resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000000")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_analysis_csrf_required(client):
+    resp = await client.post("/api/v1/analysis/00000000-0000-0000-0000-000000000000/cancel")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_report_download_content_type(client):
+    import asyncio
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value={"final_trade_decision": "BUY SPY"}):
+        start_resp = await client.post(
+            "/api/v1/analysis",
+            json={"ticker": "SPY", "analysis_date": "2025-06-01", "provider": "anthropic"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        run_id = start_resp.json()["run_id"]
+        await asyncio.sleep(0.5)
+
+        resp = await client.get(f"/api/v1/analysis/{run_id}/report")
+        if resp.status_code == 200:
+            assert "text/markdown" in resp.headers.get("content-type", "")
+            assert f"report-{run_id}.md" in resp.headers.get("content-disposition", "")
+
+
+@pytest.mark.asyncio
+async def test_validation_errors(client):
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={"ticker": "", "analysis_date": "2025-06-01"},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 422

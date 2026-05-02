@@ -43,6 +43,7 @@ cli = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "unit: fast isolated unit tests",

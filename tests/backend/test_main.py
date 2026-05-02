@@ -1,0 +1,76 @@
+"""Tests for FastAPI application skeleton — TASK-001."""
+
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+
+
+@pytest.fixture
+def app(tmp_path):
+    import os
+    os.environ["TRADINGAGENTS_WEB_DB_PATH"] = str(tmp_path / "test.db")
+    from backend.main import create_app
+    return create_app()
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with app.router.lifespan_context(app):
+            yield c
+
+
+@pytest.mark.asyncio
+async def test_health_returns_200(client):
+    resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "db" in data
+
+
+@pytest.mark.asyncio
+async def test_cors_rejects_unknown_origin(client):
+    resp = await client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": "http://evil.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert "access-control-allow-origin" not in resp.headers or resp.headers.get("access-control-allow-origin") != "http://evil.com"
+
+
+@pytest.mark.asyncio
+async def test_cors_allows_configured_origin(client):
+    resp = await client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": "http://localhost:5177",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5177"
+
+
+@pytest.mark.asyncio
+async def test_csp_header_present(client):
+    resp = await client.get("/api/v1/health")
+    assert "content-security-policy" in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_csrf_header_required_on_post(client):
+    resp = await client.post("/api/v1/config", json={"overrides": {}})
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_csrf_header_accepted_on_post(client):
+    resp = await client.patch(
+        "/api/v1/config",
+        json={"overrides": {"output_language": "French"}},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code in (200, 422)
