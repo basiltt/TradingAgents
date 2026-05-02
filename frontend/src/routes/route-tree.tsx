@@ -9,6 +9,8 @@ import { ConfigForm } from "@/components/analysis/ConfigForm";
 import { AnalysisDashboard } from "@/components/analysis/AnalysisDashboard";
 import { HomeDashboard } from "@/components/dashboard/HomeDashboard";
 import { HistoryList } from "@/components/dashboard/HistoryList";
+import { ConfigPage as ConfigPageComponent } from "@/components/config/ConfigPage";
+import { MemoryPage as MemoryPageComponent } from "@/components/config/MemoryPage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -37,19 +39,11 @@ function HistoryPage() {
 }
 
 function ConfigPage() {
-  return (
-    <div>
-      <h2 className="text-xl font-bold">Configuration</h2>
-    </div>
-  );
+  return <ConfigPageComponent />;
 }
 
 function MemoryPage() {
-  return (
-    <div>
-      <h2 className="text-xl font-bold">Memory</h2>
-    </div>
-  );
+  return <MemoryPageComponent />;
 }
 
 const indexRoute = createRoute({
