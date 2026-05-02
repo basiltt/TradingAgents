@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_RING_EVENTS = 500
 _MAX_RING_BYTES = 2 * 1024 * 1024  # 2MB
+_MAX_CLEANED_IDS = 1000
 
 _POISON = {"type": "_poison"}
 
@@ -30,6 +31,8 @@ class EventBus:
 
     def _get_queue(self, run_id: str) -> asyncio.Queue:
         with self._lock:
+            if run_id in self._cleaned:
+                raise StopAsyncIteration(f"Run {run_id} already cleaned up")
             if run_id not in self._queues:
                 self._queues[run_id] = asyncio.Queue(maxsize=1000)
             return self._queues[run_id]
@@ -116,6 +119,11 @@ class EventBus:
     def cleanup_run(self, run_id: str) -> None:
         with self._lock:
             self._cleaned.add(run_id)
+            if len(self._cleaned) > _MAX_CLEANED_IDS:
+                try:
+                    self._cleaned.pop()
+                except KeyError:
+                    pass
             queue = self._queues.pop(run_id, None)
             self._ring_buffers.pop(run_id, None)
             self._ring_bytes.pop(run_id, None)

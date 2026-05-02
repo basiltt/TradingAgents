@@ -76,8 +76,17 @@ def create_app() -> FastAPI:
         )
         yield
         analysis_service = app.state.analysis_service
-        for rid in list(analysis_service._active_runs):
-            await analysis_service.cancel_analysis(rid)
+        tasks_to_await = []
+        async with analysis_service._lock:
+            for rid, run in list(analysis_service._active_runs.items()):
+                if run.get("cancel_event"):
+                    run["cancel_event"].set()
+                task = run.get("task")
+                if task and not task.done():
+                    task.cancel()
+                    tasks_to_await.append(task)
+        if tasks_to_await:
+            await asyncio.gather(*tasks_to_await, return_exceptions=True)
         db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
