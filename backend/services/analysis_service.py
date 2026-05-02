@@ -212,7 +212,6 @@ class AnalysisService:
                 if run_data:
                     run_data["status"] = "terminal"
 
-            await asyncio.to_thread(self._db.checkpoint)
             await asyncio.sleep(0.1)
             self._bus.cleanup_run(run_id)
 
