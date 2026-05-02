@@ -150,11 +150,14 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "complete" || type === "error") {
+      if (
+        type === "progress" &&
+        ["completed", "failed", "cancelled"].includes(data.phase as string)
+      ) {
         dispatch(
           updateRunStatus({
             runId,
-            status: type === "complete" ? "completed" : "failed",
+            status: data.phase === "completed" ? "completed" : "failed",
             currentAgent: undefined,
           }),
         );
