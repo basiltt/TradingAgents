@@ -91,7 +91,7 @@ export function useAnalysisWebSocket(runId: string) {
           dispatch(
             updateRunStatus({
               runId,
-              status: phase === "completed" ? "completed" : "failed",
+              status: phase === "completed" ? "completed" : phase === "cancelled" ? "cancelled" : "failed",
               currentAgent: undefined,
             }),
           );

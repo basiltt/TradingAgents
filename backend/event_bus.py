@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 from collections import deque, OrderedDict
@@ -80,8 +79,7 @@ class EventBus:
         self.emit(run_id, event)
 
     def _add_to_ring(self, run_id: str, event_dict: Dict[str, Any]) -> None:
-        serialized = json.dumps(event_dict)
-        event_bytes = len(serialized)
+        event_bytes = len(str(event_dict))
 
         if run_id not in self._ring_buffers:
             self._ring_buffers[run_id] = deque()
