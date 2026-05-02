@@ -84,16 +84,32 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "progress") {
+        const phase = data.phase as string;
+        const terminal = ["completed", "failed", "cancelled"];
+
+        if (terminal.includes(phase)) {
+          dispatch(
+            updateRunStatus({
+              runId,
+              status: phase === "completed" ? "completed" : "failed",
+              currentAgent: undefined,
+            }),
+          );
+          ws.close(1000, "Run terminal");
+          setStatus("disconnected");
+          return;
+        }
+
         dispatch(
           updateRunStatus({
             runId,
             status: "running",
-            currentAgent: data.phase as string,
+            currentAgent: phase,
           }),
         );
         updateCacheRef.current((prev) => ({
           ...prev,
-          progress: { phase: data.phase as string, detail: data.detail as string },
+          progress: { phase, detail: data.detail as string },
         }));
         return;
       }
@@ -147,22 +163,6 @@ export function useAnalysisWebSocket(runId: string) {
               : (data.content as string),
           },
         }));
-        return;
-      }
-
-      if (
-        type === "progress" &&
-        ["completed", "failed", "cancelled"].includes(data.phase as string)
-      ) {
-        dispatch(
-          updateRunStatus({
-            runId,
-            status: data.phase === "completed" ? "completed" : "failed",
-            currentAgent: undefined,
-          }),
-        );
-        ws.close(1000, "Run terminal");
-        setStatus("disconnected");
         return;
       }
     };

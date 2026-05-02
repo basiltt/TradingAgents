@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
 import uuid
@@ -131,7 +132,7 @@ class AnalysisService:
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
         from tradingagents.default_config import DEFAULT_CONFIG
 
-        config = dict(DEFAULT_CONFIG)
+        config = copy.deepcopy(DEFAULT_CONFIG)
 
         resolved = self._config.get_config()["resolved"]
         for k, v in resolved.items():
