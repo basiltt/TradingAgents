@@ -1,3 +1,5 @@
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+
 class ApiError extends Error {
   status: number;
   detail: string;
@@ -10,28 +12,52 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail ?? detail;
-    } catch {
-      // ignore parse errors
-    }
-    throw new ApiError(res.status, detail);
+const DEFAULT_HEADERS: HeadersInit = {
+  "X-Requested-With": "XMLHttpRequest",
+};
+
+async function throwApiError(res: Response): Promise<never> {
+  let detail = res.statusText;
+  try {
+    const body = await res.json();
+    detail = body.detail ?? detail;
+  } catch {
+    // non-JSON error body
   }
+  throw new ApiError(res.status, detail);
+}
+
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  signal?: AbortSignal,
+): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    signal: signal ?? init?.signal,
+    headers: { ...DEFAULT_HEADERS, ...init?.headers },
+  });
+  if (!res.ok) return throwApiError(res);
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+async function requestText(
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: DEFAULT_HEADERS,
+    signal,
+  });
+  if (!res.ok) return throwApiError(res);
+  return res.text();
 }
 
 function mutate<T>(method: string, path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Requested-With": "XMLHttpRequest",
-    },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
@@ -41,8 +67,17 @@ export interface HealthResponse {
   db: string;
 }
 
+export interface AnalysisListItem {
+  run_id: string;
+  ticker: string;
+  analysis_date: string;
+  status: string;
+  started_at: string;
+  completed_at?: string;
+}
+
 export interface AnalysisListResponse {
-  items: AnalysisRun[];
+  items: AnalysisListItem[];
   total: number;
   page: number;
   limit: number;
@@ -51,11 +86,11 @@ export interface AnalysisListResponse {
 export interface AnalysisRun {
   run_id: string;
   ticker: string;
+  analysis_date: string;
   status: string;
-  analysis_date?: string;
-  provider?: string;
-  created_at?: string;
-  updated_at?: string;
+  config: Record<string, unknown>;
+  started_at: string;
+  completed_at?: string;
   error?: string;
 }
 
@@ -68,40 +103,56 @@ export interface StartAnalysisRequest {
   ticker: string;
   analysis_date: string;
   provider?: string;
+  deep_think_llm?: string;
+  quick_think_llm?: string;
+  backend_url?: string;
   analysts?: string[];
   research_depth?: number;
+  output_language?: string;
+  data_vendors?: Record<string, string>;
 }
 
 export interface ConfigResponse {
-  resolved: Record<string, unknown>;
+  defaults: Record<string, unknown>;
   overrides: Record<string, unknown>;
+  resolved: Record<string, unknown>;
 }
 
 export const apiClient = {
-  getHealth: () => request<HealthResponse>("/api/v1/health"),
+  getHealth: (signal?: AbortSignal) =>
+    request<HealthResponse>("/api/v1/health", undefined, signal),
 
-  listAnalyses: (params?: {
-    page?: number;
-    limit?: number;
-    ticker?: string;
-    status?: string;
-  }) => {
+  listAnalyses: (
+    params?: {
+      page?: number;
+      limit?: number;
+      ticker?: string;
+      status?: string;
+    },
+    signal?: AbortSignal,
+  ) => {
     const sp = new URLSearchParams();
-    if (params?.page) sp.set("page", String(params.page));
-    if (params?.limit) sp.set("limit", String(params.limit));
+    if (params?.page != null) sp.set("page", String(params.page));
+    if (params?.limit != null) sp.set("limit", String(params.limit));
     if (params?.ticker) sp.set("ticker", params.ticker);
     if (params?.status) sp.set("status", params.status);
     const qs = sp.toString();
     return request<AnalysisListResponse>(
       `/api/v1/analysis${qs ? `?${qs}` : ""}`,
+      undefined,
+      signal,
     );
   },
 
   startAnalysis: (body: StartAnalysisRequest) =>
     mutate<AnalysisCreateResponse>("POST", "/api/v1/analysis", body),
 
-  getAnalysis: (runId: string) =>
-    request<AnalysisRun>(`/api/v1/analysis/${encodeURIComponent(runId)}`),
+  getAnalysis: (runId: string, signal?: AbortSignal) =>
+    request<AnalysisRun>(
+      `/api/v1/analysis/${encodeURIComponent(runId)}`,
+      undefined,
+      signal,
+    ),
 
   cancelAnalysis: (runId: string) =>
     mutate<{ status: string }>(
@@ -109,18 +160,17 @@ export const apiClient = {
       `/api/v1/analysis/${encodeURIComponent(runId)}/cancel`,
     ),
 
-  getReport: (runId: string) =>
-    fetch(`/api/v1/analysis/${encodeURIComponent(runId)}/report`).then(
-      (res) => {
-        if (!res.ok) throw new ApiError(res.status, "Report not available");
-        return res.text();
-      },
+  getReport: (runId: string, signal?: AbortSignal) =>
+    requestText(
+      `/api/v1/analysis/${encodeURIComponent(runId)}/report`,
+      signal,
     ),
 
-  getConfig: () => request<ConfigResponse>("/api/v1/config"),
+  getConfig: (signal?: AbortSignal) =>
+    request<ConfigResponse>("/api/v1/config", undefined, signal),
 
   updateConfig: (overrides: Record<string, unknown>) =>
-    mutate<ConfigResponse>("PATCH", "/api/v1/config", overrides),
+    mutate<ConfigResponse>("PATCH", "/api/v1/config", { overrides }),
 };
 
 export { ApiError };

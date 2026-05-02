@@ -5,14 +5,25 @@ import {
   createMemoryHistory,
   RouterProvider,
 } from "@tanstack/react-router";
+import { Provider } from "react-redux";
+import { configureStore } from "@reduxjs/toolkit";
 import { routeTree } from "../route-tree";
+import { analysisSlice } from "@/store/analysis-slice";
+import { uiSlice } from "@/store/ui-slice";
 
 function renderWithRouter(initialPath: string) {
+  const store = configureStore({
+    reducer: { analysis: analysisSlice.reducer, ui: uiSlice.reducer },
+  });
   const router = createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: [initialPath] }),
   });
-  return render(<RouterProvider router={router} />);
+  return render(
+    <Provider store={store}>
+      <RouterProvider router={router} />
+    </Provider>,
+  );
 }
 
 describe("routing", () => {
@@ -53,6 +64,20 @@ describe("routing", () => {
     renderWithRouter("/memory");
     expect(
       await screen.findByRole("heading", { name: /memory/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders analysis run page with param", async () => {
+    renderWithRouter("/analysis/abc-123");
+    expect(
+      await screen.findByRole("heading", { name: /analysis run/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("sidebar has accessible label", async () => {
+    renderWithRouter("/");
+    expect(
+      await screen.findByRole("navigation", { name: /main navigation/i }),
     ).toBeInTheDocument();
   });
 });
