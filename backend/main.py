@@ -1,0 +1,88 @@
+"""FastAPI application with CORS, CSP, CSRF protection — TASK-001."""
+
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from backend.persistence import AnalysisDB
+from backend.services.config_service import ConfigService
+from backend.services.memory_service import MemoryService
+
+
+class CSPMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:*; "
+            "frame-ancestors 'none'"
+        )
+        return response
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("POST", "PATCH", "PUT", "DELETE"):
+            if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+                return Response(
+                    content='{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED"}',
+                    status_code=403,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
+
+def create_app() -> FastAPI:
+    db_path = os.environ.get(
+        "TRADINGAGENTS_WEB_DB_PATH", "~/.tradingagents/cache/web_runs.db"
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        db = AnalysisDB(db_path=db_path)
+        db.recover_orphans()
+        app.state.db = db
+        app.state.config_service = ConfigService(db=db)
+        app.state.memory_service = MemoryService()
+        yield
+        db.close()
+
+    app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
+
+    cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[cors_origin],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(CSRFMiddleware)
+    app.add_middleware(CSPMiddleware)
+
+    from backend.routers.config import router as config_router
+    from backend.routers.models import router as models_router
+    from backend.routers.checkpoints import router as checkpoints_router
+    from backend.routers.memory import router as memory_router
+
+    app.include_router(config_router, prefix="/api/v1")
+    app.include_router(models_router, prefix="/api/v1")
+    app.include_router(checkpoints_router, prefix="/api/v1")
+    app.include_router(memory_router, prefix="/api/v1")
+
+    @app.get("/api/v1/health")
+    async def health(request: Request):
+        db_ok = "ok"
+        try:
+            with request.app.state.db._lock:
+                request.app.state.db._conn.execute("SELECT 1")
+        except Exception:
+            db_ok = "degraded"
+        return {"status": "ok", "db": db_ok}
+
+    return app
