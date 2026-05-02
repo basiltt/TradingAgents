@@ -154,12 +154,24 @@ def create_crypto_trader(llm, max_leverage: int = 20):
         company = state["company_of_interest"]
         instrument_context = build_instrument_context(company)
         investment_plan = state["investment_plan"]
+        market_report = state.get("market_report", "")
+        news_report = state.get("news_report", "")
+        fundamentals_report = state.get("fundamentals_report", "")
+
+        analyst_context = ""
+        if market_report:
+            analyst_context += f"\n\n## Market/Technical Report\n{market_report}"
+        if news_report:
+            analyst_context += f"\n\n## News Report\n{news_report}"
+        if fundamentals_report:
+            analyst_context += f"\n\n## Fundamentals/Derivatives Report\n{fundamentals_report}"
 
         base_prompt = (
             f"You are a crypto futures trader. Based on the analyst reports and research plan, "
             f"produce a structured trading signal for {company}. {instrument_context}\n\n"
             f"You MUST output a JSON object matching this schema:\n{signal_schema_str}\n\n"
-            f"Research plan: {investment_plan}\n\n"
+            f"Research plan: {investment_plan}"
+            f"{analyst_context}\n\n"
             f"Output ONLY the JSON inside a ```json``` code block."
         )
 

@@ -36,8 +36,8 @@ def _sanitize(raw: str) -> str:
 
 
 def _dates_to_ms(start_date: str, end_date: str) -> tuple[int, int]:
-    start_ts = int(pd.Timestamp(start_date).timestamp() * 1000)
-    end_ts = int(pd.Timestamp(end_date).timestamp() * 1000)
+    start_ts = int(pd.Timestamp(start_date, tz="UTC").timestamp() * 1000)
+    end_ts = int(pd.Timestamp(end_date, tz="UTC").timestamp() * 1000)
     return start_ts, end_ts
 
 
