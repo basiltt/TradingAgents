@@ -74,6 +74,9 @@ class EventBus:
         )
 
     async def _async_emit(self, run_id: str, event: Any) -> None:
+        with self._lock:
+            if run_id in self._cleaned:
+                return
         self.emit(run_id, event)
 
     def _add_to_ring(self, run_id: str, event_dict: Dict[str, Any]) -> None:

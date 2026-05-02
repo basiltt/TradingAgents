@@ -58,12 +58,18 @@ class AnalysisService:
 
             config_snapshot = self._build_config(request)
 
+            _SECRET_KEYS = {"api_key", "secret", "token", "password"}
+            safe_config = {
+                k: "***" if any(s in k.lower() for s in _SECRET_KEYS) else v
+                for k, v in config_snapshot.items()
+            }
+
             await asyncio.to_thread(self._db.insert_run, {
                 "run_id": run_id,
                 "ticker": request["ticker"],
                 "analysis_date": request["analysis_date"],
                 "status": "running",
-                "config": _safe_json(config_snapshot),
+                "config": _safe_json(safe_config),
                 "started_at": now,
             })
 
@@ -83,23 +89,19 @@ class AnalysisService:
     async def cancel_analysis(self, run_id: str) -> bool:
         async with self._lock:
             run = self._active_runs.get(run_id)
-            if not run:
-                db_run = self._db.get_run(run_id)
-                if not db_run:
-                    return False
-                if db_run["status"] != "running":
+            if run:
+                if run["status"] != "running":
                     return True
-                return False
-
-            if run["status"] != "running":
+                run["cancel_event"].set()
+                task = run.get("task")
+                if task and not task.done():
+                    task.cancel()
                 return True
 
-            run["cancel_event"].set()
-            task = run.get("task")
-
-        if task and not task.done():
-            task.cancel()
-        return True
+        db_run = await asyncio.to_thread(self._db.get_run, run_id)
+        if not db_run:
+            return False
+        return db_run["status"] != "running"
 
     async def shutdown(self) -> None:
         tasks_to_await = []
@@ -194,7 +196,7 @@ class AnalysisService:
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
             async with self._lock:
                 self._zombie_count += 1
-            asyncio.get_event_loop().call_later(
+            asyncio.get_running_loop().call_later(
                 _HARD_TIMEOUT - _WALL_TIMEOUT, self._reclaim_zombie, run_id
             )
 

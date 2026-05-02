@@ -29,6 +29,7 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
     try:
         uuid.UUID(run_id)
     except ValueError:
+        await websocket.accept()
         await websocket.close(code=4400, reason="Invalid run_id")
         return
 
@@ -38,6 +39,7 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
     db = app.state.db
 
     if not _check_origin(websocket):
+        await websocket.accept()
         await websocket.close(code=4403, reason="Origin not allowed")
         return
 
