@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { apiClient, type StartAnalysisRequest } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,24 +16,47 @@ interface FormValues {
   ticker: string;
   analysis_date: string;
   provider: string;
+  backend_url: string;
+  deep_think_llm: string;
+  quick_think_llm: string;
 }
 
 export function ConfigForm() {
   const navigate = useNavigate();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const { data: configData } = useQuery({
+    queryKey: ["config"],
+    queryFn: ({ signal }) => apiClient.getConfig(signal),
+    staleTime: 60_000,
+  });
+
+  const resolved = configData?.resolved ?? {};
+  const envProvider = String(resolved.llm_provider ?? "openai");
+  const envBackendUrl = resolved.backend_url ? String(resolved.backend_url) : "";
+  const envDeepThink = String(resolved.deep_think_llm ?? "");
+  const envQuickThink = String(resolved.quick_think_llm ?? "");
+
   const {
     register,
     handleSubmit,
     control,
     setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     defaultValues: {
       ticker: "",
       analysis_date: "",
-      provider: "openai",
+      provider: envProvider,
+      backend_url: "",
+      deep_think_llm: "",
+      quick_think_llm: "",
     },
   });
+
+  const selectedProvider = watch("provider");
 
   async function onSubmit(data: FormValues) {
     setSubmitError(null);
@@ -41,6 +65,9 @@ export function ConfigForm() {
         ticker: data.ticker.toUpperCase(),
         analysis_date: data.analysis_date,
         provider: data.provider || undefined,
+        backend_url: data.backend_url.trim() || undefined,
+        deep_think_llm: data.deep_think_llm.trim() || undefined,
+        quick_think_llm: data.quick_think_llm.trim() || undefined,
       };
       const result = await apiClient.startAnalysis(body);
       navigate({ to: "/analysis/$runId", params: { runId: result.run_id } });
@@ -146,13 +173,126 @@ export function ConfigForm() {
                       {PROVIDERS.map((p) => (
                         <SelectItem key={p} value={p} className="capitalize">
                           {p}
+                          {p === envProvider && (
+                            <span className="ml-1 text-muted-foreground text-xs">(env default)</span>
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 )}
               />
-              <p className="text-xs text-muted-foreground">AI provider for agent reasoning</p>
+              <p className="text-xs text-muted-foreground">
+                AI provider for agent reasoning
+                {envProvider !== "openai" && (
+                  <span className="ml-1 text-primary font-medium">
+                    (env: {envProvider})
+                  </span>
+                )}
+              </p>
+            </div>
+
+            {/* Advanced Settings */}
+            <div className="border-t pt-3">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
+              >
+                <svg
+                  className={`w-4 h-4 transition-transform duration-200 ${showAdvanced ? "rotate-90" : ""}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                Advanced Settings
+                {(envBackendUrl || selectedProvider === "anthropic") && (
+                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                    {envBackendUrl ? "Custom endpoint configured" : "Proxy available"}
+                  </span>
+                )}
+              </button>
+
+              {showAdvanced && (
+                <div className="mt-4 space-y-4 pl-1">
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="backend_url" className="font-medium text-sm">
+                      Backend URL / Proxy Endpoint
+                    </Label>
+                    <Input
+                      id="backend_url"
+                      placeholder={envBackendUrl || "https://your-proxy.example.com/v1"}
+                      className="font-mono text-sm"
+                      {...register("backend_url")}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Custom API endpoint (e.g. Anthropic proxy, Azure endpoint).
+                      {envBackendUrl && (
+                        <span className="block mt-0.5 text-primary font-medium">
+                          Env default: {envBackendUrl}
+                        </span>
+                      )}
+                      {!envBackendUrl && " Leave empty to use the provider's default endpoint."}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="deep_think_llm" className="font-medium text-sm">
+                      Deep Think Model
+                    </Label>
+                    <Input
+                      id="deep_think_llm"
+                      placeholder={envDeepThink || "e.g. claude-opus-4-6"}
+                      className="font-mono text-sm"
+                      {...register("deep_think_llm")}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Model for complex reasoning tasks.
+                      {envDeepThink && (
+                        <span className="ml-1 text-primary font-medium">
+                          (env: {envDeepThink})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="quick_think_llm" className="font-medium text-sm">
+                      Quick Think Model
+                    </Label>
+                    <Input
+                      id="quick_think_llm"
+                      placeholder={envQuickThink || "e.g. claude-sonnet-4-6"}
+                      className="font-mono text-sm"
+                      {...register("quick_think_llm")}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Model for fast, lightweight tasks.
+                      {envQuickThink && (
+                        <span className="ml-1 text-primary font-medium">
+                          (env: {envQuickThink})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground mb-1">
+                      <svg className="w-3.5 h-3.5 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Proxy / Custom endpoint
+                    </p>
+                    If you're using an Anthropic-compatible proxy, select <strong>anthropic</strong> as provider,
+                    set your proxy URL above, and specify the model IDs your proxy supports.
+                    Values from <code className="px-1 py-0.5 rounded bg-muted">TRADINGAGENTS_BACKEND_URL</code> env
+                    var are used when fields are left empty.
+                  </div>
+                </div>
+              )}
             </div>
 
             {submitError && (
