@@ -66,12 +66,20 @@ class ConfigService:
         }
 
     def update_config(self, patch: Dict[str, Any]) -> None:
-        for key in patch:
+        for key, value in patch.items():
             if key in _FORBIDDEN_OVERRIDE_KEYS:
                 raise ValueError(
                     f"Cannot override '{key}' via API — read from environment variables"
                 )
             if key not in _ALLOWLISTED_KEYS:
                 raise ValueError(f"unknown config key: '{key}'")
+
+            default_val = DEFAULT_CONFIG.get(key)
+            if default_val is not None and not isinstance(value, type(default_val)):
+                raise ValueError(
+                    f"invalid type for '{key}': expected {type(default_val).__name__}"
+                )
+            if isinstance(value, (int, float)) and value > 1_000_000:
+                raise ValueError(f"value for '{key}' exceeds maximum allowed")
 
         self._overrides.update(patch)
