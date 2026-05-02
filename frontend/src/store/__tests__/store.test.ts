@@ -38,10 +38,16 @@ describe("analysis slice reducers", () => {
     expect(store.getState().analysis.activeRuns["r1"].currentAgent).toBe("market");
   });
 
-  it("updateRunStatus is no-op for unknown run", () => {
+  it("updateRunStatus upserts unknown run", () => {
     const store = createTestStore();
     store.dispatch(updateRunStatus({ runId: "unknown", status: "running" }));
-    expect(store.getState().analysis.activeRuns).toEqual({});
+    expect(store.getState().analysis.activeRuns["unknown"]).toEqual({
+      runId: "unknown",
+      ticker: "",
+      status: "running",
+      progress: 0,
+      currentAgent: undefined,
+    });
   });
 
   it("updateRunStatus preserves terminal status runs for UI display", () => {

@@ -27,11 +27,14 @@ export const analysisSlice = createSlice({
       state,
       action: PayloadAction<{ runId: string; status: string; progress?: number; currentAgent?: string }>,
     ) {
-      const run = state.activeRuns[action.payload.runId];
+      const { runId, status, progress, currentAgent } = action.payload;
+      const run = state.activeRuns[runId];
       if (run) {
-        run.status = action.payload.status;
-        if (action.payload.progress !== undefined) run.progress = action.payload.progress;
-        if (action.payload.currentAgent !== undefined) run.currentAgent = action.payload.currentAgent;
+        run.status = status;
+        if (progress !== undefined) run.progress = progress;
+        if (currentAgent !== undefined) run.currentAgent = currentAgent;
+      } else {
+        state.activeRuns[runId] = { runId, ticker: "", status, progress: progress ?? 0, currentAgent };
       }
     },
     removeActiveRun(state, action: PayloadAction<string>) {

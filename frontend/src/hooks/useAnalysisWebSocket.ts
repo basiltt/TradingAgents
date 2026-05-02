@@ -172,7 +172,7 @@ export function useAnalysisWebSocket(runId: string) {
       if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
-      const NON_RETRIABLE = [1000, 4404, 4403, 1008, 1009];
+      const NON_RETRIABLE = [1000, 4400, 4403, 4404, 1008, 1009];
       if (NON_RETRIABLE.includes(ev.code)) {
         setStatus("disconnected");
         return;
