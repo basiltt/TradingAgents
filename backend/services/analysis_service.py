@@ -101,6 +101,19 @@ class AnalysisService:
             task.cancel()
         return True
 
+    async def shutdown(self) -> None:
+        tasks_to_await = []
+        async with self._lock:
+            for rid, run in list(self._active_runs.items()):
+                if run.get("cancel_event"):
+                    run["cancel_event"].set()
+                task = run.get("task")
+                if task and not task.done():
+                    task.cancel()
+                    tasks_to_await.append(task)
+        if tasks_to_await:
+            await asyncio.gather(*tasks_to_await, return_exceptions=True)
+
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         return self._db.get_run(run_id)
 

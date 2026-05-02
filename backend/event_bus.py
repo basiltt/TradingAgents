@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _MAX_RING_EVENTS = 500
 _MAX_RING_BYTES = 2 * 1024 * 1024  # 2MB
 _MAX_CLEANED_IDS = 1000
+_MAX_QUEUE_SIZE = 1000
 
 _POISON = {"type": "_poison"}
 
@@ -34,7 +35,7 @@ class EventBus:
             if run_id in self._cleaned:
                 raise StopAsyncIteration(f"Run {run_id} already cleaned up")
             if run_id not in self._queues:
-                self._queues[run_id] = asyncio.Queue(maxsize=1000)
+                self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
             return self._queues[run_id]
 
     def emit(self, run_id: str, event: Any) -> None:
@@ -46,7 +47,7 @@ class EventBus:
                 return
             queue = self._queues.get(run_id)
             if queue is None:
-                self._queues[run_id] = asyncio.Queue(maxsize=1000)
+                self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
                 queue = self._queues[run_id]
 
             if event_dict.get("type") != "report_chunk":

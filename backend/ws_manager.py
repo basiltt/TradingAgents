@@ -147,5 +147,21 @@ class WSManager:
         await self.disconnect(conn)
 
     def get_connection_count(self, run_id: str) -> int:
-        # Note: callers needing atomicity with mutations should hold _lock externally
         return len(self._connections.get(run_id, set()))
+
+    async def ensure_consumer(self, run_id: str, consume_fn) -> None:
+        async with self._consumer_lock:
+            task = self._consumers.get(run_id)
+            if task and not task.done():
+                return
+            self._consumers[run_id] = asyncio.create_task(consume_fn())
+
+    async def remove_consumer_if_empty(self, run_id: str) -> None:
+        async with self._consumer_lock:
+            async with self._lock:
+                count = len(self._connections.get(run_id, set()))
+                if count > 0:
+                    return
+                task = self._consumers.pop(run_id, None)
+            if task and not task.done():
+                task.cancel()

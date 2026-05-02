@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sqlite3
 import threading
@@ -12,7 +13,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _SCHEMA_V1 = """
-CREATE TABLE analysis_runs (
+CREATE TABLE IF NOT EXISTS analysis_runs (
     run_id TEXT PRIMARY KEY,
     ticker TEXT NOT NULL,
     analysis_date TEXT NOT NULL,
@@ -24,10 +25,10 @@ CREATE TABLE analysis_runs (
     instance_id TEXT NOT NULL
 );
 
-CREATE INDEX idx_runs_ticker_date ON analysis_runs(ticker, analysis_date);
-CREATE INDEX idx_runs_status_started ON analysis_runs(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_ticker_date ON analysis_runs(ticker, analysis_date);
+CREATE INDEX IF NOT EXISTS idx_runs_status_started ON analysis_runs(status, started_at DESC);
 
-CREATE TABLE report_sections (
+CREATE TABLE IF NOT EXISTS report_sections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
     section TEXT NOT NULL,
@@ -35,7 +36,7 @@ CREATE TABLE report_sections (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
-CREATE INDEX idx_reports_run_id ON report_sections(run_id);
+CREATE INDEX IF NOT EXISTS idx_reports_run_id ON report_sections(run_id);
 """
 
 _MIGRATIONS: list[tuple[int, str]] = [
@@ -45,8 +46,6 @@ _MIGRATIONS: list[tuple[int, str]] = [
 
 class AnalysisDB:
     def __init__(self, db_path: str = "~/.tradingagents/cache/web_runs.db"):
-        import os
-
         self._db_path = os.path.expanduser(db_path)
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
 
@@ -57,26 +56,32 @@ class AnalysisDB:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        self._apply_migrations()
+        try:
+            self._apply_migrations()
+        except Exception:
+            self._conn.close()
+            raise
 
     def _apply_migrations(self) -> None:
         with self._lock:
             current = self._conn.execute("PRAGMA user_version").fetchone()[0]
 
-        max_version = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
-        if current > max_version:
-            raise RuntimeError(
-                f"Database schema v{current} is newer than this application supports "
-                f"(max v{max_version}). Please upgrade the application or restore from "
-                f"backup at {self._db_path}.backup.v{current}"
-            )
+            max_version = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
+            if current > max_version:
+                raise RuntimeError(
+                    f"Database schema v{current} is newer than this application supports "
+                    f"(max v{max_version}). Please upgrade the application or restore from "
+                    f"backup at {self._db_path}.backup.v{current}"
+                )
 
-        if current >= max_version:
-            return
+            if current >= max_version:
+                return
 
-        shutil.copy2(self._db_path, f"{self._db_path}.backup.v{current}")
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            backup_path = f"{self._db_path}.backup.v{current}"
+            if not os.path.exists(backup_path):
+                shutil.copy2(self._db_path, backup_path)
 
-        with self._lock:
             self._conn.execute("BEGIN EXCLUSIVE")
             try:
                 for version, sql in _MIGRATIONS:

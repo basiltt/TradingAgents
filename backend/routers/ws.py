@@ -14,25 +14,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-async def _ensure_consumer(event_bus, run_id: str, ws_manager) -> None:
-    async with ws_manager._consumer_lock:
-        task = ws_manager._consumers.get(run_id)
-        if task and not task.done():
-            return
-        ws_manager._consumers[run_id] = asyncio.create_task(_consume_events(event_bus, run_id, ws_manager))
-
-
-async def _remove_consumer_if_empty(run_id: str, ws_manager) -> None:
-    async with ws_manager._consumer_lock:
-        async with ws_manager._lock:
-            count = len(ws_manager._connections.get(run_id, set()))
-            if count > 0:
-                return
-            task = ws_manager._consumers.pop(run_id, None)
-        if task and not task.done():
-            task.cancel()
-
-
 def _check_origin(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if not origin:
@@ -63,7 +44,15 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
     await websocket.accept()
     conn = await ws_manager.connect(websocket, run_id)
 
-    await _ensure_consumer(event_bus, run_id, ws_manager)
+    async def _consume():
+        try:
+            while True:
+                event = await event_bus.drain(run_id)
+                await ws_manager.broadcast(run_id, event)
+        except (asyncio.CancelledError, StopAsyncIteration):
+            pass
+
+    await ws_manager.ensure_consumer(run_id, _consume)
 
     try:
         async for raw in websocket.iter_text():
@@ -82,13 +71,4 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
         pass
     finally:
         await ws_manager.disconnect(conn)
-        await _remove_consumer_if_empty(run_id, ws_manager)
-
-
-async def _consume_events(event_bus, run_id: str, ws_manager):
-    try:
-        while True:
-            event = await event_bus.drain(run_id)
-            await ws_manager.broadcast(run_id, event)
-    except (asyncio.CancelledError, StopAsyncIteration):
-        pass
+        await ws_manager.remove_consumer_if_empty(run_id)
