@@ -67,6 +67,9 @@ def create_app() -> FastAPI:
             config_service=config_service,
         )
         yield
+        analysis_service = app.state.analysis_service
+        for rid in list(analysis_service._active_runs):
+            await analysis_service.cancel_analysis(rid)
         db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
@@ -76,8 +79,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[cors_origin],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Requested-With"],
     )
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(CSPMiddleware)

@@ -28,6 +28,7 @@ class WSConnection:
         self._send_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._seq = 0
+        self._msg_timestamps: list[float] = []
 
     def next_seq(self) -> int:
         self._seq += 1
@@ -111,6 +112,14 @@ class WSManager:
     async def handle_message(self, conn: WSConnection, raw: str) -> Optional[str]:
         if len(raw) > _INBOUND_FRAME_MAX:
             return "frame_too_large"
+
+        now = time.monotonic()
+        cutoff = now - 1.0
+        conn._msg_timestamps = [t for t in conn._msg_timestamps if t > cutoff]
+        if len(conn._msg_timestamps) >= _INBOUND_RATE_LIMIT:
+            return "rate_limited"
+        conn._msg_timestamps.append(now)
+
         try:
             msg = json.loads(raw)
         except (json.JSONDecodeError, ValueError):

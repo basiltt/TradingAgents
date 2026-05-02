@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const TICKER_REGEX = /^[A-Z]{1,5}$/;
+const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
 const PROVIDERS = ["openai", "anthropic", "google", "deepseek"] as const;
 
 interface FormValues {
@@ -66,7 +66,7 @@ export function ConfigForm() {
                 required: "Ticker is required",
                 pattern: {
                   value: TICKER_REGEX,
-                  message: "Enter a valid ticker (1-5 uppercase letters)",
+                  message: "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)",
                 },
                 onChange: (e) => {
                   setValue("ticker", e.target.value.toUpperCase(), { shouldValidate: false });

@@ -6,9 +6,9 @@ import asyncio
 import json
 import logging
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import asdict
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class EventBus:
     def __init__(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
         self._queues: Dict[str, asyncio.Queue] = defaultdict(lambda: asyncio.Queue(maxsize=1000))
-        self._ring_buffers: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self._ring_buffers: Dict[str, Deque[Dict[str, Any]]] = defaultdict(deque)
         self._ring_bytes: Dict[str, int] = defaultdict(int)
         self._subscribers: Dict[str, Set[Callable]] = defaultdict(set)
         self._lock = threading.Lock()
@@ -30,7 +30,8 @@ class EventBus:
         queue = self._queues[run_id]
 
         if event_dict.get("type") != "report_chunk":
-            self._add_to_ring(run_id, event_dict)
+            with self._lock:
+                self._add_to_ring(run_id, event_dict)
 
         try:
             queue.put_nowait(event_dict)
@@ -40,7 +41,8 @@ class EventBus:
             except asyncio.QueueEmpty:
                 pass
             logger.warning("Event bus queue full for run %s, dropping oldest", run_id)
-            self._add_to_ring(run_id, {"type": "events_dropped", "run_id": run_id})
+            with self._lock:
+                self._add_to_ring(run_id, {"type": "events_dropped", "run_id": run_id})
             try:
                 queue.put_nowait(event_dict)
             except asyncio.QueueFull:
@@ -65,7 +67,7 @@ class EventBus:
         while len(buf) > _MAX_RING_EVENTS or self._ring_bytes[run_id] > _MAX_RING_BYTES:
             if not buf:
                 break
-            removed = buf.pop(0)
+            removed = buf.popleft()
             self._ring_bytes[run_id] -= len(json.dumps(removed))
 
     async def drain(self, run_id: str) -> Any:

@@ -175,7 +175,8 @@ class AnalysisService:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             self._db.update_run_status(run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
-            self._zombie_count += 1
+            async with self._lock:
+                self._zombie_count += 1
             asyncio.get_event_loop().call_later(
                 _HARD_TIMEOUT - _WALL_TIMEOUT, self._reclaim_zombie, run_id
             )
@@ -228,7 +229,11 @@ class AnalysisService:
         return trace[-1] if trace else None
 
     def _reclaim_zombie(self, run_id: str) -> None:
-        self._zombie_count = max(0, self._zombie_count - 1)
+        asyncio.ensure_future(self._reclaim_zombie_async(run_id))
+
+    async def _reclaim_zombie_async(self, run_id: str) -> None:
+        async with self._lock:
+            self._zombie_count = max(0, self._zombie_count - 1)
         logger.error("Hard zombie reclamation for run %s", run_id)
 
 
