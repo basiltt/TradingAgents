@@ -13,7 +13,7 @@ async def get_checkpoint(
     ticker: str = Query(...),
     date: str = Query(...),
 ):
-    exists = request.app.state.db.get_checkpoint_exists(ticker, date)
+    exists = await asyncio.to_thread(request.app.state.db.get_checkpoint_exists, ticker, date)
     return {"exists": exists, "ticker": ticker, "date": date}
 
 

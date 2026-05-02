@@ -11,6 +11,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from backend.utils import mask_secrets
 from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
 from backend.persistence import AnalysisDB
@@ -58,12 +59,7 @@ class AnalysisService:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
             config_snapshot = self._build_config(request)
-
-            _SECRET_KEYS = {"api_key", "secret", "token", "password"}
-            safe_config = {
-                k: "***" if any(s in k.lower() for s in _SECRET_KEYS) else v
-                for k, v in config_snapshot.items()
-            }
+            safe_config = mask_secrets(config_snapshot)
 
             await asyncio.to_thread(self._db.insert_run, {
                 "run_id": run_id,

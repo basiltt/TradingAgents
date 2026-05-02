@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import sqlite3
 import threading
 import uuid
@@ -81,7 +80,11 @@ class AnalysisDB:
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             backup_path = f"{self._db_path}.backup.v{current}"
             if not os.path.exists(backup_path):
-                shutil.copy2(self._db_path, backup_path)
+                backup_conn = sqlite3.connect(backup_path)
+                try:
+                    self._conn.backup(backup_conn)
+                finally:
+                    backup_conn.close()
 
             self._conn.execute("BEGIN EXCLUSIVE")
             try:
@@ -98,8 +101,8 @@ class AnalysisDB:
                     except Exception:
                         self._conn.execute(f"ROLLBACK TO SAVEPOINT migration_v{version}")
                         raise
-                self._conn.execute(f"PRAGMA user_version = {max_version}")
                 self._conn.commit()
+                self._conn.execute(f"PRAGMA user_version = {max_version}")
             except Exception:
                 self._conn.rollback()
                 raise

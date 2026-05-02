@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -19,8 +18,7 @@ def _check_origin(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if not origin:
         return False
-    allowed_raw = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
-    allowed = {o.strip() for o in allowed_raw.split(",") if o.strip()}
+    allowed = set(websocket.app.state.cors_origins)
     return origin in allowed
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
+from backend.utils import mask_secrets
 from tradingagents.default_config import DEFAULT_CONFIG
 
 _ALLOWLISTED_KEYS = frozenset(DEFAULT_CONFIG.keys()) - {
@@ -12,8 +13,6 @@ _ALLOWLISTED_KEYS = frozenset(DEFAULT_CONFIG.keys()) - {
     "results_dir",
     "data_cache_dir",
 }
-
-_SECRET_KEYS = frozenset(k for k in DEFAULT_CONFIG if "key" in k.lower() or "api_key" in k.lower())
 
 _FORBIDDEN_OVERRIDE_KEYS = frozenset(
     k for k in DEFAULT_CONFIG if "api_key" in k.lower() or k == "backend_url"
@@ -47,22 +46,10 @@ class ConfigService:
         for key, val in self._overrides.items():
             resolved[key] = val
 
-        masked_resolved = {}
-        for k, v in resolved.items():
-            if k in _SECRET_KEYS and isinstance(v, str) and v:
-                masked_resolved[k] = "***"
-            else:
-                masked_resolved[k] = v
-
-        masked_defaults = {
-            k: "***" if k in _SECRET_KEYS and isinstance(v, str) and v else v
-            for k, v in defaults.items()
-        }
-
         return {
-            "defaults": masked_defaults,
+            "defaults": mask_secrets(defaults),
             "overrides": dict(self._overrides),
-            "resolved": masked_resolved,
+            "resolved": mask_secrets(resolved),
         }
 
     def update_config(self, patch: Dict[str, Any]) -> None:

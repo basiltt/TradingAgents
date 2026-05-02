@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
         app.state.ws_manager = ws_manager
         app.state.config_service = config_service
         app.state.memory_service = MemoryService()
+        app.state.cors_origins = cors_origins
         app.state.analysis_service = AnalysisService(
             persistence=db,
             event_bus=event_bus,
