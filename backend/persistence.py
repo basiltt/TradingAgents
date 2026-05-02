@@ -41,6 +41,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_run_id ON report_sections(run_id);
 
 _MIGRATIONS: list[tuple[int, str]] = [
     (1, _SCHEMA_V1),
+    (2, "ALTER TABLE analysis_runs ADD COLUMN asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
+    (3, "CREATE INDEX IF NOT EXISTS idx_runs_asset_type_started ON analysis_runs(asset_type, started_at DESC)"),
 ]
 
 
@@ -86,33 +88,27 @@ class AnalysisDB:
                 finally:
                     backup_conn.close()
 
-            self._conn.execute("BEGIN EXCLUSIVE")
-            try:
-                for version, sql in _MIGRATIONS:
-                    if version <= current:
-                        continue
-                    self._conn.execute(f"SAVEPOINT migration_v{version}")
-                    try:
-                        for stmt in sql.split(";"):
-                            stmt = stmt.strip()
-                            if stmt:
-                                self._conn.execute(stmt)
-                        self._conn.execute(f"RELEASE SAVEPOINT migration_v{version}")
-                    except Exception:
-                        self._conn.execute(f"ROLLBACK TO SAVEPOINT migration_v{version}")
-                        raise
-                self._conn.execute(f"PRAGMA user_version = {max_version}")
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                raise
+            for version, sql in _MIGRATIONS:
+                if version <= current:
+                    continue
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for stmt in sql.split(";"):
+                        stmt = stmt.strip()
+                        if stmt:
+                            self._conn.execute(stmt)
+                    self._conn.execute(f"PRAGMA user_version = {version}")
+                    self._conn.commit()
+                except Exception:
+                    self._conn.rollback()
+                    raise
 
     def insert_run(self, run: Dict[str, Any]) -> None:
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT INTO analysis_runs (run_id, ticker, analysis_date, status, config, started_at, instance_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO analysis_runs (run_id, ticker, analysis_date, status, config, started_at, instance_id, asset_type) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         run["run_id"],
                         run["ticker"],
@@ -121,6 +117,7 @@ class AnalysisDB:
                         run.get("config", "{}"),
                         run["started_at"],
                         self._instance_id,
+                        run.get("asset_type", "stock"),
                     ),
                 )
                 self._conn.commit()
@@ -167,6 +164,7 @@ class AnalysisDB:
         status: Optional[str] = None,
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
+        asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         limit = min(max(limit, 1), 100)
         conditions: list[str] = []
@@ -184,6 +182,9 @@ class AnalysisDB:
         if to_date:
             conditions.append("analysis_date <= ?")
             params.append(to_date)
+        if asset_type:
+            conditions.append("asset_type = ?")
+            params.append(asset_type)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * limit

@@ -69,6 +69,7 @@ class AnalysisService:
                 "status": "running",
                 "config": _safe_json(safe_config),
                 "started_at": now,
+                "asset_type": request.get("asset_type", "stock"),
             })
 
             self._active_runs[run_id] = {
@@ -163,6 +164,12 @@ class AnalysisService:
             depth = request["research_depth"]
             config["max_debate_rounds"] = depth
             config["max_risk_discuss_rounds"] = depth
+
+        # Crypto-specific config
+        if request.get("asset_type"):
+            config["asset_type"] = request["asset_type"]
+        if request.get("interval"):
+            config["crypto_interval"] = request["interval"]
 
         backend_url = request.get("backend_url") or os.getenv("TRADINGAGENTS_BACKEND_URL")
         if backend_url:
@@ -281,11 +288,16 @@ class AnalysisService:
 
         graph = TradingAgentsGraph(
             config=config,
-            selected_analysts=[a.value if hasattr(a, "value") else a for a in (request.get("analysts") or ["market", "news"])],
+            selected_analysts=[a.value if hasattr(a, "value") else a for a in (request.get("analysts") or (
+                ["crypto_technical", "crypto_derivatives", "crypto_news"]
+                if config.get("asset_type") == "crypto"
+                else ["market", "news"]
+            ))],
         )
 
         init_state = graph.propagator.create_initial_state(
-            request["ticker"], request["analysis_date"]
+            request["ticker"], request["analysis_date"],
+            asset_type=config.get("asset_type", "stock"),
         )
         args = graph.propagator.get_graph_args(callbacks=[callback])
 

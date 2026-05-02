@@ -227,3 +227,60 @@ def test_get_checkpoint_exists(db, sample_run):
     db.insert_run(sample_run)
     assert db.get_checkpoint_exists("SPY", "2025-06-01") is True
     assert db.get_checkpoint_exists("AAPL", "2025-06-01") is False
+
+
+# ---------------------------------------------------------------------------
+# Crypto migration tests (TASK-015)
+# ---------------------------------------------------------------------------
+
+def test_migration_adds_asset_type_column(db):
+    with db._lock:
+        row = db._conn.execute(
+            "PRAGMA table_info(analysis_runs)"
+        ).fetchall()
+    col_names = [r[1] for r in row]
+    assert "asset_type" in col_names
+
+
+def test_insert_run_with_asset_type(db):
+    run = {
+        "run_id": str(uuid.uuid4()),
+        "ticker": "BTCUSDT",
+        "analysis_date": "2025-01-15",
+        "status": "running",
+        "config": '{}',
+        "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "asset_type": "crypto",
+    }
+    db.insert_run(run)
+    stored = db.get_run(run["run_id"])
+    assert stored["asset_type"] == "crypto"
+
+
+def test_insert_run_default_asset_type(db, sample_run):
+    db.insert_run(sample_run)
+    stored = db.get_run(sample_run["run_id"])
+    assert stored["asset_type"] == "stock"
+
+
+def test_list_runs_filter_asset_type(db):
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    for i, at in enumerate(["stock", "crypto", "crypto"]):
+        db.insert_run({
+            "run_id": str(uuid.uuid4()),
+            "ticker": "BTCUSDT" if at == "crypto" else "SPY",
+            "analysis_date": "2025-01-15",
+            "status": "running",
+            "config": "{}",
+            "started_at": ts,
+            "asset_type": at,
+        })
+    result = db.list_runs(asset_type="crypto")
+    assert result["total"] == 2
+    result2 = db.list_runs(asset_type="stock")
+    assert result2["total"] == 1
+
+
+def test_asset_type_sql_injection_safe(db):
+    result = db.list_runs(asset_type="'; DROP TABLE analysis_runs; --")
+    assert result["total"] == 0

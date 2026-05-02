@@ -37,6 +37,7 @@ async def start_analysis(request: Request, body: AnalysisRequest):
     provider = body.provider or request.app.state.config_service.get_config()["resolved"].get("llm_provider", "openai")
     backend_url = body.backend_url or request.app.state.config_service.get_config()["resolved"].get("backend_url")
     env_key = _PROVIDER_KEY_MAP.get(provider)
+    # Crypto uses Bybit public API (no key needed), but still requires LLM provider key
     if env_key and not backend_url and not os.getenv(env_key):
         raise HTTPException(
             status_code=422,
