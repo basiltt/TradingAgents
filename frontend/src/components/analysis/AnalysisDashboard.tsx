@@ -5,6 +5,7 @@ import { MessagesPanel } from "./MessagesPanel";
 import { ReportPanel } from "./ReportPanel";
 import { StatsBar } from "./StatsBar";
 import { ReconnectionIndicator } from "./ReconnectionIndicator";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface AnalysisDashboardProps {
   runId: string;
@@ -35,14 +36,35 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
     Object.keys(reports).length === 0;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">Analysis: {runId}</h2>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            Analysis
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1 font-mono">{runId}</p>
+        </div>
         <ReconnectionIndicator status={status} attempt={attempt} />
       </div>
+
       {isLoading ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-          Connecting to analysis stream…
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-20 rounded-xl" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Skeleton className="h-64 rounded-xl" />
+            <Skeleton className="h-64 rounded-xl" />
+          </div>
+          <Skeleton className="h-48 rounded-xl" />
         </div>
       ) : (
         <>
