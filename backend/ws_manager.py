@@ -29,6 +29,7 @@ class WSConnection:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._seq = 0
         self._msg_timestamps: list[float] = []
+        self._closed = False
 
     def next_seq(self) -> int:
         self._seq += 1
@@ -55,6 +56,10 @@ class WSManager:
         return conn
 
     async def disconnect(self, conn: WSConnection) -> None:
+        if conn._closed:
+            return
+        conn._closed = True
+
         async with self._lock:
             conns = self._connections.get(conn.run_id)
             if conns:

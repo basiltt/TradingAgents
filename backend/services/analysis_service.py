@@ -193,7 +193,7 @@ class AnalysisService:
                 if run_data:
                     run_data["status"] = "terminal"
 
-            self._db.checkpoint()
+            await asyncio.to_thread(self._db.checkpoint)
 
     def _execute_graph(
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any], callback: Any

@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import threading
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import asdict
 from typing import Any, Callable, Deque, Dict, List, Set, Tuple
 
@@ -15,23 +15,38 @@ logger = logging.getLogger(__name__)
 _MAX_RING_EVENTS = 500
 _MAX_RING_BYTES = 2 * 1024 * 1024  # 2MB
 
+_POISON = {"type": "_poison"}
+
 
 class EventBus:
     def __init__(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
-        self._queues: Dict[str, asyncio.Queue] = defaultdict(lambda: asyncio.Queue(maxsize=1000))
-        self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = defaultdict(deque)
-        self._ring_bytes: Dict[str, int] = defaultdict(int)
-        self._subscribers: Dict[str, Set[Callable]] = defaultdict(set)
+        self._queues: Dict[str, asyncio.Queue] = {}
+        self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = {}
+        self._ring_bytes: Dict[str, int] = {}
+        self._subscribers: Dict[str, Set[Callable]] = {}
+        self._cleaned: Set[str] = set()
         self._lock = threading.Lock()
+
+    def _get_queue(self, run_id: str) -> asyncio.Queue:
+        with self._lock:
+            if run_id not in self._queues:
+                self._queues[run_id] = asyncio.Queue(maxsize=1000)
+            return self._queues[run_id]
 
     def emit(self, run_id: str, event: Any) -> None:
         """Must only be called from the event loop thread. Use emit_threadsafe() from other threads."""
         event_dict = asdict(event) if hasattr(event, "__dataclass_fields__") else event
-        queue = self._queues[run_id]
 
-        if event_dict.get("type") != "report_chunk":
-            with self._lock:
+        with self._lock:
+            if run_id in self._cleaned:
+                return
+            queue = self._queues.get(run_id)
+            if queue is None:
+                self._queues[run_id] = asyncio.Queue(maxsize=1000)
+                queue = self._queues[run_id]
+
+            if event_dict.get("type") != "report_chunk":
                 self._add_to_ring(run_id, event_dict)
 
         try:
@@ -61,6 +76,10 @@ class EventBus:
         serialized = json.dumps(event_dict)
         event_bytes = len(serialized)
 
+        if run_id not in self._ring_buffers:
+            self._ring_buffers[run_id] = deque()
+            self._ring_bytes[run_id] = 0
+
         buf = self._ring_buffers[run_id]
         buf.append((event_dict, event_bytes))
         self._ring_bytes[run_id] += event_bytes
@@ -72,19 +91,44 @@ class EventBus:
             self._ring_bytes[run_id] -= removed_bytes
 
     async def drain(self, run_id: str) -> Any:
-        return await self._queues[run_id].get()
+        queue = self._get_queue(run_id)
+        event = await queue.get()
+        if event is _POISON:
+            raise StopAsyncIteration(f"Run {run_id} cleaned up")
+        return event
 
     def subscribe(self, run_id: str, callback: Callable) -> None:
-        self._subscribers[run_id].add(callback)
+        with self._lock:
+            if run_id not in self._subscribers:
+                self._subscribers[run_id] = set()
+            self._subscribers[run_id].add(callback)
 
     def unsubscribe(self, run_id: str, callback: Callable) -> None:
-        self._subscribers[run_id].discard(callback)
+        with self._lock:
+            if run_id in self._subscribers:
+                self._subscribers[run_id].discard(callback)
 
     def get_snapshot(self, run_id: str) -> List[Dict[str, Any]]:
-        return [ev for ev, _ in self._ring_buffers.get(run_id, [])]
+        with self._lock:
+            buf = self._ring_buffers.get(run_id, [])
+            return [ev for ev, _ in buf]
 
     def cleanup_run(self, run_id: str) -> None:
-        self._queues.pop(run_id, None)
-        self._ring_buffers.pop(run_id, None)
-        self._ring_bytes.pop(run_id, None)
-        self._subscribers.pop(run_id, None)
+        with self._lock:
+            self._cleaned.add(run_id)
+            queue = self._queues.pop(run_id, None)
+            self._ring_buffers.pop(run_id, None)
+            self._ring_bytes.pop(run_id, None)
+            self._subscribers.pop(run_id, None)
+        if queue:
+            try:
+                queue.put_nowait(_POISON)
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(_POISON)
+                except asyncio.QueueFull:
+                    pass

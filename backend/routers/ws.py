@@ -34,11 +34,9 @@ def _check_origin(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if not origin:
         return False
-    allowed = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
-    if origin == allowed:
-        return True
-    host = websocket.headers.get("host", "")
-    return origin in (f"http://{host}", f"https://{host}")
+    allowed_raw = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
+    allowed = {o.strip() for o in allowed_raw.split(",") if o.strip()}
+    return origin in allowed
 
 
 @router.websocket("/ws/v1/analysis/{run_id}")
@@ -89,5 +87,5 @@ async def _consume_events(event_bus, run_id: str, ws_manager):
         while True:
             event = await event_bus.drain(run_id)
             await ws_manager.broadcast(run_id, event)
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, StopAsyncIteration):
         pass
