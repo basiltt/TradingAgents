@@ -47,11 +47,11 @@ async def test_cors_allows_configured_origin(client):
     resp = await client.options(
         "/api/v1/health",
         headers={
-            "Origin": "http://localhost:5173",
+            "Origin": "http://localhost:5177",
             "Access-Control-Request-Method": "GET",
         },
     )
-    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5177"
 
 
 @pytest.mark.asyncio

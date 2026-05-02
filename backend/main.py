@@ -25,7 +25,7 @@ class CSPMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         csp_connect = os.environ.get(
             "WEB_CSP_CONNECT_SRC",
-            "'self' ws://localhost:* wss://localhost:*",
+            "'self' ws://localhost:8877 wss://localhost:8877",
         )
         csp_connect = csp_connect.replace("\n", "").replace("\r", "").replace(";", "")
         response.headers["Content-Security-Policy"] = (
@@ -87,7 +87,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
 
-    cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5173")
+    cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
