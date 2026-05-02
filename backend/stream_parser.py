@@ -36,6 +36,7 @@ class MessageEvent:
     type: str = EventType.MESSAGE
     sender: str = ""
     content: str = ""
+    seq: int = 0
 
 
 @dataclass
@@ -87,14 +88,19 @@ _RISK_FIELD_MAP = {
 }
 
 
+_message_seq = 0
+
+
 def parse_stream_chunk(chunk: Dict[str, Any]) -> List[DomainEvent]:
+    global _message_seq
     events: List[DomainEvent] = []
 
     for message in chunk.get("messages", []):
         content = getattr(message, "content", None) or ""
         if isinstance(content, str) and content.strip():
             sender = getattr(message, "name", None) or getattr(message, "type", "Unknown")
-            events.append(MessageEvent(sender=str(sender), content=content.strip()))
+            _message_seq += 1
+            events.append(MessageEvent(sender=str(sender), content=content.strip(), seq=_message_seq))
 
         tool_calls = getattr(message, "tool_calls", None) or []
         for tc in tool_calls:

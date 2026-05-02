@@ -59,7 +59,11 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         loop = asyncio.get_running_loop()
         db = AnalysisDB(db_path=db_path)
-        db.recover_orphans()
+        try:
+            db.recover_orphans()
+        except Exception:
+            db.close()
+            raise
         event_bus = EventBus(loop=loop)
         ws_manager = WSManager(event_bus=event_bus)
         config_service = ConfigService(db=db)

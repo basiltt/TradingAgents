@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS report_sections (
     run_id TEXT NOT NULL REFERENCES analysis_runs(run_id) ON DELETE CASCADE,
     section TEXT NOT NULL,
     content TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(run_id, section)
 );
 
 CREATE INDEX IF NOT EXISTS idx_reports_run_id ON report_sections(run_id);
@@ -143,7 +144,7 @@ class AnalysisDB:
     def save_report_section(self, run_id: str, section: str, content: str) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO report_sections (run_id, section, content) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO report_sections (run_id, section, content) VALUES (?, ?, ?)",
                 (run_id, section, content),
             )
             self._conn.commit()
@@ -224,6 +225,21 @@ class AnalysisDB:
                 (ticker, date),
             ).fetchone()
         return row is not None
+
+    def delete_all_checkpoints(self) -> int:
+        with self._lock:
+            cursor = self._conn.execute("DELETE FROM analysis_runs WHERE status IN ('completed', 'failed', 'cancelled')")
+            self._conn.commit()
+            return cursor.rowcount
+
+    def delete_ticker_checkpoints(self, ticker: str) -> int:
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM analysis_runs WHERE ticker=? AND status IN ('completed', 'failed', 'cancelled')",
+                (ticker,),
+            )
+            self._conn.commit()
+            return cursor.rowcount
 
     def checkpoint(self) -> None:
         with self._lock:

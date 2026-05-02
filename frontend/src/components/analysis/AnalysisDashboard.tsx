@@ -28,18 +28,32 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
   const reports = wsData?.reports ?? EMPTY_REPORTS;
   const stats = wsData?.stats ?? null;
 
+  const isLoading =
+    status === "connecting" &&
+    Object.keys(agents).length === 0 &&
+    messages.length === 0 &&
+    Object.keys(reports).length === 0;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">Analysis: {runId}</h2>
         <ReconnectionIndicator status={status} attempt={attempt} />
       </div>
-      <StatsBar stats={stats} />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AgentStatusTable agents={agents} />
-        <MessagesPanel messages={messages} />
-      </div>
-      <ReportPanel reports={reports} />
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+          Connecting to analysis stream…
+        </div>
+      ) : (
+        <>
+          <StatsBar stats={stats} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <AgentStatusTable agents={agents} />
+            <MessagesPanel messages={messages} />
+          </div>
+          <ReportPanel reports={reports} />
+        </>
+      )}
     </div>
   );
 }

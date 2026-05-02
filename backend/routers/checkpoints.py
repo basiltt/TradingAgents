@@ -1,5 +1,7 @@
 """Checkpoints router — TASK-007."""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 router = APIRouter(tags=["checkpoints"])
@@ -22,6 +24,7 @@ async def delete_all_checkpoints(
 ):
     if not confirm:
         raise HTTPException(status_code=400, detail="confirm=true required")
+    await asyncio.to_thread(request.app.state.db.delete_all_checkpoints)
     return Response(status_code=204)
 
 
@@ -33,4 +36,5 @@ async def delete_ticker_checkpoints(
 ):
     if not confirm:
         raise HTTPException(status_code=400, detail="confirm=true required")
+    await asyncio.to_thread(request.app.state.db.delete_ticker_checkpoints, ticker)
     return Response(status_code=204)
