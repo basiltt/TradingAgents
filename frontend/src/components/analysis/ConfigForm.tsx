@@ -270,7 +270,7 @@ export function ConfigForm() {
         research_depth: data.research_depth !== 3 ? data.research_depth : undefined,
         output_language: data.output_language !== "English" ? data.output_language : undefined,
         ...(isCryptoSubmit
-          ? { interval: data.interval !== "60" ? data.interval : undefined }
+          ? { interval: data.interval }
           : {
               data_vendors: {
                 core_stock_apis: data.data_vendor_core,

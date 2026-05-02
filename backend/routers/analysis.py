@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
@@ -61,7 +62,7 @@ async def list_analyses(
     limit: int = Query(20, ge=1, le=100),
     ticker: str = Query(None),
     status: str = Query(None),
-    asset_type: str = Query(None),
+    asset_type: Optional[Literal["stock", "crypto"]] = Query(None),
     from_date: str = Query(None),
     to_date: str = Query(None),
 ):
