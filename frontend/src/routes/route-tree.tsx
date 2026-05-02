@@ -2,8 +2,13 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useParams,
 } from "@tanstack/react-router";
 import { RootLayout, NotFound } from "@/components/layout/RootLayout";
+import { ConfigForm } from "@/components/analysis/ConfigForm";
+import { AnalysisDashboard } from "@/components/analysis/AnalysisDashboard";
+import { HomeDashboard } from "@/components/dashboard/HomeDashboard";
+import { HistoryList } from "@/components/dashboard/HistoryList";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -11,36 +16,24 @@ const rootRoute = createRootRoute({
 });
 
 function HomePage() {
-  return (
-    <div>
-      <h2 className="text-xl font-bold">TradingAgents Dashboard</h2>
-      <p className="text-muted-foreground mt-2">Welcome to TradingAgents.</p>
-    </div>
-  );
+  return <HomeDashboard />;
 }
 
 function AnalysisNewPage() {
   return (
-    <div>
-      <h2 className="text-xl font-bold">New Analysis</h2>
+    <div className="max-w-2xl mx-auto py-4">
+      <ConfigForm />
     </div>
   );
 }
 
 function AnalysisRunPage() {
-  return (
-    <div>
-      <h2 className="text-xl font-bold">Analysis Run</h2>
-    </div>
-  );
+  const { runId } = useParams({ from: "/analysis/$runId" });
+  return <AnalysisDashboard runId={runId} />;
 }
 
 function HistoryPage() {
-  return (
-    <div>
-      <h2 className="text-xl font-bold">History</h2>
-    </div>
-  );
+  return <HistoryList />;
 }
 
 function ConfigPage() {

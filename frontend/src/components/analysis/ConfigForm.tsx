@@ -1,0 +1,124 @@
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { useNavigate } from "@tanstack/react-router";
+import { apiClient, type StartAnalysisRequest } from "@/api/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+const TICKER_REGEX = /^[A-Z]{1,5}$/;
+const PROVIDERS = ["openai", "anthropic", "google", "deepseek"] as const;
+
+interface FormValues {
+  ticker: string;
+  analysis_date: string;
+  provider: string;
+}
+
+export function ConfigForm() {
+  const navigate = useNavigate();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<FormValues>({
+    defaultValues: {
+      ticker: "",
+      analysis_date: "",
+      provider: "openai",
+    },
+  });
+
+  async function onSubmit(data: FormValues) {
+    setSubmitError(null);
+    try {
+      const body: StartAnalysisRequest = {
+        ticker: data.ticker.toUpperCase(),
+        analysis_date: data.analysis_date,
+        provider: data.provider || undefined,
+      };
+      const result = await apiClient.startAnalysis(body);
+      navigate({ to: "/analysis/$runId", params: { runId: result.run_id } });
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to start analysis");
+    }
+  }
+
+  return (
+    <Card className="max-w-lg mx-auto">
+      <CardHeader>
+        <CardTitle>New Analysis</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="ticker">Ticker</Label>
+            <Input
+              id="ticker"
+              placeholder="SPY"
+              {...register("ticker", {
+                required: "Ticker is required",
+                pattern: {
+                  value: TICKER_REGEX,
+                  message: "Enter a valid ticker (1-5 uppercase letters)",
+                },
+              })}
+              onChange={(e) => {
+                const val = e.target.value.toUpperCase();
+                setValue("ticker", val, { shouldValidate: false });
+              }}
+            />
+            {errors.ticker && (
+              <p className="text-sm text-destructive">{errors.ticker.message}</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="analysis_date">Analysis Date</Label>
+            <Input
+              id="analysis_date"
+              type="date"
+              {...register("analysis_date", {
+                required: "Date is required",
+              })}
+            />
+            {errors.analysis_date && (
+              <p className="text-sm text-destructive">{errors.analysis_date.message}</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="provider">Provider</Label>
+            <Select
+              defaultValue="openai"
+              onValueChange={(v) => setValue("provider", v)}
+            >
+              <SelectTrigger id="provider">
+                <SelectValue placeholder="Select provider" />
+              </SelectTrigger>
+              <SelectContent>
+                {PROVIDERS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {submitError && (
+            <p className="text-sm text-destructive" role="alert">{submitError}</p>
+          )}
+
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Starting…" : "Start Analysis"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
