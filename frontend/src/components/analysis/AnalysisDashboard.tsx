@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { apiClient, type AnalysisSnapshot } from "@/api/client";
 import { useAnalysisWebSocket, emptyWsState, type WsState } from "@/hooks/useAnalysisWebSocket";
 import { AgentStatusTable } from "./AgentStatusTable";
 import { MessagesPanel } from "./MessagesPanel";
@@ -19,21 +20,60 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
   const { status, attempt } = useAnalysisWebSocket(runId);
   const { data: wsData } = useQuery<WsState>({
     queryKey: ["analysis", runId, "ws-state"],
+    queryFn: () => emptyWsState(),
     initialData: emptyWsState,
     enabled: false,
     staleTime: Infinity,
   });
 
-  const agents = wsData?.agents ?? EMPTY_AGENTS;
-  const messages = wsData?.messages ?? EMPTY_MESSAGES;
-  const reports = wsData?.reports ?? EMPTY_REPORTS;
-  const stats = wsData?.stats ?? null;
+  // Fetch run details to know if it's completed/failed
+  const { data: runDetails } = useQuery({
+    queryKey: ["analysis", runId, "details"],
+    queryFn: ({ signal }) => apiClient.getAnalysis(runId, signal),
+    staleTime: 10_000,
+    refetchInterval: status === "connected" ? 15_000 : false,
+  });
+
+  // Fetch saved report for completed runs
+  const isTerminal = runDetails?.status === "completed" || runDetails?.status === "failed" || runDetails?.status === "cancelled";
+  const { data: savedReport } = useQuery({
+    queryKey: ["analysis", runId, "report"],
+    queryFn: ({ signal }) => apiClient.getReport(runId, signal),
+    enabled: isTerminal,
+    staleTime: Infinity,
+  });
+
+  // Fetch saved snapshot (stats, agents, messages) for completed runs
+  const { data: snapshot } = useQuery<AnalysisSnapshot>({
+    queryKey: ["analysis", runId, "snapshot"],
+    queryFn: ({ signal }) => apiClient.getSnapshot(runId, signal),
+    enabled: isTerminal,
+    staleTime: Infinity,
+  });
+
+  const hasLiveData = Object.keys(wsData?.agents ?? {}).length > 0 || (wsData?.messages ?? []).length > 0;
+
+  const agents = hasLiveData ? (wsData?.agents ?? EMPTY_AGENTS) : (snapshot?.agents ?? EMPTY_AGENTS);
+  const messages = hasLiveData ? (wsData?.messages ?? EMPTY_MESSAGES) : (snapshot?.messages ?? EMPTY_MESSAGES);
+  const wsReports = wsData?.reports ?? EMPTY_REPORTS;
+  const stats = (wsData?.stats ?? null) || (snapshot?.stats ?? null);
+
+  // Merge WS reports with saved report/snapshot for completed runs
+  const reports = Object.keys(wsReports).length > 0
+    ? wsReports
+    : Object.keys(snapshot?.reports ?? {}).length > 0
+      ? snapshot!.reports
+      : savedReport
+        ? { final_trade_decision: savedReport }
+        : EMPTY_REPORTS;
 
   const isLoading =
     status === "connecting" &&
     Object.keys(agents).length === 0 &&
     messages.length === 0 &&
-    Object.keys(reports).length === 0;
+    Object.keys(reports).length === 0 &&
+    !runDetails &&
+    !snapshot;
 
   return (
     <div className="space-y-6">

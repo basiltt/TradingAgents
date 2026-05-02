@@ -36,6 +36,8 @@ class AnthropicClient(BaseLLMClient):
 
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
+            if "api_key" not in self.kwargs:
+                llm_kwargs["api_key"] = "dummy"
 
         for key in _PASSTHROUGH_KWARGS:
             if key in self.kwargs:

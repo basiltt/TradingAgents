@@ -229,6 +229,14 @@ class AnalysisDB:
             ).fetchone()
         return row is not None
 
+    def delete_run(self, run_id: str) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM analysis_runs WHERE run_id=?", (run_id,)
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+
     def delete_all_checkpoints(self) -> int:
         with self._lock:
             cursor = self._conn.execute("DELETE FROM analysis_runs WHERE status IN ('completed', 'failed', 'cancelled')")

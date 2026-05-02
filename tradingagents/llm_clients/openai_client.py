@@ -154,10 +154,14 @@ class OpenAIClient(BaseLLMClient):
                 api_key = os.environ.get(api_key_env)
                 if api_key:
                     llm_kwargs["api_key"] = api_key
+                elif self.base_url:
+                    llm_kwargs["api_key"] = "dummy"
             else:
                 llm_kwargs["api_key"] = "ollama"
         elif self.base_url:
             llm_kwargs["base_url"] = self.base_url
+            if "api_key" not in self.kwargs:
+                llm_kwargs["api_key"] = "dummy"
 
         # Forward user-provided kwargs
         for key in _PASSTHROUGH_KWARGS:

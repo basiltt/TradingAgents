@@ -6,11 +6,14 @@ import time
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+from langchain_core.callbacks import BaseCallbackHandler
+
 from backend.stream_parser import MessageEvent, StatsEvent, ToolCallEvent
 
 
-class WebCallbackHandler:
+class WebCallbackHandler(BaseCallbackHandler):
     def __init__(self, run_id: str, event_bus: Any):
+        super().__init__()
         self._run_id = run_id
         self._bus = event_bus
         self._tokens_in = 0
@@ -42,10 +45,23 @@ class WebCallbackHandler:
         parent_run_id: Optional[UUID] = None,
         **kwargs: Any,
     ) -> None:
+        # Try OpenAI-style llm_output.token_usage first
         usage = getattr(response, "llm_output", {}) or {}
         token_usage = usage.get("token_usage", {}) or {}
-        self._tokens_in += token_usage.get("prompt_tokens", 0)
-        self._tokens_out += token_usage.get("completion_tokens", 0)
+        prompt_tokens = token_usage.get("prompt_tokens", 0)
+        completion_tokens = token_usage.get("completion_tokens", 0)
+
+        # Fall back to generation-level usage_metadata (Anthropic, newer LangChain)
+        if not prompt_tokens and not completion_tokens:
+            for gen in getattr(response, "generations", []):
+                msg = getattr(gen, "message", None)
+                if msg:
+                    um = getattr(msg, "usage_metadata", None) or {}
+                    prompt_tokens += um.get("input_tokens", 0)
+                    completion_tokens += um.get("output_tokens", 0)
+
+        self._tokens_in += prompt_tokens
+        self._tokens_out += completion_tokens
         self._bus.emit_threadsafe(
             self._run_id,
             StatsEvent(

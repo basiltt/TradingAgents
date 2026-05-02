@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import logging
 import os
 import uuid
@@ -16,7 +17,7 @@ from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
 from backend.persistence import AnalysisDB
 from backend.services.config_service import ConfigService
-from backend.stream_parser import parse_stream_chunk, make_seq_counter, AgentStatusEvent, ProgressEvent
+from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, AgentStatusEvent, ProgressEvent
 from backend.validators import validate_backend_url
 from backend.ws_manager import WSManager
 
@@ -116,6 +117,9 @@ class AnalysisService:
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         return await asyncio.to_thread(self._db.get_run, run_id)
 
+    async def delete_run(self, run_id: str) -> bool:
+        return await asyncio.to_thread(self._db.delete_run, run_id)
+
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
         return await asyncio.to_thread(self._db.list_runs, **kwargs)
 
@@ -123,7 +127,17 @@ class AnalysisService:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
         if not sections:
             return None
-        return "\n\n---\n\n".join(s["content"] for s in sections)
+        return "\n\n---\n\n".join(s["content"] for s in sections if s["section"] != "_snapshot")
+
+    async def get_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
+        sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
+        for s in sections:
+            if s["section"] == "_snapshot":
+                try:
+                    return json.loads(s["content"])
+                except (json.JSONDecodeError, TypeError):
+                    return None
+        return None
 
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
         from tradingagents.default_config import DEFAULT_CONFIG
@@ -207,12 +221,53 @@ class AnalysisService:
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
 
         finally:
+            self._save_snapshot(run_id)
             async with self._lock:
                 run_data = self._active_runs.pop(run_id, None)
                 if run_data:
                     run_data["status"] = "terminal"
 
             self._bus.cleanup_run(run_id)
+
+    def _save_snapshot(self, run_id: str) -> None:
+        try:
+            events = self._bus.get_snapshot(run_id)
+            agents: Dict[str, str] = {}
+            messages: list = []
+            stats: Optional[Dict[str, Any]] = None
+            reports: Dict[str, str] = {}
+
+            for ev in events:
+                t = ev.get("type")
+                if t == "agent_status":
+                    agents[ev.get("agent", "")] = ev.get("status", "")
+                elif t == "message":
+                    messages.append({
+                        "sender": ev.get("sender", ""),
+                        "content": ev.get("content", ""),
+                        "seq": ev.get("seq", 0),
+                    })
+                elif t == "stats":
+                    stats = {
+                        "tokens_in": ev.get("tokens_in", 0),
+                        "tokens_out": ev.get("tokens_out", 0),
+                        "llm_calls": ev.get("llm_calls", 0),
+                        "tool_calls": ev.get("tool_calls", 0),
+                    }
+                elif t == "report_chunk":
+                    section = ev.get("section", "")
+                    if section:
+                        reports[section] = ev.get("content", "")
+
+            snapshot = {
+                "agents": agents,
+                "messages": messages[-200:],
+                "stats": stats,
+                "reports": reports,
+            }
+            self._db.save_report_section(run_id, "_snapshot", json.dumps(snapshot, default=str))
+        except Exception:
+            logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
 
     def _execute_graph(
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
@@ -226,7 +281,7 @@ class AnalysisService:
 
         graph = TradingAgentsGraph(
             config=config,
-            analysts=[a.value if hasattr(a, "value") else a for a in (request.get("analysts") or ["market", "news"])],
+            selected_analysts=[a.value if hasattr(a, "value") else a for a in (request.get("analysts") or ["market", "news"])],
         )
 
         init_state = graph.propagator.create_initial_state(
@@ -236,11 +291,12 @@ class AnalysisService:
 
         last_chunk = None
         seq = make_seq_counter()
+        parser_state = StreamParserState()
         for chunk in graph.graph.stream(init_state, **args):
             if cancel_event.is_set():
                 break
 
-            events = parse_stream_chunk(chunk, seq=seq)
+            events = parse_stream_chunk(chunk, seq=seq, state=parser_state)
             for event in events:
                 self._bus.emit_threadsafe(run_id, event)
 

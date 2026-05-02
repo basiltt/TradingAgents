@@ -93,10 +93,31 @@ def make_seq_counter() -> Iterator[int]:
     return itertools.count(1)
 
 
-def parse_stream_chunk(chunk: Dict[str, Any], seq: Optional[Iterator[int]] = None) -> List[DomainEvent]:
-    events: List[DomainEvent] = []
+class StreamParserState:
+    """Tracks state across stream chunks to detect deltas (stream_mode=values)."""
+    def __init__(self):
+        self.msg_count = 0
+        self.prev_debate: Optional[Dict] = None
+        self.prev_risk: Optional[Dict] = None
+        self.prev_trader: Optional[str] = None
+        self.prev_final: Optional[str] = None
 
-    for message in chunk.get("messages", []):
+
+def parse_stream_chunk(
+    chunk: Dict[str, Any],
+    seq: Optional[Iterator[int]] = None,
+    state: Optional[StreamParserState] = None,
+) -> List[DomainEvent]:
+    events: List[DomainEvent] = []
+    if state is None:
+        state = StreamParserState()
+
+    # Only process NEW messages (stream_mode=values sends full accumulated list)
+    messages = chunk.get("messages", [])
+    new_messages = messages[state.msg_count:] if isinstance(messages, list) else []
+    state.msg_count = len(messages) if isinstance(messages, list) else state.msg_count
+
+    for message in new_messages:
         content = getattr(message, "content", None) or ""
         if isinstance(content, str) and content.strip():
             sender = getattr(message, "name", None) or getattr(message, "type", "Unknown")
@@ -110,37 +131,53 @@ def parse_stream_chunk(chunk: Dict[str, Any], seq: Optional[Iterator[int]] = Non
             else:
                 events.append(ToolCallEvent(tool_name=getattr(tc, "name", ""), args=getattr(tc, "args", {})))
 
+    # Detect current agent from the last new message
+    if new_messages:
+        last_msg = new_messages[-1]
+        agent_name = getattr(last_msg, "name", None)
+        if agent_name:
+            events.insert(0, AgentStatusEvent(agent=agent_name, status="in_progress"))
+
     debate = chunk.get("investment_debate_state")
-    if debate:
+    if debate and debate != state.prev_debate:
         for field_name, (section, agent) in _DEBATE_FIELD_MAP.items():
             val = debate.get(field_name, "").strip()
-            if val:
+            prev_val = (state.prev_debate or {}).get(field_name, "").strip() if state.prev_debate else ""
+            if val and val != prev_val:
                 events.append(AgentStatusEvent(agent=agent, status="in_progress"))
                 events.append(ReportChunkEvent(section=section, content=val))
         if debate.get("judge_decision", "").strip():
             events.append(AgentStatusEvent(agent="Research Manager", status="completed"))
             events.append(AgentStatusEvent(agent="Trader", status="in_progress"))
+        state.prev_debate = debate
 
     trader_plan = chunk.get("trader_investment_plan")
-    if trader_plan:
-        events.append(ReportChunkEvent(section="trader", content=str(trader_plan)))
+    trader_str = str(trader_plan) if trader_plan else None
+    if trader_str and trader_str != state.prev_trader:
+        events.append(ReportChunkEvent(section="trader", content=trader_str))
         events.append(AgentStatusEvent(agent="Trader", status="completed"))
+        state.prev_trader = trader_str
 
     risk = chunk.get("risk_debate_state")
-    if risk:
+    if risk and risk != state.prev_risk:
         for field_name, (section, agent) in _RISK_FIELD_MAP.items():
             val = risk.get(field_name, "").strip()
-            if val:
+            prev_val = (state.prev_risk or {}).get(field_name, "").strip() if state.prev_risk else ""
+            if val and val != prev_val:
                 events.append(AgentStatusEvent(agent=agent, status="in_progress"))
                 events.append(ReportChunkEvent(section=section, content=val))
         judge = risk.get("judge_decision", "").strip()
-        if judge:
+        prev_judge = (state.prev_risk or {}).get("judge_decision", "").strip() if state.prev_risk else ""
+        if judge and judge != prev_judge:
             events.append(ReportChunkEvent(section="portfolio_manager", content=judge))
             for agent in ["Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager"]:
                 events.append(AgentStatusEvent(agent=agent, status="completed"))
+        state.prev_risk = risk
 
     final = chunk.get("final_trade_decision")
-    if final and not risk:
-        events.append(ReportChunkEvent(section="portfolio_manager", content=str(final)))
+    final_str = str(final) if final else None
+    if final_str and final_str != state.prev_final and not risk:
+        events.append(ReportChunkEvent(section="portfolio_manager", content=final_str))
+        state.prev_final = final_str
 
     return events

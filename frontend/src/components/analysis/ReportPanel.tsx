@@ -1,4 +1,6 @@
 import { memo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,6 +23,14 @@ const SECTION_LABELS: Record<string, string> = {
   risk_neutral: "Neutral Risk",
   portfolio_manager: "Portfolio Manager",
 };
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="prose prose-sm dark:prose-invert max-w-none text-foreground/80 leading-relaxed prose-headings:text-foreground prose-strong:text-foreground prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-h2:text-lg prose-h2:mt-6 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-4 prose-h3:mb-1">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
 
 const SECTION_ICONS: Record<string, string> = {
   analyst_market: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
@@ -71,7 +81,7 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
                   )}
                   {SECTION_LABELS[section] ?? section}
                 </h4>
-                <p className="text-sm whitespace-pre-wrap text-foreground/80 leading-relaxed">{content}</p>
+                <MarkdownContent content={content} />
               </div>
             ))}
           </div>
@@ -89,7 +99,7 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
             {entries.map(([section, content]) => (
               <TabsContent key={section} value={section} className="mt-4">
                 <div className="rounded-lg border bg-muted/30 p-4">
-                  <p className="text-sm whitespace-pre-wrap text-foreground/80 leading-relaxed">{content}</p>
+                  <MarkdownContent content={content} />
                 </div>
               </TabsContent>
             ))}

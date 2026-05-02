@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _HEARTBEAT_INTERVAL = 30
 _PONG_TIMEOUT = 90
-_OUTBOUND_BUFFER_SIZE = 64
+_OUTBOUND_BUFFER_SIZE = 2048
 _INBOUND_FRAME_MAX = 4096
 _INBOUND_RATE_LIMIT = 10  # per second
 
@@ -80,8 +80,7 @@ class WSManager:
             try:
                 conn.outbound.put_nowait(event)
             except asyncio.QueueFull:
-                logger.warning("Slow consumer on run %s, disconnecting", run_id)
-                asyncio.create_task(self._close_slow(conn))
+                logger.debug("Queue full on run %s, dropping event", run_id)
 
     async def send_to(self, conn: WSConnection, event: Dict[str, Any]) -> None:
         try:
