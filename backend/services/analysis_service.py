@@ -115,13 +115,13 @@ class AnalysisService:
             await asyncio.gather(*tasks_to_await, return_exceptions=True)
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        return self._db.get_run(run_id)
+        return await asyncio.to_thread(self._db.get_run, run_id)
 
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
-        return self._db.list_runs(**kwargs)
+        return await asyncio.to_thread(self._db.list_runs, **kwargs)
 
     async def get_report(self, run_id: str) -> Optional[str]:
-        sections = self._db.get_report_sections(run_id)
+        sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
         if not sections:
             return None
         return "\n\n---\n\n".join(s["content"] for s in sections)
@@ -233,7 +233,7 @@ class AnalysisService:
         )
         args = graph.propagator.get_graph_args(callbacks=[callback])
 
-        trace = []
+        last_chunk = None
         for chunk in graph.graph.stream(init_state, **args):
             if cancel_event.is_set():
                 break
@@ -242,9 +242,9 @@ class AnalysisService:
             for event in events:
                 self._bus.emit_threadsafe(run_id, event)
 
-            trace.append(chunk)
+            last_chunk = chunk
 
-        return trace[-1] if trace else None
+        return last_chunk
 
     def _reclaim_zombie(self, run_id: str) -> None:
         asyncio.ensure_future(self._reclaim_zombie_async(run_id))

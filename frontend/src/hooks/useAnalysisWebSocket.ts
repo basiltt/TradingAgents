@@ -158,6 +158,8 @@ export function useAnalysisWebSocket(runId: string) {
             currentAgent: undefined,
           }),
         );
+        ws.close(1000, "Run terminal");
+        setStatus("disconnected");
         return;
       }
     };
