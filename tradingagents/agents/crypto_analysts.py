@@ -43,7 +43,8 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
         tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
-        assert tools, "No technical analysis tools found in crypto_tools"
+        if not tools:
+            raise ValueError("No technical analysis tools found in crypto_tools")
 
         system_message = (
             "You are a crypto futures technical analyst. Analyze OHLCV price data and "
@@ -80,7 +81,8 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
         tools = [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
-        assert tools, "No derivatives tools found in crypto_tools"
+        if not tools:
+            raise ValueError("No derivatives tools found in crypto_tools")
 
         system_message = (
             "You are a crypto derivatives analyst. Analyze funding rates, open interest "

@@ -25,12 +25,12 @@ from tradingagents.dataflows.bybit_data import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_OUTPUT_BYTES = 50 * 1024
+_MAX_OUTPUT_CHARS = 50 * 1024
 
 
 def _sanitize(raw: str) -> str:
-    if len(raw) > _MAX_OUTPUT_BYTES:
-        raw = raw[:_MAX_OUTPUT_BYTES] + "\n[truncated]"
+    if len(raw) > _MAX_OUTPUT_CHARS:
+        raw = raw[:_MAX_OUTPUT_CHARS] + "\n[truncated]"
     escaped = html.escape(raw, quote=False)
     return f"<data>{escaped}</data>"
 
@@ -56,13 +56,17 @@ def make_crypto_tools(
         end_date: Annotated[str, "End date yyyy-mm-dd"],
     ) -> str:
         """Retrieve OHLCV kline data for a crypto perpetual futures contract."""
-        start_ms, end_ms = _dates_to_ms(start_date, end_date)
-        raw = get_bybit_klines(
-            symbol, interval, start_ms, end_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        return _sanitize(raw)
+        try:
+            start_ms, end_ms = _dates_to_ms(start_date, end_date)
+            raw = get_bybit_klines(
+                symbol, interval, start_ms, end_ms,
+                cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+                api_key=api_key, api_secret=api_secret,
+            )
+            return _sanitize(raw)
+        except Exception as exc:
+            logger.exception("get_crypto_klines failed for %s", symbol)
+            return f"Error fetching kline data for {symbol}: {exc}"
 
     @tool
     def get_crypto_indicators(
@@ -72,13 +76,17 @@ def make_crypto_tools(
         end_date: Annotated[str, "End date yyyy-mm-dd"],
     ) -> str:
         """Compute technical indicators (RSI, MACD, Bollinger, EMA) for a crypto perpetual."""
-        start_ms, end_ms = _dates_to_ms(start_date, end_date)
-        raw = get_bybit_indicators(
-            symbol, interval, start_ms, end_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        return _sanitize(raw)
+        try:
+            start_ms, end_ms = _dates_to_ms(start_date, end_date)
+            raw = get_bybit_indicators(
+                symbol, interval, start_ms, end_ms,
+                cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+                api_key=api_key, api_secret=api_secret,
+            )
+            return _sanitize(raw)
+        except Exception as exc:
+            logger.exception("get_crypto_indicators failed for %s", symbol)
+            return f"Error computing indicators for {symbol}: {exc}"
 
     @tool
     def get_funding_rates(
