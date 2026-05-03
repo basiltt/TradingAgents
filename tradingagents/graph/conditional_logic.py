@@ -64,6 +64,20 @@ class ConditionalLogic:
             return "tools_crypto_news"
         return "Msg Clear Crypto_news"
 
+    def should_continue_crypto_fundamentals(self, state: AgentState):
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_crypto_fundamentals"
+        return "Msg Clear Crypto_fundamentals"
+
+    def should_continue_crypto_social(self, state: AgentState):
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools_crypto_social"
+        return "Msg Clear Crypto_social"
+
     def should_continue_debate(self, state: AgentState) -> str:
         """Determine if debate should continue."""
 

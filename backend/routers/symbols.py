@@ -9,7 +9,7 @@ router = APIRouter(tags=["symbols"])
 
 @router.get("/symbols")
 async def list_symbols(
-    asset_type: str = Query("crypto", regex="^(stock|crypto)$"),
+    asset_type: str = Query("crypto", pattern="^(stock|crypto)$"),
 ):
     if asset_type != "crypto":
         return {"symbols": []}

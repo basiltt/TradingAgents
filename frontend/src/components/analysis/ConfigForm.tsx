@@ -20,7 +20,7 @@ const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
 const CRYPTO_TICKER_REGEX = /^[A-Z0-9]{2,20}$/;
 const PROVIDERS = ["openai", "anthropic", "google", "deepseek", "xai", "qwen", "glm", "openrouter", "azure", "ollama"] as const;
 const STOCK_ANALYSTS = ["market", "social", "news", "fundamentals"] as const;
-const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news"] as const;
+const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
 const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
   { value: "15", label: "15 min" },
   { value: "60", label: "1 hour" },

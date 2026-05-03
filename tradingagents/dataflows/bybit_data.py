@@ -155,8 +155,15 @@ def _fetch_valid_symbols() -> set[str]:
                 break
             for item in data.get("result", {}).get("list", []):
                 sym = item.get("symbol", "")
-                if sym:
-                    symbols.add(sym)
+                if not sym:
+                    continue
+                if item.get("status") != "Trading":
+                    continue
+                if item.get("contractType") != "LinearPerpetual":
+                    continue
+                if not sym.endswith("USDT"):
+                    continue
+                symbols.add(sym)
             cursor = data.get("result", {}).get("nextPageCursor", "")
             if not cursor:
                 break

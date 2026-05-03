@@ -20,6 +20,7 @@ const SECTION_META: Record<
   analyst_social:       { label: "Social Sentiment",   group: "Analysis",  icon: "M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2V6a2 2 0 012-2h6a2 2 0 012 2v2", accent: "text-pink-400", bg: "bg-pink-500/10" },
   analyst_news:         { label: "News Analysis",      group: "Analysis",  icon: "M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2", accent: "text-amber-400", bg: "bg-amber-500/10" },
   analyst_fundamentals: { label: "Fundamentals",       group: "Analysis",  icon: "M9 7h6m0 10v-3m-3 3h.01M9 17v-3m3 3h.01M12 14v-3", accent: "text-teal-400", bg: "bg-teal-500/10" },
+  analyst_crypto_fundamentals: { label: "Crypto Fundamentals", group: "Analysis", icon: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4", accent: "text-cyan-400", bg: "bg-cyan-500/10" },
   research_bull:        { label: "Bull Case",          group: "Research",  icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",   accent: "text-emerald-400", bg: "bg-emerald-500/10" },
   research_bear:        { label: "Bear Case",          group: "Research",  icon: "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6",  accent: "text-red-400",     bg: "bg-red-500/10" },
   research_manager:     { label: "Research Summary",   group: "Research",  icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", accent: "text-indigo-400", bg: "bg-indigo-500/10" },

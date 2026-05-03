@@ -136,10 +136,13 @@ class TradingAgentsGraph:
 
     def _setup_crypto_workflow(self, selected_analysts):
         from tradingagents.agents.utils.crypto_agent_utils import make_crypto_tools
+        from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
         from tradingagents.agents.crypto_analysts import (
             create_crypto_technical_analyst,
             create_crypto_derivatives_analyst,
             create_crypto_news_analyst,
+            create_crypto_fundamentals_analyst,
+            create_crypto_social_analyst,
             create_crypto_trader,
             create_crypto_risk_bull_debater,
             create_crypto_risk_bear_debater,
@@ -186,6 +189,24 @@ class TradingAgentsGraph:
                 self.quick_thinking_llm
             )
             tool_nodes["crypto_news"] = ToolNode([get_news, get_global_news])
+
+        coingecko_tools = make_coingecko_tools()
+
+        if "crypto_fundamentals" in selected_analysts:
+            analyst_nodes["crypto_fundamentals"] = create_crypto_fundamentals_analyst(
+                self.quick_thinking_llm, coingecko_tools
+            )
+            tool_nodes["crypto_fundamentals"] = ToolNode(
+                [t for t in coingecko_tools if t.name == "get_crypto_market_data"]
+            )
+
+        if "crypto_social" in selected_analysts:
+            analyst_nodes["crypto_social"] = create_crypto_social_analyst(
+                self.quick_thinking_llm, coingecko_tools
+            )
+            tool_nodes["crypto_social"] = ToolNode(
+                [t for t in coingecko_tools if t.name == "get_crypto_community_data"] + [get_news]
+            )
 
         trader_node = create_crypto_trader(self.quick_thinking_llm, max_leverage=max_leverage)
         bull_debater = create_crypto_risk_bull_debater(self.quick_thinking_llm)
@@ -422,34 +443,34 @@ class TradingAgentsGraph:
 
     def _log_state(self, trade_date, final_state):
         """Log the final state to a JSON file."""
+        debate = final_state.get("investment_debate_state") or {}
+        risk = final_state.get("risk_debate_state") or {}
+
         self.log_states_dict[str(trade_date)] = {
             "company_of_interest": final_state["company_of_interest"],
             "trade_date": final_state["trade_date"],
-            "market_report": final_state["market_report"],
-            "sentiment_report": final_state["sentiment_report"],
-            "news_report": final_state["news_report"],
-            "fundamentals_report": final_state["fundamentals_report"],
+            "market_report": final_state.get("market_report", ""),
+            "sentiment_report": final_state.get("sentiment_report", ""),
+            "news_report": final_state.get("news_report", ""),
+            "fundamentals_report": final_state.get("fundamentals_report", ""),
+            "crypto_fundamentals_report": final_state.get("crypto_fundamentals_report", ""),
             "investment_debate_state": {
-                "bull_history": final_state["investment_debate_state"]["bull_history"],
-                "bear_history": final_state["investment_debate_state"]["bear_history"],
-                "history": final_state["investment_debate_state"]["history"],
-                "current_response": final_state["investment_debate_state"][
-                    "current_response"
-                ],
-                "judge_decision": final_state["investment_debate_state"][
-                    "judge_decision"
-                ],
+                "bull_history": debate.get("bull_history", ""),
+                "bear_history": debate.get("bear_history", ""),
+                "history": debate.get("history", ""),
+                "current_response": debate.get("current_response", ""),
+                "judge_decision": debate.get("judge_decision", ""),
             },
-            "trader_investment_decision": final_state["trader_investment_plan"],
+            "trader_investment_decision": final_state.get("trader_investment_plan", ""),
             "risk_debate_state": {
-                "aggressive_history": final_state["risk_debate_state"]["aggressive_history"],
-                "conservative_history": final_state["risk_debate_state"]["conservative_history"],
-                "neutral_history": final_state["risk_debate_state"]["neutral_history"],
-                "history": final_state["risk_debate_state"]["history"],
-                "judge_decision": final_state["risk_debate_state"]["judge_decision"],
+                "aggressive_history": risk.get("aggressive_history", ""),
+                "conservative_history": risk.get("conservative_history", ""),
+                "neutral_history": risk.get("neutral_history", ""),
+                "history": risk.get("history", ""),
+                "judge_decision": risk.get("judge_decision", ""),
             },
-            "investment_plan": final_state["investment_plan"],
-            "final_trade_decision": final_state["final_trade_decision"],
+            "investment_plan": final_state.get("investment_plan", ""),
+            "final_trade_decision": final_state.get("final_trade_decision", ""),
         }
 
         # Save to file. Reject ticker values that would escape the

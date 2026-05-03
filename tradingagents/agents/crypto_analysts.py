@@ -149,6 +149,88 @@ def create_crypto_news_analyst(llm):
     return node
 
 
+def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
+    def node(state):
+        current_date = state["trade_date"]
+        instrument_context = build_instrument_context(state["company_of_interest"])
+        tools = [t for t in coingecko_tools if t.name == "get_crypto_market_data"]
+        if not tools:
+            raise ValueError("No market data tool found in coingecko_tools")
+
+        system_message = (
+            "You are a crypto fundamentals analyst. Evaluate the on-chain and market "
+            "fundamentals for the given cryptocurrency. Analyze market capitalization trends, "
+            "circulating vs total vs max supply dynamics, fully diluted valuation, trading "
+            "volume relative to market cap, ATH/ATL distance, and multi-timeframe price "
+            "performance (24h, 7d, 30d, 200d, 1y). Assess tokenomics health: inflation rate "
+            "(if supply is growing), concentration risk, and sector positioning. "
+            "Compare to major benchmarks (BTC, ETH) where relevant. "
+            "If data is unavailable, acknowledge it and continue with what you have. "
+            "Write a detailed report with a Markdown summary table at the end."
+            + get_language_instruction()
+        )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", _ANALYST_SYSTEM_PREFIX),
+            MessagesPlaceholder(variable_name="messages"),
+        ])
+        prompt = prompt.partial(
+            system_message=system_message,
+            tool_names=", ".join(t.name for t in tools),
+            current_date=current_date,
+            instrument_context=instrument_context,
+        )
+
+        chain = prompt | llm.bind_tools(tools)
+        result = chain.invoke(state["messages"])
+
+        report = result.content if not result.tool_calls else ""
+        return {"messages": [result], "crypto_fundamentals_report": report}
+
+    return node
+
+
+def create_crypto_social_analyst(llm, coingecko_tools: list):
+    def node(state):
+        current_date = state["trade_date"]
+        instrument_context = build_instrument_context(state["company_of_interest"])
+        community_tools = [t for t in coingecko_tools if t.name == "get_crypto_community_data"]
+        tools = community_tools + [get_news]
+
+        system_message = (
+            "You are a crypto social sentiment analyst. Evaluate community engagement "
+            "and social metrics for the given cryptocurrency. Analyze Twitter/X follower "
+            "count and growth, Reddit subscriber count and activity (posts, comments), "
+            "Telegram community size, developer activity (GitHub commits, PRs, issues), "
+            "and overall sentiment (bullish vs bearish vote percentages). "
+            "Use get_news to search for social media buzz, trending narratives, "
+            "influencer mentions, and community sentiment around the coin. "
+            "Assess whether social momentum supports or contradicts the price action. "
+            "If data is unavailable, acknowledge it and continue with what you have. "
+            "Write a detailed report with a Markdown summary table at the end."
+            + get_language_instruction()
+        )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", _ANALYST_SYSTEM_PREFIX),
+            MessagesPlaceholder(variable_name="messages"),
+        ])
+        prompt = prompt.partial(
+            system_message=system_message,
+            tool_names=", ".join(t.name for t in tools),
+            current_date=current_date,
+            instrument_context=instrument_context,
+        )
+
+        chain = prompt | llm.bind_tools(tools)
+        result = chain.invoke(state["messages"])
+
+        report = result.content if not result.tool_calls else ""
+        return {"messages": [result], "sentiment_report": report}
+
+    return node
+
+
 def create_crypto_trader(llm, max_leverage: int = 20):
     signal_schema_str = json.dumps(SIGNAL_SCHEMA, indent=2)
 
@@ -159,6 +241,8 @@ def create_crypto_trader(llm, max_leverage: int = 20):
         market_report = state.get("market_report", "")
         news_report = state.get("news_report", "")
         fundamentals_report = state.get("fundamentals_report", "")
+        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
+        sentiment_report = state.get("sentiment_report", "")
 
         analyst_context = ""
         if market_report:
@@ -167,6 +251,10 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             analyst_context += f"\n\n## News Report\n{news_report}"
         if fundamentals_report:
             analyst_context += f"\n\n## Fundamentals/Derivatives Report\n{fundamentals_report}"
+        if crypto_fundamentals_report:
+            analyst_context += f"\n\n## Crypto Fundamentals Report\n{crypto_fundamentals_report}"
+        if sentiment_report:
+            analyst_context += f"\n\n## Social Sentiment Report\n{sentiment_report}"
 
         base_prompt = (
             f"You are a crypto futures trader. Based on the analyst reports and research plan, "
@@ -225,7 +313,15 @@ def create_crypto_risk_bull_debater(llm):
         market_report = state["market_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
+        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
+        sentiment_report = state.get("sentiment_report", "")
         bear_response = risk_debate_state.get("current_conservative_response", "")
+
+        extra_context = ""
+        if crypto_fundamentals_report:
+            extra_context += f"\nCrypto fundamentals report: {crypto_fundamentals_report}\n"
+        if sentiment_report:
+            extra_context += f"\nSocial sentiment report: {sentiment_report}\n"
 
         prompt = (
             f"As the Bullish Risk Analyst for crypto futures, argue in favor of the "
@@ -235,6 +331,7 @@ def create_crypto_risk_bull_debater(llm):
             f"Market report: {market_report}\n"
             f"News report: {news_report}\n"
             f"Derivatives report: {fundamentals_report}\n"
+            f"{extra_context}"
             f"Debate history: {history}\n"
             f"Bear analyst's last response: {bear_response}\n\n"
             f"Counter the bear's arguments with evidence."
@@ -269,7 +366,15 @@ def create_crypto_risk_bear_debater(llm):
         market_report = state["market_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
+        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
+        sentiment_report = state.get("sentiment_report", "")
         bull_response = risk_debate_state.get("current_aggressive_response", "")
+
+        extra_context = ""
+        if crypto_fundamentals_report:
+            extra_context += f"\nCrypto fundamentals report: {crypto_fundamentals_report}\n"
+        if sentiment_report:
+            extra_context += f"\nSocial sentiment report: {sentiment_report}\n"
 
         prompt = (
             f"As the Bearish Risk Analyst for crypto futures, critically examine the "
@@ -280,6 +385,7 @@ def create_crypto_risk_bear_debater(llm):
             f"Market report: {market_report}\n"
             f"News report: {news_report}\n"
             f"Derivatives report: {fundamentals_report}\n"
+            f"{extra_context}"
             f"Debate history: {history}\n"
             f"Bull analyst's last response: {bull_response}\n\n"
             f"Counter the bull's arguments with evidence of downside risks."

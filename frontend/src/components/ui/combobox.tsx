@@ -24,6 +24,7 @@ export function Combobox({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState(value);
   const [highlightIdx, setHighlightIdx] = useState(-1);
+  const [openUp, setOpenUp] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -38,6 +39,14 @@ export function Combobox({
   useEffect(() => {
     setHighlightIdx(-1);
   }, [search]);
+
+  useEffect(() => {
+    if (open && wrapperRef.current) {
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUp(spaceBelow < 260);
+    }
+  }, [open]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -108,7 +117,10 @@ export function Combobox({
       {open && filtered.length > 0 && (
         <div
           ref={listRef}
-          className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
+          className={cn(
+            "absolute z-50 w-full max-h-60 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg",
+            openUp ? "bottom-full mb-1" : "mt-1",
+          )}
         >
           {filtered.map((opt, i) => (
             <button

@@ -8,6 +8,8 @@ export function useSymbols(assetType: string) {
     staleTime: 60 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
     enabled: assetType === "crypto",
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     select: (data) => data.symbols,
   });
 }

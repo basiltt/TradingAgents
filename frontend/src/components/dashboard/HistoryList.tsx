@@ -40,6 +40,13 @@ export function HistoryList() {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: (runId: string) => apiClient.cancelAnalysis(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analyses"] });
+    },
+  });
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -158,6 +165,16 @@ export function HistoryList() {
                       <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
                       {item.status}
                     </Badge>
+                    {item.status === "running" && (
+                      <button
+                        onClick={() => cancelMutation.mutate(item.run_id)}
+                        disabled={cancelMutation.isPending}
+                        className="px-2.5 py-1 text-xs font-medium rounded-md border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                        title="Cancel analysis"
+                      >
+                        {cancelMutation.isPending ? "…" : "Cancel"}
+                      </button>
+                    )}
                     {confirmId === item.run_id ? (
                       <div className="flex items-center gap-1">
                         <button

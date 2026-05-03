@@ -70,6 +70,7 @@ DomainEvent = Union[
 
 SECTION_KEYS = frozenset([
     "analyst_market", "analyst_social", "analyst_news", "analyst_fundamentals",
+    "analyst_crypto_fundamentals",
     "research_bull", "research_bear", "research_manager",
     "trader",
     "risk_aggressive", "risk_conservative", "risk_neutral",
@@ -93,6 +94,7 @@ _ANALYST_REPORT_MAP = {
     "sentiment_report": ("analyst_social", "Social Analyst"),
     "news_report": ("analyst_news", "News Analyst"),
     "fundamentals_report": ("analyst_fundamentals", "Fundamentals Analyst"),
+    "crypto_fundamentals_report": ("analyst_crypto_fundamentals", "Crypto Fundamentals Analyst"),
 }
 
 
