@@ -5,6 +5,7 @@ import { apiClient } from "@/api/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { parseTradeCard } from "@/components/analysis/parseTradeCard";
 
 const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; dot: string }> = {
   running: { variant: "default", dot: "bg-primary animate-pulse" },
@@ -13,6 +14,45 @@ const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destru
   cancelled: { variant: "outline", dot: "bg-muted-foreground" },
   pending: { variant: "outline", dot: "bg-amber-500" },
 };
+
+const ACTION_COLORS: Record<string, string> = {
+  buy: "text-emerald-500",
+  sell: "text-red-500",
+  hold: "text-amber-500",
+  long: "text-emerald-500",
+  short: "text-red-500",
+};
+
+function actionColor(action?: string) {
+  if (!action) return "text-muted-foreground";
+  return ACTION_COLORS[action.toLowerCase()] ?? "text-muted-foreground";
+}
+
+function TradeScore({ runId }: { runId: string }) {
+  const { data: card } = useQuery({
+    queryKey: ["trade-score", runId],
+    queryFn: async ({ signal }) => {
+      const snap = await apiClient.getSnapshot(runId, signal);
+      return parseTradeCard(snap.reports);
+    },
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+  });
+
+  if (!card) return null;
+
+  const action = card.action ?? card.rating ?? "—";
+  const conf = card.confidence;
+
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className={`font-bold uppercase ${actionColor(action)}`}>{action}</span>
+      {conf != null && (
+        <span className="text-muted-foreground">{conf}/10</span>
+      )}
+    </div>
+  );
+}
 
 export function HistoryList() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -147,7 +187,7 @@ export function HistoryList() {
                     <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
                       <span className="font-mono font-bold text-sm text-foreground">{item.ticker.slice(0, 4)}</span>
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold font-mono">{item.ticker}</span>
                         {item.asset_type === "crypto" && (
@@ -159,6 +199,7 @@ export function HistoryList() {
                         {item.run_id}
                       </p>
                     </div>
+                    {item.status === "completed" && <TradeScore runId={item.run_id} />}
                   </Link>
                   <div className="flex items-center gap-2 shrink-0">
                     <Badge variant={cfg.variant} className="gap-1.5">

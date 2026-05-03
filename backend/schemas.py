@@ -244,3 +244,28 @@ class CheckpointResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     code: Optional[str] = None
+
+
+class ScanRequest(BaseModel):
+    analysis_date: str
+    asset_type: Optional[str] = "crypto"
+    interval: Optional[str] = "D"
+    provider: Optional[str] = None
+    deep_think_llm: Optional[str] = None
+    quick_think_llm: Optional[str] = None
+    backend_url: Optional[str] = None
+    analysts: Optional[List[str]] = None
+    research_depth: Optional[int] = Field(None, ge=1, le=5)
+    output_language: Optional[str] = None
+    data_vendors: Optional[Dict[str, str]] = None
+
+    @field_validator("analysis_date")
+    @classmethod
+    def validate_scan_date(cls, v: str) -> str:
+        try:
+            d = date.fromisoformat(v)
+        except ValueError:
+            raise ValueError("Invalid date format, expected YYYY-MM-DD")
+        if d > date.today():
+            raise ValueError("Analysis date cannot be in the future")
+        return v

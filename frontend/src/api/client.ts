@@ -157,6 +157,44 @@ export interface AnalysisSnapshot {
   reports: Record<string, string>;
 }
 
+export interface ScanRequest {
+  analysis_date: string;
+  asset_type?: AssetType;
+  interval?: CryptoInterval;
+  provider?: string;
+  deep_think_llm?: string;
+  quick_think_llm?: string;
+  backend_url?: string;
+  analysts?: string[];
+  research_depth?: number;
+  output_language?: string;
+  data_vendors?: Record<string, string>;
+}
+
+export interface ScanResultItem {
+  ticker: string;
+  run_id: string | null;
+  status: string;
+  direction: string;
+  confidence: string;
+  score: number;
+  decision_summary: string;
+}
+
+export interface ScanStatus {
+  scan_id: string;
+  status: string;
+  total: number;
+  completed: number;
+  failed: number;
+  current_batch: number;
+  total_batches: number;
+  current_tickers: string[];
+  results: ScanResultItem[];
+  started_at: string;
+  completed_at: string | null;
+}
+
 export const apiClient = {
   getHealth: (signal?: AbortSignal) =>
     request<HealthResponse>("/api/v1/health", undefined, signal),
@@ -251,6 +289,16 @@ export const apiClient = {
 
   getSymbols: (assetType: string, signal?: AbortSignal) =>
     request<{ symbols: string[] }>(`/api/v1/symbols?asset_type=${encodeURIComponent(assetType)}`, undefined, signal),
+
+  // Scanner
+  startScan: (body: ScanRequest) =>
+    mutate<{ scan_id: string; status: string }>("POST", "/api/v1/scanner", body),
+
+  getScan: (scanId: string, signal?: AbortSignal) =>
+    request<ScanStatus>(`/api/v1/scanner/${encodeURIComponent(scanId)}`, undefined, signal),
+
+  cancelScan: (scanId: string) =>
+    mutate<{ status: string }>("POST", `/api/v1/scanner/${encodeURIComponent(scanId)}/cancel`),
 };
 
 export { ApiError };

@@ -169,6 +169,16 @@ export function RootLayout() {
           >
             New Analysis
           </NavLink>
+          <NavLink
+            to="/scanner"
+            icon={
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            }
+          >
+            Market Scanner
+          </NavLink>
 
           <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
             Settings

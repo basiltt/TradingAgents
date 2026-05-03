@@ -11,6 +11,7 @@ import { HomeDashboard } from "@/components/dashboard/HomeDashboard";
 import { HistoryList } from "@/components/dashboard/HistoryList";
 import { ConfigPage as ConfigPageComponent } from "@/components/config/ConfigPage";
 import { MemoryPage as MemoryPageComponent } from "@/components/config/MemoryPage";
+import { ScannerPage as ScannerPageComponent } from "@/components/scanner/ScannerPage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -44,6 +45,10 @@ function ConfigPage() {
 
 function MemoryPage() {
   return <MemoryPageComponent />;
+}
+
+function ScannerPage() {
+  return <ScannerPageComponent />;
 }
 
 const indexRoute = createRoute({
@@ -82,6 +87,12 @@ const memoryRoute = createRoute({
   component: MemoryPage,
 });
 
+const scannerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scanner",
+  component: ScannerPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   analysisNewRoute,
@@ -89,6 +100,7 @@ export const routeTree = rootRoute.addChildren([
   historyRoute,
   configRoute,
   memoryRoute,
+  scannerRoute,
 ]);
 
 export function createAppRouter() {

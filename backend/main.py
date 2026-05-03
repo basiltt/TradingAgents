@@ -15,6 +15,7 @@ from backend.persistence import AnalysisDB
 from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
+from backend.services.scanner_service import ScannerService
 from backend.ws_manager import WSManager
 
 
@@ -80,6 +81,9 @@ def create_app() -> FastAPI:
             ws_manager=ws_manager,
             config_service=config_service,
         )
+        app.state.scanner_service = ScannerService(
+            analysis_service=app.state.analysis_service,
+        )
         yield
         await app.state.analysis_service.shutdown()
         await ws_manager.shutdown()
@@ -105,6 +109,7 @@ def create_app() -> FastAPI:
     from backend.routers.memory import router as memory_router
     from backend.routers.analysis import router as analysis_router
     from backend.routers.symbols import router as symbols_router
+    from backend.routers.scanner import router as scanner_router
     from backend.routers.ws import router as ws_router
 
     app.include_router(config_router, prefix="/api/v1")
@@ -113,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_router, prefix="/api/v1")
     app.include_router(analysis_router, prefix="/api/v1")
     app.include_router(symbols_router, prefix="/api/v1")
+    app.include_router(scanner_router, prefix="/api/v1")
     app.include_router(ws_router)
 
     @app.get("/api/v1/health")
