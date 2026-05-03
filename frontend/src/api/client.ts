@@ -69,6 +69,8 @@ export interface HealthResponse {
   db: string;
 }
 
+export type AssetType = "stock" | "crypto";
+
 export interface AnalysisListItem {
   run_id: string;
   ticker: string;
@@ -76,6 +78,7 @@ export interface AnalysisListItem {
   status: string;
   started_at: string;
   completed_at?: string;
+  asset_type?: AssetType;
 }
 
 export interface AnalysisListResponse {
@@ -94,12 +97,15 @@ export interface AnalysisRun {
   started_at: string;
   completed_at?: string;
   error?: string;
+  asset_type?: AssetType;
 }
 
 export interface AnalysisCreateResponse {
   run_id: string;
   status: string;
 }
+
+export type CryptoInterval = "15" | "60" | "240" | "D";
 
 export interface StartAnalysisRequest {
   ticker: string;
@@ -112,6 +118,8 @@ export interface StartAnalysisRequest {
   research_depth?: number;
   output_language?: string;
   data_vendors?: Record<string, string>;
+  asset_type?: AssetType;
+  interval?: CryptoInterval;
 }
 
 export interface ConfigResponse {
@@ -159,6 +167,7 @@ export const apiClient = {
       limit?: number;
       ticker?: string;
       status?: string;
+      asset_type?: AssetType;
     },
     signal?: AbortSignal,
   ) => {
@@ -167,6 +176,7 @@ export const apiClient = {
     if (params?.limit != null) sp.set("limit", String(params.limit));
     if (params?.ticker) sp.set("ticker", params.ticker);
     if (params?.status) sp.set("status", params.status);
+    if (params?.asset_type) sp.set("asset_type", params.asset_type);
     const qs = sp.toString();
     return request<AnalysisListResponse>(
       `/api/v1/analysis${qs ? `?${qs}` : ""}`,

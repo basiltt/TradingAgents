@@ -36,7 +36,7 @@ def test_ticker_too_long():
     from backend.schemas import AnalysisRequest
 
     with pytest.raises(Exception):
-        AnalysisRequest(ticker="A" * 16, analysis_date="2025-06-01")
+        AnalysisRequest(ticker="A" * 21, analysis_date="2025-06-01")
 
 
 def test_empty_ticker():
@@ -228,3 +228,79 @@ def test_memory_entry():
         status="resolved",
     )
     assert entry.ticker == "SPY"
+
+
+# ---------------------------------------------------------------------------
+# Crypto schema tests (TASK-014)
+# ---------------------------------------------------------------------------
+
+def test_valid_crypto_request():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(
+        ticker="BTCUSDT", analysis_date="2025-01-15",
+        asset_type="crypto", interval="60",
+    )
+    assert req.asset_type == "crypto"
+    assert req.interval == "60"
+
+
+def test_crypto_invalid_symbol():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception):
+        AnalysisRequest(
+            ticker="btc usdt!", analysis_date="2025-01-15",
+            asset_type="crypto", interval="60",
+        )
+
+
+def test_crypto_stock_analysts_rejected():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception):
+        AnalysisRequest(
+            ticker="BTCUSDT", analysis_date="2025-01-15",
+            asset_type="crypto", interval="60",
+            analysts=["market"],
+        )
+
+
+def test_crypto_valid_analysts():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(
+        ticker="BTCUSDT", analysis_date="2025-01-15",
+        asset_type="crypto", interval="60",
+        analysts=["crypto_technical", "crypto_derivatives"],
+    )
+    assert len(req.analysts) == 2
+
+
+def test_crypto_invalid_interval():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception):
+        AnalysisRequest(
+            ticker="BTCUSDT", analysis_date="2025-01-15",
+            asset_type="crypto", interval="999",
+        )
+
+
+def test_crypto_requires_interval():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception):
+        AnalysisRequest(
+            ticker="BTCUSDT", analysis_date="2025-01-15",
+            asset_type="crypto",
+        )
+
+
+def test_stock_request_unchanged():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(ticker="SPY", analysis_date="2025-06-01")
+    assert req.asset_type == "stock"
+
+
+def test_stock_analysts_valid():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(
+        ticker="SPY", analysis_date="2025-06-01",
+        analysts=["market", "news"],
+    )
+    assert len(req.analysts) == 2

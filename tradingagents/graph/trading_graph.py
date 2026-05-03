@@ -125,10 +125,82 @@ class TradingAgentsGraph:
         self.ticker = None
         self.log_states_dict = {}  # date to full state dict
 
-        # Set up the graph: keep the workflow for recompilation with a checkpointer.
-        self.workflow = self.graph_setup.setup_graph(selected_analysts)
+        # Set up the graph based on asset type
+        asset_type = self.config.get("asset_type", "stock")
+        if asset_type == "crypto":
+            self.workflow = self._setup_crypto_workflow(selected_analysts)
+        else:
+            self.workflow = self.graph_setup.setup_graph(selected_analysts)
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
+
+    def _setup_crypto_workflow(self, selected_analysts):
+        from tradingagents.agents.utils.crypto_agent_utils import make_crypto_tools
+        from tradingagents.agents.crypto_analysts import (
+            create_crypto_technical_analyst,
+            create_crypto_derivatives_analyst,
+            create_crypto_news_analyst,
+            create_crypto_trader,
+            create_crypto_risk_bull_debater,
+            create_crypto_risk_bear_debater,
+            create_crypto_portfolio_manager,
+        )
+        from tradingagents.dataflows.bybit_data import BybitRateLimiter, BybitCircuitBreaker
+
+        creds = self.config.get("exchange_credentials", {}).get("bybit", {})
+        api_key = creds.get("api_key")
+        api_secret = creds.get("api_secret")
+
+        cache: dict = {}
+        limiter = BybitRateLimiter()
+        cb = BybitCircuitBreaker()
+
+        crypto_tools = make_crypto_tools(
+            cache=cache, limiter=limiter, circuit_breaker=cb,
+            api_key=api_key, api_secret=api_secret,
+        )
+
+        max_leverage = self.config.get("crypto_max_leverage", 20)
+
+        analyst_nodes = {}
+        tool_nodes = {}
+
+        if "crypto_technical" in selected_analysts:
+            analyst_nodes["crypto_technical"] = create_crypto_technical_analyst(
+                self.quick_thinking_llm, crypto_tools
+            )
+            tool_nodes["crypto_technical"] = ToolNode(
+                [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
+            )
+
+        if "crypto_derivatives" in selected_analysts:
+            analyst_nodes["crypto_derivatives"] = create_crypto_derivatives_analyst(
+                self.quick_thinking_llm, crypto_tools
+            )
+            tool_nodes["crypto_derivatives"] = ToolNode(
+                [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
+            )
+
+        if "crypto_news" in selected_analysts:
+            analyst_nodes["crypto_news"] = create_crypto_news_analyst(
+                self.quick_thinking_llm
+            )
+            tool_nodes["crypto_news"] = ToolNode([get_news, get_global_news])
+
+        trader_node = create_crypto_trader(self.quick_thinking_llm, max_leverage=max_leverage)
+        bull_debater = create_crypto_risk_bull_debater(self.quick_thinking_llm)
+        bear_debater = create_crypto_risk_bear_debater(self.quick_thinking_llm)
+        pm_node = create_crypto_portfolio_manager(self.deep_thinking_llm, max_leverage=max_leverage)
+
+        return self.graph_setup.setup_crypto_graph(
+            selected_analysts=selected_analysts,
+            crypto_analyst_nodes=analyst_nodes,
+            crypto_tool_nodes=tool_nodes,
+            crypto_trader_node=trader_node,
+            crypto_bull_debater=bull_debater,
+            crypto_bear_debater=bear_debater,
+            crypto_portfolio_manager=pm_node,
+        )
 
     def _get_provider_kwargs(self) -> Dict[str, Any]:
         """Get provider-specific kwargs for LLM client creation."""
@@ -305,7 +377,8 @@ class TradingAgentsGraph:
         # Initialize state — inject memory log context for PM.
         past_context = self.memory_log.get_past_context(company_name)
         init_agent_state = self.propagator.create_initial_state(
-            company_name, trade_date, past_context=past_context
+            company_name, trade_date, past_context=past_context,
+            asset_type=self.config.get("asset_type", "stock"),
         )
         args = self.propagator.get_graph_args()
 

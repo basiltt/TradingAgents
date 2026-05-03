@@ -1,6 +1,6 @@
 # TradingAgents/graph/setup.py
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -177,6 +177,77 @@ class GraphSetup:
             },
         )
 
+        workflow.add_edge("Portfolio Manager", END)
+
+        return workflow
+
+    def setup_crypto_graph(
+        self,
+        selected_analysts: List[str],
+        crypto_analyst_nodes: Dict[str, Any],
+        crypto_tool_nodes: Dict[str, ToolNode],
+        crypto_trader_node: Any,
+        crypto_bull_debater: Any,
+        crypto_bear_debater: Any,
+        crypto_portfolio_manager: Any,
+    ):
+        """Set up a crypto futures graph with bull/bear 2-party debate."""
+        if not selected_analysts:
+            raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
+
+        workflow = StateGraph(AgentState)
+
+        delete_nodes = {}
+        for analyst_type in selected_analysts:
+            node = crypto_analyst_nodes[analyst_type]
+            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
+            delete_nodes[analyst_type] = create_msg_delete()
+            workflow.add_node(f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type])
+            workflow.add_node(f"tools_{analyst_type}", crypto_tool_nodes[analyst_type])
+
+        workflow.add_node("Trader", crypto_trader_node)
+        workflow.add_node("Bull Analyst", crypto_bull_debater)
+        workflow.add_node("Bear Analyst", crypto_bear_debater)
+        workflow.add_node("Portfolio Manager", crypto_portfolio_manager)
+
+        first_analyst = selected_analysts[0]
+        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
+
+        for i, analyst_type in enumerate(selected_analysts):
+            current_analyst = f"{analyst_type.capitalize()} Analyst"
+            current_tools = f"tools_{analyst_type}"
+            current_clear = f"Msg Clear {analyst_type.capitalize()}"
+
+            workflow.add_conditional_edges(
+                current_analyst,
+                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
+                [current_tools, current_clear],
+            )
+            workflow.add_edge(current_tools, current_analyst)
+
+            if i < len(selected_analysts) - 1:
+                next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
+                workflow.add_edge(current_clear, next_analyst)
+            else:
+                workflow.add_edge(current_clear, "Trader")
+
+        workflow.add_edge("Trader", "Bull Analyst")
+        workflow.add_conditional_edges(
+            "Bull Analyst",
+            self.conditional_logic.should_continue_risk_analysis,
+            {
+                "Bear Analyst": "Bear Analyst",
+                "Portfolio Manager": "Portfolio Manager",
+            },
+        )
+        workflow.add_conditional_edges(
+            "Bear Analyst",
+            self.conditional_logic.should_continue_risk_analysis,
+            {
+                "Bull Analyst": "Bull Analyst",
+                "Portfolio Manager": "Portfolio Manager",
+            },
+        )
         workflow.add_edge("Portfolio Manager", END)
 
         return workflow

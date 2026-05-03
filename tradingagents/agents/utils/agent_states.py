@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 from typing_extensions import TypedDict
 from langgraph.graph import MessagesState
 
@@ -48,6 +48,12 @@ class AgentState(MessagesState):
     trade_date: Annotated[str, "What date we are trading at"]
 
     sender: Annotated[str, "Agent that sent this message"]
+
+    # Asset type: "stock" or "crypto"
+    asset_type: Annotated[str, "Asset type for this analysis"]
+
+    # Error propagation: set by analyst on critical failure, checked by downstream nodes
+    error: Annotated[Optional[str], "Error message if a critical failure occurred"]
 
     # research step
     market_report: Annotated[str, "Report from the Market Analyst"]

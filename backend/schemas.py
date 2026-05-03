@@ -7,9 +7,10 @@ from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,15}$")
+CRYPTO_TICKER_RE = re.compile(r"^[A-Z0-9]{2,20}$")
 MODEL_ID_RE = re.compile(r"^[a-zA-Z0-9._:/-]{1,100}$")
 CUSTOM_LANG_RE = re.compile(r"^[A-Z][a-z]+([\s\-][A-Z][a-z]+)*$")
 
@@ -58,14 +59,25 @@ class AnalystType(str, Enum):
     FUNDAMENTALS = "fundamentals"
 
 
+class CryptoAnalystType(str, Enum):
+    CRYPTO_TECHNICAL = "crypto_technical"
+    CRYPTO_DERIVATIVES = "crypto_derivatives"
+    CRYPTO_NEWS = "crypto_news"
+
+
+VALID_CRYPTO_INTERVALS = frozenset(["15", "60", "240", "D"])
+
+
 class AnalysisRequest(BaseModel):
     ticker: str
     analysis_date: str
+    asset_type: Optional[str] = "stock"
+    interval: Optional[str] = None
     provider: Optional[str] = None
     deep_think_llm: Optional[str] = None
     quick_think_llm: Optional[str] = None
     backend_url: Optional[str] = None
-    analysts: Optional[List[AnalystType]] = None
+    analysts: Optional[List[str]] = None
     research_depth: Optional[int] = Field(None, ge=1, le=5)
     output_language: Optional[str] = None
     data_vendors: Optional[Dict[str, str]] = None
@@ -74,9 +86,9 @@ class AnalysisRequest(BaseModel):
     @classmethod
     def validate_ticker(cls, v: str) -> str:
         v = v.strip().upper()
-        if not TICKER_RE.match(v):
+        if not TICKER_RE.match(v) and not CRYPTO_TICKER_RE.match(v):
             raise ValueError(
-                f"Invalid ticker: must match {TICKER_RE.pattern}"
+                f"Invalid ticker: must match stock or crypto pattern"
             )
         return v
 
@@ -137,6 +149,31 @@ class AnalysisRequest(BaseModel):
                 raise ValueError(f"Invalid vendor value: {val}")
         return v
 
+    @model_validator(mode="after")
+    def validate_asset_type_constraints(self):
+        asset = self.asset_type or "stock"
+        if asset == "crypto":
+            if not CRYPTO_TICKER_RE.match(self.ticker):
+                raise ValueError(f"Crypto ticker must match {CRYPTO_TICKER_RE.pattern}")
+            if self.interval is None:
+                raise ValueError("interval is required for crypto analysis")
+            if self.interval not in VALID_CRYPTO_INTERVALS:
+                raise ValueError(f"Invalid crypto interval: {self.interval}, must be one of {sorted(VALID_CRYPTO_INTERVALS)}")
+            if self.analysts:
+                valid = {e.value for e in CryptoAnalystType}
+                for a in self.analysts:
+                    if a not in valid:
+                        raise ValueError(f"Invalid crypto analyst: {a}, must be one of {sorted(valid)}")
+        elif asset == "stock":
+            if self.analysts:
+                valid = {e.value for e in AnalystType}
+                for a in self.analysts:
+                    if a not in valid:
+                        raise ValueError(f"Invalid stock analyst: {a}, must be one of {sorted(valid)}")
+        else:
+            raise ValueError(f"Invalid asset_type: {asset}, must be 'stock' or 'crypto'")
+        return self
+
 
 class AnalysisCreateResponse(BaseModel):
     run_id: str
@@ -152,6 +189,7 @@ class AnalysisResponse(BaseModel):
     started_at: str
     completed_at: Optional[str] = None
     error: Optional[str] = None
+    asset_type: Optional[str] = None
 
 
 class AnalysisListItem(BaseModel):
@@ -161,6 +199,7 @@ class AnalysisListItem(BaseModel):
     status: str
     started_at: str
     completed_at: Optional[str] = None
+    asset_type: Optional[str] = None
 
 
 class AnalysisListResponse(BaseModel):

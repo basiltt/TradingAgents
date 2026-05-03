@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { apiClient, type StartAnalysisRequest } from "@/api/client";
+import { apiClient, type StartAnalysisRequest, type AssetType, type CryptoInterval } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,8 +14,16 @@ import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCh
 import { getModelOptions } from "@/lib/model-catalog";
 
 const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
+const CRYPTO_TICKER_REGEX = /^[A-Z0-9]{2,20}$/;
 const PROVIDERS = ["openai", "anthropic", "google", "deepseek", "xai", "qwen", "glm", "openrouter", "azure", "ollama"] as const;
-const ANALYSTS = ["market", "social", "news", "fundamentals"] as const;
+const STOCK_ANALYSTS = ["market", "social", "news", "fundamentals"] as const;
+const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news"] as const;
+const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
+  { value: "15", label: "15 min" },
+  { value: "60", label: "1 hour" },
+  { value: "240", label: "4 hours" },
+  { value: "D", label: "1 day" },
+];
 const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Hindi", "Spanish", "Portuguese", "French", "German", "Arabic", "Russian"] as const;
 const VENDOR_CATEGORIES = ["core_stock_apis", "technical_indicators", "fundamental_data", "news_data"] as const;
 const VENDOR_OPTIONS = ["yfinance", "alpha_vantage"] as const;
@@ -78,6 +86,7 @@ function SectionToggle({ label, open, onToggle, badge }: { label: string; open: 
 /* ---------- persistence ---------- */
 
 interface SavedSettings {
+  asset_type?: AssetType;
   provider?: string;
   backend_url?: string;
   deep_think_llm?: string;
@@ -89,6 +98,7 @@ interface SavedSettings {
   max_risk_discuss_rounds?: number;
   max_recur_limit?: number;
   checkpoint_enabled?: boolean;
+  interval?: CryptoInterval;
   data_vendors?: Record<string, string>;
 }
 
@@ -108,6 +118,7 @@ function saveSettings(s: SavedSettings) {
 /* ---------- form values ---------- */
 
 interface FormValues {
+  asset_type: AssetType;
   ticker: string;
   analysis_date: string;
   provider: string;
@@ -121,6 +132,7 @@ interface FormValues {
   max_risk_discuss_rounds: number;
   max_recur_limit: number;
   checkpoint_enabled: boolean;
+  interval: CryptoInterval;
   data_vendor_core: string;
   data_vendor_technical: string;
   data_vendor_fundamental: string;
@@ -157,19 +169,21 @@ export function ConfigForm() {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     defaultValues: {
+      asset_type: saved.asset_type || "stock",
       ticker: "",
       analysis_date: new Date().toISOString().split("T")[0],
       provider: saved.provider || envProvider,
       backend_url: saved.backend_url || "",
       deep_think_llm: saved.deep_think_llm || "",
       quick_think_llm: saved.quick_think_llm || "",
-      analysts: saved.analysts || [...ANALYSTS],
+      analysts: saved.analysts || [...STOCK_ANALYSTS],
       research_depth: saved.research_depth ?? 3,
       output_language: saved.output_language || "English",
       max_debate_rounds: saved.max_debate_rounds ?? 1,
       max_risk_discuss_rounds: saved.max_risk_discuss_rounds ?? 1,
       max_recur_limit: saved.max_recur_limit ?? 100,
       checkpoint_enabled: saved.checkpoint_enabled ?? false,
+      interval: saved.interval || "60",
       data_vendor_core: saved.data_vendors?.core_stock_apis || "yfinance",
       data_vendor_technical: saved.data_vendors?.technical_indicators || "yfinance",
       data_vendor_fundamental: saved.data_vendors?.fundamental_data || "yfinance",
@@ -178,6 +192,7 @@ export function ConfigForm() {
   });
 
   const selectedProvider = watch("provider");
+  const watchedAssetType = watch("asset_type");
   const watchedBackendUrl = watch("backend_url");
   const watchedDeep = watch("deep_think_llm");
   const watchedQuick = watch("quick_think_llm");
@@ -188,13 +203,18 @@ export function ConfigForm() {
   const watchedRisk = watch("max_risk_discuss_rounds");
   const watchedRecur = watch("max_recur_limit");
   const watchedCheckpoint = watch("checkpoint_enabled");
+  const watchedInterval = watch("interval");
   const watchedVendorCore = watch("data_vendor_core");
   const watchedVendorTech = watch("data_vendor_technical");
   const watchedVendorFund = watch("data_vendor_fundamental");
   const watchedVendorNews = watch("data_vendor_news");
 
+  const isCrypto = watchedAssetType === "crypto";
+  const activeAnalysts = isCrypto ? CRYPTO_ANALYSTS : STOCK_ANALYSTS;
+
   useEffect(() => {
     saveSettings({
+      asset_type: watchedAssetType,
       provider: selectedProvider,
       backend_url: watchedBackendUrl,
       deep_think_llm: watchedDeep,
@@ -206,6 +226,7 @@ export function ConfigForm() {
       max_risk_discuss_rounds: watchedRisk,
       max_recur_limit: watchedRecur,
       checkpoint_enabled: watchedCheckpoint,
+      interval: watchedInterval,
       data_vendors: {
         core_stock_apis: watchedVendorCore,
         technical_indicators: watchedVendorTech,
@@ -213,10 +234,11 @@ export function ConfigForm() {
         news_data: watchedVendorNews,
       },
     });
-  }, [selectedProvider, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
+  }, [watchedAssetType, selectedProvider, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
 
-  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(watchedBackendUrl?.trim() || undefined);
-  const backendConn = useConnectivityCheck(watchedBackendUrl?.trim() || undefined);
+  const trimmedBackendUrl = useMemo(() => watchedBackendUrl?.trim() || undefined, [watchedBackendUrl]);
+  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl);
+  const backendConn = useConnectivityCheck(trimmedBackendUrl);
 
   const deepOptions = useMemo(() => {
     if (proxyModels?.length) return proxyModels.map((m) => ({ label: m.name ?? m.id, value: m.id }));
@@ -231,22 +253,32 @@ export function ConfigForm() {
   async function onSubmit(data: FormValues) {
     setSubmitError(null);
     try {
+      const isCryptoSubmit = data.asset_type === "crypto";
+      const defaultAnalysts = isCryptoSubmit ? [...CRYPTO_ANALYSTS] : [...STOCK_ANALYSTS];
+      const allSelected = data.analysts.length === defaultAnalysts.length &&
+        defaultAnalysts.every((a) => data.analysts.includes(a));
+
       const body: StartAnalysisRequest = {
         ticker: data.ticker.toUpperCase(),
         analysis_date: data.analysis_date,
+        asset_type: data.asset_type,
         provider: data.provider || undefined,
         backend_url: data.backend_url.trim() || undefined,
         deep_think_llm: data.deep_think_llm.trim() || undefined,
         quick_think_llm: data.quick_think_llm.trim() || undefined,
-        analysts: data.analysts.length < 4 ? data.analysts : undefined,
+        analysts: allSelected ? undefined : data.analysts,
         research_depth: data.research_depth !== 3 ? data.research_depth : undefined,
         output_language: data.output_language !== "English" ? data.output_language : undefined,
-        data_vendors: {
-          core_stock_apis: data.data_vendor_core,
-          technical_indicators: data.data_vendor_technical,
-          fundamental_data: data.data_vendor_fundamental,
-          news_data: data.data_vendor_news,
-        },
+        ...(isCryptoSubmit
+          ? { interval: data.interval }
+          : {
+              data_vendors: {
+                core_stock_apis: data.data_vendor_core,
+                technical_indicators: data.data_vendor_technical,
+                fundamental_data: data.data_vendor_fundamental,
+                news_data: data.data_vendor_news,
+              },
+            }),
       };
       const result = await apiClient.startAnalysis(body);
       navigate({ to: "/analysis/$runId", params: { runId: result.run_id } });
@@ -274,24 +306,68 @@ export function ConfigForm() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
+            {/* Asset Type Toggle */}
+            <div className="flex flex-col gap-2">
+              <Label className="font-medium">Asset Type</Label>
+              <Controller
+                name="asset_type"
+                control={control}
+                render={({ field }) => (
+                  <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Asset type">
+                    {(["stock", "crypto"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        role="radio"
+                        aria-checked={field.value === t}
+                        className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                          field.value === t
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-background hover:bg-muted"
+                        }`}
+                        onClick={() => {
+                          field.onChange(t);
+                          const defaults = t === "crypto" ? [...CRYPTO_ANALYSTS] : [...STOCK_ANALYSTS];
+                          setValue("analysts", defaults);
+                          setValue("ticker", "");
+                        }}
+                      >
+                        {t === "stock" ? "Stock" : "Crypto Futures"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              />
+            </div>
+
             {/* Ticker */}
             <div className="flex flex-col gap-2">
-              <Label htmlFor="ticker" className="font-medium">Ticker Symbol</Label>
+              <Label htmlFor="ticker" className="font-medium">{isCrypto ? "Trading Pair" : "Ticker Symbol"}</Label>
               <Input
                 id="ticker"
-                placeholder="e.g. AAPL, SPY, TSLA"
+                placeholder={isCrypto ? "e.g. BTCUSDT, ETHUSDT" : "e.g. AAPL, SPY, TSLA"}
                 className="font-mono text-base tracking-wide"
                 aria-invalid={!!errors.ticker}
                 {...register("ticker", {
-                  required: "Ticker is required",
-                  pattern: { value: TICKER_REGEX, message: "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)" },
+                  required: isCrypto ? "Trading pair is required" : "Ticker is required",
+                  validate: (v) => {
+                    const regex = isCrypto ? CRYPTO_TICKER_REGEX : TICKER_REGEX;
+                    if (!regex.test(v)) {
+                      return isCrypto
+                        ? "Enter a valid pair (2-20 chars: A-Z, 0-9)"
+                        : "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)";
+                    }
+                    return true;
+                  },
                   onChange: (e) => setValue("ticker", e.target.value.toUpperCase(), { shouldValidate: false }),
                 })}
               />
               {errors.ticker ? (
                 <p className="text-sm text-destructive">{errors.ticker.message}</p>
               ) : (
-                <p className="text-xs text-muted-foreground">Enter the stock ticker symbol to analyze</p>
+                <p className="text-xs text-muted-foreground">
+                  {isCrypto ? "Bybit perpetual futures pair" : "Enter the stock ticker symbol to analyze"}
+                </p>
               )}
             </div>
 
@@ -347,10 +423,11 @@ export function ConfigForm() {
                 <Controller
                   name="analysts"
                   control={control}
+                  rules={{ validate: (v) => v.length > 0 || "Select at least one analyst" }}
                   render={({ field }) => (
                     <>
-                      {ANALYSTS.map((a) => (
-                        <label key={a} className="flex items-center gap-2 text-sm capitalize cursor-pointer">
+                      {activeAnalysts.map((a) => (
+                        <label key={a} className="flex items-center gap-2 text-sm cursor-pointer">
                           <Checkbox
                             checked={field.value.includes(a)}
                             onCheckedChange={(checked) => {
@@ -360,14 +437,17 @@ export function ConfigForm() {
                               field.onChange(next);
                             }}
                           />
-                          {a}
+                          {a.replace(/_/g, " ").replace(/\bcrypto\b/i, "").trim() || a}
                         </label>
                       ))}
                     </>
                   )}
                 />
               </div>
-              <p className="text-xs text-muted-foreground">Select which analyst agents to include ({watchedAnalysts.length}/4)</p>
+              <p className="text-xs text-muted-foreground">Select which analyst agents to include ({watchedAnalysts.length}/{activeAnalysts.length})</p>
+              {errors.analysts && (
+                <p className="text-sm text-destructive">{errors.analysts.message}</p>
+              )}
             </div>
 
             {/* Research Depth */}
@@ -412,6 +492,28 @@ export function ConfigForm() {
               />
               <p className="text-xs text-muted-foreground">Language for the final report (agent debate stays in English)</p>
             </div>
+
+            {/* Crypto Interval — only for crypto */}
+            {isCrypto && (
+              <div className="flex flex-col gap-2">
+                <Label className="font-medium">Kline Interval</Label>
+                <Controller
+                  name="interval"
+                  control={control}
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger><SelectValue placeholder="Select interval" /></SelectTrigger>
+                      <SelectContent>
+                        {CRYPTO_INTERVALS.map((i) => (
+                          <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">Candlestick interval for technical analysis</p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -538,7 +640,8 @@ export function ConfigForm() {
           </CardContent>
         </Card>
 
-        {/* ── Data Sources ── */}
+        {/* ── Data Sources (stock only) ── */}
+        {!isCrypto && (
         <Card className="shadow-sm">
           <CardContent className="pt-5">
             <SectionToggle label="Data Sources" open={showData} onToggle={() => setShowData(!showData)} />
@@ -574,6 +677,7 @@ export function ConfigForm() {
             )}
           </CardContent>
         </Card>
+        )}
 
         {/* ── Submit ── */}
         {submitError && (
