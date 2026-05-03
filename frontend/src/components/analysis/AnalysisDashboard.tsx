@@ -6,6 +6,7 @@ import { MessagesPanel } from "./MessagesPanel";
 import { ReportPanel } from "./ReportPanel";
 import { StatsBar } from "./StatsBar";
 import { ReconnectionIndicator } from "./ReconnectionIndicator";
+import { AnalysisStatusBadge } from "./AnalysisStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface AnalysisDashboardProps {
@@ -86,7 +87,12 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
             </div>
-            Analysis
+            {runDetails?.ticker ? (
+              <span>{runDetails.ticker} Analysis</span>
+            ) : (
+              "Analysis"
+            )}
+            <AnalysisStatusBadge status={runDetails?.status} />
           </h1>
           <p className="text-sm text-muted-foreground mt-1 font-mono">{runId}</p>
         </div>

@@ -22,6 +22,7 @@ const SECTION_LABELS: Record<string, string> = {
   risk_conservative: "Conservative Risk",
   risk_neutral: "Neutral Risk",
   portfolio_manager: "Portfolio Manager",
+  final_trade_decision: "Final Trade Decision",
 };
 
 function MarkdownContent({ content }: { content: string }) {

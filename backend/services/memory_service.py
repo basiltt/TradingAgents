@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from tradingagents.agents.utils.memory import TradingMemoryLog
 
-_ENTRY_RE = re.compile(
-    r"^##\s+(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|\s*(\S+)"
-)
+logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -28,35 +25,19 @@ class MemoryService:
         if self._cache is not None and mtime == self._cache_mtime:
             return self._cache
 
+        log = TradingMemoryLog({"memory_log_path": self._path})
+        raw_entries = log.load_entries()
+
         entries: List[Dict[str, Any]] = []
-        current_entry: Optional[Dict[str, Any]] = None
-        reasoning_lines: List[str] = []
-
-        with open(self._path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.rstrip("\n")
-                m = _ENTRY_RE.match(line)
-                if m:
-                    if current_entry:
-                        current_entry["reasoning"] = "\n".join(reasoning_lines).strip() or None
-                        entries.append(current_entry)
-                    current_entry = {
-                        "ticker": m.group(1),
-                        "date": m.group(2),
-                        "decision": m.group(3),
-                        "confidence": m.group(4),
-                        "status": m.group(5),
-                    }
-                    reasoning_lines = []
-                elif current_entry is not None:
-                    if line.startswith("Reasoning:"):
-                        reasoning_lines.append(line[len("Reasoning:"):].strip())
-                    elif line.strip():
-                        reasoning_lines.append(line)
-
-        if current_entry:
-            current_entry["reasoning"] = "\n".join(reasoning_lines).strip() or None
-            entries.append(current_entry)
+        for e in raw_entries:
+            entries.append({
+                "ticker": e.get("ticker", ""),
+                "date": e.get("date", ""),
+                "decision": e.get("rating", ""),
+                "confidence": "pending" if e.get("pending") else (e.get("raw") or "resolved"),
+                "status": "pending" if e.get("pending") else "resolved",
+                "reasoning": e.get("decision", "") or None,
+            })
 
         self._cache = entries
         self._cache_mtime = mtime

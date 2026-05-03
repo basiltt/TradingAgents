@@ -88,6 +88,13 @@ _RISK_FIELD_MAP = {
     "neutral_history": ("risk_neutral", "Neutral Analyst"),
 }
 
+_ANALYST_REPORT_MAP = {
+    "market_report": ("analyst_market", "Market Analyst"),
+    "sentiment_report": ("analyst_social", "Social Analyst"),
+    "news_report": ("analyst_news", "News Analyst"),
+    "fundamentals_report": ("analyst_fundamentals", "Fundamentals Analyst"),
+}
+
 
 def make_seq_counter() -> Iterator[int]:
     return itertools.count(1)
@@ -101,6 +108,7 @@ class StreamParserState:
         self.prev_risk: Optional[Dict] = None
         self.prev_trader: Optional[str] = None
         self.prev_final: Optional[str] = None
+        self.prev_analyst_reports: Dict[str, str] = {}
 
 
 def parse_stream_chunk(
@@ -137,6 +145,16 @@ def parse_stream_chunk(
         agent_name = getattr(last_msg, "name", None)
         if agent_name:
             events.insert(0, AgentStatusEvent(agent=agent_name, status="in_progress"))
+
+    # Extract analyst reports (market, social, news, fundamentals)
+    for field_name, (section, agent) in _ANALYST_REPORT_MAP.items():
+        val = chunk.get(field_name)
+        if isinstance(val, str) and val.strip():
+            prev_val = state.prev_analyst_reports.get(field_name, "")
+            if val.strip() != prev_val:
+                events.append(AgentStatusEvent(agent=agent, status="completed"))
+                events.append(ReportChunkEvent(section=section, content=val.strip()))
+                state.prev_analyst_reports[field_name] = val.strip()
 
     debate = chunk.get("investment_debate_state")
     if debate and debate != state.prev_debate:

@@ -16,14 +16,33 @@ def memory_service(memory_file):
 
 
 SAMPLE_MEMORY = """\
-## SPY | 2025-06-01 | BUY | High | resolved
-Reasoning: Strong momentum signals.
+[2025-06-01 | SPY | BUY | pending]
 
-## AAPL | 2025-05-15 | SELL | Medium | pending
-Reasoning: Overvalued based on fundamentals.
+DECISION:
+Strong momentum signals. Recommend buying.
 
-## TSLA | 2025-05-10 | HOLD | Low | resolved
-Reasoning: Mixed signals from analysts.
+<!-- ENTRY_END -->
+
+[2025-05-15 | AAPL | SELL | +2.5% | +1.2% | 10d]
+
+DECISION:
+Overvalued based on fundamentals.
+
+REFLECTION:
+Trade went well, alpha was positive.
+
+<!-- ENTRY_END -->
+
+[2025-05-10 | TSLA | HOLD | -1.0% | -0.5% | 5d]
+
+DECISION:
+Mixed signals from analysts.
+
+REFLECTION:
+Should have been more cautious.
+
+<!-- ENTRY_END -->
+
 """
 
 
@@ -46,6 +65,9 @@ def test_parse_entries(memory_service, memory_file):
     assert result["total"] == 3
     assert result["items"][0]["ticker"] == "SPY"
     assert result["items"][0]["decision"] == "BUY"
+    assert result["items"][0]["status"] == "pending"
+    assert result["items"][1]["ticker"] == "AAPL"
+    assert result["items"][1]["status"] == "resolved"
 
 
 def test_pagination(memory_service, memory_file):
@@ -60,13 +82,24 @@ def test_pagination(memory_service, memory_file):
 
 def test_malformed_entries_skipped(memory_service, memory_file):
     content = """\
-## SPY | 2025-06-01 | BUY | High | resolved
-Reasoning: Good.
+[2025-06-01 | SPY | BUY | pending]
 
-## This is malformed no pipes
+DECISION:
+Good.
 
-## AAPL | 2025-05-15 | SELL | Medium | pending
-Reasoning: Bad.
+<!-- ENTRY_END -->
+
+This is malformed no brackets
+
+<!-- ENTRY_END -->
+
+[2025-05-15 | AAPL | SELL | +1.0% | +0.5% | 7d]
+
+DECISION:
+Bad.
+
+<!-- ENTRY_END -->
+
 """
     memory_file.write_text(content)
     result = memory_service.get_entries(page=1, limit=10)
@@ -82,8 +115,13 @@ def test_cache_invalidation(memory_service, memory_file):
     time.sleep(0.1)
 
     memory_file.write_text("""\
-## GOOG | 2025-06-01 | BUY | High | resolved
-Reasoning: Cloud growth.
+[2025-06-01 | GOOG | BUY | pending]
+
+DECISION:
+Cloud growth.
+
+<!-- ENTRY_END -->
+
 """)
     result2 = memory_service.get_entries(page=1, limit=10)
     assert result2["total"] == 1
