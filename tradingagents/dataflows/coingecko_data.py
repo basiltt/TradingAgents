@@ -1,6 +1,6 @@
 """CoinGecko free-tier data access for crypto fundamentals and community metrics.
 
-No API key required.  Rate-limited to stay within the public tier (~10-30 req/min).
+No API key required.  Rate-limited to stay within the public tier (30 req/min, using 25 with safety margin).
 """
 
 from __future__ import annotations
@@ -90,7 +90,17 @@ class _RateLimiter:
             self._timestamps.append(time.time())
 
 
-_limiter = _RateLimiter(max_per_min=10)
+_limiter = _RateLimiter(max_per_min=25)
+
+_coingecko_semaphore = threading.Semaphore(25)
+_coingecko_sem_lock = threading.Lock()
+
+
+def configure_coingecko_concurrency(max_concurrent: int) -> None:
+    global _coingecko_semaphore
+    with _coingecko_sem_lock:
+        _coingecko_semaphore = threading.Semaphore(max_concurrent)
+    logger.info("CoinGecko concurrency limit set to %d", max_concurrent)
 
 # ---------------------------------------------------------------------------
 # Response cache
@@ -109,14 +119,23 @@ def _cached_get(url: str, params: dict | None = None) -> dict:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
             return _json.loads(_cache[key][1])
 
-    _limiter.wait()
-    resp = _SESSION.get(url, params=params, timeout=20)
-    resp.raise_for_status()
-    data = resp.json()
+    _coingecko_semaphore.acquire()
+    try:
+        # Re-check cache after acquiring semaphore (another thread may have fetched)
+        with _cache_lock:
+            if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
+                return _json.loads(_cache[key][1])
 
-    with _cache_lock:
-        _cache[key] = (time.time(), _json.dumps(data))
-    return data
+        _limiter.wait()
+        resp = _SESSION.get(url, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+
+        with _cache_lock:
+            _cache[key] = (time.time(), _json.dumps(data))
+        return data
+    finally:
+        _coingecko_semaphore.release()
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
 def _parse_signal(decision: str) -> Dict[str, Any]:
-    """Parse final_trade_decision text into direction, confidence, and numeric score."""
+    """Parse final_trade_decision text into direction, confidence, and numeric score (1-10)."""
     if not decision:
         return {"direction": "hold", "confidence": "low", "score": 0}
 
@@ -30,13 +30,24 @@ def _parse_signal(decision: str) -> Dict[str, Any]:
         direction = "sell"
 
     confidence = "low"
-    conf_score = 1
-    if re.search(r"\b(strong|high|very\s+high|extremely)\b", text):
+    conf_score = 2
+    if re.search(r"\b(very\s+high|extremely|exceptional|overwhelming)\b", text):
         confidence = "high"
-        conf_score = 3
+        conf_score = 10
+    elif re.search(r"\b(strong|high)\b", text):
+        confidence = "high"
+        conf_score = 8
     elif re.search(r"\b(moderate|medium|moderately)\b", text):
         confidence = "moderate"
-        conf_score = 2
+        conf_score = 5
+
+    pct_match = re.search(r"(\d{1,3})\s*%", text)
+    if pct_match:
+        pct = int(pct_match.group(1))
+        if 0 < pct <= 100:
+            conf_score = max(conf_score, round(pct / 10))
+
+    conf_score = max(1, min(10, conf_score))
 
     sign = 1 if direction == "buy" else (-1 if direction == "sell" else 0)
     score = sign * conf_score

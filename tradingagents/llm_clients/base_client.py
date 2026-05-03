@@ -1,6 +1,35 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
+import logging
+import threading
 import warnings
+
+logger = logging.getLogger(__name__)
+
+_llm_semaphore: threading.Semaphore | None = None
+_llm_sem_lock = threading.Lock()
+
+
+def configure_llm_concurrency(max_concurrent: int) -> None:
+    global _llm_semaphore
+    with _llm_sem_lock:
+        if max_concurrent <= 0:
+            _llm_semaphore = None
+            logger.info("LLM concurrency: unlimited")
+        else:
+            _llm_semaphore = threading.Semaphore(max_concurrent)
+            logger.info("LLM concurrency limit set to %d", max_concurrent)
+
+
+def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
+    sem = _llm_semaphore
+    if sem is None:
+        return super_invoke(input, config, **kwargs)
+    sem.acquire()
+    try:
+        return super_invoke(input, config, **kwargs)
+    finally:
+        sem.release()
 
 
 def normalize_content(response):

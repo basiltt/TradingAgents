@@ -31,6 +31,9 @@ DEFAULT_CONFIG = {
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",
+    # Maximum concurrent LLM API calls (0 = unlimited).
+    # Users on pay-as-you-go plans can leave this at 0.
+    "llm_max_concurrent": 0,
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

@@ -10,10 +10,17 @@ VALID_MODELS = {
 }
 
 
+def _normalize_model_name(name: str) -> str:
+    """Normalize model name so 'claude-sonnet-4.6' matches 'claude-sonnet-4-6'."""
+    import re
+    return re.sub(r"[\.\-]", "-", name)
+
+
 def validate_model(provider: str, model: str) -> bool:
     """Check if model name is valid for the given provider.
 
     For ollama, openrouter - any model is accepted.
+    Normalizes dots/hyphens so proxy and direct API model IDs both match.
     """
     provider_lower = provider.lower()
 
@@ -23,4 +30,8 @@ def validate_model(provider: str, model: str) -> bool:
     if provider_lower not in VALID_MODELS:
         return True
 
-    return model in VALID_MODELS[provider_lower]
+    normalized = _normalize_model_name(model)
+    return any(
+        _normalize_model_name(m) == normalized
+        for m in VALID_MODELS[provider_lower]
+    )
