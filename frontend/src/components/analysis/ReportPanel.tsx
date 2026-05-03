@@ -126,93 +126,62 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-/* ── Section card (expandable) ──────────────────────────────────────── */
+/* ── Tab button ─────────────────────────────────────────────────────── */
 
-function SectionCard({
+function TabButton({
   section,
-  content,
-  defaultOpen = false,
+  active,
+  onClick,
 }: {
   section: string;
-  content: string;
-  defaultOpen?: boolean;
+  active: boolean;
+  onClick: () => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   const meta = SECTION_META[section] ?? {
     label: section, group: "Other", icon: "", accent: "text-primary", bg: "bg-primary/10",
   };
-
   const isDecision = section === "final_trade_decision";
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       className={cn(
-        "rounded-xl border overflow-hidden transition-all",
-        isDecision
-          ? "border-yellow-500/30 bg-yellow-500/[0.02]"
-          : "border-border/40 bg-card/30",
+        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all text-sm",
+        active
+          ? cn("bg-muted/30 font-semibold", isDecision ? "text-yellow-400" : "text-foreground")
+          : "text-muted-foreground hover:text-foreground/80 hover:bg-muted/15",
       )}
     >
-      {/* Header button */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "w-full flex items-center gap-3.5 px-5 py-4 text-left transition-colors",
-          open ? "bg-muted/15" : "hover:bg-muted/10",
+      <div className={cn(
+        "w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-colors",
+        active ? meta.bg : "bg-transparent",
+      )}>
+        {meta.icon && (
+          <svg
+            className={cn("w-3.5 h-3.5", active ? meta.accent : "text-muted-foreground/50")}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d={meta.icon} />
+          </svg>
         )}
-      >
-        <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0", meta.bg)}>
-          {meta.icon && (
-            <svg className={cn("w-4 h-4", meta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d={meta.icon} />
-            </svg>
-          )}
-        </div>
-
-        <span className={cn(
-          "text-sm font-semibold flex-1",
-          isDecision ? "text-yellow-400" : "text-foreground/90",
-        )}>
-          {meta.label}
-        </span>
-
-        <svg
-          className={cn(
-            "w-4 h-4 text-muted-foreground/40 transition-transform duration-200 flex-shrink-0",
-            open && "rotate-180",
-          )}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {/* Content */}
-      {open && (
-        <div className={cn(
-          "border-t",
-          isDecision ? "border-yellow-500/15" : "border-border/25",
-        )}>
-          <div className="px-7 py-6 sm:px-8 sm:py-7">
-            <MarkdownContent content={content} />
-          </div>
-        </div>
+      </div>
+      <span className="truncate">{meta.label}</span>
+      {isDecision && (
+        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" />
       )}
-    </div>
+    </button>
   );
 }
 
-/* ── Group header ───────────────────────────────────────────────────── */
+/* ── Group label in sidebar ─────────────────────────────────────────── */
 
-function GroupHeader({ name, count }: { name: string; count: number }) {
+function SidebarGroupLabel({ name }: { name: string }) {
   return (
-    <div className="flex items-center gap-2.5 pt-3 pb-1.5">
-      <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/50">
+    <div className="px-3 pt-4 pb-1.5 first:pt-0">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/40">
         {name}
-      </h3>
-      <span className="text-[10px] text-muted-foreground/35 tabular-nums">{count}</span>
-      <div className="flex-1 h-px bg-border/20 ml-1.5" />
+      </span>
     </div>
   );
 }
@@ -221,6 +190,14 @@ function GroupHeader({ name, count }: { name: string; count: number }) {
 
 export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelProps) {
   const entries = Object.entries(reports);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+
+  // Auto-select first tab or final_trade_decision
+  const effectiveTab = activeTab && reports[activeTab]
+    ? activeTab
+    : reports.final_trade_decision
+      ? "final_trade_decision"
+      : entries[0]?.[0] ?? null;
 
   if (entries.length === 0) {
     return (
@@ -239,6 +216,7 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
     );
   }
 
+  // Group entries for sidebar
   const grouped = new Map<string, Array<[string, string]>>();
   for (const [section, content] of entries) {
     const group = SECTION_META[section]?.group ?? "Other";
@@ -252,10 +230,13 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
-  const finalDecision = reports.final_trade_decision;
+  const activeContent = effectiveTab ? reports[effectiveTab] : null;
+  const activeMeta = effectiveTab
+    ? SECTION_META[effectiveTab] ?? { label: effectiveTab, accent: "text-primary", bg: "bg-primary/10", icon: "" }
+    : null;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -271,30 +252,59 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
         </div>
       </div>
 
-      {/* Final decision at top */}
-      {finalDecision && (
-        <SectionCard section="final_trade_decision" content={finalDecision} defaultOpen />
-      )}
+      {/* Tab layout: sidebar + content */}
+      <div className="flex rounded-xl border border-border/40 bg-card/20 overflow-hidden min-h-[500px]">
+        {/* Sidebar tabs */}
+        <div className="w-52 flex-shrink-0 border-r border-border/30 bg-muted/5 py-2 overflow-y-auto">
+          {sortedGroups.map(([group, groupEntries]) => (
+            <div key={group}>
+              <SidebarGroupLabel name={group} />
+              {groupEntries.map(([section]) => (
+                <div key={section} className="px-1.5">
+                  <TabButton
+                    section={section}
+                    active={effectiveTab === section}
+                    onClick={() => setActiveTab(section)}
+                  />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
 
-      {/* Grouped sections */}
-      {sortedGroups.map(([group, groupEntries]) => {
-        const filtered = groupEntries.filter(([s]) => s !== "final_trade_decision");
-        if (filtered.length === 0) return null;
+        {/* Content area */}
+        <div className="flex-1 overflow-y-auto">
+          {activeContent && activeMeta ? (
+            <div>
+              {/* Content header */}
+              <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-sm border-b border-border/25 px-7 py-4 flex items-center gap-3">
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", activeMeta.bg)}>
+                  {activeMeta.icon && (
+                    <svg className={cn("w-4 h-4", activeMeta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d={activeMeta.icon} />
+                    </svg>
+                  )}
+                </div>
+                <h3 className={cn(
+                  "text-base font-semibold",
+                  effectiveTab === "final_trade_decision" ? "text-yellow-400" : "text-foreground",
+                )}>
+                  {activeMeta.label}
+                </h3>
+              </div>
 
-        return (
-          <div key={group} className="space-y-2.5">
-            <GroupHeader name={group} count={filtered.length} />
-            {filtered.map(([section, content]) => (
-              <SectionCard
-                key={section}
-                section={section}
-                content={content}
-                defaultOpen={filtered.length <= 2}
-              />
-            ))}
-          </div>
-        );
-      })}
+              {/* Markdown content */}
+              <div className="px-7 py-6 sm:px-8 sm:py-7">
+                <MarkdownContent content={activeContent} />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground/40 text-sm">
+              Select a section to view
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 });
