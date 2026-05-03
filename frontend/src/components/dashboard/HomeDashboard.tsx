@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useAppSelector } from "@/store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+
 
 export function HomeDashboard() {
   const activeRuns = useAppSelector((s) => s.analysis.activeRuns);
@@ -11,28 +11,26 @@ export function HomeDashboard() {
   return (
     <div className="space-y-8">
       {/* Hero */}
-      <div className="relative overflow-hidden rounded-2xl gradient-primary p-8 md:p-10 text-white">
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDM0djZoLTJ2LTZoMnptMC0xNnYyaC0ydi0yaDJ6bTAtOHYyaC0yVjhoMnptMCA0djZoLTJ2LTZoMnptMCAxNnYyaC0ydi0yaDJ6bTAgOHY2aC0ydi02aDJ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-30" />
+      <div className="gradient-hero relative overflow-hidden rounded-2xl p-8 md:p-10 text-white shadow-xl shadow-primary/15">
+        <div className="absolute inset-0 opacity-[0.07]" style={{backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 20%, white 1px, transparent 1px)', backgroundSize: '40px 40px'}} />
+        <div className="absolute top-0 right-0 w-72 h-72 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/4 blur-3xl" />
         <div className="relative">
-          <h1 className="text-2xl md:text-3xl font-bold mb-2">
+          <h1 className="text-2xl md:text-3xl font-bold mb-3 tracking-tight">
             Welcome to TradingAgents
           </h1>
-          <p className="text-white/80 text-base md:text-lg max-w-2xl mb-6">
+          <p className="text-white/75 text-base md:text-lg max-w-2xl mb-8 leading-relaxed">
             AI-powered multi-agent trading analysis. Get comprehensive market insights
             from specialized analyst, researcher, and risk management agents.
           </p>
-          <Button
-            asChild
-            size="lg"
-            className="bg-white text-primary font-semibold hover:bg-white/90 shadow-lg"
+          <Link
+            to="/analysis/new"
+            className="inline-flex items-center gap-2 h-10 px-5 rounded-lg bg-white/90 dark:bg-white/30 text-primary dark:text-white font-semibold hover:bg-white dark:hover:bg-white/40 shadow-lg shadow-black/10 text-sm transition-colors"
           >
-            <Link to="/analysis/new">
-              <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              New Analysis
-            </Link>
-          </Button>
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            New Analysis
+          </Link>
         </div>
       </div>
 
@@ -126,25 +124,26 @@ export function HomeDashboard() {
           </div>
         </div>
       ) : (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
-              <svg className="w-7 h-7 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <Card className="border-dashed border-2 shadow-none">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-primary/5 dark:bg-primary/10 flex items-center justify-center mb-5">
+              <svg className="w-8 h-8 text-primary/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
             </div>
-            <h3 className="font-semibold text-foreground mb-1">No active analyses</h3>
-            <p className="text-sm text-muted-foreground mb-4 max-w-sm">
+            <h3 className="font-semibold text-foreground mb-1.5 text-base">No active analyses</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-xs leading-relaxed">
               Start a new analysis to see real-time progress from AI trading agents.
             </p>
-            <Button asChild size="sm">
-              <Link to="/analysis/new">
-                <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Start Analysis
-              </Link>
-            </Button>
+            <Link
+              to="/analysis/new"
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
+            >
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Start Analysis
+            </Link>
           </CardContent>
         </Card>
       )}
@@ -166,15 +165,15 @@ function QuickStat({
   bgColor: string;
 }) {
   return (
-    <Card>
+    <Card className="shadow-sm hover:shadow-md transition-shadow duration-200">
       <CardContent className="pt-5 pb-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3.5">
           <div className={`w-10 h-10 rounded-xl ${bgColor} flex items-center justify-center ${color}`}>
             {icon}
           </div>
           <div>
-            <p className="text-2xl font-bold">{value}</p>
-            <p className="text-xs text-muted-foreground font-medium">{label}</p>
+            <p className="text-2xl font-bold tracking-tight">{value}</p>
+            <p className="text-xs text-muted-foreground font-medium mt-0.5">{label}</p>
           </div>
         </div>
       </CardContent>
