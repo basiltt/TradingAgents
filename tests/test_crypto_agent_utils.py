@@ -98,26 +98,28 @@ class TestOutputSanitization:
 
 class TestErrorHandling:
     @patch("tradingagents.agents.utils.crypto_agent_utils.get_bybit_klines")
-    def test_critical_tool_raises_on_failure(self, mock_fn):
+    def test_critical_tool_returns_error_on_failure(self, mock_fn):
         mock_fn.side_effect = ValueError("API error")
         tools = _make_tools()
         klines_tool = next(t for t in tools if t.name == "get_crypto_klines")
-        with pytest.raises(Exception):
-            klines_tool.invoke({
-                "symbol": "BTCUSDT", "interval": "60",
-                "start_date": "2025-01-01", "end_date": "2025-01-02",
-            })
+        result = klines_tool.invoke({
+            "symbol": "BTCUSDT", "interval": "60",
+            "start_date": "2025-01-01", "end_date": "2025-01-02",
+        })
+        assert "Error" in result
+        assert "BTCUSDT" in result
 
     @patch("tradingagents.agents.utils.crypto_agent_utils.get_bybit_indicators")
-    def test_critical_indicators_raises_on_failure(self, mock_fn):
+    def test_critical_indicators_returns_error_on_failure(self, mock_fn):
         mock_fn.side_effect = ValueError("API error")
         tools = _make_tools()
         ind_tool = next(t for t in tools if t.name == "get_crypto_indicators")
-        with pytest.raises(Exception):
-            ind_tool.invoke({
-                "symbol": "BTCUSDT", "interval": "60",
-                "start_date": "2025-01-01", "end_date": "2025-01-02",
+        result = ind_tool.invoke({
+            "symbol": "BTCUSDT", "interval": "60",
+            "start_date": "2025-01-01", "end_date": "2025-01-02",
             })
+        assert "Error" in result
+        assert "BTCUSDT" in result
 
     @patch("tradingagents.agents.utils.crypto_agent_utils.get_bybit_funding_rates")
     def test_non_critical_returns_unavailable_on_failure(self, mock_fn):
