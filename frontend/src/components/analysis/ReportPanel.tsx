@@ -1,8 +1,10 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useState, useMemo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { TradingCard } from "./TradingCard";
+import { parseTradeCard } from "./parseTradeCard";
 
 interface ReportPanelProps {
   reports: Record<string, string>;
@@ -29,7 +31,7 @@ const SECTION_META: Record<
   final_trade_decision: { label: "Final Trade Decision", group: "Decision", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z", accent: "text-yellow-400", bg: "bg-yellow-500/10" },
 };
 
-const GROUP_ORDER = ["Analysis", "Research", "Trading", "Risk", "Decision"];
+const GROUP_ORDER = ["Trading", "Decision", "Risk", "Analysis", "Research"];
 
 /* ── Custom markdown components for better table/content rendering ─── */
 
@@ -111,16 +113,39 @@ const markdownComponents = {
   },
 };
 
+/* ── JSON detection & formatting ───────────────────────────────────── */
+
+function formatJsonInContent(text: string): string {
+  const trimmed = text.trim();
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start === -1 || end === -1) return text;
+  try {
+    const obj = JSON.parse(trimmed.slice(start, end + 1));
+    const before = trimmed.slice(0, start).trim();
+    const after = trimmed.slice(end + 1).trim();
+    const formatted = JSON.stringify(obj, null, 2);
+    const parts: string[] = [];
+    if (before) parts.push(before);
+    parts.push("```json\n" + formatted + "\n```");
+    if (after) parts.push(after);
+    return parts.join("\n\n");
+  } catch {
+    return text;
+  }
+}
+
 /* ── Markdown renderer ──────────────────────────────────────────────── */
 
 function MarkdownContent({ content }: { content: string }) {
+  const processed = content.trim().includes("{") ? formatJsonInContent(content) : content;
   return (
     <div className="max-w-none text-[13.5px]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={markdownComponents}
       >
-        {content}
+        {processed}
       </ReactMarkdown>
     </div>
   );
@@ -191,12 +216,15 @@ function SidebarGroupLabel({ name }: { name: string }) {
 export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelProps) {
   const entries = Object.entries(reports);
   const [activeTab, setActiveTab] = useState<string | null>(null);
+  const tradeCardData = useMemo(() => parseTradeCard(reports), [reports]);
 
-  // Auto-select first tab or final_trade_decision
+  // Auto-select trader tab, then final_trade_decision, then first available
   const effectiveTab = activeTab && reports[activeTab]
     ? activeTab
-    : reports.final_trade_decision
-      ? "final_trade_decision"
+    : reports.trader
+      ? "trader"
+      : reports.final_trade_decision
+        ? "final_trade_decision"
       : entries[0]?.[0] ?? null;
 
   if (entries.length === 0) {
@@ -292,6 +320,13 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
                   {activeMeta.label}
                 </h3>
               </div>
+
+              {/* Trade Setup card for trader section */}
+              {effectiveTab === "trader" && tradeCardData && (
+                <div className="px-7 pt-6 sm:px-8 sm:pt-7">
+                  <TradingCard data={tradeCardData} />
+                </div>
+              )}
 
               {/* Markdown content */}
               <div className="px-7 py-6 sm:px-8 sm:py-7">

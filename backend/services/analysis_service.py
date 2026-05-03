@@ -121,6 +121,9 @@ class AnalysisService:
     async def delete_run(self, run_id: str) -> bool:
         return await asyncio.to_thread(self._db.delete_run, run_id)
 
+    async def delete_all_runs(self) -> int:
+        return await asyncio.to_thread(self._db.delete_all_runs)
+
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
         return await asyncio.to_thread(self._db.list_runs, **kwargs)
 

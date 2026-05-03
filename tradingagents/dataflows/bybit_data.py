@@ -125,6 +125,84 @@ class BybitCircuitBreaker:
 
 _SENSITIVE_PARAM_KEYS = {"api_key", "sign", "timestamp", "api_secret"}
 
+# ---------------------------------------------------------------------------
+# Symbol validation — fetch available linear perpetual symbols from Bybit
+# ---------------------------------------------------------------------------
+
+_valid_symbols_cache: set[str] | None = None
+_valid_symbols_lock = threading.Lock()
+_valid_symbols_ts: float = 0.0
+_SYMBOLS_TTL = 3600  # refresh every hour
+
+
+def _fetch_valid_symbols() -> set[str]:
+    """Fetch all valid linear perpetual symbols from Bybit."""
+    symbols: set[str] = set()
+    cursor = ""
+    for _ in range(20):  # safety limit
+        params: dict = {"category": "linear", "limit": "1000"}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            resp = _session.get(
+                "https://api.bybit.com/v5/market/instruments-info",
+                params=params,
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("retCode") != 0:
+                logger.warning("Failed to fetch Bybit instruments: %s", data.get("retMsg"))
+                break
+            for item in data.get("result", {}).get("list", []):
+                sym = item.get("symbol", "")
+                if sym:
+                    symbols.add(sym)
+            cursor = data.get("result", {}).get("nextPageCursor", "")
+            if not cursor:
+                break
+        except Exception:
+            logger.warning("Error fetching Bybit instruments", exc_info=True)
+            break
+    logger.info("Loaded %d valid Bybit linear symbols", len(symbols))
+    return symbols
+
+
+def get_valid_symbols() -> set[str]:
+    """Return cached set of valid Bybit linear perpetual symbols."""
+    global _valid_symbols_cache, _valid_symbols_ts
+    now = time.monotonic()
+    if _valid_symbols_cache is not None and (now - _valid_symbols_ts) < _SYMBOLS_TTL:
+        return _valid_symbols_cache
+    with _valid_symbols_lock:
+        # double-check after acquiring lock
+        if _valid_symbols_cache is not None and (time.monotonic() - _valid_symbols_ts) < _SYMBOLS_TTL:
+            return _valid_symbols_cache
+        _valid_symbols_cache = _fetch_valid_symbols()
+        _valid_symbols_ts = time.monotonic()
+        return _valid_symbols_cache
+
+
+class InvalidSymbolError(ValueError):
+    """Raised when a symbol is not listed on Bybit linear perpetuals."""
+    pass
+
+
+def normalize_bybit_symbol(symbol: str) -> str:
+    """Normalize a symbol to Bybit's listed format, raising if not found."""
+    upper = symbol.upper().strip()
+    valid = get_valid_symbols()
+    if upper in valid:
+        return upper
+    # Try 1000x prefix for low-priced tokens
+    prefixed = f"1000{upper}"
+    if prefixed in valid:
+        logger.info("Symbol %s normalized to %s", upper, prefixed)
+        return prefixed
+    raise InvalidSymbolError(
+        f"Symbol '{upper}' is not available on Bybit linear perpetuals. "
+        f"Check https://www.bybit.com/derivatives/en/usdt-perpetual for valid symbols."
+    )
+
 
 def _sign_request(params: dict, api_key: str, api_secret: str) -> dict:
     """Add HMAC-SHA256 signature to request params (Bybit V5 auth)."""
@@ -261,6 +339,7 @@ def get_bybit_klines(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> str:
+    symbol = normalize_bybit_symbol(symbol)
     cache_key = ("klines", symbol, interval, start_time, end_time)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
@@ -336,6 +415,7 @@ def get_bybit_funding_rates(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> str:
+    symbol = normalize_bybit_symbol(symbol)
     cache_key = ("funding", symbol, start_time, end_time)
 
     result = _bybit_request(
@@ -373,6 +453,7 @@ def get_bybit_open_interest(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> str:
+    symbol = normalize_bybit_symbol(symbol)
     cache_key = ("oi", symbol, interval, start_time, end_time)
 
     result = _bybit_request(
@@ -407,8 +488,8 @@ def get_bybit_ticker(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> str:
+    symbol = normalize_bybit_symbol(symbol)
     cache_key = ("ticker", symbol)
-
     result = _bybit_request(
         "/v5/market/tickers",
         {"category": "linear", "symbol": symbol},
@@ -448,6 +529,7 @@ def get_bybit_indicators(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> str:
+    symbol = normalize_bybit_symbol(symbol)
     cache_key = ("indicators", symbol, interval, start_time, end_time)
     if cache is not None and cache_key in cache:
         return cache[cache_key]

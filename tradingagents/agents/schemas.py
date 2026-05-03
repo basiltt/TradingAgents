@@ -118,6 +118,13 @@ class TraderProposal(BaseModel):
     action: TraderAction = Field(
         description="The transaction direction. Exactly one of Buy / Hold / Sell.",
     )
+    confidence: Optional[int] = Field(
+        default=None,
+        description=(
+            "Conviction level from 1 (lowest) to 10 (highest) reflecting how "
+            "strongly the evidence supports this action."
+        ),
+    )
     reasoning: str = Field(
         description=(
             "The case for this action, anchored in the analysts' reports and "
@@ -126,15 +133,39 @@ class TraderProposal(BaseModel):
     )
     entry_price: Optional[float] = Field(
         default=None,
-        description="Optional entry price target in the instrument's quote currency.",
+        description="Entry price target in the instrument's quote currency.",
     )
     stop_loss: Optional[float] = Field(
         default=None,
-        description="Optional stop-loss price in the instrument's quote currency.",
+        description="Primary stop-loss price in the instrument's quote currency.",
+    )
+    stop_loss_2: Optional[float] = Field(
+        default=None,
+        description="Secondary (wider) stop-loss price, if a two-tier exit strategy is warranted.",
+    )
+    take_profit_1: Optional[float] = Field(
+        default=None,
+        description="First (nearest) take-profit target price.",
+    )
+    take_profit_2: Optional[float] = Field(
+        default=None,
+        description="Second take-profit target price.",
+    )
+    take_profit_3: Optional[float] = Field(
+        default=None,
+        description="Third (stretch) take-profit target price.",
+    )
+    risk_reward_ratio: Optional[float] = Field(
+        default=None,
+        description="Risk-to-reward ratio, e.g. 2.5 means 2.5R reward per 1R risk.",
     )
     position_sizing: Optional[str] = Field(
         default=None,
-        description="Optional sizing guidance, e.g. '5% of portfolio'.",
+        description="Sizing guidance, e.g. '5% of portfolio'.",
+    )
+    time_horizon: Optional[str] = Field(
+        default=None,
+        description="Recommended holding period, e.g. '2-4 weeks' or '3-6 months'.",
     )
 
 
@@ -147,15 +178,28 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
     """
     parts = [
         f"**Action**: {proposal.action.value}",
-        "",
-        f"**Reasoning**: {proposal.reasoning}",
     ]
+    if proposal.confidence is not None:
+        parts.extend(["", f"**Confidence**: {proposal.confidence}/10"])
+    parts.extend(["", f"**Reasoning**: {proposal.reasoning}"])
     if proposal.entry_price is not None:
         parts.extend(["", f"**Entry Price**: {proposal.entry_price}"])
     if proposal.stop_loss is not None:
         parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
+    if proposal.stop_loss_2 is not None:
+        parts.extend(["", f"**Stop Loss 2**: {proposal.stop_loss_2}"])
+    if proposal.take_profit_1 is not None:
+        parts.extend(["", f"**Take Profit 1**: {proposal.take_profit_1}"])
+    if proposal.take_profit_2 is not None:
+        parts.extend(["", f"**Take Profit 2**: {proposal.take_profit_2}"])
+    if proposal.take_profit_3 is not None:
+        parts.extend(["", f"**Take Profit 3**: {proposal.take_profit_3}"])
+    if proposal.risk_reward_ratio is not None:
+        parts.extend(["", f"**Risk/Reward Ratio**: {proposal.risk_reward_ratio}"])
     if proposal.position_sizing:
         parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
+    if proposal.time_horizon:
+        parts.extend(["", f"**Time Horizon**: {proposal.time_horizon}"])
     parts.extend([
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
@@ -181,6 +225,13 @@ class PortfolioDecision(BaseModel):
         description=(
             "The final position rating. Exactly one of Buy / Overweight / Hold / "
             "Underweight / Sell, picked based on the analysts' debate."
+        ),
+    )
+    confidence: Optional[int] = Field(
+        default=None,
+        description=(
+            "Conviction level from 1 (lowest) to 10 (highest) reflecting how "
+            "strongly the overall evidence supports this rating."
         ),
     )
     executive_summary: str = Field(
@@ -216,11 +267,15 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     """
     parts = [
         f"**Rating**: {decision.rating.value}",
+    ]
+    if decision.confidence is not None:
+        parts.extend(["", f"**Confidence**: {decision.confidence}/10"])
+    parts.extend([
         "",
         f"**Executive Summary**: {decision.executive_summary}",
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
-    ]
+    ])
     if decision.price_target is not None:
         parts.extend(["", f"**Price Target**: {decision.price_target}"])
     if decision.time_horizon:

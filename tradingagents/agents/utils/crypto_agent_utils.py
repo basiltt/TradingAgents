@@ -19,6 +19,7 @@ from tradingagents.dataflows.bybit_data import (
     get_bybit_klines,
     get_bybit_open_interest,
     get_bybit_ticker,
+    InvalidSymbolError,
     BybitRateLimiter,
     BybitCircuitBreaker,
 )
@@ -64,6 +65,8 @@ def make_crypto_tools(
                 api_key=api_key, api_secret=api_secret,
             )
             return _sanitize(raw)
+        except InvalidSymbolError as exc:
+            return str(exc)
         except Exception as exc:
             logger.exception("get_crypto_klines failed for %s", symbol)
             return f"Error fetching kline data for {symbol}: {exc}"
@@ -84,6 +87,8 @@ def make_crypto_tools(
                 api_key=api_key, api_secret=api_secret,
             )
             return _sanitize(raw)
+        except InvalidSymbolError as exc:
+            return str(exc)
         except Exception as exc:
             logger.exception("get_crypto_indicators failed for %s", symbol)
             return f"Error computing indicators for {symbol}: {exc}"
@@ -103,6 +108,8 @@ def make_crypto_tools(
                 api_key=api_key, api_secret=api_secret,
             )
             return _sanitize(raw)
+        except InvalidSymbolError as exc:
+            return str(exc)
         except Exception as exc:
             logger.warning("Funding rates unavailable for %s: %s", symbol, exc)
             return _sanitize("Data unavailable: funding rate data could not be retrieved")
@@ -123,6 +130,8 @@ def make_crypto_tools(
                 api_key=api_key, api_secret=api_secret,
             )
             return _sanitize(raw)
+        except InvalidSymbolError as exc:
+            return str(exc)
         except Exception as exc:
             logger.warning("Open interest unavailable for %s: %s", symbol, exc)
             return _sanitize("Data unavailable: open interest data could not be retrieved")
@@ -139,6 +148,8 @@ def make_crypto_tools(
                 api_key=api_key, api_secret=api_secret,
             )
             return _sanitize(raw)
+        except InvalidSymbolError as exc:
+            return str(exc)
         except Exception as exc:
             logger.warning("Ticker unavailable for %s: %s", symbol, exc)
             return _sanitize("Data unavailable: ticker data could not be retrieved")

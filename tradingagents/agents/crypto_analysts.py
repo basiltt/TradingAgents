@@ -155,7 +155,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
     def node(state):
         company = state["company_of_interest"]
         instrument_context = build_instrument_context(company)
-        investment_plan = state["investment_plan"]
+        investment_plan = state.get("investment_plan", "")
         market_report = state.get("market_report", "")
         news_report = state.get("news_report", "")
         fundamentals_report = state.get("fundamentals_report", "")
@@ -221,7 +221,7 @@ def create_crypto_risk_bull_debater(llm):
     def node(state):
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
-        trader_decision = state["trader_investment_plan"]
+        trader_decision = state.get("trader_investment_plan", "")
         market_report = state["market_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
@@ -265,7 +265,7 @@ def create_crypto_risk_bear_debater(llm):
     def node(state):
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
-        trader_decision = state["trader_investment_plan"]
+        trader_decision = state.get("trader_investment_plan", "")
         market_report = state["market_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
@@ -310,8 +310,8 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
     def node(state):
         instrument_context = build_instrument_context(state["company_of_interest"])
         history = state["risk_debate_state"]["history"]
-        research_plan = state["investment_plan"]
-        trader_plan = state["trader_investment_plan"]
+        research_plan = state.get("investment_plan", "")
+        trader_plan = state.get("trader_investment_plan", "")
         risk_debate_state = state["risk_debate_state"]
 
         past_context = state.get("past_context", "")

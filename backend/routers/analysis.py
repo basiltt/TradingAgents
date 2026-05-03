@@ -125,3 +125,9 @@ async def delete_analysis(request: Request, run_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Run not found")
     return Response(status_code=204)
+
+
+@router.delete("/analysis", status_code=200)
+async def delete_all_analyses(request: Request):
+    count = await request.app.state.analysis_service.delete_all_runs()
+    return {"deleted": count}

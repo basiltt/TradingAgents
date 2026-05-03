@@ -1,7 +1,10 @@
-import { memo, useRef, useEffect, useState } from "react";
+import { memo, useRef, useEffect, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 interface Message {
   sender: string;
@@ -13,17 +16,87 @@ interface MessagesPanelProps {
   messages: Message[];
 }
 
-const SENDER_COLORS: Record<string, string> = {
-  market_analyst: "text-blue-600 dark:text-blue-400",
-  social_analyst: "text-purple-600 dark:text-purple-400",
-  news_analyst: "text-amber-600 dark:text-amber-400",
-  fundamentals_analyst: "text-green-600 dark:text-green-400",
-  bull_researcher: "text-emerald-600 dark:text-emerald-400",
-  bear_researcher: "text-red-600 dark:text-red-400",
-  trader: "text-orange-600 dark:text-orange-400",
-  risk_manager: "text-rose-600 dark:text-rose-400",
-  portfolio_manager: "text-indigo-600 dark:text-indigo-400",
+const SENDER_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
+  market_analyst: { color: "text-blue-700 dark:text-blue-400", bg: "bg-blue-500/10", label: "Market Analyst" },
+  social_analyst: { color: "text-purple-700 dark:text-purple-400", bg: "bg-purple-500/10", label: "Social Analyst" },
+  news_analyst: { color: "text-amber-700 dark:text-amber-400", bg: "bg-amber-500/10", label: "News Analyst" },
+  fundamentals_analyst: { color: "text-green-700 dark:text-green-400", bg: "bg-green-500/10", label: "Fundamentals Analyst" },
+  bull_researcher: { color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-500/10", label: "Bull Researcher" },
+  bear_researcher: { color: "text-red-700 dark:text-red-400", bg: "bg-red-500/10", label: "Bear Researcher" },
+  trader: { color: "text-orange-700 dark:text-orange-400", bg: "bg-orange-500/10", label: "Trader" },
+  risk_manager: { color: "text-rose-700 dark:text-rose-400", bg: "bg-rose-500/10", label: "Risk Manager" },
+  portfolio_manager: { color: "text-indigo-700 dark:text-indigo-400", bg: "bg-indigo-500/10", label: "Portfolio Manager" },
 };
+
+function formatSender(sender: string): string {
+  return SENDER_CONFIG[sender]?.label ?? sender.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const mdComponents = {
+  table: ({ children }: { children?: ReactNode }) => (
+    <div className="my-1.5 overflow-x-auto rounded-md border border-border/50">
+      <table className="w-full text-xs">{children}</table>
+    </div>
+  ),
+  thead: ({ children }: { children?: ReactNode }) => (
+    <thead className="bg-muted/60">{children}</thead>
+  ),
+  th: ({ children }: { children?: ReactNode }) => (
+    <th className="px-2.5 py-1.5 text-left text-xs font-semibold text-foreground/80 border-b border-border/50">{children}</th>
+  ),
+  td: ({ children }: { children?: ReactNode }) => (
+    <td className="px-2.5 py-1.5 text-foreground/80 border-t border-border/30">{children}</td>
+  ),
+  h1: ({ children }: { children?: ReactNode }) => (
+    <h1 className="text-sm font-bold mt-3 mb-1.5">{children}</h1>
+  ),
+  h2: ({ children }: { children?: ReactNode }) => (
+    <h2 className="text-sm font-semibold mt-3 mb-1">{children}</h2>
+  ),
+  h3: ({ children }: { children?: ReactNode }) => (
+    <h3 className="text-xs font-semibold mt-2 mb-1 uppercase tracking-wider text-foreground/70">{children}</h3>
+  ),
+  p: ({ children }: { children?: ReactNode }) => (
+    <p className="my-1.5 leading-relaxed">{children}</p>
+  ),
+  ul: ({ children }: { children?: ReactNode }) => (
+    <ul className="my-1.5 ml-1 space-y-0.5 list-disc list-outside pl-4">{children}</ul>
+  ),
+  ol: ({ children }: { children?: ReactNode }) => (
+    <ol className="my-1.5 ml-1 space-y-0.5 list-decimal list-outside pl-4">{children}</ol>
+  ),
+  blockquote: ({ children }: { children?: ReactNode }) => (
+    <blockquote className="my-1.5 border-l-2 border-primary/25 pl-3 text-foreground/55 italic">{children}</blockquote>
+  ),
+  strong: ({ children }: { children?: ReactNode }) => (
+    <strong className="font-semibold text-foreground">{children}</strong>
+  ),
+  hr: () => <hr className="my-2 border-border/30" />,
+  code: ({ children, className }: { children?: ReactNode; className?: string }) => {
+    if (className) {
+      const lang = className.replace("language-", "");
+      return (
+        <pre className="my-1.5 rounded-md bg-muted/70 border border-border/50 p-2.5 overflow-x-auto text-xs font-mono leading-relaxed">
+          {lang && <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">{lang}</div>}
+          <code>{children}</code>
+        </pre>
+      );
+    }
+    return (
+      <code className="px-1 py-0.5 rounded bg-muted/60 text-xs font-mono text-primary/80">{children}</code>
+    );
+  },
+};
+
+function MessageContent({ content }: { content: string }) {
+  return (
+    <div className="text-sm text-foreground/90 leading-relaxed">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 export const MessagesPanel = memo(function MessagesPanel({ messages }: MessagesPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -72,17 +145,24 @@ export const MessagesPanel = memo(function MessagesPanel({ messages }: MessagesP
             <p className="text-sm text-muted-foreground">No messages yet</p>
           </div>
         ) : (
-          <ScrollArea className="h-72" role="log">
-            <div className="space-y-1.5 pr-4">
-              {messages.map((msg) => (
-                <div key={msg.seq} className="text-sm py-1.5 px-2.5 rounded-md hover:bg-muted/50 transition-colors">
-                  <span className={`font-semibold ${SENDER_COLORS[msg.sender] ?? "text-primary"}`}>
-                    {msg.sender}
-                  </span>
-                  <span className="text-muted-foreground mx-1.5">·</span>
-                  <span className="text-foreground/90">{msg.content}</span>
-                </div>
-              ))}
+          <ScrollArea className="h-[28rem]" role="log">
+            <div className="space-y-2 pr-4">
+              {messages.map((msg) => {
+                const cfg = SENDER_CONFIG[msg.sender];
+                const colorClass = cfg?.color ?? "text-primary";
+                const bgClass = cfg?.bg ?? "bg-muted";
+                return (
+                  <div key={msg.seq} className="rounded-lg border border-border/50 p-3 hover:bg-muted/30 transition-colors">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-md ${bgClass} ${colorClass}`}>
+                        {formatSender(msg.sender)}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground font-mono">#{msg.seq}</span>
+                    </div>
+                    <MessageContent content={msg.content} />
+                  </div>
+                );
+              })}
               <div ref={bottomRef} />
             </div>
           </ScrollArea>

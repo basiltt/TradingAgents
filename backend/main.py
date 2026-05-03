@@ -104,6 +104,7 @@ def create_app() -> FastAPI:
     from backend.routers.checkpoints import router as checkpoints_router
     from backend.routers.memory import router as memory_router
     from backend.routers.analysis import router as analysis_router
+    from backend.routers.symbols import router as symbols_router
     from backend.routers.ws import router as ws_router
 
     app.include_router(config_router, prefix="/api/v1")
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(checkpoints_router, prefix="/api/v1")
     app.include_router(memory_router, prefix="/api/v1")
     app.include_router(analysis_router, prefix="/api/v1")
+    app.include_router(symbols_router, prefix="/api/v1")
     app.include_router(ws_router)
 
     @app.get("/api/v1/health")

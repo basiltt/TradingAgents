@@ -16,6 +16,7 @@ const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destru
 
 export function HistoryList() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["analyses"],
@@ -31,6 +32,14 @@ export function HistoryList() {
     },
   });
 
+  const deleteAllMutation = useMutation({
+    mutationFn: () => apiClient.deleteAllAnalyses(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analyses"] });
+      setConfirmDeleteAll(false);
+    },
+  });
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -39,15 +48,46 @@ export function HistoryList() {
           <h1 className="text-2xl font-bold tracking-tight">History</h1>
           <p className="text-muted-foreground mt-1">Browse past analyses and their results.</p>
         </div>
-        <Link
-          to="/analysis/new"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          New Analysis
-        </Link>
+        <div className="flex items-center gap-2">
+          {(data?.items ?? []).length > 0 && (
+            confirmDeleteAll ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => deleteAllMutation.mutate()}
+                  disabled={deleteAllMutation.isPending}
+                  className="px-3 py-2 text-xs font-medium rounded-lg bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {deleteAllMutation.isPending ? "Deleting..." : "Confirm Delete All"}
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteAll(false)}
+                  className="px-3 py-2 text-xs font-medium rounded-lg bg-muted text-muted-foreground hover:opacity-90"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDeleteAll(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-destructive/30 text-destructive font-medium text-sm hover:bg-destructive/10 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete All
+              </button>
+            )
+          )}
+          <Link
+            to="/analysis/new"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            New Analysis
+          </Link>
+        </div>
       </div>
 
       {/* Content */}

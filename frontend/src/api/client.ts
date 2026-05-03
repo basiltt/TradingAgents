@@ -207,6 +207,12 @@ export const apiClient = {
       `/api/v1/analysis/${encodeURIComponent(runId)}`,
     ),
 
+  deleteAllAnalyses: () =>
+    mutate<{ deleted: number }>(
+      "DELETE",
+      "/api/v1/analysis",
+    ),
+
   getReport: (runId: string, signal?: AbortSignal) =>
     requestText(
       `/api/v1/analysis/${encodeURIComponent(runId)}/report`,
@@ -242,6 +248,9 @@ export const apiClient = {
 
   deleteTickerCheckpoints: (ticker: string) =>
     mutate<void>("DELETE", `/api/v1/checkpoints/${encodeURIComponent(ticker)}?confirm=true`),
+
+  getSymbols: (assetType: string, signal?: AbortSignal) =>
+    request<{ symbols: string[] }>(`/api/v1/symbols?asset_type=${encodeURIComponent(assetType)}`, undefined, signal),
 };
 
 export { ApiError };

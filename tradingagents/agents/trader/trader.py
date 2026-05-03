@@ -28,7 +28,15 @@ def create_trader(llm):
                 "content": (
                     "You are a trading agent analyzing market data to make investment decisions. "
                     "Based on your analysis, provide a specific recommendation to buy, sell, or hold. "
-                    "Anchor your reasoning in the analysts' reports and the research plan."
+                    "Anchor your reasoning in the analysts' reports and the research plan.\n\n"
+                    "You MUST provide:\n"
+                    "- A confidence score (1-10) reflecting conviction strength\n"
+                    "- An entry price target\n"
+                    "- At least one take-profit target (up to 3 levels for scaling out)\n"
+                    "- A primary stop-loss level (and optionally a secondary wider stop)\n"
+                    "- A risk/reward ratio\n"
+                    "- Position sizing guidance\n"
+                    "- A time horizon for the trade"
                 ),
             },
             {

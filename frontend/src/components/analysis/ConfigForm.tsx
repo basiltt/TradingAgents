@@ -9,9 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Combobox } from "@/components/ui/combobox";
 import { useModels } from "@/hooks/useModels";
+import { useSymbols } from "@/hooks/useSymbols";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
+import { WatchlistPanel, type BatchConfig } from "./WatchlistPanel";
 
 const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
 const CRYPTO_TICKER_REGEX = /^[A-Z0-9]{2,20}$/;
@@ -211,6 +214,7 @@ export function ConfigForm() {
 
   const isCrypto = watchedAssetType === "crypto";
   const activeAnalysts = isCrypto ? CRYPTO_ANALYSTS : STOCK_ANALYSTS;
+  const { data: cryptoSymbols = [], isLoading: symbolsLoading } = useSymbols(watchedAssetType);
 
   useEffect(() => {
     saveSettings({
@@ -343,25 +347,44 @@ export function ConfigForm() {
             {/* Ticker */}
             <div className="flex flex-col gap-2">
               <Label htmlFor="ticker" className="font-medium">{isCrypto ? "Trading Pair" : "Ticker Symbol"}</Label>
-              <Input
-                id="ticker"
-                placeholder={isCrypto ? "e.g. BTCUSDT, ETHUSDT" : "e.g. AAPL, SPY, TSLA"}
-                className="font-mono text-base tracking-wide"
-                aria-invalid={!!errors.ticker}
-                {...register("ticker", {
-                  required: isCrypto ? "Trading pair is required" : "Ticker is required",
-                  validate: (v) => {
-                    const regex = isCrypto ? CRYPTO_TICKER_REGEX : TICKER_REGEX;
-                    if (!regex.test(v)) {
-                      return isCrypto
-                        ? "Enter a valid pair (2-20 chars: A-Z, 0-9)"
-                        : "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)";
-                    }
-                    return true;
-                  },
-                  onChange: (e) => setValue("ticker", e.target.value.toUpperCase(), { shouldValidate: false }),
-                })}
-              />
+              {isCrypto ? (
+                <Controller
+                  name="ticker"
+                  control={control}
+                  rules={{
+                    required: "Trading pair is required",
+                    validate: (v) =>
+                      CRYPTO_TICKER_REGEX.test(v) || "Enter a valid pair (2-20 chars: A-Z, 0-9)",
+                  }}
+                  render={({ field }) => (
+                    <Combobox
+                      options={cryptoSymbols}
+                      value={field.value}
+                      onChange={(v) => field.onChange(v)}
+                      placeholder="Search Bybit pairs..."
+                      loading={symbolsLoading}
+                      className="font-mono text-base tracking-wide"
+                    />
+                  )}
+                />
+              ) : (
+                <Input
+                  id="ticker"
+                  placeholder="e.g. AAPL, SPY, TSLA"
+                  className="font-mono text-base tracking-wide"
+                  aria-invalid={!!errors.ticker}
+                  {...register("ticker", {
+                    required: "Ticker is required",
+                    validate: (v) => {
+                      if (!TICKER_REGEX.test(v)) {
+                        return "Enter a valid ticker (1-15 chars: A-Z, 0-9, . - ^)";
+                      }
+                      return true;
+                    },
+                    onChange: (e) => setValue("ticker", e.target.value.toUpperCase(), { shouldValidate: false }),
+                  })}
+                />
+              )}
               {errors.ticker ? (
                 <p className="text-sm text-destructive">{errors.ticker.message}</p>
               ) : (
@@ -711,6 +734,27 @@ export function ConfigForm() {
           <Button type="button" variant="outline" onClick={() => navigate({ to: "/" })}>Cancel</Button>
         </div>
       </form>
+
+      <WatchlistPanel
+        config={{
+          asset_type: watchedAssetType,
+          analysis_date: watch("analysis_date"),
+          provider: selectedProvider,
+          deep_think_llm: watchedDeep,
+          quick_think_llm: watchedQuick,
+          backend_url: watchedBackendUrl,
+          analysts: watchedAnalysts,
+          research_depth: watchedDepth,
+          output_language: watchedLang,
+          interval: watchedInterval,
+          data_vendors: isCrypto ? undefined : {
+            core_stock_apis: watchedVendorCore,
+            technical_indicators: watchedVendorTech,
+            fundamental_data: watchedVendorFund,
+            news_data: watchedVendorNews,
+          },
+        }}
+      />
     </div>
   );
 }
