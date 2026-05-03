@@ -23,7 +23,7 @@ from backend.ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
 
-_MAX_CONCURRENT = 3
+_MAX_CONCURRENT = 10
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
@@ -132,13 +132,22 @@ class AnalysisService:
 
     async def get_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
+        snapshot = None
         for s in sections:
             if s["section"] == "_snapshot":
                 try:
-                    return json.loads(s["content"])
+                    snapshot = json.loads(s["content"])
                 except (json.JSONDecodeError, TypeError):
-                    return None
-        return None
+                    pass
+                break
+        if snapshot is None:
+            return None
+        # Backfill reports from individually saved DB sections if snapshot reports are empty
+        if not snapshot.get("reports"):
+            reports = {s["section"]: s["content"] for s in sections if s["section"] != "_snapshot"}
+            if reports:
+                snapshot["reports"] = reports
+        return snapshot
 
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
         from tradingagents.default_config import DEFAULT_CONFIG
@@ -228,6 +237,8 @@ class AnalysisService:
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
 
         finally:
+            # Let pending emit_threadsafe coroutines execute before reading ring buffer
+            await asyncio.sleep(0.2)
             self._save_snapshot(run_id)
             async with self._lock:
                 run_data = self._active_runs.pop(run_id, None)
@@ -273,6 +284,8 @@ class AnalysisService:
                 "reports": reports,
             }
             self._db.save_report_section(run_id, "_snapshot", json.dumps(snapshot, default=str))
+            for section, content in reports.items():
+                self._db.save_report_section(run_id, section, content)
         except Exception:
             logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
 
@@ -311,6 +324,8 @@ class AnalysisService:
             events = parse_stream_chunk(chunk, seq=seq, state=parser_state)
             for event in events:
                 self._bus.emit_threadsafe(run_id, event)
+                if hasattr(event, "type") and event.type == "report_chunk" and event.section:
+                    self._db.save_report_section(run_id, event.section, event.content)
 
             last_chunk = chunk
 
