@@ -327,6 +327,13 @@ def test_health_check(db):
     assert db.health_check() == "ok"
 
 
+def test_health_check_degraded(tmp_path):
+    from backend.persistence import AnalysisDB
+    db2 = AnalysisDB(db_path=str(tmp_path / "degraded.db"))
+    db2._conn.close()
+    assert db2.health_check() == "degraded"
+
+
 def test_checkpoint(db, sample_run):
     db.insert_run(sample_run)
     db.checkpoint()  # should not raise

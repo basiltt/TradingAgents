@@ -327,3 +327,17 @@ def test_reclaim_zombie(service, event_loop):
         await service._reclaim_zombie_async("test-run")
         assert service._zombie_count == 2
     event_loop.run_until_complete(_test())
+
+
+def test_save_snapshot_exception_logged(service, db, bus):
+    from collections import deque
+    run_id = "snap-err-1"
+    db.insert_run({
+        "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+        "status": "running", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
+    })
+    bus._ring_buffers[run_id] = deque([
+        ({"type": "agent_status", "agent": "market", "status": "done"}, 50),
+    ])
+    with patch.object(db, "save_report_section", side_effect=Exception("db error")):
+        service._save_snapshot(run_id)

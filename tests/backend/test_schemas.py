@@ -304,3 +304,46 @@ def test_stock_analysts_valid():
         analysts=["market", "news"],
     )
     assert len(req.analysts) == 2
+
+
+def test_output_language_none():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(ticker="SPY", analysis_date="2025-06-01", output_language=None)
+    assert req.output_language is None
+
+
+def test_data_vendors_none():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(ticker="SPY", analysis_date="2025-06-01", data_vendors=None)
+    assert req.data_vendors is None
+
+
+def test_crypto_ticker_invalid_format():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception, match="Crypto ticker"):
+        AnalysisRequest(ticker="CNC.TO", analysis_date="2025-06-01", asset_type="crypto", interval="D")
+
+
+def test_invalid_stock_analyst():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception, match="Invalid stock analyst"):
+        AnalysisRequest(ticker="SPY", analysis_date="2025-06-01", analysts=["crypto_technical"])
+
+
+def test_invalid_asset_type():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception, match="Invalid asset_type"):
+        AnalysisRequest(ticker="SPY", analysis_date="2025-06-01", asset_type="forex")
+
+
+def test_scan_request_invalid_date():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid date"):
+        ScanRequest(analysis_date="not-a-date")
+
+
+def test_scan_request_future_date():
+    from backend.schemas import ScanRequest
+    future = (date.today() + timedelta(days=30)).isoformat()
+    with pytest.raises(Exception, match="future"):
+        ScanRequest(analysis_date=future)
