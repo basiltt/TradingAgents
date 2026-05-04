@@ -49,3 +49,16 @@ async def test_patch_config_unknown_key(client):
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 500 or resp.status_code == 422 or resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_patch_config_llm_concurrency(client):
+    from unittest.mock import patch as mpatch
+    with mpatch("backend.routers.config.configure_llm_concurrency") as mock_cfg:
+        resp = await client.patch(
+            "/api/v1/config",
+            json={"overrides": {"llm_max_concurrent": 4}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    mock_cfg.assert_called_once_with(4)

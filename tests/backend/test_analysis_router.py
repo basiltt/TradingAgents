@@ -38,6 +38,126 @@ async def test_start_analysis(client):
 
 
 @pytest.mark.asyncio
+async def test_start_analysis_concurrency_limit(client):
+    from backend.services.analysis_service import ConcurrencyLimitError
+
+    with patch(
+        "backend.services.analysis_service.AnalysisService.start_analysis",
+        side_effect=ConcurrencyLimitError("limit reached"),
+    ):
+        resp = await client.post(
+            "/api/v1/analysis",
+            json={"ticker": "SPY", "analysis_date": "2025-06-01", "provider": "anthropic"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_start_analysis_value_error(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.start_analysis",
+        side_effect=ValueError("bad input"),
+    ):
+        resp = await client.post(
+            "/api/v1/analysis",
+            json={"ticker": "SPY", "analysis_date": "2025-06-01", "provider": "anthropic"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_analysis_success(client):
+    run_data = {"run_id": "00000000-0000-0000-0000-000000000001", "status": "done"}
+    with patch(
+        "backend.services.analysis_service.AnalysisService.get_run",
+        return_value=run_data,
+    ):
+        resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000001")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_get_report_success(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.get_run",
+        return_value={"run_id": "00000000-0000-0000-0000-000000000001"},
+    ):
+        with patch(
+            "backend.services.analysis_service.AnalysisService.get_report",
+            return_value="# Report\nBUY SPY",
+        ):
+            resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000001/report")
+    assert resp.status_code == 200
+    assert "text/markdown" in resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_get_report_no_report(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.get_run",
+        return_value={"run_id": "00000000-0000-0000-0000-000000000001"},
+    ):
+        with patch(
+            "backend.services.analysis_service.AnalysisService.get_report",
+            return_value=None,
+        ):
+            resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000001/report")
+    assert resp.status_code == 404
+    assert "Report not available" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_report_run_not_found(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.get_run",
+        return_value=None,
+    ):
+        resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000001/report")
+    assert resp.status_code == 404
+    assert "Run not found" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_snapshot_success(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.get_snapshot",
+        return_value={"events": []},
+    ):
+        resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000001/snapshot")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_cancel_analysis_success(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.cancel_analysis",
+        return_value=True,
+    ):
+        resp = await client.post(
+            "/api/v1/analysis/00000000-0000-0000-0000-000000000001/cancel",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_delete_analysis_success(client):
+    with patch(
+        "backend.services.analysis_service.AnalysisService.delete_run",
+        return_value=True,
+    ):
+        resp = await client.delete(
+            "/api/v1/analysis/00000000-0000-0000-0000-000000000001",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
 async def test_start_analysis_missing_csrf(client):
     resp = await client.post(
         "/api/v1/analysis",

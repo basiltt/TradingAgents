@@ -221,3 +221,184 @@ class TestRunScan:
         with patch("backend.services.scanner_service.asyncio.to_thread", side_effect=mock_to_thread):
             await scanner._run_scan("s1")
         assert scanner._scans["s1"]["status"] == "failed"
+
+
+class TestResumeIncompleteScansWithDB:
+    @pytest.mark.asyncio
+    async def test_resume_one_scan(self, scanner):
+        scanner._db.get_running_scans.return_value = [
+            {"scan_id": "s1", "config": '{"analysis_date":"2025-01-10"}', "started_at": "2025-01-10", "completed": 0, "failed": 0}
+        ]
+        scanner._db.get_scan_completed_tickers.return_value = set()
+        scanner._db.get_scan.return_value = {"results": []}
+        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTCUSDT"]):
+            with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+                result = await scanner.resume_incomplete_scans()
+        assert result == 1
+        assert "s1" in scanner._scans
+
+    @pytest.mark.asyncio
+    async def test_resume_marks_extra_as_failed(self, scanner):
+        scanner._db.get_running_scans.return_value = [
+            {"scan_id": "s1", "config": '{}', "started_at": "t1", "completed": 0, "failed": 0},
+            {"scan_id": "s2", "config": '{}', "started_at": "t2", "completed": 0, "failed": 0},
+        ]
+        scanner._db.get_scan_completed_tickers.return_value = set()
+        scanner._db.get_scan.return_value = {"results": []}
+        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTCUSDT"]):
+            with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+                result = await scanner.resume_incomplete_scans()
+        assert result == 1
+        scanner._db.update_scan.assert_any_call("s2", status="failed")
+
+    @pytest.mark.asyncio
+    async def test_resume_all_done(self, scanner):
+        scanner._db.get_running_scans.return_value = [
+            {"scan_id": "s1", "config": '{}', "started_at": "t1", "completed": 1, "failed": 0}
+        ]
+        scanner._db.get_scan_completed_tickers.return_value = {"BTCUSDT"}
+        scanner._db.get_scan.return_value = {"results": []}
+        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTCUSDT"]):
+            result = await scanner.resume_incomplete_scans()
+        assert result == 0
+        # Verify update_scan was called with completed status
+        calls = [c for c in scanner._db.update_scan.call_args_list if c[0][0] == "s1"]
+        assert any("completed" in str(c) for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_resume_symbol_fetch_fails(self, scanner):
+        scanner._db.get_running_scans.return_value = [
+            {"scan_id": "s1", "config": '{}', "started_at": "t1"}
+        ]
+        scanner._db.get_scan_completed_tickers.return_value = set()
+        scanner._db.get_scan.return_value = {"results": []}
+
+        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", side_effect=Exception("network")):
+            result = await scanner.resume_incomplete_scans()
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_resume_invalid_config_json(self, scanner):
+        scanner._db.get_running_scans.return_value = [
+            {"scan_id": "s1", "config": "not json", "started_at": "t1", "completed": 0, "failed": 0}
+        ]
+        scanner._db.get_scan_completed_tickers.return_value = set()
+        scanner._db.get_scan.return_value = {"results": []}
+        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTCUSDT"]):
+            with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+                result = await scanner.resume_incomplete_scans()
+        assert result == 1
+
+
+class TestAnalyzeTickerCancel:
+    @pytest.mark.asyncio
+    async def test_cancel_during_poll(self, scanner):
+        scanner._analysis.start_analysis.return_value = "run-1"
+        scanner._analysis.get_run.return_value = {"status": "running"}
+        scanner._analysis.cancel_analysis = AsyncMock()
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+
+        original_sleep = asyncio.sleep
+
+        async def cancel_on_sleep(t):
+            scanner._scans["s1"]["cancel"] = True
+            await original_sleep(0)
+
+        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
+            with patch("backend.services.scanner_service.asyncio.sleep", side_effect=cancel_on_sleep):
+                await scanner._run_single("s1", "BTCUSDT")
+        scanner._analysis.cancel_analysis.assert_called_once_with("run-1")
+        assert scanner._scans["s1"]["failed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_poll_exception(self, scanner):
+        scanner._analysis.start_analysis.return_value = "run-1"
+        scanner._analysis.get_run.side_effect = Exception("poll fail")
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
+            await scanner._run_single("s1", "BTCUSDT")
+        assert scanner._scans["s1"]["failed"] == 1
+
+
+class TestCollectResultEdgeCases:
+    @pytest.mark.asyncio
+    async def test_snapshot_exception_fallback_to_report(self, scanner):
+        scanner._analysis.get_snapshot = AsyncMock(side_effect=Exception("snapshot fail"))
+        scanner._analysis.get_report = AsyncMock(return_value="Sell recommendation")
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "completed"})
+        assert scanner._scans["s1"]["completed"] == 1
+        assert scanner._scans["s1"]["results"][0]["direction"] == "sell"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_no_reports_fallback_to_report(self, scanner):
+        scanner._analysis.get_snapshot = AsyncMock(return_value={"reports": {}})
+        scanner._analysis.get_report = AsyncMock(return_value="Buy with high confidence")
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "completed"})
+        assert scanner._scans["s1"]["completed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_report_exception(self, scanner):
+        scanner._analysis.get_snapshot = AsyncMock(return_value=None)
+        scanner._analysis.get_report = AsyncMock(side_effect=Exception("report fail"))
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "completed"})
+        assert scanner._scans["s1"]["completed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_collect_result_no_db(self, scanner_no_db):
+        scanner_no_db._scans = {}
+        scanner_no_db._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        scanner_no_db._analysis.get_snapshot = AsyncMock(return_value=None)
+        scanner_no_db._analysis.get_report = AsyncMock(return_value=None)
+        await scanner_no_db._collect_result("s1", "BTCUSDT", "run-1", {"status": "failed"})
+        assert scanner_no_db._scans["s1"]["failed"] == 1
+
+
+class TestGetScanFromDB:
+    @pytest.mark.asyncio
+    async def test_get_scan_from_db(self, scanner):
+        scanner._db.get_scan.return_value = {
+            "scan_id": "s1", "status": "completed", "total": 5,
+            "completed": 5, "failed": 0, "results": [],
+            "started_at": "2025-01-10",
+        }
+        result = await scanner.get_scan("s1")
+        assert result is not None
+        assert result["scan_id"] == "s1"
+
+    @pytest.mark.asyncio
+    async def test_list_scans_includes_db(self, scanner):
+        scanner._db.list_scans.return_value = [
+            {"scan_id": "db1", "status": "completed", "total": 3, "completed": 3,
+             "failed": 0, "results": [], "started_at": "2025-01-10"}
+        ]
+        result = await scanner.list_scans()
+        assert any(s["scan_id"] == "db1" for s in result)
