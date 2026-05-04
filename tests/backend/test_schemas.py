@@ -347,3 +347,116 @@ def test_scan_request_future_date():
     future = (date.today() + timedelta(days=30)).isoformat()
     with pytest.raises(Exception, match="future"):
         ScanRequest(analysis_date=future)
+
+
+# ---------------------------------------------------------------------------
+# ScanRequest validator coverage (lines 281-340)
+# ---------------------------------------------------------------------------
+
+def test_scan_request_invalid_provider():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid provider"):
+        ScanRequest(analysis_date="2025-01-01", provider="invalid_provider")
+
+
+def test_scan_request_valid_provider():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(analysis_date="2025-01-01", provider="openai")
+    assert req.provider == "openai"
+
+
+def test_scan_request_invalid_deep_think_llm():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid model ID"):
+        ScanRequest(analysis_date="2025-01-01", deep_think_llm="bad model!!!")
+
+
+def test_scan_request_invalid_quick_think_llm():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid model ID"):
+        ScanRequest(analysis_date="2025-01-01", quick_think_llm="bad model!!!")
+
+
+def test_scan_request_valid_model_ids():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(
+        analysis_date="2025-01-01",
+        deep_think_llm="gpt-4o",
+        quick_think_llm="claude-3-haiku",
+    )
+    assert req.deep_think_llm == "gpt-4o"
+
+
+def test_scan_request_output_language_invalid():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception):
+        ScanRequest(analysis_date="2025-01-01", output_language="123invalid")
+
+
+def test_scan_request_output_language_too_long():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="30 characters"):
+        ScanRequest(analysis_date="2025-01-01", output_language="A" * 31)
+
+
+def test_scan_request_output_language_preset():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(analysis_date="2025-01-01", output_language="Japanese")
+    assert req.output_language == "Japanese"
+
+
+def test_scan_request_invalid_data_vendor_category():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid vendor category"):
+        ScanRequest(analysis_date="2025-01-01", data_vendors={"bad_category": "yfinance"})
+
+
+def test_scan_request_invalid_data_vendor_value():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid vendor value"):
+        ScanRequest(analysis_date="2025-01-01", data_vendors={"core_stock_apis": "bad_vendor"})
+
+
+def test_scan_request_valid_data_vendors():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(
+        analysis_date="2025-01-01",
+        data_vendors={"core_stock_apis": "yfinance"},
+    )
+    assert req.data_vendors == {"core_stock_apis": "yfinance"}
+
+
+def test_scan_request_invalid_analyst_crypto():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid analyst"):
+        ScanRequest(analysis_date="2025-01-01", asset_type="crypto", analysts=["market"])
+
+
+def test_scan_request_invalid_analyst_stock():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid analyst"):
+        ScanRequest(analysis_date="2025-01-01", asset_type="stock", analysts=["crypto_technical"])
+
+
+def test_scan_request_invalid_asset_type():
+    from backend.schemas import ScanRequest
+    with pytest.raises(Exception, match="Invalid asset_type"):
+        ScanRequest(analysis_date="2025-01-01", asset_type="forex")
+
+
+def test_scan_request_output_language_none_allowed():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(analysis_date="2025-01-01")
+    assert req.output_language is None
+
+
+def test_scan_request_output_language_custom_valid():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(analysis_date="2025-01-01", output_language="Swahili")
+    assert req.output_language == "Swahili"
+
+
+def test_scan_request_data_vendors_none_allowed():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(analysis_date="2025-01-01")
+    assert req.data_vendors is None
