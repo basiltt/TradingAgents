@@ -215,3 +215,85 @@ def test_emit_dataclass_uses_asdict(bus, event_loop):
     assert len(snapshot) == 1
     assert snapshot[0]["phase"] == "starting"
     assert snapshot[0]["detail"] == "init"
+
+
+def test_queue_full_evict_get_raises_queue_empty(bus, event_loop):
+    """R8: emit() QueueFull path — QueueEmpty during get_nowait is silently swallowed (lines 64-65)."""
+    from unittest.mock import patch as mpatch
+
+    q = asyncio.Queue(maxsize=1)
+    q.put_nowait({"type": "first"})
+    bus._queues["run1"] = q
+
+    with mpatch.object(q, "get_nowait", side_effect=asyncio.QueueEmpty):
+        # Should not raise; lines 64-65 are exercised
+        bus.emit("run1", {"type": "second"})
+
+
+def test_queue_full_retry_put_also_full(bus, event_loop):
+    """R8: emit() QueueFull path — second put_nowait also raises QueueFull (lines 70-71)."""
+    from unittest.mock import patch as mpatch
+    import asyncio as _aio
+
+    q = asyncio.Queue(maxsize=1)
+    q.put_nowait({"type": "first"})
+    bus._queues["run1"] = q
+
+    original_put = q.put_nowait
+    call_count = [0]
+
+    def raising_put(item):
+        call_count[0] += 1
+        if call_count[0] >= 2:
+            raise asyncio.QueueFull()
+        raise asyncio.QueueFull()
+
+    with mpatch.object(q, "put_nowait", side_effect=raising_put):
+        # Should not raise; lines 70-71 are exercised
+        bus.emit("run1", {"type": "second"})
+
+
+def test_cleanup_run_queue_full_get_raises_queue_empty(bus, event_loop):
+    """R8: cleanup_run() QueueFull path — QueueEmpty during get_nowait (lines 127-128)."""
+    from unittest.mock import patch as mpatch
+
+    q = asyncio.Queue(maxsize=1)
+    q.put_nowait({"type": "blocking"})
+    bus._queues["run1"] = q
+
+    with mpatch.object(q, "get_nowait", side_effect=asyncio.QueueEmpty):
+        # Should not raise; lines 127-128 are exercised
+        bus.cleanup_run("run1")
+
+
+def test_cleanup_run_second_put_also_full(bus, event_loop):
+    """R8: cleanup_run() — both put_nowait calls raise QueueFull (lines 131-132)."""
+    from unittest.mock import patch as mpatch
+
+    q = asyncio.Queue(maxsize=1)
+    q.put_nowait({"type": "blocking"})
+    bus._queues["run1"] = q
+
+    call_count = [0]
+
+    def always_full(item):
+        call_count[0] += 1
+        raise asyncio.QueueFull()
+
+    with mpatch.object(q, "put_nowait", side_effect=always_full):
+        # Should not raise; lines 131-132 are exercised
+        bus.cleanup_run("run1")
+
+
+def test_ring_buffer_empty_deque_guard(bus, event_loop):
+    """R8: ring buffer overflow loop hits 'if not buf: break' (line 97) when buf is emptied."""
+    from backend import event_bus
+    from collections import deque
+
+    # Manually set ring_bytes beyond the limit but leave buf empty
+    bus._ring_buffers["run1"] = deque()
+    bus._ring_bytes["run1"] = event_bus._MAX_RING_BYTES + 1
+
+    # Emitting will call _add_to_ring; the while loop will enter and hit 'if not buf: break'
+    bus.emit("run1", {"type": "msg"})
+    # Should not raise; line 97 was exercised

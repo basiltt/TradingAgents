@@ -221,3 +221,60 @@ def test_update_scan_completed_at(db):
     db.update_scan(s["scan_id"], status="completed", completed_at="2025-01-10T00:00:00Z")
     scan = db.get_scan(s["scan_id"])
     assert scan["completed_at"] == "2025-01-10T00:00:00Z"
+
+
+def test_scans_invalid_status_raises(db):
+    """R8: CHECK constraint on scans.status rejects invalid values."""
+    import sqlite3
+    s = _scan()
+    with pytest.raises(Exception):
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO scans (scan_id, status, config, total, completed, failed, started_at) "
+                "VALUES (?, ?, '{}', 0, 0, 0, '2025-01-10T00:00:00Z')",
+                (s["scan_id"], "bogus_status"),
+            )
+
+
+def test_scan_results_fk_nonexistent_scan_raises(db):
+    """R8: FK constraint on scan_results.scan_id is enforced."""
+    import sqlite3
+    with pytest.raises(Exception):
+        db.insert_scan_result("nonexistent-scan-id", {
+            "ticker": "SPY", "score": 1, "status": "completed", "direction": "long"
+        })
+
+
+def test_scan_results_cascade_delete(db):
+    """R8: Deleting a scan cascades to remove its scan_results rows."""
+    s = _scan()
+    db.insert_scan(s)
+    db.insert_scan_result(s["scan_id"], {"ticker": "SPY", "score": 1, "status": "completed", "direction": "long"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "AAPL", "score": 2, "status": "completed", "direction": "long"})
+    with db._lock:
+        db._conn.execute("DELETE FROM scans WHERE scan_id=?", (s["scan_id"],))
+        db._conn.commit()
+        rows = db._conn.execute(
+            "SELECT * FROM scan_results WHERE scan_id=?", (s["scan_id"],)
+        ).fetchall()
+    assert rows == []
+
+
+def test_update_scan_nonexistent_scan_id_noop(db):
+    """R8: update_scan with unknown scan_id silently does nothing."""
+    db.update_scan("nonexistent-scan-id", status="completed")
+    # No exception raised, nothing blows up
+
+
+def test_list_scans_hydrates_results(db):
+    """R8: list_scans returns result rows for each scan, not just empty arrays."""
+    s = _scan()
+    db.insert_scan(s)
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "long"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 3, "status": "completed", "direction": "short"})
+    scans = db.list_scans()
+    assert len(scans) == 1
+    results = scans[0].get("results", [])
+    assert len(results) == 2
+    tickers = {r["ticker"] for r in results}
+    assert tickers == {"BTC", "ETH"}

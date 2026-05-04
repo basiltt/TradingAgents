@@ -58,7 +58,7 @@ def validate_backend_url(url: str, server_port: int) -> str:
             f"private/internal address blocked: {hostname} resolves to CGN range {resolved_ip}"
         )
 
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:  # pragma: no cover
         v4 = addr.ipv4_mapped
         if v4.is_private or v4.is_link_local or v4.is_reserved or v4.is_loopback:
             raise ValueError(

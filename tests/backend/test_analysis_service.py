@@ -630,3 +630,45 @@ def test_build_config_backend_url_from_env(service):
         with mpatch.dict(os.environ, {"TRADINGAGENTS_BACKEND_URL": "http://env-backend:8000"}):
             config = service._build_config({"ticker": "SPY", "analysis_date": "2025-01-10"})
     assert config["backend_url"] == "http://env-backend:8000"
+
+
+def test_get_snapshot_malformed_json_returns_none(service, db, event_loop):
+    """R7-F5: get_snapshot returns None when _snapshot section contains malformed JSON."""
+    async def _test():
+        run_id = "55555555-5555-5555-5555-555555555555"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+                       "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        db.save_report_section(run_id, "_snapshot", "not valid json {{{")
+        result = await service.get_snapshot(run_id)
+        assert result is None
+    event_loop.run_until_complete(_test())
+
+
+def test_save_snapshot_exception_swallowed(service, db):
+    """R7-F6: _save_snapshot swallows exceptions from db.save_report_section."""
+    from unittest.mock import patch as mpatch
+    run_id = "66666666-6666-6666-6666-666666666666"
+    db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+                   "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+    with mpatch.object(db, "save_report_section", side_effect=RuntimeError("disk full")):
+        # Should not raise
+        service._save_snapshot(run_id)
+
+
+def test_get_snapshot_backfills_reports_from_sections(service, db, event_loop):
+    """R8-F14: get_snapshot backfills empty reports{} from individual DB section rows."""
+    async def _test():
+        run_id = "77777777-7777-7777-7777-777777777777"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+                       "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        import json
+        # Save snapshot with empty reports
+        snapshot_data = {"agents": {}, "messages": [], "stats": None, "reports": {}}
+        db.save_report_section(run_id, "_snapshot", json.dumps(snapshot_data))
+        # Save a separate market section
+        db.save_report_section(run_id, "market", "Market analysis text")
+        result = await service.get_snapshot(run_id)
+        assert result is not None
+        assert "market" in result.get("reports", {})
+        assert result["reports"]["market"] == "Market analysis text"
+    event_loop.run_until_complete(_test())

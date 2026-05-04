@@ -23,8 +23,6 @@ from backend.ws_manager import WSManager
 
 class CSPMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.scope.get("type") == "websocket":
-            return await call_next(request)
         response = await call_next(request)
         csp_connect = os.environ.get(
             "WEB_CSP_CONNECT_SRC",
@@ -41,8 +39,6 @@ class CSPMiddleware(BaseHTTPMiddleware):
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.scope.get("type") == "websocket":
-            return await call_next(request)
         if request.method in ("POST", "PATCH", "PUT", "DELETE"):
             if request.headers.get("X-Requested-With") != "XMLHttpRequest":
                 return Response(

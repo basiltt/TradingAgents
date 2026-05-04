@@ -382,7 +382,32 @@ def test_migration_skip_already_applied(tmp_path):
     # Should work without errors; the 'continue' path was exercised
     result = db2.list_runs(page=1, limit=1)
     assert result["total"] == 0
-    db2.close()
+
+
+def test_migration_continue_skips_lower_version(tmp_path):
+    """R8: persistence.py:120 — continue branch when version <= current in mid-migration."""
+    import sqlite3
+    from backend import persistence as pers
+
+    db_path = str(tmp_path / "mid.db")
+    # Apply migration 1 (creates analysis_runs and report_sections) manually
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA user_version = 1")
+    for stmt in pers._MIGRATIONS[0][1].split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+    conn.commit()
+    conn.close()
+
+    # AnalysisDB should skip migration 1 (continue branch) and apply migrations 2-5
+    db = pers.AnalysisDB(db_path=db_path)
+    with db._lock:
+        tables = [r[0] for r in db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+    assert "scans" in tables  # migration 4 created scans table
+    db.close()
 
 
 def test_save_report_section_upsert_replaces(db, sample_run):
@@ -434,3 +459,57 @@ def test_insert_run_invalid_asset_type_raises(db):
             "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "asset_type": "forex",
         })
+
+
+def test_report_sections_fk_nonexistent_run_raises(db):
+    """R8: FK constraint on report_sections.run_id is enforced."""
+    with pytest.raises(Exception):
+        db.save_report_section("nonexistent-run-id", "market", "data")
+
+
+def test_pre_migration_backup_already_exists_no_overwrite(tmp_path):
+    """R8: pre-migration backup is skipped (no overwrite) when backup file already exists."""
+    from backend.persistence import AnalysisDB
+    import os
+
+    db_path = str(tmp_path / "test.db")
+    backup_path = db_path + ".backup.v0"
+
+    # Pre-create the backup with sentinel content
+    with open(backup_path, "w") as f:
+        f.write("sentinel")
+
+    # Open a v0 DB and apply migrations
+    conn = __import__("sqlite3").connect(db_path)
+    conn.execute("PRAGMA user_version = 0")
+    conn.close()
+
+    db2 = AnalysisDB(db_path=db_path)
+    db2.close()
+
+    # Sentinel content should still be intact (not overwritten)
+    with open(backup_path) as f:
+        assert f.read() == "sentinel"
+
+
+def test_update_run_status_nonexistent_run_returns_false(db):
+    """R8: update_run_status with a run_id that does not exist returns False."""
+    result = db.update_run_status("nonexistent-run-id", "completed", None, "2025-01-10T00:00:00Z")
+    assert result is False
+
+
+def test_delete_ticker_checkpoints_preserves_running_runs(db, sample_run):
+    """R8: delete_ticker_checkpoints only removes terminal runs, keeps running ones."""
+    # Insert a completed run
+    completed_run = sample_run.copy()
+    completed_run["run_id"] = str(uuid.uuid4())
+    db.insert_run(completed_run)
+    db.update_run_status(completed_run["run_id"], "completed", None, "2025-01-10T00:00:00Z")
+    # Insert a running run for the same ticker
+    running_run = sample_run.copy()
+    running_run["run_id"] = str(uuid.uuid4())
+    db.insert_run(running_run)
+    # Delete checkpoints — should only delete the completed one
+    count = db.delete_ticker_checkpoints("SPY")
+    assert count == 1
+    assert db.get_run(running_run["run_id"]) is not None
