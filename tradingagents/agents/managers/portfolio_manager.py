@@ -63,7 +63,7 @@ def create_portfolio_manager(llm):
 
 Be decisive and ground every conclusion in specific evidence from the analysts. Include a confidence score (1-10) reflecting your overall conviction.{get_language_instruction()}"""
 
-        final_trade_decision = invoke_structured_or_freetext(
+        final_trade_decision, decision_obj = invoke_structured_or_freetext(
             structured_llm,
             llm,
             prompt,
@@ -87,6 +87,7 @@ Be decisive and ground every conclusion in specific evidence from the analysts. 
         return {
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_trade_decision,
+            "_pm_signal_data": decision_obj,
         }
 
     return portfolio_manager_node

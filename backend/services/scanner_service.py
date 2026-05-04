@@ -162,6 +162,51 @@ def _validate_signal_consistency(
     return "pm_overrides"
 
 
+def _rating_to_direction(rating: str) -> str:
+    """Map 5-tier PortfolioRating string to 3-tier scanner direction."""
+    r = rating.lower().strip()
+    if r in ("buy", "overweight"):
+        return "buy"
+    if r in ("sell", "underweight"):
+        return "sell"
+    return "hold"
+
+
+def _extract_signal_from_structured(
+    pm_data: Dict[str, Any],
+    trader_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a validated signal dict from pre-parsed structured agent output.
+
+    pm_data: dict from PortfolioDecision.model_dump() — keys: rating, confidence, ...
+    trader_data: dict from TraderProposal.model_dump() — keys: action, confidence, ...
+    """
+    rating = str(pm_data.get("rating") or "Hold")
+    direction = _rating_to_direction(rating)
+
+    if direction == "hold":
+        return {"direction": "hold", "confidence": "none", "score": 0}
+
+    # PM confidence is authoritative; fall back to trader's if absent
+    pm_conf = pm_data.get("confidence")
+    conf_score = pm_conf if pm_conf is not None else trader_data.get("confidence")
+    if conf_score is None:
+        conf_score = 5  # neutral default when direction is known but conviction isn't
+    conf_score = max(1, min(10, int(conf_score)))
+
+    if conf_score >= 7:
+        confidence = "high"
+    elif conf_score >= 4:
+        confidence = "moderate"
+    else:
+        confidence = "low"
+
+    sign = 1 if direction == "buy" else -1
+    score = sign * conf_score
+
+    return {"direction": direction, "confidence": confidence, "score": score}
+
+
 def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
     """Extract a validated trading signal from structured agent outputs.
 
@@ -645,12 +690,37 @@ class ScannerService:
             except Exception:
                 logger.exception("Failed to fetch snapshot for %s/%s", scan_id, run_id)
 
-        # Only call _parse_signal_from_reports when the run actually completed with reports.
-        # For failed/cancelled/empty runs always return a safe hold — never try to parse.
+            if not decision_text:
+                try:
+                    report = await self._analysis.get_report(run_id)
+                    if report:
+                        decision_text = report
+                except Exception:
+                    pass
+
         if status == "completed" and reports:
-            signal = _parse_signal_from_reports(reports)
+            pm_json = reports.get("_pm_signal")
+            trader_json = reports.get("_trader_signal")
+
+            if pm_json:
+                try:
+                    pm_data = _json.loads(pm_json)
+                    trader_data = _json.loads(trader_json) if trader_json else {}
+                    signal = _extract_signal_from_structured(pm_data, trader_data)
+                    signal_source = "structured"
+                except Exception:
+                    logger.exception(
+                        "Failed to parse structured signal JSON for %s/%s — falling back",
+                        scan_id, run_id,
+                    )
+                    signal = _parse_signal_from_reports(reports)
+                    signal_source = "regex_fallback"
+            else:
+                signal = _parse_signal_from_reports(reports)
+                signal_source = "regex_fallback"
         else:
             signal = {"direction": "hold", "confidence": "none", "score": 0}
+            signal_source = "none"
 
         result = {
             "ticker": ticker,
@@ -660,7 +730,7 @@ class ScannerService:
             "confidence": signal["confidence"],
             "score": signal["score"],
             "decision_summary": decision_text[:500] if decision_text else "",
-            "signal_source": "structured" if (status == "completed" and reports) else "none",
+            "signal_source": signal_source,
         }
 
         async with self._lock:

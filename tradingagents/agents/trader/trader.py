@@ -52,7 +52,7 @@ def create_trader(llm):
             },
         ]
 
-        trader_plan = invoke_structured_or_freetext(
+        trader_plan, proposal_obj = invoke_structured_or_freetext(
             structured_llm,
             llm,
             messages,
@@ -63,6 +63,7 @@ def create_trader(llm):
         return {
             "messages": [AIMessage(content=trader_plan)],
             "trader_investment_plan": trader_plan,
+            "_trader_signal_data": proposal_obj,
             "sender": name,
         }
 

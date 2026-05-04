@@ -131,7 +131,10 @@ class AnalysisService:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
         if not sections:
             return None
-        return "\n\n---\n\n".join(s["content"] for s in sections if s["section"] != "_snapshot")
+        return "\n\n---\n\n".join(
+            s["content"] for s in sections
+            if s["section"] != "_snapshot" and not s["section"].startswith("_")
+        )
 
     async def get_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
@@ -154,12 +157,13 @@ class AnalysisService:
             # No snapshot blob yet but we have sections — construct a minimal one
             snapshot = {"agents": {}, "messages": [], "stats": None, "reports": db_reports}
         else:
-            # Merge: DB sections override snapshot blob for any section present in DB.
-            # This ensures late-arriving sections written after the snapshot are included.
-            merged = dict(snapshot.get("reports") or {})
-            merged.update(db_reports)
-            snapshot["reports"] = merged
-
+            # Inject DB sections absent from the snapshot's reports dict.
+            # DB sections written after the snapshot (e.g. _pm_signal, _trader_signal)
+            # must be visible to the scanner; existing snapshot content is not overwritten.
+            existing = snapshot.setdefault("reports", {})
+            for key, content in db_reports.items():
+                if key not in existing:
+                    existing[key] = content
         return snapshot
 
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -326,6 +330,33 @@ class AnalysisService:
         except Exception:
             logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
 
+    def _persist_signal_sections(self, run_id: str, last_chunk) -> None:
+        """Save _pm_signal and _trader_signal JSON sections from the final graph chunk.
+
+        Called from _execute_graph (runs in a thread), so sync DB calls are safe here.
+        """
+        if not last_chunk:
+            return
+        for key, section_name in (
+            ("_pm_signal_data", "_pm_signal"),
+            ("_trader_signal_data", "_trader_signal"),
+        ):
+            obj = last_chunk.get(key)
+            if obj is None:
+                continue
+            try:
+                if hasattr(obj, "model_dump_json"):
+                    json_str = obj.model_dump_json()
+                elif isinstance(obj, dict):
+                    json_str = json.dumps(obj)
+                else:
+                    continue
+                self._db.save_report_section(run_id, section_name, json_str)
+            except Exception:
+                logger.warning(
+                    "Failed to persist %s for run %s", section_name, run_id, exc_info=True
+                )
+
     def _execute_graph(
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
         callback: Any, cancel_event: threading.Event,
@@ -366,6 +397,7 @@ class AnalysisService:
 
             last_chunk = chunk
 
+        self._persist_signal_sections(run_id, last_chunk)
         return last_chunk
 
     async def _reclaim_zombie_async(self, run_id: str) -> None:

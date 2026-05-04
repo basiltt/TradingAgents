@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 from typing_extensions import TypedDict
 from langgraph.graph import MessagesState
 
@@ -78,3 +78,8 @@ class AgentState(MessagesState):
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]
+
+    # Internal signal carriers — set by PM and Trader nodes, read by analysis_service.
+    # Never written to logs, memory, or rendered markdown.
+    _pm_signal_data: Annotated[Optional[Any], "PortfolioDecision object or None (internal, not logged)"]
+    _trader_signal_data: Annotated[Optional[Any], "TraderProposal object or None (internal, not logged)"]
