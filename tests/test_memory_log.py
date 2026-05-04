@@ -640,6 +640,7 @@ class TestPortfolioManagerInjection:
         pm_node = create_portfolio_manager(llm)
         result = pm_node(_make_pm_state())
         assert result["final_trade_decision"] == plain_response
+        assert result["_pm_signal_data"] is None   # free-text path yields no object
 
     # get_past_context ordering and limits
 
