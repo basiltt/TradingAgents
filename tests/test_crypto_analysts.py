@@ -213,3 +213,149 @@ class TestCryptoPortfolioManager:
         state["risk_debate_state"]["history"] = "Bull: good. Bear: risky."
         result = node(state)
         assert "final_trade_decision" in result
+
+    def test_with_past_context(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_portfolio_manager
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content="Decision with lessons")
+        node = create_crypto_portfolio_manager(llm)
+        state = _base_state()
+        state["past_context"] = "lost money last time"
+        state["risk_debate_state"]["history"] = "debate"
+        result = node(state)
+        assert result["final_trade_decision"] == "Decision with lessons"
+
+
+class TestCryptoTechnicalAnalystNoTools:
+    def test_no_matching_tools_raises(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_technical_analyst
+        llm = MagicMock()
+        unrelated = MagicMock(); unrelated.name = "unrelated"
+        node = create_crypto_technical_analyst(llm, [unrelated])
+        with pytest.raises(ValueError, match="No technical analysis tools"):
+            node(_base_state())
+
+
+class TestCryptoDerivativesNoTools:
+    def test_no_matching_tools_raises(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_derivatives_analyst
+        llm = MagicMock()
+        node = create_crypto_derivatives_analyst(llm, [])
+        with pytest.raises(ValueError, match="No derivatives tools"):
+            node(_base_state())
+
+
+class TestCryptoFundamentalsAnalyst:
+    def test_returns_report(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_fundamentals_analyst
+        result_msg = AIMessage(content="fundamentals", tool_calls=[])
+        llm = MagicMock()
+        llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
+        tool = MagicMock(); tool.name = "get_crypto_market_data"
+        node = create_crypto_fundamentals_analyst(llm, [tool])
+        with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
+            mock_chain = MagicMock()
+            mock_chain.invoke.return_value = result_msg
+            mock_prompt = MagicMock()
+            mock_prompt.__or__ = MagicMock(return_value=mock_chain)
+            mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
+            result = node(_base_state())
+            assert result["crypto_fundamentals_report"] == "fundamentals"
+
+    def test_no_tools_raises(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_fundamentals_analyst
+        llm = MagicMock()
+        node = create_crypto_fundamentals_analyst(llm, [])
+        with pytest.raises(ValueError, match="No market data tool"):
+            node(_base_state())
+
+
+class TestCryptoSocialAnalyst:
+    def test_returns_sentiment_report(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_social_analyst
+        result_msg = AIMessage(content="social data", tool_calls=[])
+        llm = MagicMock()
+        llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
+        tool = MagicMock(); tool.name = "get_crypto_community_data"
+        node = create_crypto_social_analyst(llm, [tool])
+        with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
+            mock_chain = MagicMock()
+            mock_chain.invoke.return_value = result_msg
+            mock_prompt = MagicMock()
+            mock_prompt.__or__ = MagicMock(return_value=mock_chain)
+            mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
+            result = node(_base_state())
+            assert result["sentiment_report"] == "social data"
+
+
+class TestCryptoToolCallsBranch:
+    def test_technical_with_tool_calls_empty_report(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_technical_analyst
+        result_msg = AIMessage(content="content", tool_calls=[{"name": "x", "args": {}, "id": "1"}])
+        llm = MagicMock()
+        llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
+        t1 = MagicMock(); t1.name = "get_crypto_klines"
+        t2 = MagicMock(); t2.name = "get_crypto_indicators"
+        node = create_crypto_technical_analyst(llm, [t1, t2])
+        with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
+            mock_chain = MagicMock()
+            mock_chain.invoke.return_value = result_msg
+            mock_prompt = MagicMock()
+            mock_prompt.__or__ = MagicMock(return_value=mock_chain)
+            mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
+            result = node(_base_state())
+            assert result["market_report"] == ""
+
+
+class TestCryptoDebaterExtraReports:
+    def test_bull_with_extra_reports(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_risk_bull_debater
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content="bull")
+        node = create_crypto_risk_bull_debater(llm)
+        state = _base_state()
+        state["crypto_fundamentals_report"] = "cf"
+        state["sentiment_report"] = "sent"
+        result = node(state)
+        assert result["risk_debate_state"]["latest_speaker"] == "Bull"
+
+    def test_bear_with_extra_reports(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_risk_bear_debater
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content="bear")
+        node = create_crypto_risk_bear_debater(llm)
+        state = _base_state()
+        state["crypto_fundamentals_report"] = "cf"
+        state["sentiment_report"] = "sent"
+        result = node(state)
+        assert result["risk_debate_state"]["latest_speaker"] == "Bear"
+
+
+class TestCryptoTraderAllReports:
+    def test_with_all_analyst_reports(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_trader
+        valid_signal = json.dumps({
+            "trade_type": "Short",
+            "entry_price": 100000,
+            "stop_losses": [105000],
+            "take_profits": [90000],
+            "confidence": 6,
+            "leverage": 3,
+        })
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content=f"```json\n{valid_signal}\n```")
+        node = create_crypto_trader(llm)
+        state = _base_state()
+        state["crypto_fundamentals_report"] = "cf"
+        state["sentiment_report"] = "sent"
+        result = node(state)
+        assert result["sender"] == "CryptoTrader"
+
+    def test_unparseable_both_attempts(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_trader
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(content="not json at all")
+        node = create_crypto_trader(llm)
+        result = node(_base_state())
+        assert "Error" in result["trader_investment_plan"]
+        assert llm.invoke.call_count == 2
