@@ -6,6 +6,8 @@ APP_DIR="${TRADINGAGENTS_DEPLOY_ROOT:-$ROOT_DIR}"
 WEB_ROOT="${TRADINGAGENTS_WEB_ROOT:-/var/www/tradingagents}"
 SERVICE_NAME="${TRADINGAGENTS_SERVICE_NAME:-tradingagents}"
 HEALTHCHECK_URL="${TRADINGAGENTS_HEALTHCHECK_URL:-}"
+HEALTHCHECK_RETRIES="${TRADINGAGENTS_HEALTHCHECK_RETRIES:-24}"
+HEALTHCHECK_DELAY="${TRADINGAGENTS_HEALTHCHECK_DELAY:-5}"
 PYTHON_BIN="${TRADINGAGENTS_PYTHON_BIN:-python3}"
 
 require_cmd() {
@@ -42,7 +44,18 @@ sudo systemctl restart "$SERVICE_NAME"
 sudo systemctl reload nginx
 
 if [[ -n "$HEALTHCHECK_URL" ]]; then
-  curl --fail --silent --show-error "$HEALTHCHECK_URL" >/dev/null
+  for ((attempt = 1; attempt <= HEALTHCHECK_RETRIES; attempt++)); do
+    if curl --fail --silent --show-error "$HEALTHCHECK_URL" >/dev/null; then
+      break
+    fi
+
+    if [[ "$attempt" -eq "$HEALTHCHECK_RETRIES" ]]; then
+      echo "Health check failed after ${HEALTHCHECK_RETRIES} attempts." >&2
+      exit 1
+    fi
+
+    sleep "$HEALTHCHECK_DELAY"
+  done
 fi
 
 echo "Deployment complete."
