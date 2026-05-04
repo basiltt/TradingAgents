@@ -165,3 +165,18 @@ def test_invalid_resolved_ip():
         mock_gai.return_value = [(None, None, None, None, ("", None))]
         with pytest.raises(ValueError, match="Invalid resolved IP"):
             validate_backend_url("http://example.com:9999", server_port=8000)
+
+
+def test_ipv6_mapped_private_blocked():
+    """Covers validators.py:62-64: IPv6 mapped IPv4 private address."""
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+    import socket
+
+    # ::ffff:192.168.1.1 is an IPv4-mapped IPv6 address in a private range
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [
+            (socket.AF_INET6, None, None, None, ("::ffff:192.168.1.1", None, 0, 0))
+        ]
+        with pytest.raises(ValueError, match="private"):
+            validate_backend_url("http://example.com:9999", server_port=8000)

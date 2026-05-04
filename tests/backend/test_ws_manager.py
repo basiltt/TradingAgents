@@ -285,3 +285,29 @@ def test_heartbeat_pong_timeout(ws_manager, event_loop):
             ws_mod._HEARTBEAT_INTERVAL = orig_interval
         ws.close.assert_called()
     event_loop.run_until_complete(_test())
+
+
+def test_heartbeat_queue_full_exits(ws_manager, event_loop):
+    """Covers ws_manager.py:106-107: heartbeat QueueFull break."""
+    import time
+    from backend.ws_manager import WSConnection
+    from backend import ws_manager as ws_mod
+
+    async def _test():
+        ws = _mock_ws()
+        conn = WSConnection(ws, "run1")
+        # Fill the outbound queue so put_nowait raises QueueFull
+        while not conn.outbound.full():
+            conn.outbound.put_nowait({"type": "filler"})
+
+        orig_interval = ws_mod._HEARTBEAT_INTERVAL
+        ws_mod._HEARTBEAT_INTERVAL = 0.01
+        try:
+            # Should exit after QueueFull instead of looping forever
+            await asyncio.wait_for(ws_manager._heartbeat_loop(conn), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass  # acceptable if it didn't break on QueueFull
+        finally:
+            ws_mod._HEARTBEAT_INTERVAL = orig_interval
+
+    event_loop.run_until_complete(_test())

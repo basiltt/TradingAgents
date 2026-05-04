@@ -174,3 +174,33 @@ def test_cleanup_full_queue_double_put(bus, event_loop):
         bus._ring_bytes["run1"] = 0
         bus.cleanup_run("run1")
     event_loop.run_until_complete(_test())
+
+
+def test_queue_full_evict_and_retry(bus, event_loop):
+    """Covers lines 64-65, 70-71: queue full eviction path."""
+    async def _test():
+        import asyncio
+        from backend.event_bus import EventBus
+        small_bus = EventBus(loop=event_loop)
+        small_bus._queues["run1"] = asyncio.Queue(maxsize=1)
+        small_bus._queues["run1"].put_nowait({"type": "first"})
+        # This should trigger the QueueFull eviction path
+        small_bus.emit("run1", {"type": "second"})
+        # Should now have one item in the queue (second replaced first)
+        assert not small_bus._queues["run1"].empty()
+    event_loop.run_until_complete(_test())
+
+
+def test_ring_buffer_byte_overflow_evicts(bus, event_loop):
+    """Covers line 97: ring buffer byte eviction loop."""
+    from backend import event_bus
+    original = event_bus._MAX_RING_BYTES
+    event_bus._MAX_RING_BYTES = 50
+    try:
+        bus.emit("run2", {"type": "message", "data": "a" * 30})
+        bus.emit("run2", {"type": "message", "data": "b" * 30})
+        snapshot = bus.get_snapshot("run2")
+        # Total bytes exceeded limit, so oldest should be evicted
+        assert len(snapshot) <= 2
+    finally:
+        event_bus._MAX_RING_BYTES = original

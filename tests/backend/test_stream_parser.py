@@ -161,3 +161,22 @@ def test_seq_counter():
     msg_events = [e for e in events if isinstance(e, MessageEvent)]
     assert msg_events[0].seq == 1
     assert msg_events[1].seq == 2
+
+
+def test_debate_chunk_with_judge_decision():
+    """Covers stream_parser.py:170-171: judge_decision branch."""
+    from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, AgentStatusEvent
+
+    seq = make_seq_counter()
+    state = StreamParserState()
+    chunk = {
+        "investment_debate_state": {
+            "bull_researcher_report": "Bullish",
+            "judge_decision": "BUY",
+        }
+    }
+    events = parse_stream_chunk(chunk, seq=seq, state=state)
+    agent_events = [e for e in events if isinstance(e, AgentStatusEvent)]
+    agents = [e.agent for e in agent_events]
+    assert "Research Manager" in agents
+    assert "Trader" in agents

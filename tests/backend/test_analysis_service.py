@@ -329,6 +329,64 @@ def test_reclaim_zombie(service, event_loop):
     event_loop.run_until_complete(_test())
 
 
+def test_timeout_sets_failed_status(service, sample_request, event_loop, db):
+    import asyncio
+    with patch("backend.services.analysis_service.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        async def _test():
+            run_id = await service.start_analysis(sample_request)
+            await asyncio.sleep(0.5)
+            run = db.get_run(run_id)
+            assert run["status"] == "failed"
+            assert "timeout" in (run["error"] or "").lower() or "Wall-clock" in (run["error"] or "")
+        event_loop.run_until_complete(_test())
+
+
+def test_execute_graph_import_error(service, sample_request):
+    import sys
+    with patch.dict(sys.modules, {"tradingagents.graph.trading_graph": None}):
+        result = service._execute_graph(
+            "run-1", {"ticker": "SPY", "analysis_date": "2025-01-10"}, {}, None,
+            __import__("threading").Event(),
+        )
+    assert result is not None
+    assert "Mock decision" in result.get("final_trade_decision", "")
+
+
+def test_safe_json_non_serializable():
+    from backend.services.analysis_service import _safe_json
+
+    class Bad:
+        def __repr__(self):
+            raise ValueError("bad repr")
+
+    # _safe_json uses default=str which should handle most objects;
+    # We cover the except branch with a circular reference
+    import json
+    circular: dict = {}
+    circular["self"] = circular
+    result = _safe_json(circular)
+    assert result == "{}"
+
+
+def test_save_snapshot_messages_truncated(service, db, bus):
+    from collections import deque
+    run_id = "snap-truncate"
+    db.insert_run({
+        "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+        "status": "running", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
+    })
+    bus._ring_buffers[run_id] = deque(
+        [({"type": "message", "sender": "a", "content": f"msg{i}", "seq": i}, 20) for i in range(250)]
+    )
+    service._save_snapshot(run_id)
+    import json
+    raw = db.get_report_sections(run_id)
+    snap_row = next(r for r in raw if r["section"] == "_snapshot")
+    snapshot = json.loads(snap_row["content"])
+    assert len(snapshot["messages"]) == 200
+    assert snapshot["messages"][0]["seq"] == 50
+
+
 def test_save_snapshot_exception_logged(service, db, bus):
     from collections import deque
     run_id = "snap-err-1"

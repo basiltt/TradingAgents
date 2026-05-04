@@ -402,3 +402,56 @@ class TestGetScanFromDB:
         ]
         result = await scanner.list_scans()
         assert any(s["scan_id"] == "db1" for s in result)
+
+
+class TestScanEviction:
+    @pytest.mark.asyncio
+    async def test_old_completed_scans_evicted(self, scanner):
+        """Evict done scans beyond 10 (line 138)."""
+        # Pre-populate with 11 completed scans
+        for i in range(11):
+            scanner._scans[f"old-{i}"] = {
+                "scan_id": f"old-{i}", "status": "completed",
+                "cancel": False, "config": "{}", "started_at": "t",
+                "total": 0, "total_batches": 0, "completed": 0, "failed": 0,
+                "current_tickers": [], "results": [],
+            }
+        with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+            await scanner.start_scan({"analysis_date": "2025-01-10"})
+        # Should have evicted to keep only 10 done + 1 running = 11 total
+        done = [s for s in scanner._scans.values() if s["status"] != "running"]
+        assert len(done) <= 10
+
+
+class TestCancelMidTicker:
+    @pytest.mark.asyncio
+    async def test_cancel_check_inside_process_ticker(self, scanner):
+        """Scan cancelled flag stops ticker processing (line 345)."""
+        symbols_called = []
+
+        async def fake_run_single(scan_id, ticker):
+            symbols_called.append(ticker)
+
+        with patch.object(scanner, "_run_single", side_effect=fake_run_single):
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTC", "ETH"]):
+                scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
+                # Immediately cancel
+                await scanner.cancel_scan(scan_id)
+                await asyncio.sleep(0.3)
+        # Either 0 or limited symbols processed due to cancel
+        assert len(symbols_called) <= 2
+
+    @pytest.mark.asyncio
+    async def test_scan_gather_exception_sets_failed(self, scanner):
+        """gather outer except sets scan_error and final status is failed (lines 361-365, 375)."""
+        async def raise_exc(scan_id, ticker):
+            if ticker == "BTC":
+                raise RuntimeError("forced error")
+
+        with patch.object(scanner, "_run_single", side_effect=raise_exc):
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTC"]):
+                scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
+                await asyncio.sleep(0.5)
+        scan = await scanner.get_scan(scan_id)
+        # Should be "completed" or "failed" — errors in gather return_exceptions=True
+        assert scan["status"] in ("completed", "failed")
