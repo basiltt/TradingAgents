@@ -253,3 +253,77 @@ def test_shutdown(service, sample_request, event_loop):
                 for r in service._active_runs.values()
             )
         event_loop.run_until_complete(_test())
+
+
+def test_zombie_count_blocks(service, sample_request, event_loop):
+    from backend.services.analysis_service import ConcurrencyLimitError
+    async def _test():
+        service._zombie_count = 100
+        with pytest.raises(ConcurrencyLimitError, match="zombie"):
+            await service.start_analysis(sample_request)
+    event_loop.run_until_complete(_test())
+
+
+def test_cancel_non_running_active_run(service, event_loop):
+    async def _test():
+        import threading
+        async with service._lock:
+            service._active_runs["r1"] = {
+                "status": "completed",
+                "cancel_event": threading.Event(),
+                "task": None,
+            }
+        result = await service.cancel_analysis("r1")
+        assert result is True
+    event_loop.run_until_complete(_test())
+
+
+def test_cancel_db_completed_run(service, db, event_loop):
+    async def _test():
+        db.insert_run({
+            "run_id": "r2", "ticker": "SPY", "analysis_date": "2025-01-10",
+            "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
+        })
+        result = await service.cancel_analysis("r2")
+        assert result is True
+    event_loop.run_until_complete(_test())
+
+
+def test_build_config_data_vendors(service):
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+        "data_vendors": {"stock": "yfinance"},
+    })
+    assert config["data_vendors"]["stock"] == "yfinance"
+
+
+def test_save_snapshot_event_types(service, db, bus):
+    import json
+    from collections import deque
+    run_id = "snap-test-1"
+    db.insert_run({
+        "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+        "status": "running", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
+    })
+    bus._ring_buffers[run_id] = deque([
+        ({"type": "agent_status", "agent": "market", "status": "running"}, 50),
+        ({"type": "message", "sender": "analyst", "content": "test msg", "seq": 1}, 50),
+        ({"type": "stats", "tokens_in": 100, "tokens_out": 50, "llm_calls": 5, "tool_calls": 2}, 80),
+        ({"type": "report_chunk", "section": "market", "content": "Market analysis report"}, 60),
+    ])
+    service._save_snapshot(run_id)
+    raw = db.get_report_sections(run_id)
+    snap_row = next(r for r in raw if r["section"] == "_snapshot")
+    snapshot = json.loads(snap_row["content"])
+    assert snapshot["agents"]["market"] == "running"
+    assert len(snapshot["messages"]) == 1
+    assert snapshot["stats"]["tokens_in"] == 100
+    assert snapshot["reports"]["market"] == "Market analysis report"
+
+
+def test_reclaim_zombie(service, event_loop):
+    async def _test():
+        service._zombie_count = 3
+        await service._reclaim_zombie_async("test-run")
+        assert service._zombie_count == 2
+    event_loop.run_until_complete(_test())
