@@ -137,3 +137,166 @@ class TestResolvePendingEntries:
         mock_fetch.return_value = (None, None, None)
         obj._resolve_pending_entries("AAPL")
         obj.memory_log.batch_update_with_outcomes.assert_not_called()
+
+    @patch.object(
+        __import__("tradingagents.graph.trading_graph", fromlist=["TradingAgentsGraph"]).TradingAgentsGraph,
+        "_fetch_returns",
+    )
+    def test_updates_with_outcomes(self, mock_fetch):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        obj.memory_log = MagicMock()
+        obj.memory_log.get_pending_entries.return_value = [
+            {"ticker": "AAPL", "date": "2025-01-10", "decision": "buy"},
+        ]
+        obj.reflector = MagicMock()
+        obj.reflector.reflect_on_final_decision.return_value = "good call"
+        mock_fetch.return_value = (0.05, 0.02, 5)
+        obj._resolve_pending_entries("AAPL")
+        obj.memory_log.batch_update_with_outcomes.assert_called_once()
+        updates = obj.memory_log.batch_update_with_outcomes.call_args[0][0]
+        assert len(updates) == 1
+        assert updates[0]["raw_return"] == 0.05
+        assert updates[0]["alpha_return"] == 0.02
+        assert updates[0]["reflection"] == "good call"
+
+
+class TestRunGraph:
+    def test_invoke_mode(self, tmp_path):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        obj.debug = False
+        obj.config = {"results_dir": str(tmp_path), "asset_type": "stock"}
+        obj.ticker = "AAPL"
+        obj.log_states_dict = {}
+        obj.memory_log = MagicMock()
+        obj.propagator = MagicMock()
+        obj.propagator.create_initial_state.return_value = {"company_of_interest": "AAPL", "trade_date": "2025-01-10"}
+        obj.propagator.get_graph_args.return_value = {}
+        obj.signal_processor = MagicMock()
+        obj.signal_processor.process_signal.return_value = "BUY"
+        final = {
+            "company_of_interest": "AAPL",
+            "trade_date": "2025-01-10",
+            "final_trade_decision": "Buy AAPL",
+            "investment_debate_state": None,
+            "risk_debate_state": None,
+        }
+        obj.graph = MagicMock()
+        obj.graph.invoke.return_value = final
+        result_state, signal = obj._run_graph("AAPL", "2025-01-10")
+        assert result_state["final_trade_decision"] == "Buy AAPL"
+        assert signal == "BUY"
+        obj.memory_log.store_decision.assert_called_once()
+
+    def test_debug_mode(self, tmp_path):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        obj.debug = True
+        obj.config = {"results_dir": str(tmp_path), "asset_type": "stock"}
+        obj.ticker = "AAPL"
+        obj.log_states_dict = {}
+        obj.memory_log = MagicMock()
+        obj.propagator = MagicMock()
+        obj.propagator.create_initial_state.return_value = {}
+        obj.propagator.get_graph_args.return_value = {}
+        obj.signal_processor = MagicMock()
+        obj.signal_processor.process_signal.return_value = "HOLD"
+
+        msg = MagicMock()
+        chunk = {
+            "messages": [msg],
+            "company_of_interest": "AAPL",
+            "trade_date": "2025-01-10",
+            "final_trade_decision": "Hold",
+            "investment_debate_state": None,
+            "risk_debate_state": None,
+        }
+        obj.graph = MagicMock()
+        obj.graph.stream.return_value = [chunk]
+        result_state, signal = obj._run_graph("AAPL", "2025-01-10")
+        assert result_state["final_trade_decision"] == "Hold"
+        msg.pretty_print.assert_called_once()
+
+    def test_checkpoint_thread_id(self, tmp_path):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        obj.debug = False
+        obj.config = {
+            "results_dir": str(tmp_path),
+            "asset_type": "stock",
+            "checkpoint_enabled": True,
+            "data_cache_dir": str(tmp_path),
+        }
+        obj.ticker = "AAPL"
+        obj.log_states_dict = {}
+        obj.memory_log = MagicMock()
+        obj.propagator = MagicMock()
+        obj.propagator.create_initial_state.return_value = {}
+        obj.propagator.get_graph_args.return_value = {}
+        obj.signal_processor = MagicMock()
+        obj.signal_processor.process_signal.return_value = "BUY"
+        final = {
+            "company_of_interest": "AAPL",
+            "trade_date": "2025-01-10",
+            "final_trade_decision": "Buy",
+            "investment_debate_state": None,
+            "risk_debate_state": None,
+        }
+        obj.graph = MagicMock()
+        obj.graph.invoke.return_value = final
+        with patch("tradingagents.graph.trading_graph.clear_checkpoint") as mock_clear:
+            result_state, _ = obj._run_graph("AAPL", "2025-01-10")
+            mock_clear.assert_called_once()
+
+
+class TestPropagate:
+    def test_basic_propagate(self, tmp_path):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        obj.config = {"results_dir": str(tmp_path), "asset_type": "stock"}
+        obj.memory_log = MagicMock()
+        obj.memory_log.get_pending_entries.return_value = []
+        obj._checkpointer_ctx = None
+
+        final = {
+            "company_of_interest": "AAPL",
+            "trade_date": "2025-01-10",
+            "final_trade_decision": "Buy",
+            "investment_debate_state": None,
+            "risk_debate_state": None,
+        }
+        with patch.object(TradingAgentsGraph, "_run_graph", return_value=(final, "BUY")):
+            result = obj.propagate("AAPL", "2025-01-10")
+            assert result == (final, "BUY")
+            assert obj.ticker == "AAPL"
+
+    @patch("tradingagents.graph.trading_graph.get_checkpointer")
+    @patch("tradingagents.graph.trading_graph.checkpoint_step")
+    def test_checkpoint_propagate(self, mock_step, mock_get_cp, tmp_path):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        obj.config = {
+            "results_dir": str(tmp_path),
+            "asset_type": "stock",
+            "checkpoint_enabled": True,
+            "data_cache_dir": str(tmp_path),
+        }
+        obj.memory_log = MagicMock()
+        obj.memory_log.get_pending_entries.return_value = []
+        obj._checkpointer_ctx = None
+        obj.workflow = MagicMock()
+
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__ = MagicMock(return_value=MagicMock())
+        mock_ctx.__exit__ = MagicMock(return_value=False)
+        mock_get_cp.return_value = mock_ctx
+        mock_step.return_value = None
+
+        final = {"final_trade_decision": "Buy", "company_of_interest": "AAPL", "trade_date": "2025-01-10", "investment_debate_state": None, "risk_debate_state": None}
+        with patch.object(TradingAgentsGraph, "_run_graph", return_value=(final, "BUY")):
+            result = obj.propagate("AAPL", "2025-01-10")
+            mock_get_cp.assert_called_once()
+            mock_ctx.__exit__.assert_called_once()
+            obj.workflow.compile.assert_called()
+            assert obj._checkpointer_ctx is None
