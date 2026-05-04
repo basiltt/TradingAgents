@@ -64,3 +64,71 @@ class TestAnalysisWsEndpoint:
         ) as ws:
             data = ws.receive_json()
             assert data["type"] == "error"
+
+    def test_happy_path_connect_disconnect(self):
+        app = _make_ws_app()
+        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111", "status": "running"})
+        mock_conn = MagicMock()
+        app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
+        app.state.ws_manager.ensure_consumer = AsyncMock()
+        app.state.ws_manager.handle_message = AsyncMock(return_value="ok")
+        app.state.ws_manager.disconnect = AsyncMock()
+        app.state.ws_manager.remove_consumer_if_empty = AsyncMock()
+        client = TestClient(app)
+        with client.websocket_connect(
+            "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
+            headers={"origin": "http://localhost:3000"},
+        ) as ws:
+            ws.send_text('{"type":"ping"}')
+        app.state.ws_manager.connect.assert_called_once()
+        app.state.ws_manager.disconnect.assert_called_once()
+
+    def test_frame_too_large_closes(self):
+        app = _make_ws_app()
+        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
+        mock_conn = MagicMock()
+        app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
+        app.state.ws_manager.ensure_consumer = AsyncMock()
+        app.state.ws_manager.handle_message = AsyncMock(return_value="frame_too_large")
+        app.state.ws_manager.disconnect = AsyncMock()
+        app.state.ws_manager.remove_consumer_if_empty = AsyncMock()
+        client = TestClient(app)
+        with client.websocket_connect(
+            "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
+            headers={"origin": "http://localhost:3000"},
+        ) as ws:
+            ws.send_text("big data")
+
+    def test_rate_limited_closes(self):
+        app = _make_ws_app()
+        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
+        mock_conn = MagicMock()
+        app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
+        app.state.ws_manager.ensure_consumer = AsyncMock()
+        app.state.ws_manager.handle_message = AsyncMock(return_value="rate_limited")
+        app.state.ws_manager.disconnect = AsyncMock()
+        app.state.ws_manager.remove_consumer_if_empty = AsyncMock()
+        client = TestClient(app)
+        with client.websocket_connect(
+            "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
+            headers={"origin": "http://localhost:3000"},
+        ) as ws:
+            ws.send_text("too fast")
+
+    def test_replay_sends_snapshot(self):
+        app = _make_ws_app()
+        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
+        mock_conn = MagicMock()
+        app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
+        app.state.ws_manager.ensure_consumer = AsyncMock()
+        app.state.ws_manager.handle_message = AsyncMock(return_value="replay")
+        app.state.ws_manager.send_to = AsyncMock()
+        app.state.ws_manager.disconnect = AsyncMock()
+        app.state.ws_manager.remove_consumer_if_empty = AsyncMock()
+        app.state.event_bus.get_snapshot = MagicMock(return_value=[{"type": "event1"}, {"type": "event2"}])
+        client = TestClient(app)
+        with client.websocket_connect(
+            "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
+            headers={"origin": "http://localhost:3000"},
+        ) as ws:
+            ws.send_text('{"type":"replay"}')
