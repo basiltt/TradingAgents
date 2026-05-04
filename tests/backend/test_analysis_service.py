@@ -228,3 +228,81 @@ def test_persist_signal_sections_handles_none_chunk(tmp_path):
     )
     service._persist_signal_sections("run-789", None)
     db.save_report_section.assert_not_called()
+
+
+def _make_service_with_sections(sections: list):
+    """Return an AnalysisService whose DB returns the given sections list."""
+    import asyncio
+    from unittest.mock import MagicMock
+    from backend.services.analysis_service import AnalysisService
+
+    db = MagicMock()
+    db.get_report_sections.return_value = sections
+    event_bus = MagicMock()
+    event_bus.get_snapshot.return_value = []
+    ws = MagicMock()
+    config_svc = MagicMock()
+    config_svc.get_config.return_value = {"resolved": {}}
+    return AnalysisService(persistence=db, event_bus=event_bus, ws_manager=ws, config_service=config_svc)
+
+
+def test_get_snapshot_injects_signal_sections_into_existing_reports():
+    """Signal sections saved after snapshot must appear in snapshot['reports']."""
+    import asyncio
+    import json
+
+    snapshot_json = json.dumps({"agents": {}, "messages": [], "stats": None, "reports": {
+        "portfolio_manager": "Some markdown",
+    }})
+    sections = [
+        {"section": "_snapshot", "content": snapshot_json},
+        {"section": "portfolio_manager", "content": "Some markdown"},
+        {"section": "_pm_signal", "content": json.dumps({"rating": "Buy", "confidence": 8})},
+        {"section": "_trader_signal", "content": json.dumps({"action": "Buy", "confidence": 7})},
+    ]
+    service = _make_service_with_sections(sections)
+    snapshot = asyncio.run(service.get_snapshot("run-42"))
+
+    assert snapshot is not None
+    reports = snapshot["reports"]
+    assert "_pm_signal" in reports
+    assert "_trader_signal" in reports
+    # Existing key must not be overwritten by DB section
+    assert reports["portfolio_manager"] == "Some markdown"
+
+
+def test_get_snapshot_does_not_overwrite_existing_snapshot_key():
+    """DB section for a key already in snapshot['reports'] must not win."""
+    import asyncio
+    import json
+
+    snapshot_json = json.dumps({"agents": {}, "messages": [], "stats": None, "reports": {
+        "trader": "Snapshot version",
+    }})
+    sections = [
+        {"section": "_snapshot", "content": snapshot_json},
+        {"section": "trader", "content": "DB version (should not overwrite)"},
+    ]
+    service = _make_service_with_sections(sections)
+    snapshot = asyncio.run(service.get_snapshot("run-43"))
+
+    assert snapshot["reports"]["trader"] == "Snapshot version"
+
+
+def test_get_report_excludes_underscore_prefixed_sections():
+    """get_report must not expose raw JSON signal blobs in the human-readable output."""
+    import asyncio
+    import json
+
+    sections = [
+        {"section": "portfolio_manager", "content": "Some markdown"},
+        {"section": "_pm_signal", "content": json.dumps({"rating": "Buy"})},
+        {"section": "_trader_signal", "content": json.dumps({"action": "Buy"})},
+    ]
+    service = _make_service_with_sections(sections)
+    report = asyncio.run(service.get_report("run-44"))
+
+    assert report is not None
+    assert "_pm_signal" not in report
+    assert "_trader_signal" not in report
+    assert "portfolio_manager" in report or "Some markdown" in report

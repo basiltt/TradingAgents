@@ -43,7 +43,8 @@ def _extract_signal_from_structured(
         return {"direction": "hold", "confidence": "none", "score": 0}
 
     # PM confidence is authoritative; fall back to trader's if absent
-    conf_score = pm_data.get("confidence") or trader_data.get("confidence")
+    pm_conf = pm_data.get("confidence")
+    conf_score = pm_conf if pm_conf is not None else trader_data.get("confidence")
     if conf_score is None:
         conf_score = 5  # neutral default when direction is known but conviction isn't
     conf_score = max(1, min(10, int(conf_score)))

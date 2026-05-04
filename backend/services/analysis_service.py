@@ -131,7 +131,10 @@ class AnalysisService:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
         if not sections:
             return None
-        return "\n\n---\n\n".join(s["content"] for s in sections if s["section"] != "_snapshot")
+        return "\n\n---\n\n".join(
+            s["content"] for s in sections
+            if s["section"] != "_snapshot" and not s["section"].startswith("_")
+        )
 
     async def get_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
@@ -145,14 +148,15 @@ class AnalysisService:
                 break
         if snapshot is None:
             return None
-        # Merge all individually-saved DB sections into snapshot["reports"].
-        # The snapshot JSON only contains report_chunk events; signal sections
-        # (_pm_signal, _trader_signal) are saved separately and must be included.
-        db_sections = {s["section"]: s["content"] for s in sections if s["section"] != "_snapshot"}
-        if db_sections:
-            merged = dict(snapshot.get("reports") or {})
-            merged.update(db_sections)
-            snapshot["reports"] = merged
+        # Inject DB sections that are absent from the snapshot's reports dict.
+        # The snapshot JSON only captures report_chunk events; _pm_signal and
+        # _trader_signal are saved separately and must be visible to the scanner.
+        # Use setdefault semantics so existing snapshot content is never overwritten.
+        existing = snapshot.setdefault("reports", {})
+        for s in sections:
+            key = s["section"]
+            if key != "_snapshot" and key not in existing:
+                existing[key] = s["content"]
         return snapshot
 
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -312,7 +316,6 @@ class AnalysisService:
         """
         if not last_chunk:
             return
-        import json as _json_local
         for key, section_name in (
             ("_pm_signal_data", "_pm_signal"),
             ("_trader_signal_data", "_trader_signal"),
@@ -324,7 +327,7 @@ class AnalysisService:
                 if hasattr(obj, "model_dump_json"):
                     json_str = obj.model_dump_json()
                 elif isinstance(obj, dict):
-                    json_str = _json_local.dumps(obj)
+                    json_str = json.dumps(obj)
                 else:
                     continue
                 self._db.save_report_section(run_id, section_name, json_str)

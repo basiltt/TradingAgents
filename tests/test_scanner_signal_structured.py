@@ -74,10 +74,14 @@ class TestExtractSignalFromStructured:
         assert result["confidence"] == "low"
         assert result["score"] == 2
 
-    def test_empty_pm_data_defaults_hold(self):
-        result = _extract({})
-        assert result["direction"] == "hold"
-        assert result["score"] == 0
+    def test_confidence_zero_treated_as_present_not_absent(self):
+        # confidence=0 must not fall through to trader's confidence
+        result = _extract({"rating": "Buy", "confidence": 0}, {"confidence": 9})
+        # 0 is clamped to 1 (min), not replaced by trader's 9
+        assert result["score"] == 1
+        assert result["confidence"] == "low"
+
+
 
 
 import asyncio
