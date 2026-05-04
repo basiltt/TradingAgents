@@ -468,3 +468,43 @@ def test_execute_graph_cancel_mid_loop(service):
             )
     # Loop should break immediately on first chunk
     assert len(chunks_yielded) <= 1
+
+
+def test_lifecycle_snapshot_persisted(service, db, event_loop):
+    """Integration: _save_snapshot runs in finally block after successful analysis."""
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph",
+               return_value={"final_trade_decision": "BUY"}):
+        async def _test():
+            run_id = await service.start_analysis({
+                "ticker": "SPY", "analysis_date": "2025-06-01",
+                "analysts": ["market"],
+            })
+            await asyncio.sleep(0.5)
+            run = db.get_run(run_id)
+            assert run["status"] == "completed"
+            snap = await service.get_snapshot(run_id)
+            assert snap is not None
+            assert "agents" in snap
+            assert "messages" in snap
+            assert "stats" in snap
+            assert "reports" in snap
+        event_loop.run_until_complete(_test())
+
+
+def test_update_run_status_false_skips_section_save(service, db, event_loop, bus):
+    """Integration: if update_run_status returns False, save_report_section is not called for final_trade_decision."""
+    from collections import deque
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph",
+               return_value={"final_trade_decision": "HOLD"}):
+        async def _test():
+            run_id = await service.start_analysis({
+                "ticker": "SPY", "analysis_date": "2025-06-01",
+            })
+            # Pre-mark as completed to make update_run_status return False
+            await asyncio.sleep(0)
+            db.update_run_status(run_id, "completed", None, "2025-01-01T00:00:00Z")
+            await asyncio.sleep(0.5)
+            sections = db.get_report_sections(run_id)
+            section_names = [s["section"] for s in sections]
+            assert "final_trade_decision" not in section_names
+        event_loop.run_until_complete(_test())
