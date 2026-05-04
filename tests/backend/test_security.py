@@ -1178,3 +1178,126 @@ async def test_start_scanner_invalid_vendor_value_rejected(client):
         headers=CSRF,
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# R9: ScanRequest asset_type validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_scanner_invalid_asset_type_rejected(client):
+    """R9: ScanRequest with invalid asset_type is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "asset_type": "forex"},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_xss_asset_type_rejected(client):
+    """R9: ScanRequest with XSS in asset_type is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "asset_type": "<script>alert(1)</script>"},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_scanner_backend_url_private_ip_deferred(client):
+    """R8: Scanner accepts 201 for private backend_url (SSRF check deferred to per-ticker execution).
+
+    The scanner does not validate backend_url at request time — it delegates to
+    analysis_service per ticker, which swallows errors in _run_single. This documents
+    the architectural difference vs the analysis endpoint (which returns 400 immediately).
+    """
+    import socket
+    private_ip_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))]
+    with patch("backend.validators.socket.getaddrinfo", return_value=private_ip_info):
+        with patch(
+            "backend.services.scanner_service.ScannerService.start_scan",
+            return_value="scan-id-123",
+        ):
+            resp = await client.post(
+                "/api/v1/scanner",
+                json={
+                    "analysis_date": "2025-06-01",
+                    "backend_url": "http://internal.corp:8080",
+                },
+                headers=CSRF,
+            )
+    # Scanner returns 201 immediately (start_scan returns scan_id, not doing SSRF check at request time)
+    assert resp.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# R8: Numeric boundary tests for analysis and scanner
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_analysis_max_debate_rounds_too_high(client):
+    """R8: max_debate_rounds=11 is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={"ticker": "SPY", "analysis_date": "2025-06-01", "max_debate_rounds": 11},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_analysis_max_debate_rounds_too_low(client):
+    """R8: max_debate_rounds=0 is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={"ticker": "SPY", "analysis_date": "2025-06-01", "max_debate_rounds": 0},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_analysis_max_recur_limit_too_high(client):
+    """R8: max_recur_limit=501 is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={"ticker": "SPY", "analysis_date": "2025-06-01", "max_recur_limit": 501},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_research_depth_too_low(client):
+    """R8: Scanner research_depth=0 is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "research_depth": 0},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_research_depth_too_high(client):
+    """R8: Scanner research_depth=6 is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "research_depth": 6},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_max_recur_limit_too_high(client):
+    """R8: Scanner max_recur_limit=501 is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "max_recur_limit": 501},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422

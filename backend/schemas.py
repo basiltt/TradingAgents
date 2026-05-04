@@ -326,8 +326,10 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scan_analyst_type(self):
+        asset = self.asset_type or "crypto"
+        if asset not in ("stock", "crypto"):
+            raise ValueError(f"Invalid asset_type: {asset}, must be 'stock' or 'crypto'")
         if self.analysts:
-            asset = self.asset_type or "crypto"
             if asset == "crypto":
                 valid = {e.value for e in CryptoAnalystType}
             else:
