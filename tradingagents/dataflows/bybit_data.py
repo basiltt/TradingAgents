@@ -198,6 +198,12 @@ def normalize_bybit_symbol(symbol: str) -> str:
     """Normalize a symbol to Bybit's listed format, raising if not found."""
     upper = symbol.upper().strip()
     valid = get_valid_symbols()
+    if not valid:
+        logger.warning(
+            "Bybit symbol catalog unavailable; skipping strict validation for %s",
+            upper,
+        )
+        return upper
     if upper in valid:
         return upper
     # Try 1000x prefix for low-priced tokens

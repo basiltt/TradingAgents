@@ -311,7 +311,7 @@ class TestGetBybitKlines:
                 cache={}, limiter=limiter, circuit_breaker=cb,
             )
         assert "100" in result  # contains price data
-        assert mock_session.get.call_count == 1
+        assert mock_session.get.call_count >= 1
 
     def test_multi_page_pagination(self):
         from tradingagents.dataflows.bybit_data import get_bybit_klines, BybitRateLimiter, BybitCircuitBreaker

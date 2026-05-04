@@ -7,10 +7,11 @@ from httpx import AsyncClient, ASGITransport
 
 
 @pytest.fixture
-def app(tmp_path):
-    import os
-    os.environ["TRADINGAGENTS_WEB_DB_PATH"] = str(tmp_path / "test.db")
-    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+def app(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_WEB_DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("TRADINGAGENTS_BACKEND_URL", raising=False)
+    monkeypatch.delenv("TRADINGAGENTS_LLM_PROVIDER", raising=False)
     from backend.main import create_app
     return create_app()
 

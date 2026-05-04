@@ -419,6 +419,43 @@ docker compose up --build
 docker compose down
 ```
 
+## CI/CD
+
+GitHub Actions is configured through [`.github/workflows/ci-cd.yml`](/C:/Users/ttbasil/Desktop/Projects/PublicProjects/TradingAgents/.github/workflows/ci-cd.yml).
+
+What it does:
+
+- Runs backend `pytest` on Python `3.12`
+- Builds the frontend with Node.js `20`
+- Deploys to the Oracle VM on pushes to `main` after CI passes
+- Supports manual redeploys through `workflow_dispatch`
+
+The deploy job runs [`scripts/deploy.sh`](/C:/Users/ttbasil/Desktop/Projects/PublicProjects/TradingAgents/scripts/deploy.sh) on the server. That script:
+
+- installs backend dependencies into `.venv`
+- runs `npm ci` and `npm run build` in `frontend/`
+- syncs `frontend/dist/` into nginx's web root
+- restarts the `tradingagents` systemd service
+- reloads nginx
+- verifies the public health endpoint
+
+Repository secrets required by the deploy job:
+
+| Secret | Example value | Purpose |
+| --- | --- | --- |
+| `ORACLE_HOST` | `144.24.128.103` | Oracle VM public IP or hostname |
+| `ORACLE_USER` | `ubuntu` | SSH username |
+| `ORACLE_PORT` | `22` | SSH port |
+| `ORACLE_APP_DIR` | `/home/ubuntu/projects/TradingAgents` | Repo path on the server |
+| `ORACLE_SSH_KEY` | multiline private key | Private key used by GitHub Actions to SSH into the VM |
+| `PRODUCTION_HEALTHCHECK_URL` | `https://144.24.128.103.sslip.io/api/v1/health` | Post-deploy verification URL |
+
+Deployment notes:
+
+- The server repository should stay on the `main` branch and remain pullable with `git pull --ff-only origin main`.
+- Keep production-only files such as `.env` untracked on the VM.
+- If you rotate the server SSH key, update the `ORACLE_SSH_KEY` secret in GitHub.
+
 ## Legacy Interfaces
 
 The repository still includes:

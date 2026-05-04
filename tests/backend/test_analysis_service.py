@@ -67,7 +67,7 @@ def test_start_analysis_returns_run_id(service, sample_request, event_loop):
 
 
 def test_concurrency_cap(service, sample_request, event_loop):
-    from backend.services.analysis_service import ConcurrencyLimitError
+    from backend.services.analysis_service import ConcurrencyLimitError, _MAX_CONCURRENT
 
     import time
 
@@ -78,7 +78,7 @@ def test_concurrency_cap(service, sample_request, event_loop):
     with patch("backend.services.analysis_service.AnalysisService._execute_graph", side_effect=slow_graph):
         async def _test():
             ids = []
-            for _ in range(3):
+            for _ in range(_MAX_CONCURRENT):
                 rid = await service.start_analysis(sample_request)
                 ids.append(rid)
 
