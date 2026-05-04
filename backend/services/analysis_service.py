@@ -145,11 +145,14 @@ class AnalysisService:
                 break
         if snapshot is None:
             return None
-        # Backfill reports from individually saved DB sections if snapshot reports are empty
-        if not snapshot.get("reports"):
-            reports = {s["section"]: s["content"] for s in sections if s["section"] != "_snapshot"}
-            if reports:
-                snapshot["reports"] = reports
+        # Merge all individually-saved DB sections into snapshot["reports"].
+        # The snapshot JSON only contains report_chunk events; signal sections
+        # (_pm_signal, _trader_signal) are saved separately and must be included.
+        db_sections = {s["section"]: s["content"] for s in sections if s["section"] != "_snapshot"}
+        if db_sections:
+            merged = dict(snapshot.get("reports") or {})
+            merged.update(db_sections)
+            snapshot["reports"] = merged
         return snapshot
 
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
