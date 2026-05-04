@@ -463,6 +463,7 @@ class ScannerService:
                         scan["results"].append(cancel_result)
                 if self._db:
                     await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
+                    await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
                 return
 
             await asyncio.sleep(_POLL_INTERVAL)
@@ -473,10 +474,20 @@ class ScannerService:
                     await self._collect_result(scan_id, ticker, run_id, run)
                     return
             except Exception:
+                poll_fail_result = {
+                    "ticker": ticker, "run_id": run_id,
+                    "status": "failed", "direction": "unknown",
+                    "confidence": "none", "score": 0,
+                    "decision_summary": "Poll error",
+                }
                 async with self._lock:
                     scan = self._scans.get(scan_id)
                     if scan:
                         scan["failed"] += 1
+                        scan["results"].append(poll_fail_result)
+                if self._db:
+                    await asyncio.to_thread(self._db.insert_scan_result, scan_id, poll_fail_result)
+                    await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
                 return
 
     async def _collect_result(

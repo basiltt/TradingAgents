@@ -382,7 +382,244 @@ class TestCollectResultEdgeCases:
         assert scanner_no_db._scans["s1"]["failed"] == 1
 
 
-class TestGetScanFromDB:
+class TestCollectResultDBPersistence:
+    @pytest.mark.asyncio
+    async def test_completed_result_calls_insert_and_increment(self, scanner):
+        """R2-F1/F3: _collect_result must call insert_scan_result + increment_scan_counter."""
+        scanner._analysis.get_snapshot = AsyncMock(return_value={
+            "reports": {"final_trade_decision": "Buy with high confidence"}
+        })
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "completed"})
+        scanner._db.insert_scan_result.assert_called_once()
+        call_args = scanner._db.insert_scan_result.call_args
+        assert call_args[0][0] == "s1"
+        assert call_args[0][1]["ticker"] == "BTCUSDT"
+        scanner._db.increment_scan_counter.assert_called_once_with("s1", "completed")
+
+    @pytest.mark.asyncio
+    async def test_failed_result_calls_insert_and_increment_failed(self, scanner):
+        """Failed result uses 'failed' counter field."""
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "failed"})
+        scanner._db.insert_scan_result.assert_called_once()
+        scanner._db.increment_scan_counter.assert_called_once_with("s1", "failed")
+
+    @pytest.mark.asyncio
+    async def test_collect_result_run_none_defaults_to_failed(self, scanner):
+        """R2-F5/F6: _collect_result with run=None treats status as 'failed'."""
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", None)
+        assert scanner._scans["s1"]["failed"] == 1
+        scanner._db.insert_scan_result.assert_called_once()
+        scanner._db.increment_scan_counter.assert_called_once_with("s1", "failed")
+
+    @pytest.mark.asyncio
+    async def test_collect_result_no_db_no_crash(self, scanner_no_db):
+        """_collect_result with no DB doesn't crash."""
+        scanner_no_db._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        scanner_no_db._analysis.get_snapshot = AsyncMock(return_value=None)
+        scanner_no_db._analysis.get_report = AsyncMock(return_value=None)
+        await scanner_no_db._collect_result("s1", "BTCUSDT", "run-1", {"status": "completed"})
+        assert scanner_no_db._scans["s1"]["completed"] == 1
+
+
+class TestRunSingleDBPersistence:
+    @pytest.mark.asyncio
+    async def test_start_analysis_failure_calls_insert_scan_result(self, scanner):
+        """R2-F2: _run_single start_analysis failure must write to DB via insert_scan_result."""
+        scanner._analysis.start_analysis.side_effect = Exception("net error")
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._run_single("s1", "BTCUSDT")
+        scanner._db.insert_scan_result.assert_called_once()
+        call_args = scanner._db.insert_scan_result.call_args[0]
+        assert call_args[0] == "s1"
+        assert call_args[1]["status"] == "failed"
+        assert call_args[1]["ticker"] == "BTCUSDT"
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_poll_calls_insert_scan_result(self, scanner):
+        """R2-F3/F4: Cancel path writes cancel_result to DB."""
+        scanner._analysis.start_analysis.return_value = "run-1"
+        scanner._analysis.get_run.return_value = {"status": "running"}
+        scanner._analysis.cancel_analysis = AsyncMock()
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+
+        original_sleep = asyncio.sleep
+
+        async def cancel_on_sleep(t):
+            scanner._scans["s1"]["cancel"] = True
+            await original_sleep(0)
+
+        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
+            with patch("backend.services.scanner_service.asyncio.sleep", side_effect=cancel_on_sleep):
+                await scanner._run_single("s1", "BTCUSDT")
+
+        scanner._db.insert_scan_result.assert_called_once()
+        call_args = scanner._db.insert_scan_result.call_args[0]
+        assert call_args[0] == "s1"
+        assert call_args[1]["status"] == "cancelled"
+        scanner._db.increment_scan_counter.assert_called_once_with("s1", "failed")
+
+    @pytest.mark.asyncio
+    async def test_poll_exception_calls_db_insert_and_increment(self, scanner):
+        """R4-F4: get_run exception path writes failed result to DB."""
+        scanner._analysis.start_analysis.return_value = "run-1"
+        scanner._analysis.get_run.side_effect = Exception("poll fail")
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
+            await scanner._run_single("s1", "BTCUSDT")
+        scanner._db.insert_scan_result.assert_called_once()
+        scanner._db.increment_scan_counter.assert_called_once_with("s1", "failed")
+
+class TestResumeEmptyRunningList:
+    @pytest.mark.asyncio
+    async def test_resume_no_running_scans_returns_zero(self, scanner):
+        """R2-F7: resume_incomplete_scans with empty running list returns 0 immediately."""
+        scanner._db.get_running_scans.return_value = []
+        result = await scanner.resume_incomplete_scans()
+        assert result == 0
+        scanner._db.update_scan.assert_not_called()
+
+
+class TestStartScanDBInsert:
+    @pytest.mark.asyncio
+    async def test_start_scan_calls_insert_scan(self, scanner):
+        """R3-F6: start_scan must call _db.insert_scan with scan_id and status='running'."""
+        with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+            scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
+        scanner._db.insert_scan.assert_called_once()
+        call_args = scanner._db.insert_scan.call_args[0]
+        scan_dict = call_args[0]
+        assert scan_dict["scan_id"] == scan_id
+        assert scan_dict["status"] == "running"
+
+
+class TestResumeSymbolFetchFailureDBUpdate:
+    @pytest.mark.asyncio
+    async def test_resume_symbol_fetch_failure_calls_update_scan_failed(self, scanner):
+        """R3-F7: resume_incomplete_scans symbol-fetch failure calls update_scan with status='failed'."""
+        scanner._db.get_running_scans.return_value = [
+            {"scan_id": "s1", "config": '{}', "started_at": "t1", "completed": 0, "failed": 0}
+        ]
+        scanner._db.get_scan_completed_tickers.return_value = set()
+        scanner._db.get_scan.return_value = {"results": []}
+
+        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", side_effect=Exception("network")):
+            result = await scanner.resume_incomplete_scans()
+        assert result == 0
+        scanner._db.update_scan.assert_called_with("s1", status="failed")
+
+
+class TestParseSignalExtendedCoverage:
+    def test_pm_approve_with_direction(self):
+        """R3-F1: PM APPROVE with direction word in text extracts direction."""
+        from backend.services.scanner_service import _parse_signal_from_reports
+        result = _parse_signal_from_reports({"portfolio_manager": "Final decision: Approve the long trade"})
+        assert result["direction"] == "buy"
+        assert result["score"] > 0
+
+    def test_percentage_confidence(self):
+        """R3-F2: Percentage confidence (e.g. 80%) sets appropriate confidence level."""
+        from backend.services.scanner_service import _parse_signal_from_reports
+        result = _parse_signal_from_reports({"final_trade_decision": "I recommend buying with 80% confidence"})
+        assert result["confidence"] in ("high", "very_high")
+
+    def test_overwhelming_confidence(self):
+        """R3-F3: 'overwhelming' keyword maps to maximum confidence score."""
+        from backend.services.scanner_service import _parse_signal_from_reports
+        result = _parse_signal_from_reports({"final_trade_decision": "Buy — overwhelming confidence"})
+        assert result["score"] == 10
+
+    def test_trader_no_trade_blocks_fallback_regex(self):
+        """R3-F4: trader JSON with trade_type=no_trade prevents direction from fallback regex."""
+        from backend.services.scanner_service import _parse_signal_from_reports
+        result = _parse_signal_from_reports({
+            "trader": '{"trade_type": "no_trade"}',
+            "final_trade_decision": "Buy bullish"
+        })
+        assert result["direction"] == "hold"
+
+    def test_malformed_trader_json_returns_valid_signal(self):
+        """R3-F5: Malformed trader JSON silently falls through and returns valid signal dict."""
+        from backend.services.scanner_service import _parse_signal_from_reports
+        result = _parse_signal_from_reports({"trader": "INVALID{"})
+        assert "direction" in result
+        assert "confidence" in result
+        assert "score" in result
+
+
+class TestRunScanDBAssertions:
+    @pytest.mark.asyncio
+    async def test_run_scan_updates_total_in_db(self, scanner):
+        """R5-F5: _run_scan calls update_scan(total=N) after resolving symbols."""
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "total": 0, "completed": 0, "failed": 0,
+            "current_batch": 0, "total_batches": 0,
+            "current_tickers": [], "results": [],
+            "started_at": "2025-01-10", "completed_at": None, "task": None,
+        }
+        with patch.object(scanner, "_run_single", new_callable=AsyncMock):
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["BTC", "ETH"]):
+                await scanner._run_scan("s1")
+        calls = [c for c in scanner._db.update_scan.call_args_list if "total" in (c[1] or {})]
+        assert any(c[1].get("total") == 2 for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_run_scan_final_update_scan_called(self, scanner):
+        """R5-F4: _run_scan calls update_scan with final status/completed/failed counts."""
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "total": 0, "completed": 0, "failed": 0,
+            "current_batch": 0, "total_batches": 0,
+            "current_tickers": [], "results": [],
+            "started_at": "2025-01-10", "completed_at": None, "task": None,
+        }
+        with patch.object(scanner, "_run_single", new_callable=AsyncMock):
+            await scanner._run_scan("s1", symbols_override=["BTC"])
+        # Should have called update_scan with final status
+        final_calls = [c for c in scanner._db.update_scan.call_args_list
+                       if "status" in (c[1] or {})]
+        assert len(final_calls) >= 1
+        last_call_kwargs = final_calls[-1][1]
+        assert last_call_kwargs["status"] in ("completed", "failed", "cancelled")
+
+
+
     @pytest.mark.asyncio
     async def test_get_scan_from_db(self, scanner):
         scanner._db.get_scan.return_value = {

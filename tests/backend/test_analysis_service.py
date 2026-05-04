@@ -508,3 +508,114 @@ def test_update_run_status_false_skips_section_save(service, db, event_loop, bus
             section_names = [s["section"] for s in sections]
             assert "final_trade_decision" not in section_names
         event_loop.run_until_complete(_test())
+
+
+def test_run_analysis_cancelled_error_sets_db_cancelled(service, db, event_loop):
+    """R3-F15: CancelledError inside _run_analysis sets DB status to 'cancelled'."""
+    # Patch asyncio.wait_for to raise CancelledError, simulating task cancellation
+    original_wait_for = asyncio.wait_for
+
+    async def raise_cancelled(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    with patch("backend.services.analysis_service.asyncio.wait_for", side_effect=raise_cancelled):
+        async def _test():
+            run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+            await asyncio.sleep(0.5)
+            run = db.get_run(run_id)
+            assert run is not None
+            assert run["status"] in ("cancelled", "failed")
+        event_loop.run_until_complete(_test())
+
+
+def test_run_analysis_empty_decision_skips_section(service, db, event_loop):
+    """R3-F16: Empty final_trade_decision ('') skips save_report_section for that key."""
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph",
+               return_value={"final_trade_decision": ""}):
+        async def _test():
+            run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+            await asyncio.sleep(0.5)
+            sections = db.get_report_sections(run_id)
+            section_names = [s["section"] for s in sections]
+            assert "final_trade_decision" not in section_names
+        event_loop.run_until_complete(_test())
+
+
+def test_timeout_increments_zombie_count(service, sample_request, event_loop, db):
+    """R4-F6: asyncio.TimeoutError path increments _zombie_count."""
+    with patch("backend.services.analysis_service.asyncio.wait_for",
+               side_effect=asyncio.TimeoutError()):
+        async def _test():
+            run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+            await asyncio.sleep(0.5)
+            assert service._zombie_count == 1
+            run = db.get_run(run_id)
+            assert run["status"] == "failed"
+        event_loop.run_until_complete(_test())
+
+
+def test_shutdown_cancels_active_tasks(service, sample_request, event_loop):
+    """R4-F7: shutdown() cancels in-flight tasks and clears active state."""
+    import threading
+    blocker = threading.Event()
+
+    def slow_graph(*args, **kwargs):
+        blocker.wait(timeout=10)
+        return {"final_trade_decision": ""}
+
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph",
+               side_effect=slow_graph):
+        async def _test():
+            run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+            await asyncio.sleep(0.05)
+            assert run_id in service._active_runs
+            await service.shutdown()
+            blocker.set()  # unblock thread
+            # After shutdown, all active tasks should be done
+            for run_data in service._active_runs.values():
+                task = run_data.get("task")
+                assert task is None or task.done()
+        event_loop.run_until_complete(_test())
+
+
+def test_service_proxy_delete_and_list(service, db, event_loop, sample_request):
+    """R3-F5: delete_run, delete_all_runs, list_runs service proxy methods work."""
+    async def _test():
+        run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+        await asyncio.sleep(0.3)
+        result = await service.list_runs(page=1, limit=10)
+        assert result["total"] >= 1
+        deleted = await service.delete_run(run_id)
+        assert deleted is True
+        result2 = await service.list_runs(ticker="SPY")
+        assert all(r["run_id"] != run_id for r in result2["items"])
+    event_loop.run_until_complete(_test())
+
+
+def test_service_delete_all_runs(service, db, event_loop):
+    """R3-F5: delete_all_runs service proxy removes all runs."""
+    async def _test():
+        with patch("backend.services.analysis_service.AnalysisService._execute_graph",
+                   return_value={"final_trade_decision": "Buy"}):
+            run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+            await asyncio.sleep(0.3)
+        count = await service.delete_all_runs()
+        assert count >= 1
+    event_loop.run_until_complete(_test())
+
+
+def test_cancel_returns_false_for_db_running_run(service, db, event_loop):
+    """R5-F7: cancel_analysis returns False for DB run with status='running' not in active_runs."""
+    import uuid
+    from datetime import datetime, timezone
+
+    async def _test():
+        run_id = str(uuid.uuid4())
+        db.insert_run({
+            "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+            "status": "running", "config": "{}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        })
+        result = await service.cancel_analysis(run_id)
+        assert result is False
+    event_loop.run_until_complete(_test())

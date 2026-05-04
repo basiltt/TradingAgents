@@ -362,6 +362,13 @@ def test_migration_rollback_on_bad_sql(tmp_path):
         pers._MIGRATIONS.extend(original)
 
 
+def test_insert_run_duplicate_raises_value_error(db, sample_run):
+    """R3-F14: insert_run twice with same run_id raises ValueError."""
+    db.insert_run(sample_run)
+    with pytest.raises(ValueError, match=sample_run["run_id"]):
+        db.insert_run(sample_run)
+
+
 def test_migration_skip_already_applied(tmp_path):
     """Covers persistence.py:120: version <= current causes 'continue' in migration loop."""
     from backend.persistence import AnalysisDB

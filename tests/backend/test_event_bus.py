@@ -204,3 +204,14 @@ def test_ring_buffer_byte_overflow_evicts(bus, event_loop):
         assert len(snapshot) <= 2
     finally:
         event_bus._MAX_RING_BYTES = original
+
+
+def test_emit_dataclass_uses_asdict(bus, event_loop):
+    """R5-F8: emit() converts dataclass instances via asdict before storing."""
+    from backend.stream_parser import ProgressEvent
+
+    bus.emit("run-dc", ProgressEvent(phase="starting", detail="init"))
+    snapshot = bus.get_snapshot("run-dc")
+    assert len(snapshot) == 1
+    assert snapshot[0]["phase"] == "starting"
+    assert snapshot[0]["detail"] == "init"
