@@ -82,5 +82,16 @@ jobs:
             cd "${{ secrets.ORACLE_APP_DIR }}"
             git fetch --all --prune
             git pull --ff-only origin main
-            export TRADINGAGENTS_HEALTHCHECK_URL="${{ secrets.PRODUCTION_HEALTHCHECK_URL }}"
+            export TRADINGAGENTS_HEALTHCHECK_URL="http://127.0.0.1:8877/api/v1/health"
             bash ./scripts/deploy.sh
+
+      - name: Verify public HTTPS health endpoint
+        run: |
+          for attempt in $(seq 1 24); do
+            if curl --fail --silent --show-error "${{ secrets.PRODUCTION_HEALTHCHECK_URL }}" >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Public health check failed." >&2
+          exit 1
