@@ -145,3 +145,23 @@ def test_loopback_default_port_443():
         mock_gai.return_value = [(None, None, None, None, ("127.0.0.1", None))]
         with pytest.raises(ValueError, match="self-request"):
             validate_backend_url("https://localhost", server_port=443)
+
+
+def test_ipv6_mapped_private():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [(None, None, None, None, ("::ffff:192.168.1.1", None))]
+        with pytest.raises(ValueError, match="private|internal"):
+            validate_backend_url("http://example.com:9999", server_port=8000)
+
+
+def test_invalid_resolved_ip():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [(None, None, None, None, ("", None))]
+        with pytest.raises(ValueError, match="Invalid resolved IP"):
+            validate_backend_url("http://example.com:9999", server_port=8000)
