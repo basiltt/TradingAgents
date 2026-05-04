@@ -226,3 +226,4 @@ __marimo__/
 
 # Ignore all claude worktrees
 .claude
+.worktrees/
