@@ -393,7 +393,7 @@ export function ScannerPage() {
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label className="font-medium">LLM Provider</Label>
-                  <Select value={provider} onValueChange={setProvider}>
+                  <Select value={provider} onValueChange={(value) => { if (value !== null) setProvider(value); }}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {PROVIDERS.map((p) => (
@@ -481,7 +481,7 @@ export function ScannerPage() {
 
                 <div className="flex flex-col gap-2">
                   <Label className="font-medium">Output Language</Label>
-                  <Select value={outputLanguage} onValueChange={setOutputLanguage}>
+                  <Select value={outputLanguage} onValueChange={(value) => { if (value !== null) setOutputLanguage(value); }}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {LANGUAGES.map((l) => (
@@ -630,7 +630,7 @@ export function ScannerPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium">Deep Think Model</Label>
-                    <Select value={deepModel} onValueChange={setDeepModel}>
+                    <Select value={deepModel} onValueChange={(value) => setDeepModel(value ?? "")}>
                       <SelectTrigger><SelectValue placeholder="Select model..." /></SelectTrigger>
                       <SelectContent>
                         {deepOptions.map((m) => (
@@ -642,7 +642,7 @@ export function ScannerPage() {
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium">Quick Think Model</Label>
-                    <Select value={quickModel} onValueChange={setQuickModel}>
+                    <Select value={quickModel} onValueChange={(value) => setQuickModel(value ?? "")}>
                       <SelectTrigger><SelectValue placeholder="Select model..." /></SelectTrigger>
                       <SelectContent>
                         {quickOptions.map((m) => (

@@ -14,7 +14,7 @@ import { useModels } from "@/hooks/useModels";
 import { useSymbols } from "@/hooks/useSymbols";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
-import { WatchlistPanel, type BatchConfig } from "./WatchlistPanel";
+import { WatchlistPanel } from "./WatchlistPanel";
 
 const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
 const CRYPTO_TICKER_REGEX = /^[A-Z0-9]{2,20}$/;
@@ -28,7 +28,6 @@ const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
   { value: "D", label: "1 day" },
 ];
 const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Hindi", "Spanish", "Portuguese", "French", "German", "Arabic", "Russian"] as const;
-const VENDOR_CATEGORIES = ["core_stock_apis", "technical_indicators", "fundamental_data", "news_data"] as const;
 const VENDOR_OPTIONS = ["yfinance", "alpha_vantage"] as const;
 
 const STORAGE_KEY = "tradingagents_settings";
@@ -644,7 +643,7 @@ export function ConfigForm() {
                       deepOptions.length > 0 ? (
                         <Select value={field.value} onValueChange={field.onChange}>
                           <SelectTrigger className="font-mono text-sm"><SelectValue placeholder={envDeepThink || "Select model"} /></SelectTrigger>
-                          <SelectContent position="popper" className="min-w-[28rem] max-h-72">
+                          <SelectContent className="min-w-[28rem] max-h-72">
                             {deepOptions.map((m) => (
                               <SelectItem key={m.value} value={m.value} className="font-mono text-sm">{m.label}</SelectItem>
                             ))}
@@ -670,7 +669,7 @@ export function ConfigForm() {
                       quickOptions.length > 0 ? (
                         <Select value={field.value} onValueChange={field.onChange}>
                           <SelectTrigger className="font-mono text-sm"><SelectValue placeholder={envQuickThink || "Select model"} /></SelectTrigger>
-                          <SelectContent position="popper" className="min-w-[28rem] max-h-72">
+                          <SelectContent className="min-w-[28rem] max-h-72">
                             {quickOptions.map((m) => (
                               <SelectItem key={m.value} value={m.value} className="font-mono text-sm">{m.label}</SelectItem>
                             ))}

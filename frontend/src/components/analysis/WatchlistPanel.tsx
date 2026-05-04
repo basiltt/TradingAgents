@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
-import { cn } from "@/lib/utils";
 import { useWatchlists } from "@/hooks/useWatchlists";
 import { useSymbols } from "@/hooks/useSymbols";
 import { apiClient, type StartAnalysisRequest } from "@/api/client";
@@ -59,7 +58,7 @@ export function WatchlistPanel({ config }: WatchlistPanelProps) {
       setBatchState({ id: watchlistId, done: 0, total: tickers.length, errors: [] });
 
       const results = await Promise.allSettled(
-        tickers.map(async (ticker, i) => {
+        tickers.map(async (ticker) => {
           const body: StartAnalysisRequest = {
             ticker,
             analysis_date: config.analysis_date,
