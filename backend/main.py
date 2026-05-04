@@ -28,7 +28,13 @@ class CSPMiddleware(BaseHTTPMiddleware):
             "WEB_CSP_CONNECT_SRC",
             "'self' ws://localhost:8877 wss://localhost:8877",
         )
-        csp_connect = csp_connect.replace("\n", "").replace("\r", "").replace(";", "")
+        import re as _re
+        csp_connect = _re.sub(r"[^\x20-\x7E]|[;\n\r]", "", csp_connect)
+        # Split on whitespace and filter to URL-like tokens only
+        csp_connect = " ".join(
+            t for t in csp_connect.split()
+            if _re.match(r"^('[\w-]+'|[\w:+.\-]+://[\w:.\-/?#@%=&+,*!]+)$", t)
+        ) or "'self'"
         response.headers["Content-Security-Policy"] = (
             f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             f"img-src 'self' data:; font-src 'self'; connect-src {csp_connect}; "
