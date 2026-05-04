@@ -130,3 +130,47 @@ def test_thread_safe_emit(bus, event_loop):
         assert event["from"] == "thread"
 
     event_loop.run_until_complete(_test())
+
+
+def test_async_emit_on_cleaned_run(bus, event_loop):
+    async def _test():
+        bus.cleanup_run("run1")
+        await bus._async_emit("run1", {"type": "message"})
+        assert bus.get_snapshot("run1") == []
+    event_loop.run_until_complete(_test())
+
+
+def test_drain_poison_pill(bus, event_loop):
+    async def _test():
+        from backend.event_bus import _POISON
+        queue = bus._get_queue("run1")
+        queue.put_nowait(_POISON)
+        with pytest.raises(StopAsyncIteration):
+            await bus.drain("run1")
+    event_loop.run_until_complete(_test())
+
+
+def test_cleaned_ids_eviction(bus, event_loop):
+    from backend import event_bus
+    original = event_bus._MAX_CLEANED_IDS
+    event_bus._MAX_CLEANED_IDS = 2
+    try:
+        bus.cleanup_run("r1")
+        bus.cleanup_run("r2")
+        bus.cleanup_run("r3")
+        assert "r1" not in bus._cleaned
+        assert "r3" in bus._cleaned
+    finally:
+        event_bus._MAX_CLEANED_IDS = original
+
+
+def test_cleanup_full_queue_double_put(bus, event_loop):
+    async def _test():
+        q = asyncio.Queue(maxsize=1)
+        q.put_nowait({"type": "a"})
+        bus._queues["run1"] = q
+        from collections import deque
+        bus._ring_buffers["run1"] = deque()
+        bus._ring_bytes["run1"] = 0
+        bus.cleanup_run("run1")
+    event_loop.run_until_complete(_test())

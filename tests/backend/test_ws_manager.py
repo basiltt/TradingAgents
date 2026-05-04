@@ -208,3 +208,80 @@ def test_shutdown(ws_manager, event_loop):
 
 def test_get_connection_count_nonexistent(ws_manager):
     assert ws_manager.get_connection_count("nope") == 0
+
+
+def test_broadcast_queue_full(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+        while not conn.outbound.full():
+            conn.outbound.put_nowait({"type": "filler"})
+        await ws_manager.broadcast("run1", {"type": "test"})
+        await ws_manager.disconnect(conn)
+    event_loop.run_until_complete(_test())
+
+
+def test_send_to_queue_full(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+        while not conn.outbound.full():
+            conn.outbound.put_nowait({"type": "filler"})
+        await ws_manager.send_to(conn, {"type": "overflow"})
+        await asyncio.sleep(0.05)
+        assert ws_manager.get_connection_count("run1") == 0
+    event_loop.run_until_complete(_test())
+
+
+def test_close_slow(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+        await ws_manager._close_slow(conn)
+        ws.close.assert_called_once()
+        await ws_manager.disconnect(conn)
+    event_loop.run_until_complete(_test())
+
+
+def test_close_slow_exception(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        ws.close.side_effect = Exception("already closed")
+        conn = await ws_manager.connect(ws, "run1")
+        await ws_manager._close_slow(conn)
+        await ws_manager.disconnect(conn)
+    event_loop.run_until_complete(_test())
+
+
+def test_send_loop_exception_disconnects(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        ws.send_json.side_effect = Exception("send failed")
+        conn = await ws_manager.connect(ws, "run1")
+        conn.outbound.put_nowait({"type": "test"})
+        await ws_manager._send_loop(conn)
+        assert ws_manager.get_connection_count("run1") == 0
+        await ws_manager.disconnect(conn)
+    event_loop.run_until_complete(_test())
+
+
+def test_heartbeat_pong_timeout(ws_manager, event_loop):
+    import time
+    from backend import ws_manager as ws_mod
+    from backend.ws_manager import WSConnection
+
+    async def _test():
+        ws = _mock_ws()
+        conn = WSConnection(ws, "run1")
+        conn.last_pong = time.monotonic() - 999
+
+        orig_interval = ws_mod._HEARTBEAT_INTERVAL
+        ws_mod._HEARTBEAT_INTERVAL = 0.01
+        try:
+            await asyncio.wait_for(ws_manager._heartbeat_loop(conn), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            ws_mod._HEARTBEAT_INTERVAL = orig_interval
+        ws.close.assert_called()
+    event_loop.run_until_complete(_test())
