@@ -8,7 +8,7 @@ echo ========================================
 echo.
 
 :: Start backend API server
-start "TradingAgents API" cmd /k "cd /d %~dp0 && python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory"
+start "TradingAgents API" cmd /k "cd /d %~dp0 && python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend"
 
 :: Wait a moment for backend to start
 timeout /t 3 /nobreak >nul

@@ -59,7 +59,7 @@ async def start_analysis(request: Request, body: AnalysisRequest):
 async def list_analyses(
     request: Request,
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=10000),
     ticker: str = Query(None),
     status: str = Query(None),
     asset_type: Optional[Literal["stock", "crypto"]] = Query(None),

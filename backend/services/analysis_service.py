@@ -176,6 +176,14 @@ class AnalysisService:
             depth = request["research_depth"]
             config["max_debate_rounds"] = depth
             config["max_risk_discuss_rounds"] = depth
+        if request.get("max_debate_rounds"):
+            config["max_debate_rounds"] = request["max_debate_rounds"]
+        if request.get("max_risk_discuss_rounds"):
+            config["max_risk_discuss_rounds"] = request["max_risk_discuss_rounds"]
+        if request.get("max_recur_limit"):
+            config["max_recur_limit"] = request["max_recur_limit"]
+        if request.get("checkpoint_enabled") is not None:
+            config["checkpoint_enabled"] = request["checkpoint_enabled"]
 
         # Crypto-specific config
         if request.get("asset_type"):

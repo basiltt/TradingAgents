@@ -16,38 +16,98 @@ _POLL_INTERVAL = 5  # seconds between polling for batch completion
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
-def _parse_signal(decision: str) -> Dict[str, Any]:
-    """Parse final_trade_decision text into direction, confidence, and numeric score (1-10)."""
-    if not decision:
-        return {"direction": "hold", "confidence": "low", "score": 0}
+def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
+    """Extract signal from structured report data instead of regex on free text.
 
-    text = decision.lower()
-
+    Priority:
+    1. Portfolio manager's final decision (APPROVE/REJECT/MODIFY + direction)
+    2. Trader's structured JSON (trade_type field)
+    3. Fallback: regex on final_trade_decision text
+    """
     direction = "hold"
-    if re.search(r"\b(buy|long|bullish)\b", text):
-        direction = "buy"
-    elif re.search(r"\b(sell|short|bearish)\b", text):
-        direction = "sell"
-
-    confidence = "low"
     conf_score = 2
-    if re.search(r"\b(very\s+high|extremely|exceptional|overwhelming)\b", text):
-        confidence = "high"
-        conf_score = 10
-    elif re.search(r"\b(strong|high)\b", text):
-        confidence = "high"
-        conf_score = 8
-    elif re.search(r"\b(moderate|medium|moderately)\b", text):
-        confidence = "moderate"
-        conf_score = 5
+    confidence = "low"
 
-    pct_match = re.search(r"(\d{1,3})\s*%", text)
-    if pct_match:
-        pct = int(pct_match.group(1))
-        if 0 < pct <= 100:
-            conf_score = max(conf_score, round(pct / 10))
+    # --- Try trader's structured JSON first for the base signal ---
+    trader_text = reports.get("trader", "")
+    trader_direction = None
+    trader_confidence = None
+    trader_no_trade = False
+    if trader_text:
+        json_match = re.search(r"\{[^{}]*\"trade_type\"\s*:[^{}]*\}", trader_text, re.DOTALL)
+        if json_match:
+            try:
+                import json
+                trade_data = json.loads(json_match.group())
+                tt = trade_data.get("trade_type", "").lower().strip()
+                if tt in ("long", "buy"):
+                    trader_direction = "buy"
+                elif tt in ("short", "sell"):
+                    trader_direction = "sell"
+                elif tt in ("no trade", "no_trade", "hold", "neutral", "none", "pass"):
+                    trader_no_trade = True
+                    trader_direction = "hold"
+                raw_conf = trade_data.get("confidence")
+                if isinstance(raw_conf, (int, float)) and 1 <= raw_conf <= 10:
+                    trader_confidence = int(raw_conf)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+    # --- Check portfolio manager decision (overrides trader if it modifies) ---
+    pm_text = reports.get("portfolio_manager", "") or reports.get("final_trade_decision", "")
+    pm_direction = None
+    if pm_text:
+        pm_lower = pm_text.lower()
+        decision_match = re.search(r"final\s+decision\s*:\s*(approve|reject|modify)", pm_lower)
+        if decision_match:
+            pm_decision = decision_match.group(1)
+            if pm_decision == "reject":
+                return {"direction": "hold", "confidence": "low", "score": 0}
+            # For APPROVE or MODIFY, extract the direction from PM text near the decision
+            dir_match = re.search(
+                r"(?:final\s+decision|approved|modified).*?\b(long|short|buy|sell)\b",
+                pm_lower[:2000],
+            )
+            if dir_match:
+                d = dir_match.group(1)
+                pm_direction = "buy" if d in ("long", "buy") else "sell"
+
+    # Resolve direction: PM decision > trader structured data > fallback
+    if pm_direction:
+        direction = pm_direction
+    elif trader_direction:
+        direction = trader_direction
+    elif not trader_no_trade:
+        fallback_text = (pm_text or trader_text).lower()
+        if re.search(r"\b(buy|long|bullish)\b", fallback_text):
+            direction = "buy"
+        elif re.search(r"\b(sell|short|bearish)\b", fallback_text):
+            direction = "sell"
+
+    # Resolve confidence
+    if trader_confidence is not None:
+        conf_score = trader_confidence
+    else:
+        text = (pm_text or trader_text).lower()
+        pct_match = re.search(r"(\d{1,3})\s*%", text)
+        if pct_match:
+            pct = int(pct_match.group(1))
+            if 0 < pct <= 100:
+                conf_score = round(pct / 10)
+        elif re.search(r"\b(very\s+high|extremely|exceptional|overwhelming)\b", text):
+            conf_score = 10
+        elif re.search(r"\b(strong|high)\b", text):
+            conf_score = 8
+        elif re.search(r"\b(moderate|medium|moderately)\b", text):
+            conf_score = 5
 
     conf_score = max(1, min(10, conf_score))
+    if conf_score >= 7:
+        confidence = "high"
+    elif conf_score >= 4:
+        confidence = "moderate"
+    else:
+        confidence = "low"
 
     sign = 1 if direction == "buy" else (-1 if direction == "sell" else 0)
     score = sign * conf_score
@@ -57,9 +117,12 @@ def _parse_signal(decision: str) -> Dict[str, Any]:
 
 class ScannerBusyError(Exception):
     pass
+
+
 class ScannerService:
-    def __init__(self, analysis_service: Any):
+    def __init__(self, analysis_service: Any, db: Any = None):
         self._analysis = analysis_service
+        self._db = db
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -97,6 +160,13 @@ class ScannerService:
         async with self._lock:
             self._scans[scan_id] = scan
 
+        if self._db:
+            import json as _json
+            await asyncio.to_thread(
+                self._db.insert_scan,
+                {"scan_id": scan_id, "status": "running", "config": _json.dumps(config), "started_at": now},
+            )
+
         task = asyncio.create_task(self._run_scan(scan_id))
         async with self._lock:
             if scan_id in self._scans:
@@ -107,9 +177,13 @@ class ScannerService:
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
         async with self._lock:
             scan = self._scans.get(scan_id)
-            if not scan:
-                return None
-            return self._serialize(scan)
+            if scan:
+                return self._serialize(scan)
+        if self._db:
+            db_scan = await asyncio.to_thread(self._db.get_scan, scan_id)
+            if db_scan:
+                return self._serialize_db(db_scan)
+        return None
 
     async def cancel_scan(self, scan_id: str) -> bool:
         async with self._lock:
@@ -124,7 +198,82 @@ class ScannerService:
 
     async def list_scans(self) -> List[Dict[str, Any]]:
         async with self._lock:
-            return [self._serialize(s) for s in self._scans.values()]
+            in_memory_ids = set(self._scans.keys())
+            result = [self._serialize(s) for s in self._scans.values()]
+        if self._db:
+            db_scans = await asyncio.to_thread(self._db.list_scans)
+            for ds in db_scans:
+                if ds["scan_id"] not in in_memory_ids:
+                    result.append(self._serialize_db(ds))
+        return result
+
+    async def resume_incomplete_scans(self) -> int:
+        if not self._db:
+            return 0
+        running = await asyncio.to_thread(self._db.get_running_scans)
+        resumed = 0
+        for db_scan in running:
+            if resumed >= 1:
+                await asyncio.to_thread(self._db.update_scan, db_scan["scan_id"], status="failed")
+                logger.warning("Marking extra stale scan %s as failed (only 1 resumed at a time)", db_scan["scan_id"])
+                continue
+            scan_id = db_scan["scan_id"]
+            try:
+                import json as _json
+                config = _json.loads(db_scan.get("config", "{}"))
+            except Exception:
+                config = {}
+
+            done_tickers = await asyncio.to_thread(self._db.get_scan_completed_tickers, scan_id)
+            db_results = await asyncio.to_thread(self._db.get_scan, scan_id)
+            existing_results = (db_results or {}).get("results", [])
+
+            try:
+                from tradingagents.dataflows.bybit_data import get_valid_symbols
+                all_symbols = sorted(await asyncio.to_thread(get_valid_symbols))
+            except Exception as e:
+                logger.error("Failed to fetch symbols for resume of %s: %s", scan_id, e)
+                await asyncio.to_thread(self._db.update_scan, scan_id, status="failed")
+                continue
+
+            remaining = [s for s in all_symbols if s not in done_tickers]
+            if not remaining:
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                await asyncio.to_thread(
+                    self._db.update_scan, scan_id, status="completed", completed_at=now,
+                )
+                continue
+
+            now = db_scan.get("started_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+            scan = {
+                "scan_id": scan_id,
+                "status": "running",
+                "config": config,
+                "total": len(all_symbols),
+                "completed": db_scan.get("completed", 0),
+                "failed": db_scan.get("failed", 0),
+                "current_batch": 0,
+                "total_batches": 0,
+                "current_tickers": [],
+                "results": list(existing_results),
+                "started_at": now,
+                "completed_at": None,
+                "cancel": False,
+                "task": None,
+            }
+
+            async with self._lock:
+                self._scans[scan_id] = scan
+
+            task = asyncio.create_task(self._run_scan(scan_id, symbols_override=remaining))
+            async with self._lock:
+                if scan_id in self._scans:
+                    self._scans[scan_id]["task"] = task
+
+            resumed += 1
+            logger.info("Resumed scan %s with %d/%d remaining symbols", scan_id, len(remaining), len(all_symbols))
+
+        return resumed
 
     def _serialize(self, scan: Dict[str, Any]) -> Dict[str, Any]:
         sorted_results = sorted(scan["results"], key=lambda r: abs(r.get("score", 0)), reverse=True)
@@ -142,45 +291,73 @@ class ScannerService:
             "completed_at": scan["completed_at"],
         }
 
-    async def _run_scan(self, scan_id: str) -> None:
+    def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "scan_id": scan["scan_id"],
+            "status": scan["status"],
+            "total": scan.get("total", 0),
+            "completed": scan.get("completed", 0),
+            "failed": scan.get("failed", 0),
+            "current_batch": 0,
+            "total_batches": 0,
+            "current_tickers": [],
+            "results": scan.get("results", []),
+            "started_at": scan.get("started_at", ""),
+            "completed_at": scan.get("completed_at"),
+        }
+
+    async def _run_scan(self, scan_id: str, symbols_override: Optional[List[str]] = None) -> None:
         try:
-            from tradingagents.dataflows.bybit_data import get_valid_symbols
-            symbols = sorted(await asyncio.to_thread(get_valid_symbols))
+            if symbols_override is not None:
+                symbols = symbols_override
+            else:
+                from tradingagents.dataflows.bybit_data import get_valid_symbols
+                symbols = sorted(await asyncio.to_thread(get_valid_symbols))
         except Exception as e:
             logger.error("Failed to fetch symbols for scan %s: %s", scan_id, e)
             async with self._lock:
                 scan = self._scans.get(scan_id)
                 if scan:
                     scan["status"] = "failed"
+            if self._db:
+                await asyncio.to_thread(self._db.update_scan, scan_id, status="failed")
             return
-
-        batches = [symbols[i:i + _BATCH_SIZE] for i in range(0, len(symbols), _BATCH_SIZE)]
 
         async with self._lock:
             scan = self._scans.get(scan_id)
             if not scan:
                 return
-            scan["total"] = len(symbols)
-            scan["total_batches"] = len(batches)
+            if symbols_override is None:
+                scan["total"] = len(symbols)
+            scan["total_batches"] = (len(symbols) + _BATCH_SIZE - 1) // _BATCH_SIZE
 
+        if self._db and symbols_override is None:
+            await asyncio.to_thread(self._db.update_scan, scan_id, total=len(symbols))
+
+        sem = asyncio.Semaphore(_BATCH_SIZE)
         scan_error = False
+
+        async def _process_ticker(ticker: str) -> None:
+            async with sem:
+                async with self._lock:
+                    s = self._scans.get(scan_id)
+                    if not s or s["cancel"]:
+                        return
+                    s["current_tickers"] = list(set(s["current_tickers"]) | {ticker})
+
+                try:
+                    await self._run_single(scan_id, ticker)
+                finally:
+                    async with self._lock:
+                        s = self._scans.get(scan_id)
+                        if s:
+                            tickers = s["current_tickers"]
+                            if ticker in tickers:
+                                tickers.remove(ticker)
+
         try:
-            for batch_idx, batch in enumerate(batches):
-                async with self._lock:
-                    scan = self._scans.get(scan_id)
-                    if not scan or scan["cancel"]:
-                        break
-                    scan["current_batch"] = batch_idx + 1
-                    scan["current_tickers"] = list(batch)
-
-                run_ids = await self._launch_batch(scan_id, batch)
-                await self._wait_for_batch(scan_id, run_ids, batch)
-
-                async with self._lock:
-                    scan = self._scans.get(scan_id)
-                    if scan and scan["cancel"]:
-                        break
-
+            tasks = [asyncio.create_task(_process_ticker(t)) for t in symbols]
+            await asyncio.gather(*tasks, return_exceptions=True)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -188,6 +365,9 @@ class ScannerService:
             scan_error = True
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        final_status = "failed" if scan_error else "completed"
+        final_completed = 0
+        final_failed = 0
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan:
@@ -200,108 +380,111 @@ class ScannerService:
                 scan["completed_at"] = now
                 scan["current_tickers"] = []
                 scan["task"] = None
+                final_status = scan["status"]
+                final_completed = scan["completed"]
+                final_failed = scan["failed"]
 
-    async def _launch_batch(self, scan_id: str, tickers: List[str]) -> Dict[str, str]:
-        """Launch analyses for a batch of tickers. Returns {ticker: run_id}."""
+        if self._db:
+            await asyncio.to_thread(
+                self._db.update_scan, scan_id,
+                status=final_status, completed_at=now,
+                completed=final_completed, failed=final_failed,
+            )
+
+    async def _run_single(self, scan_id: str, ticker: str) -> None:
+        """Launch one analysis, poll until done, collect result."""
         async with self._lock:
             scan = self._scans.get(scan_id)
-            if not scan:
-                return {}
+            if not scan or scan["cancel"]:
+                return
             config = scan["config"]
 
-        run_ids: Dict[str, str] = {}
-        for ticker in tickers:
+        request = {
+            "ticker": ticker,
+            "analysis_date": config.get("analysis_date"),
+            "asset_type": config.get("asset_type", "crypto"),
+            "interval": config.get("interval", "D"),
+            "provider": config.get("provider"),
+            "deep_think_llm": config.get("deep_think_llm"),
+            "quick_think_llm": config.get("quick_think_llm"),
+            "backend_url": config.get("backend_url"),
+            "analysts": config.get("analysts"),
+            "research_depth": config.get("research_depth"),
+            "output_language": config.get("output_language"),
+            "max_debate_rounds": config.get("max_debate_rounds"),
+            "max_risk_discuss_rounds": config.get("max_risk_discuss_rounds"),
+            "max_recur_limit": config.get("max_recur_limit"),
+            "checkpoint_enabled": config.get("checkpoint_enabled"),
+            "data_vendors": config.get("data_vendors"),
+        }
+
+        try:
+            run_id = await self._analysis.start_analysis(request)
+        except Exception as e:
+            logger.warning("Failed to start analysis for %s: %s", ticker, e)
+            fail_result = {
+                "ticker": ticker,
+                "run_id": None,
+                "status": "failed",
+                "direction": "unknown",
+                "confidence": "none",
+                "score": 0,
+                "decision_summary": f"Failed to start: {e}",
+            }
             async with self._lock:
                 scan = self._scans.get(scan_id)
-                if scan and scan["cancel"]:
-                    break
+                if scan:
+                    scan["failed"] += 1
+                    scan["results"].append(fail_result)
+            if self._db:
+                await asyncio.to_thread(self._db.insert_scan_result, scan_id, fail_result)
+            return
 
-            request = {
-                "ticker": ticker,
-                "analysis_date": config.get("analysis_date"),
-                "asset_type": config.get("asset_type", "crypto"),
-                "interval": config.get("interval", "D"),
-                "provider": config.get("provider"),
-                "deep_think_llm": config.get("deep_think_llm"),
-                "quick_think_llm": config.get("quick_think_llm"),
-                "backend_url": config.get("backend_url"),
-                "analysts": config.get("analysts"),
-                "research_depth": config.get("research_depth"),
-                "output_language": config.get("output_language"),
-                "data_vendors": config.get("data_vendors"),
-            }
+        while True:
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                should_cancel = not scan or scan["cancel"]
 
-            try:
-                run_id = await self._analysis.start_analysis(request)
-                run_ids[ticker] = run_id
-            except Exception as e:
-                logger.warning("Failed to start analysis for %s: %s", ticker, e)
+            if should_cancel:
+                await self._analysis.cancel_analysis(run_id)
+                cancel_result = {
+                    "ticker": ticker,
+                    "run_id": run_id,
+                    "status": "cancelled",
+                    "direction": "unknown",
+                    "confidence": "none",
+                    "score": 0,
+                    "decision_summary": "Cancelled",
+                }
                 async with self._lock:
                     scan = self._scans.get(scan_id)
                     if scan:
                         scan["failed"] += 1
-                        scan["results"].append({
-                            "ticker": ticker,
-                            "run_id": None,
-                            "status": "failed",
-                            "direction": "unknown",
-                            "confidence": "none",
-                            "score": 0,
-                            "decision_summary": f"Failed to start: {e}",
-                        })
-
-        return run_ids
-
-    async def _wait_for_batch(self, scan_id: str, run_ids: Dict[str, str], tickers: List[str]) -> None:
-        """Poll until all runs in the batch are terminal, then collect results."""
-        pending = dict(run_ids)
-
-        while pending:
-            async with self._lock:
-                scan = self._scans.get(scan_id)
-                if not scan or scan["cancel"]:
-                    for ticker, rid in pending.items():
-                        await self._analysis.cancel_analysis(rid)
-                    async with self._lock:
-                        scan = self._scans.get(scan_id)
-                        if scan:
-                            for ticker, rid in pending.items():
-                                scan["failed"] += 1
-                                scan["results"].append({
-                                    "ticker": ticker,
-                                    "run_id": rid,
-                                    "status": "cancelled",
-                                    "direction": "unknown",
-                                    "confidence": "none",
-                                    "score": 0,
-                                    "decision_summary": "Cancelled",
-                                })
-                    return
+                        scan["results"].append(cancel_result)
+                if self._db:
+                    await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
+                return
 
             await asyncio.sleep(_POLL_INTERVAL)
 
-            done_tickers = []
-            for ticker, rid in list(pending.items()):
-                try:
-                    run = await self._analysis.get_run(rid)
-                    if not run or run.get("status") in _TERMINAL_STATUSES:
-                        done_tickers.append(ticker)
-                        await self._collect_result(scan_id, ticker, rid, run)
-                except Exception:
-                    done_tickers.append(ticker)
-                    async with self._lock:
-                        scan = self._scans.get(scan_id)
-                        if scan:
-                            scan["failed"] += 1
-
-            for t in done_tickers:
-                pending.pop(t, None)
+            try:
+                run = await self._analysis.get_run(run_id)
+                if not run or run.get("status") in _TERMINAL_STATUSES:
+                    await self._collect_result(scan_id, ticker, run_id, run)
+                    return
+            except Exception:
+                async with self._lock:
+                    scan = self._scans.get(scan_id)
+                    if scan:
+                        scan["failed"] += 1
+                return
 
     async def _collect_result(
         self, scan_id: str, ticker: str, run_id: str, run: Optional[Dict[str, Any]]
     ) -> None:
         """Parse the completed run's decision and add to results."""
         status = (run or {}).get("status", "failed")
+        reports: Dict[str, str] = {}
         decision_text = ""
 
         if status == "completed":
@@ -321,7 +504,7 @@ class ScannerService:
                 except Exception:
                     pass
 
-        signal = _parse_signal(decision_text)
+        signal = _parse_signal_from_reports(reports) if reports else _parse_signal_from_reports({"final_trade_decision": decision_text})
 
         result = {
             "ticker": ticker,
@@ -341,3 +524,8 @@ class ScannerService:
                 else:
                     scan["failed"] += 1
                 scan["results"].append(result)
+
+        if self._db:
+            await asyncio.to_thread(self._db.insert_scan_result, scan_id, result)
+            count_field = "completed" if status == "completed" else "failed"
+            await asyncio.to_thread(self._db.increment_scan_counter, scan_id, count_field)

@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { apiClient } from "@/api/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { parseTradeCard } from "@/components/analysis/parseTradeCard";
+import { parseTradeCard, type TradeCardData } from "@/components/analysis/parseTradeCard";
 
 const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; dot: string }> = {
   running: { variant: "default", dot: "bg-primary animate-pulse" },
@@ -23,22 +23,27 @@ const ACTION_COLORS: Record<string, string> = {
   short: "text-red-500",
 };
 
+const SORT_OPTIONS = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "confidence-desc", label: "Confidence: High → Low" },
+  { value: "confidence-asc", label: "Confidence: Low → High" },
+  { value: "signal-strongest", label: "Signal: Strongest first" },
+  { value: "ticker-az", label: "Ticker A → Z" },
+  { value: "ticker-za", label: "Ticker Z → A" },
+] as const;
+
+type SortOption = (typeof SORT_OPTIONS)[number]["value"];
+
+const STATUS_FILTERS = ["running", "completed", "failed", "cancelled"] as const;
+const PAGE_SIZES = [10, 25, 50, 100] as const;
+
 function actionColor(action?: string) {
   if (!action) return "text-muted-foreground";
   return ACTION_COLORS[action.toLowerCase()] ?? "text-muted-foreground";
 }
 
-function TradeScore({ runId }: { runId: string }) {
-  const { data: card } = useQuery({
-    queryKey: ["trade-score", runId],
-    queryFn: async ({ signal }) => {
-      const snap = await apiClient.getSnapshot(runId, signal);
-      return parseTradeCard(snap.reports);
-    },
-    staleTime: Infinity,
-    gcTime: 30 * 60 * 1000,
-  });
-
+function TradeScoreDisplay({ card }: { card: TradeCardData | null | undefined }) {
   if (!card) return null;
 
   const action = card.action ?? card.rating ?? "—";
@@ -57,10 +62,16 @@ function TradeScore({ runId }: { runId: string }) {
 export function HistoryList() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<SortOption>("newest");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(25);
+
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["analyses"],
-    queryFn: ({ signal }) => apiClient.listAnalyses(undefined, signal),
+    queryFn: ({ signal }) => apiClient.listAnalyses({ limit: 10000 }, signal),
     staleTime: 30_000,
   });
 
@@ -87,16 +98,114 @@ export function HistoryList() {
     },
   });
 
+  const allItems = data?.items ?? [];
+
+  const completedRunIds = useMemo(
+    () => allItems.filter((i) => i.status === "completed").map((i) => i.run_id),
+    [allItems]
+  );
+
+  const scoreQueries = useQueries({
+    queries: completedRunIds.map((runId) => ({
+      queryKey: ["trade-score", runId],
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const snap = await apiClient.getSnapshot(runId, signal);
+        return parseTradeCard(snap.reports);
+      },
+      staleTime: Infinity,
+      gcTime: 30 * 60 * 1000,
+    })),
+  });
+
+  const scoreMap = useMemo(() => {
+    const map = new Map<string, TradeCardData | null>();
+    completedRunIds.forEach((id, i) => {
+      map.set(id, scoreQueries[i]?.data ?? null);
+    });
+    return map;
+  }, [completedRunIds, scoreQueries]);
+
+  const getConfidence = (runId: string): number => scoreMap.get(runId)?.confidence ?? 0;
+  const getSignalStrength = (runId: string): number => {
+    const card = scoreMap.get(runId);
+    if (!card) return 0;
+    const action = (card.action ?? card.rating ?? "").toLowerCase();
+    const conf = card.confidence ?? 0;
+    if (action === "short" || action === "sell") return -conf;
+    if (action === "long" || action === "buy") return conf;
+    return 0;
+  };
+
+  const filtered = useMemo(() => {
+    let items = [...allItems];
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      items = items.filter(
+        (i) =>
+          i.ticker.toLowerCase().includes(q) ||
+          i.run_id.toLowerCase().includes(q)
+      );
+    }
+
+    if (statusFilter.size > 0) {
+      items = items.filter((i) => statusFilter.has(i.status));
+    }
+
+    items.sort((a, b) => {
+      switch (sort) {
+        case "oldest":
+          return (a.analysis_date ?? "").localeCompare(b.analysis_date ?? "");
+        case "ticker-az":
+          return a.ticker.localeCompare(b.ticker);
+        case "ticker-za":
+          return b.ticker.localeCompare(a.ticker);
+        case "confidence-desc":
+          return getConfidence(b.run_id) - getConfidence(a.run_id);
+        case "confidence-asc":
+          return getConfidence(a.run_id) - getConfidence(b.run_id);
+        case "signal-strongest":
+          return Math.abs(getSignalStrength(b.run_id)) - Math.abs(getSignalStrength(a.run_id));
+        case "newest":
+        default:
+          return (b.analysis_date ?? "").localeCompare(a.analysis_date ?? "");
+      }
+    });
+
+    return items;
+  }, [allItems, search, statusFilter, sort, scoreMap]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const paged = filtered.slice(safePage * pageSize, (safePage + 1) * pageSize);
+
+  const toggleStatus = (s: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+    setPage(0);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">History</h1>
-          <p className="text-muted-foreground mt-1">Browse past analyses and their results.</p>
+          <p className="text-muted-foreground mt-1">
+            Browse past analyses and their results.
+            {allItems.length > 0 && (
+              <span className="ml-2 text-foreground font-medium">
+                {filtered.length !== allItems.length ? `${filtered.length} of ${allItems.length}` : `${allItems.length} total`}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {(data?.items ?? []).length > 0 && (
+          {allItems.length > 0 && (
             confirmDeleteAll ? (
               <div className="flex items-center gap-1.5">
                 <button
@@ -137,6 +246,66 @@ export function HistoryList() {
         </div>
       </div>
 
+      {/* Search + Filters + Sort bar */}
+      {allItems.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              placeholder="Search ticker or run ID..."
+              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+
+          {/* Status filters */}
+          <div className="flex items-center gap-1.5">
+            {STATUS_FILTERS.map((s) => {
+              const active = statusFilter.has(s);
+              const cfg = STATUS_CONFIG[s];
+              return (
+                <button
+                  key={s}
+                  onClick={() => toggleStatus(s)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                    active
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                  {s}
+                </button>
+              );
+            })}
+            {statusFilter.size > 0 && (
+              <button
+                onClick={() => { setStatusFilter(new Set()); setPage(0); }}
+                className="px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Sort */}
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortOption)}
+            className="px-3 py-2 text-xs rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Content */}
       {isLoading ? (
         <div className="space-y-3">
@@ -158,7 +327,7 @@ export function HistoryList() {
             </div>
           </CardContent>
         </Card>
-      ) : (data?.items ?? []).length === 0 ? (
+      ) : allItems.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
@@ -172,83 +341,130 @@ export function HistoryList() {
             </p>
           </CardContent>
         </Card>
+      ) : filtered.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+            <p className="text-sm text-muted-foreground">No results match your filters.</p>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="space-y-2">
-          {(data?.items ?? []).map((item) => {
-            const cfg = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.pending;
-            return (
-              <Card key={item.run_id} className="group hover:shadow-md hover:border-primary/30 transition-all duration-200">
-                <CardContent className="py-3.5 px-4 flex items-center justify-between gap-4">
-                  <Link
-                    to="/analysis/$runId"
-                    params={{ runId: item.run_id }}
-                    className="flex items-center gap-4 min-w-0 flex-1 cursor-pointer"
-                  >
-                    <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
-                      <span className="font-mono font-bold text-sm text-foreground">{item.ticker.slice(0, 4)}</span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold font-mono">{item.ticker}</span>
-                        {item.asset_type === "crypto" && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">CRYPTO</span>
-                        )}
-                        <span className="text-xs text-muted-foreground">{item.analysis_date}</span>
+        <>
+          <div className="space-y-2">
+            {paged.map((item) => {
+              const cfg = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.pending;
+              return (
+                <Card key={item.run_id} className="group hover:shadow-md hover:border-primary/30 transition-all duration-200">
+                  <CardContent className="py-3.5 px-4 flex items-center justify-between gap-4">
+                    <Link
+                      to="/analysis/$runId"
+                      params={{ runId: item.run_id }}
+                      className="flex items-center gap-4 min-w-0 flex-1 cursor-pointer"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
+                        <span className="font-mono font-bold text-sm text-foreground">{item.ticker.slice(0, 4)}</span>
                       </div>
-                      <p className="text-xs text-muted-foreground truncate font-mono">
-                        {item.run_id}
-                      </p>
-                    </div>
-                    {item.status === "completed" && <TradeScore runId={item.run_id} />}
-                  </Link>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Badge variant={cfg.variant} className="gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                      {item.status}
-                    </Badge>
-                    {item.status === "running" && (
-                      <button
-                        onClick={() => cancelMutation.mutate(item.run_id)}
-                        disabled={cancelMutation.isPending}
-                        className="px-2.5 py-1 text-xs font-medium rounded-md border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
-                        title="Cancel analysis"
-                      >
-                        {cancelMutation.isPending ? "…" : "Cancel"}
-                      </button>
-                    )}
-                    {confirmId === item.run_id ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => deleteMutation.mutate(item.run_id)}
-                          disabled={deleteMutation.isPending}
-                          className="px-2 py-1 text-xs font-medium rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
-                        >
-                          {deleteMutation.isPending ? "…" : "Confirm"}
-                        </button>
-                        <button
-                          onClick={() => setConfirmId(null)}
-                          className="px-2 py-1 text-xs font-medium rounded bg-muted text-muted-foreground hover:opacity-90"
-                        >
-                          Cancel
-                        </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold font-mono">{item.ticker}</span>
+                          {item.asset_type === "crypto" && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">CRYPTO</span>
+                          )}
+                          <span className="text-xs text-muted-foreground">{item.analysis_date}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate font-mono">
+                          {item.run_id}
+                        </p>
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmId(item.run_id)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                        title="Delete analysis"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                      {item.status === "completed" && <TradeScoreDisplay card={scoreMap.get(item.run_id)} />}
+                    </Link>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={cfg.variant} className="gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                        {item.status}
+                      </Badge>
+                      {item.status === "running" && (
+                        <button
+                          onClick={() => cancelMutation.mutate(item.run_id)}
+                          disabled={cancelMutation.isPending}
+                          className="px-2.5 py-1 text-xs font-medium rounded-md border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                          title="Cancel analysis"
+                        >
+                          {cancelMutation.isPending ? "…" : "Cancel"}
+                        </button>
+                      )}
+                      {confirmId === item.run_id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => deleteMutation.mutate(item.run_id)}
+                            disabled={deleteMutation.isPending}
+                            className="px-2 py-1 text-xs font-medium rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                          >
+                            {deleteMutation.isPending ? "…" : "Confirm"}
+                          </button>
+                          <button
+                            onClick={() => setConfirmId(null)}
+                            className="px-2 py-1 text-xs font-medium rounded bg-muted text-muted-foreground hover:opacity-90"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmId(item.run_id)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          title="Delete analysis"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Pagination */}
+          {filtered.length > pageSize && (
+            <div className="flex items-center justify-between pt-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>
+                  {safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, filtered.length)} of {filtered.length}
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+                  className="px-2 py-1 rounded border border-border bg-background text-foreground text-xs focus:outline-none"
+                >
+                  {PAGE_SIZES.map((s) => (
+                    <option key={s} value={s}>{s} / page</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={safePage === 0}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border hover:bg-muted disabled:opacity-40 transition-colors"
+                >
+                  Prev
+                </button>
+                <span className="px-3 py-1.5 text-xs text-muted-foreground">
+                  {safePage + 1} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={safePage >= totalPages - 1}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-border hover:bg-muted disabled:opacity-40 transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

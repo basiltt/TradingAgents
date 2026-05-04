@@ -43,6 +43,33 @@ _MIGRATIONS: list[tuple[int, str]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
     (3, "CREATE INDEX IF NOT EXISTS idx_runs_asset_type_started ON analysis_runs(asset_type, started_at DESC)"),
+    (4, """
+CREATE TABLE IF NOT EXISTS scans (
+    scan_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed','cancelled')),
+    config TEXT NOT NULL DEFAULT '{}',
+    total INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    completed_at TEXT
+)
+"""),
+    (5, """
+CREATE TABLE IF NOT EXISTS scan_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id TEXT NOT NULL REFERENCES scans(scan_id) ON DELETE CASCADE,
+    ticker TEXT NOT NULL,
+    run_id TEXT,
+    status TEXT NOT NULL,
+    direction TEXT NOT NULL DEFAULT 'unknown',
+    confidence TEXT NOT NULL DEFAULT 'none',
+    score INTEGER NOT NULL DEFAULT 0,
+    decision_summary TEXT NOT NULL DEFAULT '',
+    UNIQUE(scan_id, ticker)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_results_scan_id ON scan_results(scan_id)
+"""),
 ]
 
 
@@ -166,7 +193,7 @@ class AnalysisDB:
         to_date: Optional[str] = None,
         asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        limit = min(max(limit, 1), 100)
+        limit = min(max(limit, 1), 10000)
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -274,6 +301,114 @@ class AnalysisDB:
             return "ok"
         except Exception:
             return "degraded"
+
+    # ── Scanner persistence ──────────────────────────────────────────
+
+    def insert_scan(self, scan: Dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO scans (scan_id, status, config, total, completed, failed, started_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scan["scan_id"],
+                    scan.get("status", "running"),
+                    scan.get("config", "{}"),
+                    scan.get("total", 0),
+                    scan.get("completed", 0),
+                    scan.get("failed", 0),
+                    scan["started_at"],
+                ),
+            )
+            self._conn.commit()
+
+    def update_scan(self, scan_id: str, **fields: Any) -> None:
+        allowed = {"status", "total", "completed", "failed", "completed_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE scans SET {set_clause} WHERE scan_id=?",
+                list(updates.values()) + [scan_id],
+            )
+            self._conn.commit()
+
+    def insert_scan_result(self, scan_id: str, result: Dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO scan_results "
+                "(scan_id, ticker, run_id, status, direction, confidence, score, decision_summary) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    scan_id,
+                    result["ticker"],
+                    result.get("run_id"),
+                    result.get("status", "failed"),
+                    result.get("direction", "unknown"),
+                    result.get("confidence", "none"),
+                    result.get("score", 0),
+                    result.get("decision_summary", ""),
+                ),
+            )
+            self._conn.commit()
+
+    def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM scans WHERE scan_id=?", (scan_id,)
+            ).fetchone()
+            if not row:
+                return None
+            scan = dict(row)
+            results = self._conn.execute(
+                "SELECT ticker, run_id, status, direction, confidence, score, decision_summary "
+                "FROM scan_results WHERE scan_id=? ORDER BY ABS(score) DESC",
+                (scan_id,),
+            ).fetchall()
+            scan["results"] = [dict(r) for r in results]
+        return scan
+
+    def list_scans(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM scans ORDER BY started_at DESC"
+            ).fetchall()
+            scans = []
+            for row in rows:
+                scan = dict(row)
+                results = self._conn.execute(
+                    "SELECT ticker, run_id, status, direction, confidence, score, decision_summary "
+                    "FROM scan_results WHERE scan_id=? ORDER BY ABS(score) DESC",
+                    (scan["scan_id"],),
+                ).fetchall()
+                scan["results"] = [dict(r) for r in results]
+                scans.append(scan)
+        return scans
+
+    def get_scan_completed_tickers(self, scan_id: str) -> set[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ticker FROM scan_results WHERE scan_id=?", (scan_id,)
+            ).fetchall()
+        return {r[0] for r in rows}
+
+    def increment_scan_counter(self, scan_id: str, field: str) -> None:
+        if field not in ("completed", "failed"):
+            return
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE scans SET {field} = {field} + 1 WHERE scan_id=?",
+                (scan_id,),
+            )
+            self._conn.commit()
+
+    def get_running_scans(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM scans WHERE status='running'"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def close(self) -> None:
         with self._lock:

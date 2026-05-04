@@ -80,6 +80,10 @@ class AnalysisRequest(BaseModel):
     analysts: Optional[List[str]] = None
     research_depth: Optional[int] = Field(None, ge=1, le=5)
     output_language: Optional[str] = None
+    max_debate_rounds: Optional[int] = Field(None, ge=1, le=10)
+    max_risk_discuss_rounds: Optional[int] = Field(None, ge=1, le=10)
+    max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
+    checkpoint_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
 
     @field_validator("ticker")
@@ -257,6 +261,10 @@ class ScanRequest(BaseModel):
     analysts: Optional[List[str]] = None
     research_depth: Optional[int] = Field(None, ge=1, le=5)
     output_language: Optional[str] = None
+    max_debate_rounds: Optional[int] = Field(None, ge=1, le=10)
+    max_risk_discuss_rounds: Optional[int] = Field(None, ge=1, le=10)
+    max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
+    checkpoint_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
 
     @field_validator("analysis_date")

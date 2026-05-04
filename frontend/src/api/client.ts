@@ -117,6 +117,10 @@ export interface StartAnalysisRequest {
   analysts?: string[];
   research_depth?: number;
   output_language?: string;
+  max_debate_rounds?: number;
+  max_risk_discuss_rounds?: number;
+  max_recur_limit?: number;
+  checkpoint_enabled?: boolean;
   data_vendors?: Record<string, string>;
   asset_type?: AssetType;
   interval?: CryptoInterval;
@@ -168,6 +172,10 @@ export interface ScanRequest {
   analysts?: string[];
   research_depth?: number;
   output_language?: string;
+  max_debate_rounds?: number;
+  max_risk_discuss_rounds?: number;
+  max_recur_limit?: number;
+  checkpoint_enabled?: boolean;
   data_vendors?: Record<string, string>;
 }
 

@@ -22,6 +22,8 @@ const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
   { value: "D", label: "1 day" },
 ];
 
+const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "French", "German", "Portuguese", "Russian", "Arabic", "Hindi"] as const;
+
 const STORAGE_KEY = "tradingagents_settings";
 const SCANNER_KEY = "tradingagents_scanner";
 
@@ -45,6 +47,12 @@ interface ScannerSettings {
   quickModel?: string;
   interval?: CryptoInterval;
   analysts?: string[];
+  researchDepth?: number;
+  outputLanguage?: string;
+  maxDebateRounds?: number;
+  maxRiskRounds?: number;
+  maxRecurLimit?: number;
+  checkpointEnabled?: boolean;
 }
 
 function loadScannerSettings(): ScannerSettings {
@@ -134,13 +142,20 @@ export function ScannerPage() {
   const [quickModel, setQuickModel] = useState(scanner.quickModel ?? saved.quick_think_llm ?? "");
   const [interval, setInterval] = useState<CryptoInterval>(scanner.interval ?? "D");
   const [analysts, setAnalysts] = useState<string[]>(scanner.analysts ?? [...CRYPTO_ANALYSTS]);
+  const [researchDepth, setResearchDepth] = useState(scanner.researchDepth ?? 3);
+  const [outputLanguage, setOutputLanguage] = useState(scanner.outputLanguage ?? "English");
+  const [maxDebateRounds, setMaxDebateRounds] = useState(scanner.maxDebateRounds ?? 1);
+  const [maxRiskRounds, setMaxRiskRounds] = useState(scanner.maxRiskRounds ?? 1);
+  const [maxRecurLimit, setMaxRecurLimit] = useState(scanner.maxRecurLimit ?? 100);
+  const [checkpointEnabled, setCheckpointEnabled] = useState(scanner.checkpointEnabled ?? false);
   const [activeScanId, _setActiveScanId] = useState<string | null>(loadActiveScanId);
   const [showLlm, setShowLlm] = useState(true);
+  const [showWorkflow, setShowWorkflow] = useState(false);
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState<number>(0);
 
   useEffect(() => {
-    saveScannerSettings({ analysisDate, provider, backendUrl, deepModel, quickModel, interval, analysts });
-  }, [analysisDate, provider, backendUrl, deepModel, quickModel, interval, analysts]);
+    saveScannerSettings({ analysisDate, provider, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled });
+  }, [analysisDate, provider, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled]);
 
   const setActiveScanId = (id: string | null) => {
     _setActiveScanId(id);
@@ -195,9 +210,11 @@ export function ScannerPage() {
     retry: false,
   });
 
+  const [lostScan, setLostScan] = useState(false);
   useEffect(() => {
     if (scanQuery.isError && activeScanId) {
       setActiveScanId(null);
+      setLostScan(true);
     }
   }, [scanQuery.isError, activeScanId]);
 
@@ -215,7 +232,12 @@ export function ScannerPage() {
       quick_think_llm: quickModel || undefined,
       backend_url: backendUrl || undefined,
       analysts,
-      research_depth: 1,
+      research_depth: researchDepth,
+      output_language: outputLanguage !== "English" ? outputLanguage : undefined,
+      max_debate_rounds: maxDebateRounds !== 1 ? maxDebateRounds : undefined,
+      max_risk_discuss_rounds: maxRiskRounds !== 1 ? maxRiskRounds : undefined,
+      max_recur_limit: maxRecurLimit !== 100 ? maxRecurLimit : undefined,
+      checkpoint_enabled: checkpointEnabled || undefined,
     };
     startMutation.mutate(body);
   };
@@ -256,6 +278,24 @@ export function ScannerPage() {
       {/* Config */}
       {!activeScanId && (
         <div className="space-y-4">
+          {lostScan && (
+            <Card className="border-amber-500/30 bg-amber-500/5">
+              <CardContent className="flex items-center gap-3 py-4">
+                <svg className="w-5 h-5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <p className="font-medium text-amber-500 text-sm">Previous scan was lost</p>
+                  <p className="text-xs text-muted-foreground">The backend restarted (hot reload or restart) while a scan was running. Completed results are saved in History. Start a new scan to continue.</p>
+                </div>
+                <button onClick={() => setLostScan(false)} className="ml-auto text-muted-foreground hover:text-foreground p-1">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader className="pb-4">
               <CardTitle className="text-base flex items-center gap-2">
@@ -335,6 +375,90 @@ export function ScannerPage() {
                 </p>
               </div>
             </CardContent>
+          </Card>
+
+          {/* Workflow Settings — collapsible */}
+          <Card>
+            <CardHeader className="pb-0">
+              <button
+                type="button"
+                onClick={() => setShowWorkflow(!showWorkflow)}
+                className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
+              >
+                <svg className={cn("w-4 h-4 transition-transform duration-200", showWorkflow && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+                Workflow Settings
+              </button>
+            </CardHeader>
+            {showWorkflow && (
+              <CardContent className="pt-4 space-y-4">
+                <div className="flex flex-col gap-2">
+                  <Label className="font-medium">Research Depth</Label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={1}
+                      value={researchDepth}
+                      onChange={(e) => setResearchDepth(Number(e.target.value))}
+                      className="flex-1 accent-primary"
+                    />
+                    <span className="text-sm font-mono w-4 text-right">{researchDepth}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">1 = Quick scan, 5 = Deep analysis</p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label className="font-medium">Output Language</Label>
+                  <Select value={outputLanguage} onValueChange={setOutputLanguage}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {LANGUAGES.map((l) => (
+                        <SelectItem key={l} value={l}>{l}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Language for the final report (agent debate stays in English)</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <Label className="font-medium text-sm">Max Debate Rounds</Label>
+                    <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} />
+                    <p className="text-xs text-muted-foreground">Bull vs Bear debate iterations</p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label className="font-medium text-sm">Max Risk Rounds</Label>
+                    <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} />
+                    <p className="text-xs text-muted-foreground">Risk team discussion iterations</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label className="font-medium text-sm">Max Recursion Limit</Label>
+                  <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} />
+                  <p className="text-xs text-muted-foreground">Upper bound on LangGraph recursion steps</p>
+                </div>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checkpointEnabled}
+                    onChange={(e) => setCheckpointEnabled(e.target.checked)}
+                    className="mt-1 w-4 h-4 rounded border-border accent-primary"
+                  />
+                  <div>
+                    <span className="font-medium text-sm">Enable Checkpoints</span>
+                    <p className="text-xs text-muted-foreground">Save state after each step so crashed runs can resume</p>
+                  </div>
+                </label>
+              </CardContent>
+            )}
           </Card>
 
           {/* LLM & Proxy section — collapsible */}

@@ -273,6 +273,10 @@ export function ConfigForm() {
         analysts: allSelected ? undefined : data.analysts,
         research_depth: data.research_depth !== 3 ? data.research_depth : undefined,
         output_language: data.output_language !== "English" ? data.output_language : undefined,
+        max_debate_rounds: data.max_debate_rounds !== 1 ? data.max_debate_rounds : undefined,
+        max_risk_discuss_rounds: data.max_risk_discuss_rounds !== 1 ? data.max_risk_discuss_rounds : undefined,
+        max_recur_limit: data.max_recur_limit !== 100 ? data.max_recur_limit : undefined,
+        checkpoint_enabled: data.checkpoint_enabled || undefined,
         ...(isCryptoSubmit
           ? { interval: data.interval }
           : {

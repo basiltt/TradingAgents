@@ -89,7 +89,9 @@ def create_app() -> FastAPI:
         )
         app.state.scanner_service = ScannerService(
             analysis_service=app.state.analysis_service,
+            db=db,
         )
+        await app.state.scanner_service.resume_incomplete_scans()
         yield
         await app.state.analysis_service.shutdown()
         await ws_manager.shutdown()
