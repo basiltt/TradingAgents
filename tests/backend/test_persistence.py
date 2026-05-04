@@ -337,3 +337,26 @@ def test_health_check_degraded(tmp_path):
 def test_checkpoint(db, sample_run):
     db.insert_run(sample_run)
     db.checkpoint()  # should not raise
+
+
+def test_migration_rollback_on_bad_sql(tmp_path):
+    """Covers persistence.py:129-131: migration exception triggers rollback."""
+    import sqlite3
+    from backend import persistence as pers
+
+    db_path = str(tmp_path / "migrate_fail.db")
+    original = pers._MIGRATIONS[:]
+    # Add a bad migration at version 9998 (above current)
+    bad_migration = (9998, "INVALID SQL THAT WILL FAIL;")
+    pers._MIGRATIONS.append(bad_migration)
+    try:
+        with pytest.raises(Exception):
+            pers.AnalysisDB(db_path=db_path)
+        # Verify DB version was not advanced
+        conn = sqlite3.connect(db_path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert version != 9998
+    finally:
+        pers._MIGRATIONS.clear()
+        pers._MIGRATIONS.extend(original)

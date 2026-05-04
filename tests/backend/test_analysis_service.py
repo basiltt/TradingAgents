@@ -399,3 +399,72 @@ def test_save_snapshot_exception_logged(service, db, bus):
     ])
     with patch.object(db, "save_report_section", side_effect=Exception("db error")):
         service._save_snapshot(run_id)
+
+
+def test_execute_graph_streaming_loop(service, db, bus):
+    """Covers analysis_service.py:313-343: actual graph streaming loop."""
+    import threading
+    from backend.stream_parser import ReportChunkEvent
+
+    # Create a fake graph chunk that parse_stream_chunk can process
+    fake_report_chunk = ReportChunkEvent(section="market", content="Market data here")
+
+    class FakeStream:
+        def __iter__(self):
+            yield {"messages": []}  # one chunk
+
+    class FakeGraph:
+        def __init__(self, config=None, selected_analysts=None):
+            self.graph = type("G", (), {"stream": lambda self, s, **kw: FakeStream()})()
+            self.propagator = type("P", (), {
+                "create_initial_state": lambda self, t, d, asset_type="stock": {},
+                "get_graph_args": lambda self, callbacks=None: {},
+            })()
+
+    cancel_event = threading.Event()
+
+    with patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph):
+        with patch("backend.services.analysis_service.parse_stream_chunk", return_value=[fake_report_chunk]):
+            with patch.object(service._db, "save_report_section"):
+                result = service._execute_graph(
+                    "run-stream",
+                    {"ticker": "SPY", "analysis_date": "2025-01-10", "analysts": ["market"]},
+                    {},
+                    None,
+                    cancel_event,
+                )
+    # last_chunk should be the dict we yielded
+    assert result is not None
+
+
+def test_execute_graph_cancel_mid_loop(service):
+    """Covers analysis_service.py:332: cancel_event breaks the stream loop."""
+    import threading
+
+    chunks_yielded = []
+
+    class SlowStream:
+        def __iter__(self):
+            for i in range(5):
+                chunks_yielded.append(i)
+                yield {"n": i}
+
+    class FakeGraph:
+        def __init__(self, config=None, selected_analysts=None):
+            self.graph = type("G", (), {"stream": lambda self, s, **kw: SlowStream()})()
+            self.propagator = type("P", (), {
+                "create_initial_state": lambda self, t, d, asset_type="stock": {},
+                "get_graph_args": lambda self, callbacks=None: {},
+            })()
+
+    cancel_event = threading.Event()
+    cancel_event.set()  # already cancelled before loop starts
+
+    with patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph):
+        with patch("backend.services.analysis_service.parse_stream_chunk", return_value=[]):
+            result = service._execute_graph(
+                "run-cancel", {"ticker": "SPY", "analysis_date": "2025-01-10"}, {},
+                None, cancel_event,
+            )
+    # Loop should break immediately on first chunk
+    assert len(chunks_yielded) <= 1
