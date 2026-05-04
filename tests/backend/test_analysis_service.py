@@ -78,7 +78,7 @@ def test_concurrency_cap(service, sample_request, event_loop):
     with patch("backend.services.analysis_service.AnalysisService._execute_graph", side_effect=slow_graph):
         async def _test():
             ids = []
-            for _ in range(3):
+            for _ in range(10):
                 rid = await service.start_analysis(sample_request)
                 ids.append(rid)
 
@@ -136,4 +136,120 @@ def test_error_sanitization(service, sample_request, event_loop, db):
             assert "Internal error" in run["error"]
             assert "secret" not in run["error"]
 
+        event_loop.run_until_complete(_test())
+
+
+def test_get_report_no_sections(service, db, event_loop):
+    async def _test():
+        result = await service.get_report("nonexistent")
+        assert result is None
+    event_loop.run_until_complete(_test())
+
+
+def test_get_report_joins_sections(service, db, event_loop):
+    async def _test():
+        run_id = "11111111-1111-1111-1111-111111111111"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        db.save_report_section(run_id, "market", "Market Analysis")
+        db.save_report_section(run_id, "news", "News Analysis")
+        db.save_report_section(run_id, "_snapshot", '{"agents":{}}')
+        report = await service.get_report(run_id)
+        assert "Market Analysis" in report
+        assert "News Analysis" in report
+        assert "_snapshot" not in report and "agents" not in report
+    event_loop.run_until_complete(_test())
+
+
+def test_get_snapshot_returns_parsed_json(service, db, event_loop):
+    async def _test():
+        run_id = "22222222-2222-2222-2222-222222222222"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        db.save_report_section(run_id, "_snapshot", '{"reports":{"market":"data"}}')
+        snap = await service.get_snapshot(run_id)
+        assert snap is not None
+        assert snap["reports"]["market"] == "data"
+    event_loop.run_until_complete(_test())
+
+
+def test_get_snapshot_backfills_from_sections(service, db, event_loop):
+    async def _test():
+        run_id = "33333333-3333-3333-3333-333333333333"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        db.save_report_section(run_id, "_snapshot", '{"reports":{}}')
+        db.save_report_section(run_id, "market", "Market Analysis")
+        snap = await service.get_snapshot(run_id)
+        assert snap["reports"]["market"] == "Market Analysis"
+    event_loop.run_until_complete(_test())
+
+
+def test_get_snapshot_none_when_no_snapshot(service, db, event_loop):
+    async def _test():
+        run_id = "44444444-4444-4444-4444-444444444444"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        snap = await service.get_snapshot(run_id)
+        assert snap is None
+    event_loop.run_until_complete(_test())
+
+
+def test_get_snapshot_bad_json(service, db, event_loop):
+    async def _test():
+        run_id = "55555555-5555-5555-5555-555555555555"
+        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        db.save_report_section(run_id, "_snapshot", "not json at all")
+        snap = await service.get_snapshot(run_id)
+        assert snap is None
+    event_loop.run_until_complete(_test())
+
+
+def test_build_config_crypto(service):
+    config = service._build_config({
+        "ticker": "BTCUSDT", "analysis_date": "2025-01-10",
+        "asset_type": "crypto", "interval": "4h",
+    })
+    assert config["asset_type"] == "crypto"
+    assert config["crypto_interval"] == "4h"
+
+
+def test_build_config_overrides(service):
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+        "provider": "google",
+        "deep_think_llm": "gemini-2.5-pro",
+        "quick_think_llm": "gemini-2.5-flash",
+        "output_language": "Japanese",
+        "max_debate_rounds": 5,
+        "max_risk_discuss_rounds": 3,
+        "max_recur_limit": 10,
+        "checkpoint_enabled": False,
+    })
+    assert config["llm_provider"] == "google"
+    assert config["deep_think_llm"] == "gemini-2.5-pro"
+    assert config["quick_think_llm"] == "gemini-2.5-flash"
+    assert config["output_language"] == "Japanese"
+    assert config["max_debate_rounds"] == 5
+    assert config["max_risk_discuss_rounds"] == 3
+    assert config["max_recur_limit"] == 10
+    assert config["checkpoint_enabled"] is False
+
+
+def test_build_config_backend_url(service):
+    with patch("backend.services.analysis_service.validate_backend_url", return_value="http://ollama:11434") as mock_val:
+        config = service._build_config({
+            "ticker": "SPY", "analysis_date": "2025-01-10",
+            "backend_url": "http://ollama:11434",
+        })
+    assert config["backend_url"] == "http://ollama:11434"
+    mock_val.assert_called_once()
+
+
+def test_shutdown(service, sample_request, event_loop):
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value=None):
+        async def _test():
+            await service.start_analysis(sample_request)
+            await asyncio.sleep(0.1)
+            await service.shutdown()
+            assert all(
+                r.get("cancel_event") is None or r["cancel_event"].is_set()
+                for r in service._active_runs.values()
+            )
         event_loop.run_until_complete(_test())

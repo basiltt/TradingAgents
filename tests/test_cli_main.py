@@ -308,3 +308,47 @@ class TestSaveReportToDisk:
         save_report_to_disk(state, "AAPL", save_path)
         assert (save_path / "1_analysts" / "market.md").exists()
         assert not (save_path / "2_research").exists()
+
+
+class TestDisplayCompleteReport:
+    def test_full_state_no_exception(self):
+        from io import StringIO
+        from rich.console import Console
+        from cli.main import display_complete_report
+        import cli.main as cli_main_mod
+        original = cli_main_mod.console
+        cli_main_mod.console = Console(file=StringIO())
+        try:
+            state = {
+                "market_report": "Market data",
+                "sentiment_report": "Social data",
+                "news_report": "News data",
+                "fundamentals_report": "Fundamentals data",
+                "investment_debate_state": {
+                    "bull_history": "Bull case",
+                    "bear_history": "Bear case",
+                    "judge_decision": "Decision",
+                },
+                "trader_investment_plan": "Trade plan",
+                "risk_debate_state": {
+                    "aggressive_history": "Aggressive",
+                    "conservative_history": "Conservative",
+                    "neutral_history": "Neutral",
+                    "judge_decision": "PM decision",
+                },
+            }
+            display_complete_report(state)
+        finally:
+            cli_main_mod.console = original
+
+    def test_empty_state_no_exception(self):
+        from io import StringIO
+        from rich.console import Console
+        from cli.main import display_complete_report
+        import cli.main as cli_main_mod
+        original = cli_main_mod.console
+        cli_main_mod.console = Console(file=StringIO())
+        try:
+            display_complete_report({})
+        finally:
+            cli_main_mod.console = original

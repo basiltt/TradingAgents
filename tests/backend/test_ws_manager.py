@@ -111,3 +111,100 @@ def test_replay_returns_type(ws_manager, event_loop):
         await ws_manager.disconnect(conn)
 
     event_loop.run_until_complete(_test())
+
+
+def test_double_disconnect_idempotent(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+        await ws_manager.disconnect(conn)
+        await ws_manager.disconnect(conn)
+        assert ws_manager.get_connection_count("run1") == 0
+
+    event_loop.run_until_complete(_test())
+
+
+def test_ensure_consumer(ws_manager, event_loop):
+    async def _test():
+        called = asyncio.Event()
+
+        async def consume():
+            called.set()
+
+        await ws_manager.ensure_consumer("run1", consume)
+        await asyncio.sleep(0.05)
+        assert called.is_set()
+        # cleanup
+        for task in ws_manager._consumers.values():
+            task.cancel()
+
+    event_loop.run_until_complete(_test())
+
+
+def test_ensure_consumer_no_duplicate(ws_manager, event_loop):
+    async def _test():
+        count = 0
+
+        async def consume():
+            nonlocal count
+            count += 1
+            await asyncio.sleep(10)
+
+        await ws_manager.ensure_consumer("run1", consume)
+        await asyncio.sleep(0.05)
+        await ws_manager.ensure_consumer("run1", consume)
+        await asyncio.sleep(0.05)
+        assert count == 1
+        for task in ws_manager._consumers.values():
+            task.cancel()
+
+    event_loop.run_until_complete(_test())
+
+
+def test_remove_consumer_if_empty(ws_manager, event_loop):
+    async def _test():
+        async def consume():
+            await asyncio.sleep(10)
+
+        await ws_manager.ensure_consumer("run1", consume)
+        await asyncio.sleep(0.05)
+        await ws_manager.remove_consumer_if_empty("run1")
+        assert "run1" not in ws_manager._consumers
+
+    event_loop.run_until_complete(_test())
+
+
+def test_remove_consumer_not_empty(ws_manager, event_loop):
+    async def _test():
+        ws = _mock_ws()
+        conn = await ws_manager.connect(ws, "run1")
+
+        async def consume():
+            await asyncio.sleep(10)
+
+        await ws_manager.ensure_consumer("run1", consume)
+        await asyncio.sleep(0.05)
+        await ws_manager.remove_consumer_if_empty("run1")
+        assert "run1" in ws_manager._consumers
+        await ws_manager.disconnect(conn)
+        for task in ws_manager._consumers.values():
+            task.cancel()
+
+    event_loop.run_until_complete(_test())
+
+
+def test_shutdown(ws_manager, event_loop):
+    async def _test():
+        async def consume():
+            await asyncio.sleep(10)
+
+        await ws_manager.ensure_consumer("run1", consume)
+        await asyncio.sleep(0.05)
+        await ws_manager.shutdown()
+        assert len(ws_manager._consumers) == 0
+
+    event_loop.run_until_complete(_test())
+
+
+def test_get_connection_count_nonexistent(ws_manager):
+    assert ws_manager.get_connection_count("nope") == 0

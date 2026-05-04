@@ -111,3 +111,53 @@ async def test_validation_errors(client):
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_snapshot_not_found(client):
+    resp = await client.get("/api/v1/analysis/00000000-0000-0000-0000-000000000000/snapshot")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_not_found(client):
+    resp = await client.post(
+        "/api/v1/analysis/00000000-0000-0000-0000-000000000000/cancel",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_analysis_not_found(client):
+    resp = await client.delete(
+        "/api/v1/analysis/00000000-0000-0000-0000-000000000000",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_all_analyses(client):
+    resp = await client.delete(
+        "/api/v1/analysis",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 200
+    assert "deleted" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_backend_url_skips_key_check(client, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value=None):
+        with patch("backend.services.analysis_service.validate_backend_url", return_value="http://ollama:11434"):
+            resp = await client.post(
+                "/api/v1/analysis",
+                json={
+                    "ticker": "SPY", "analysis_date": "2025-06-01",
+                    "backend_url": "http://ollama:11434",
+                },
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+    assert resp.status_code == 201
