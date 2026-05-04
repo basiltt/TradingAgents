@@ -9,6 +9,7 @@ HEALTHCHECK_URL="${TRADINGAGENTS_HEALTHCHECK_URL:-}"
 HEALTHCHECK_RETRIES="${TRADINGAGENTS_HEALTHCHECK_RETRIES:-24}"
 HEALTHCHECK_DELAY="${TRADINGAGENTS_HEALTHCHECK_DELAY:-5}"
 PYTHON_BIN="${TRADINGAGENTS_PYTHON_BIN:-python3}"
+FRONTEND_DIST_SOURCE="${TRADINGAGENTS_FRONTEND_DIST_SOURCE:-}"
 
 log() {
   printf '[deploy] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -22,7 +23,6 @@ require_cmd() {
 }
 
 require_cmd "$PYTHON_BIN"
-require_cmd npm
 require_cmd rsync
 require_cmd curl
 
@@ -42,15 +42,27 @@ python -m pip install --upgrade pip
 log "Installing backend package"
 python -m pip install -e .
 
-log "Installing frontend dependencies"
-pushd frontend >/dev/null
-npm ci
-log "Building frontend bundle"
-npm run build
-popd >/dev/null
+if [[ -n "$FRONTEND_DIST_SOURCE" ]]; then
+  if [[ ! -d "$FRONTEND_DIST_SOURCE" ]]; then
+    echo "Provided frontend dist directory does not exist: $FRONTEND_DIST_SOURCE" >&2
+    exit 1
+  fi
+
+  FRONTEND_DIST_PATH="$FRONTEND_DIST_SOURCE"
+  log "Using prebuilt frontend assets from $FRONTEND_DIST_PATH"
+else
+  require_cmd npm
+  log "Installing frontend dependencies"
+  pushd frontend >/dev/null
+  npm ci
+  log "Building frontend bundle"
+  npm run build
+  popd >/dev/null
+  FRONTEND_DIST_PATH="$APP_DIR/frontend/dist"
+fi
 
 log "Syncing frontend assets to $WEB_ROOT"
-sudo rsync -a --delete "$APP_DIR/frontend/dist/" "$WEB_ROOT/"
+sudo rsync -a --delete "$FRONTEND_DIST_PATH/" "$WEB_ROOT/"
 log "Restarting systemd service $SERVICE_NAME"
 sudo systemctl restart "$SERVICE_NAME"
 log "Reloading nginx"
