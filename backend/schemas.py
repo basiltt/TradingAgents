@@ -279,3 +279,70 @@ class ScanRequest(BaseModel):
         if d > date.today():
             raise ValueError("Analysis date cannot be in the future")
         return v
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scan result response schemas — strict validation so wrong values never reach
+# the frontend. Any value outside the allowed sets is coerced to a safe default
+# rather than passed through.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ScanDirection(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
+    HOLD = "hold"
+
+
+class ScanConfidence(str, Enum):
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+    NONE = "none"
+
+
+class ScanResultItem(BaseModel):
+    ticker: str
+    run_id: Optional[str] = None
+    status: Literal["completed", "failed", "cancelled", "unknown"] = "unknown"
+    direction: ScanDirection = ScanDirection.HOLD
+    confidence: ScanConfidence = ScanConfidence.NONE
+    score: int = Field(default=0, ge=-10, le=10)
+    decision_summary: str = ""
+    signal_source: str = "unknown"
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def clamp_score(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return 0
+        return max(-10, min(10, v))
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def coerce_direction(cls, v: Any) -> str:
+        if isinstance(v, str) and v.lower() in ("buy", "sell", "hold"):
+            return v.lower()
+        return "hold"
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def coerce_confidence(cls, v: Any) -> str:
+        if isinstance(v, str) and v.lower() in ("high", "moderate", "low", "none"):
+            return v.lower()
+        return "none"
+
+
+class ScanStatusResponse(BaseModel):
+    scan_id: str
+    status: Literal["running", "completed", "failed", "cancelled"]
+    total: int = Field(ge=0)
+    completed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    current_batch: int = Field(ge=0)
+    total_batches: int = Field(ge=0)
+    current_tickers: List[str] = []
+    results: List[ScanResultItem] = []
+    started_at: str = ""
+    completed_at: Optional[str] = None

@@ -143,13 +143,23 @@ class AnalysisService:
                 except (json.JSONDecodeError, TypeError):
                     pass
                 break
+
+        # Build reports dict from individually-saved DB sections (always authoritative —
+        # the snapshot blob may have been saved before all sections landed).
+        db_reports = {s["section"]: s["content"] for s in sections if s["section"] != "_snapshot"}
+
         if snapshot is None:
-            return None
-        # Backfill reports from individually saved DB sections if snapshot reports are empty
-        if not snapshot.get("reports"):
-            reports = {s["section"]: s["content"] for s in sections if s["section"] != "_snapshot"}
-            if reports:
-                snapshot["reports"] = reports
+            if not db_reports:
+                return None
+            # No snapshot blob yet but we have sections — construct a minimal one
+            snapshot = {"agents": {}, "messages": [], "stats": None, "reports": db_reports}
+        else:
+            # Merge: DB sections override snapshot blob for any section present in DB.
+            # This ensures late-arriving sections written after the snapshot are included.
+            merged = dict(snapshot.get("reports") or {})
+            merged.update(db_reports)
+            snapshot["reports"] = merged
+
         return snapshot
 
     def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -215,26 +225,36 @@ class AnalysisService:
                 timeout=_WALL_TIMEOUT,
             )
 
-            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            updated = await asyncio.to_thread(self._db.update_run_status, run_id, "completed", None, now)
+            # Save snapshot before marking completed so the scanner never reads
+            # a completed run without its reports already persisted in the DB.
+            # The 0.2 s sleep is a best-effort yield so that in-flight emit_threadsafe
+            # coroutines (scheduled via call_soon_threadsafe from background threads)
+            # can land before the snapshot is captured.  It is not guaranteed — a slow
+            # event-loop tick could still miss a late event — but that's tolerable here
+            # because individual sections are also saved incrementally during streaming.
+            await asyncio.sleep(0.2)
+            await asyncio.to_thread(self._save_snapshot, run_id)
 
-            if updated and isinstance(result, dict):
+            if isinstance(result, dict):
                 decision = result.get("final_trade_decision", "")
                 if decision:
                     await asyncio.to_thread(self._db.save_report_section, run_id, "final_trade_decision", str(decision))
+
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            updated = await asyncio.to_thread(self._db.update_run_status, run_id, "completed", None, now)
 
             if updated:
                 self._bus.emit(run_id, ProgressEvent(phase="completed", detail="Analysis complete"))
 
         except asyncio.CancelledError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._db.update_run_status(run_id, "cancelled", "Cancelled by user", now)
+            await asyncio.to_thread(self._db.update_run_status, run_id, "cancelled", "Cancelled by user", now)
             self._bus.emit(run_id, ProgressEvent(phase="cancelled", detail="Cancelled"))
 
         except asyncio.TimeoutError:
             cancel_event.set()
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._db.update_run_status(run_id, "failed", "Wall-clock timeout (30min)", now)
+            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
             async with self._lock:
                 self._zombie_count += 1
@@ -246,13 +266,17 @@ class AnalysisService:
         except Exception as e:
             logger.error("Analysis %s failed: %s", run_id, e, exc_info=True)
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._db.update_run_status(run_id, "failed", "Internal error occurred", now)
+            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Internal error occurred", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
 
         finally:
-            # Let pending emit_threadsafe coroutines execute before reading ring buffer
-            await asyncio.sleep(0.2)
-            self._save_snapshot(run_id)
+            # Save snapshot for error/cancel paths. The success path already called it
+            # before marking completed, so this is a no-op there (sections already exist).
+            # Run in a thread so we don't block the event loop on DB I/O.
+            try:
+                await asyncio.to_thread(self._save_snapshot, run_id)
+            except Exception:
+                pass  # already logged inside _save_snapshot
             async with self._lock:
                 run_data = self._active_runs.pop(run_id, None)
                 if run_data:

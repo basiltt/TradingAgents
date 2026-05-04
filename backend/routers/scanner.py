@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
-from backend.schemas import ScanRequest
+from backend.schemas import ScanRequest, ScanStatusResponse, ScanResultItem
 from backend.services.scanner_service import ScannerBusyError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["scanner"])
 
@@ -30,6 +33,18 @@ def _validate_scan_id(scan_id: str) -> None:
         uuid.UUID(scan_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid scan_id format")
+
+
+def _validate_scan_response(raw: dict) -> dict:
+    """Run scan results through Pydantic to coerce/reject invalid signal values."""
+    validated_results = []
+    for r in raw.get("results", []):
+        try:
+            validated_results.append(ScanResultItem.model_validate(r).model_dump())
+        except Exception:
+            logger.exception("Scan result item validation failed — skipping item: %r", r)
+    raw["results"] = validated_results
+    return raw
 
 
 @router.post("/scanner", status_code=201)
@@ -62,7 +77,7 @@ async def get_scan(request: Request, scan_id: str):
     scan = await request.app.state.scanner_service.get_scan(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
-    return scan
+    return _validate_scan_response(scan)
 
 
 @router.post("/scanner/{scan_id}/cancel")

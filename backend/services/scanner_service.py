@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
+import random
 import re
 import uuid
 from datetime import datetime, timezone
@@ -15,93 +17,227 @@ _BATCH_SIZE = 10
 _POLL_INTERVAL = 5  # seconds between polling for batch completion
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
+_VALID_DIRECTIONS = frozenset({"buy", "sell", "hold"})
+_VALID_CONFIDENCES = frozenset({"high", "moderate", "low", "none"})
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Signal extraction helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_trader_signal(trader_text: str) -> Optional[Dict[str, Any]]:
+    """Parse trader's structured JSON output.
+
+    Returns dict with keys: direction, confidence_score (int 1-10), no_trade (bool).
+    Returns None if no valid structured data found — never falls back to regex.
+    """
+    if not trader_text:
+        return None
+
+    # Try direct JSON parse first (stream_parser now emits proper JSON for dicts)
+    try:
+        data = _json.loads(trader_text)
+        if isinstance(data, dict) and "trade_type" in data:
+            return _decode_trader_dict(data)
+    except (_json.JSONDecodeError, ValueError):
+        pass
+
+    # Try to extract an embedded JSON object containing trade_type
+    # Use a broader pattern that allows nested objects
+    for match in re.finditer(r'\{[^{}]*"trade_type"[^{}]*\}', trader_text, re.DOTALL):
+        try:
+            data = _json.loads(match.group())
+            return _decode_trader_dict(data)
+        except (_json.JSONDecodeError, ValueError):
+            continue
+
+    return None
+
+
+def _decode_trader_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    tt = str(data.get("trade_type", "")).lower().strip()
+    if tt in ("long", "buy"):
+        direction = "buy"
+        no_trade = False
+    elif tt in ("short", "sell"):
+        direction = "sell"
+        no_trade = False
+    elif tt in ("no trade", "no_trade", "hold", "neutral", "none", "pass", ""):
+        direction = "hold"
+        no_trade = True
+    else:
+        direction = "hold"
+        no_trade = True
+
+    raw_conf = data.get("confidence")
+    if isinstance(raw_conf, (int, float)) and 1 <= raw_conf <= 10:
+        conf_score = int(raw_conf)
+    else:
+        conf_score = None
+
+    return {"direction": direction, "no_trade": no_trade, "confidence_score": conf_score}
+
+
+def _extract_pm_signal(pm_text: str) -> Optional[Dict[str, Any]]:
+    """Parse portfolio manager's structured decision text.
+
+    Returns dict with: direction, confidence_score (int|None), definitive (bool).
+    Returns None if no structured decision block found.
+    Never runs on bulk analyst narrative text.
+    """
+    if not pm_text:
+        return None
+
+    # Only search within the last 3000 chars where the decision summary appears
+    search_text = pm_text[-3000:].lower()
+
+    # Use findall to collect ALL occurrences, then take the LAST one.
+    # Multi-round risk discussions can produce intermediate "final decision:" lines;
+    # the last one is the authoritative conclusion.
+    all_matches = list(re.finditer(r"final\s+decision\s*:\s*(approve|reject|modify)", search_text))
+    if not all_matches:
+        return None
+
+    decision_match = all_matches[-1]
+    pm_decision = decision_match.group(1)
+
+    if pm_decision == "reject":
+        return {"direction": "hold", "no_trade": True, "confidence_score": None, "definitive": True}
+
+    # For APPROVE or MODIFY: find direction word within 500 chars after the decision marker
+    decision_pos = decision_match.start()
+    window = search_text[decision_pos: decision_pos + 500]
+    dir_match = re.search(
+        r"\b(long|short|buy|sell|no\s+trade|no_trade)\b",
+        window,
+    )
+    if not dir_match:
+        return None
+
+    d = dir_match.group(1).strip()
+    if d in ("no trade", "no_trade"):
+        return {"direction": "hold", "no_trade": True, "confidence_score": None, "definitive": True}
+
+    direction = "buy" if d in ("long", "buy") else "sell"
+
+    # Try to extract confidence from the decision window (e.g. "confidence: 7/10")
+    conf_score = None
+    conf_match = re.search(r"confidence[:\s]+(\d+)\s*(?:/\s*10)?", window)
+    if conf_match:
+        v = int(conf_match.group(1))
+        if 0 <= v <= 10:  # 0 = explicitly zero confidence
+            conf_score = v
+
+    return {"direction": direction, "no_trade": False, "confidence_score": conf_score, "definitive": True}
+
+
+def _validate_signal_consistency(
+    trader: Optional[Dict[str, Any]],
+    pm: Optional[Dict[str, Any]],
+) -> str:
+    """Cross-check trader and PM signals.
+
+    Returns: 'consistent', 'pm_overrides', 'conflict', 'trader_only', 'pm_only', or 'no_data'.
+    'conflict' means the directions differ (PM still wins, but this should be logged).
+    'pm_overrides' means trader said no-trade and PM approved a direction (or vice-versa directionally).
+    """
+    if trader is None and pm is None:
+        return "no_data"
+    if trader is None:
+        return "pm_only"
+    if pm is None:
+        return "trader_only"
+
+    t_dir = trader["direction"]
+    p_dir = pm["direction"]
+
+    if t_dir == p_dir:
+        return "consistent"
+
+    # Directions differ — this is always worth logging
+    if t_dir in ("buy", "sell") and p_dir in ("buy", "sell") and t_dir != p_dir:
+        # Trader said buy, PM said sell (or vice-versa) — direct contradiction
+        return "conflict"
+
+    # One said trade (buy/sell), the other said hold — PM overrides
+    return "pm_overrides"
+
 
 def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
-    """Extract signal from structured report data instead of regex on free text.
+    """Extract a validated trading signal from structured agent outputs.
 
-    Priority:
-    1. Portfolio manager's final decision (APPROVE/REJECT/MODIFY + direction)
-    2. Trader's structured JSON (trade_type field)
-    3. Fallback: regex on final_trade_decision text
+    Design principles:
+    - Structured JSON/pattern data only; no keyword regex on narrative text.
+    - PM decision is authoritative and overrides trader.
+    - If sources conflict, log a warning and use PM (conservative choice).
+    - If no structured data exists, return hold/none/0 — never guess.
+    - All outputs are validated against allowed value sets before returning.
     """
-    direction = "hold"
-    conf_score = 2
-    confidence = "low"
-
-    # --- Try trader's structured JSON first for the base signal ---
     trader_text = reports.get("trader", "")
-    trader_direction = None
-    trader_confidence = None
-    trader_no_trade = False
-    if trader_text:
-        json_match = re.search(r"\{[^{}]*\"trade_type\"\s*:[^{}]*\}", trader_text, re.DOTALL)
-        if json_match:
-            try:
-                import json
-                trade_data = json.loads(json_match.group())
-                tt = trade_data.get("trade_type", "").lower().strip()
-                if tt in ("long", "buy"):
-                    trader_direction = "buy"
-                elif tt in ("short", "sell"):
-                    trader_direction = "sell"
-                elif tt in ("no trade", "no_trade", "hold", "neutral", "none", "pass"):
-                    trader_no_trade = True
-                    trader_direction = "hold"
-                raw_conf = trade_data.get("confidence")
-                if isinstance(raw_conf, (int, float)) and 1 <= raw_conf <= 10:
-                    trader_confidence = int(raw_conf)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
-
-    # --- Check portfolio manager decision (overrides trader if it modifies) ---
     pm_text = reports.get("portfolio_manager", "") or reports.get("final_trade_decision", "")
-    pm_direction = None
-    if pm_text:
-        pm_lower = pm_text.lower()
-        decision_match = re.search(r"final\s+decision\s*:\s*(approve|reject|modify)", pm_lower)
-        if decision_match:
-            pm_decision = decision_match.group(1)
-            if pm_decision == "reject":
-                return {"direction": "hold", "confidence": "low", "score": 0}
-            # For APPROVE or MODIFY, extract the direction from PM text near the decision
-            dir_match = re.search(
-                r"(?:final\s+decision|approved|modified).*?\b(long|short|buy|sell)\b",
-                pm_lower[:2000],
+
+    trader_signal = _extract_trader_signal(trader_text)
+    pm_signal = _extract_pm_signal(pm_text)
+
+    consistency = _validate_signal_consistency(trader_signal, pm_signal)
+
+    if consistency == "conflict":
+        logger.warning(
+            "Signal CONFLICT: trader=%s pm=%s — PM wins (conservative)",
+            trader_signal["direction"] if trader_signal else None,
+            pm_signal["direction"] if pm_signal else None,
+        )
+    elif consistency == "pm_overrides":
+        logger.info(
+            "PM overrides trader: trader=%s → pm=%s",
+            trader_signal["direction"] if trader_signal else None,
+            pm_signal["direction"] if pm_signal else None,
+        )
+
+    # If PM text exists but couldn't be parsed, fall back to the trader signal rather than
+    # suppressing it entirely. The PM's unparseable narrative may still agree with the trader;
+    # silencing a valid structured trader signal is too aggressive. Only suppress if the PM
+    # text contains explicit rejection language (conservative guard against known rejections).
+    pm_text = reports.get("portfolio_manager", "") or reports.get("final_trade_decision", "")
+    if pm_text and pm_signal is None:
+        pm_lower = pm_text[-1500:].lower()
+        if re.search(r"\b(reject|do not trade|no trade|do not proceed)\b", pm_lower):
+            logger.warning(
+                "PM text contains rejection language but no structured decision — returning hold/none/0"
             )
-            if dir_match:
-                d = dir_match.group(1)
-                pm_direction = "buy" if d in ("long", "buy") else "sell"
+            return {"direction": "hold", "confidence": "none", "score": 0}
+        logger.info(
+            "PM text present but no structured decision found — falling back to trader signal"
+        )
+        # Fall through: pm_signal remains None, trader_signal used below
 
-    # Resolve direction: PM decision > trader structured data > fallback
-    if pm_direction:
-        direction = pm_direction
-    elif trader_direction:
-        direction = trader_direction
-    elif not trader_no_trade:
-        fallback_text = (pm_text or trader_text).lower()
-        if re.search(r"\b(buy|long|bullish)\b", fallback_text):
-            direction = "buy"
-        elif re.search(r"\b(sell|short|bearish)\b", fallback_text):
-            direction = "sell"
-
-    # Resolve confidence
-    if trader_confidence is not None:
-        conf_score = trader_confidence
+    # Resolve direction — PM is authoritative
+    if pm_signal is not None:
+        direction = pm_signal["direction"]
+        conf_score = pm_signal.get("confidence_score")
+        # If PM approved but didn't give a confidence, fall back to trader's confidence
+        if conf_score is None and trader_signal is not None:
+            conf_score = trader_signal.get("confidence_score")
+    elif trader_signal is not None:
+        direction = trader_signal["direction"]
+        conf_score = trader_signal.get("confidence_score")
     else:
-        text = (pm_text or trader_text).lower()
-        pct_match = re.search(r"(\d{1,3})\s*%", text)
-        if pct_match:
-            pct = int(pct_match.group(1))
-            if 0 < pct <= 100:
-                conf_score = round(pct / 10)
-        elif re.search(r"\b(very\s+high|extremely|exceptional|overwhelming)\b", text):
-            conf_score = 10
-        elif re.search(r"\b(strong|high)\b", text):
-            conf_score = 8
-        elif re.search(r"\b(moderate|medium|moderately)\b", text):
-            conf_score = 5
+        # No structured data at all — return a safe hold with score 0
+        logger.warning("No structured signal data found in reports — returning hold/none/0")
+        return {"direction": "hold", "confidence": "none", "score": 0}
 
-    conf_score = max(1, min(10, conf_score))
+    # No-trade cases always return 0
+    is_no_trade = (
+        (pm_signal is not None and pm_signal.get("no_trade"))
+        or (pm_signal is None and trader_signal is not None and trader_signal.get("no_trade"))
+    )
+    if is_no_trade:
+        return {"direction": "hold", "confidence": "none", "score": 0}
+
+    # Map confidence score to label
+    if conf_score is None:
+        conf_score = 5  # middle ground when direction is known but confidence isn't specified
+    conf_score = max(1, min(10, int(conf_score)))
+
     if conf_score >= 7:
         confidence = "high"
     elif conf_score >= 4:
@@ -112,7 +248,16 @@ def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
     sign = 1 if direction == "buy" else (-1 if direction == "sell" else 0)
     score = sign * conf_score
 
+    # Final safety validation — reject any value not in the allowed sets
+    if direction not in _VALID_DIRECTIONS:
+        logger.error("Invalid direction value %r — forcing hold", direction)
+        return {"direction": "hold", "confidence": "none", "score": 0}
+    if confidence not in _VALID_CONFIDENCES:
+        logger.error("Invalid confidence value %r — forcing none", confidence)
+        confidence = "none"
+
     return {"direction": direction, "confidence": confidence, "score": score}
+
 
 
 class ScannerBusyError(Exception):
@@ -230,7 +375,7 @@ class ScannerService:
 
             try:
                 from tradingagents.dataflows.bybit_data import get_valid_symbols
-                all_symbols = sorted(await asyncio.to_thread(get_valid_symbols))
+                all_symbols = random.sample(syms := list(await asyncio.to_thread(get_valid_symbols)), len(syms))
             except Exception as e:
                 logger.error("Failed to fetch symbols for resume of %s: %s", scan_id, e)
                 await asyncio.to_thread(self._db.update_scan, scan_id, status="failed")
@@ -312,7 +457,7 @@ class ScannerService:
                 symbols = symbols_override
             else:
                 from tradingagents.dataflows.bybit_data import get_valid_symbols
-                symbols = sorted(await asyncio.to_thread(get_valid_symbols))
+                symbols = random.sample(syms := list(await asyncio.to_thread(get_valid_symbols)), len(syms))
         except Exception as e:
             logger.error("Failed to fetch symbols for scan %s: %s", scan_id, e)
             async with self._lock:
@@ -493,19 +638,19 @@ class ScannerService:
                 snapshot = await self._analysis.get_snapshot(run_id)
                 if snapshot:
                     reports = snapshot.get("reports", {})
-                    decision_text = reports.get("final_trade_decision", "") or reports.get("portfolio_manager", "")
+                    decision_text = (
+                        reports.get("portfolio_manager", "")
+                        or reports.get("final_trade_decision", "")
+                    )
             except Exception:
-                pass
+                logger.exception("Failed to fetch snapshot for %s/%s", scan_id, run_id)
 
-            if not decision_text:
-                try:
-                    report = await self._analysis.get_report(run_id)
-                    if report:
-                        decision_text = report
-                except Exception:
-                    pass
-
-        signal = _parse_signal_from_reports(reports) if reports else _parse_signal_from_reports({"final_trade_decision": decision_text})
+        # Only call _parse_signal_from_reports when the run actually completed with reports.
+        # For failed/cancelled/empty runs always return a safe hold — never try to parse.
+        if status == "completed" and reports:
+            signal = _parse_signal_from_reports(reports)
+        else:
+            signal = {"direction": "hold", "confidence": "none", "score": 0}
 
         result = {
             "ticker": ticker,
@@ -515,6 +660,7 @@ class ScannerService:
             "confidence": signal["confidence"],
             "score": signal["score"],
             "decision_summary": decision_text[:500] if decision_text else "",
+            "signal_source": "structured" if (status == "completed" and reports) else "none",
         }
 
         async with self._lock:

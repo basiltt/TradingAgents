@@ -41,6 +41,11 @@ CREATE INDEX IF NOT EXISTS idx_reports_run_id ON report_sections(run_id);
 
 _MIGRATIONS: list[tuple[int, str]] = [
     (1, _SCHEMA_V1),
+    # NOTE: SQLite's ALTER TABLE ADD COLUMN applies CHECK constraints only to new
+    # rows written after this migration runs.  Rows that pre-date the migration and
+    # were backfilled by the DEFAULT value are not re-validated.  This is acceptable
+    # here because the DEFAULT 'stock' is always valid and legacy rows will never
+    # contain an invalid value in practice.
     (2, "ALTER TABLE analysis_runs ADD COLUMN asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
     (3, "CREATE INDEX IF NOT EXISTS idx_runs_asset_type_started ON analysis_runs(asset_type, started_at DESC)"),
     (4, """
@@ -61,14 +66,17 @@ CREATE TABLE IF NOT EXISTS scan_results (
     scan_id TEXT NOT NULL REFERENCES scans(scan_id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
     run_id TEXT,
-    status TEXT NOT NULL,
-    direction TEXT NOT NULL DEFAULT 'unknown',
-    confidence TEXT NOT NULL DEFAULT 'none',
-    score INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('completed','failed','cancelled','unknown')),
+    direction TEXT NOT NULL DEFAULT 'hold' CHECK(direction IN ('buy','sell','hold')),
+    confidence TEXT NOT NULL DEFAULT 'none' CHECK(confidence IN ('high','moderate','low','none')),
+    score INTEGER NOT NULL DEFAULT 0 CHECK(score BETWEEN -10 AND 10),
     decision_summary TEXT NOT NULL DEFAULT '',
     UNIQUE(scan_id, ticker)
 );
 CREATE INDEX IF NOT EXISTS idx_scan_results_scan_id ON scan_results(scan_id)
+"""),
+    (6, """
+ALTER TABLE scan_results ADD COLUMN signal_source TEXT NOT NULL DEFAULT 'unknown'
 """),
 ]
 
@@ -170,11 +178,15 @@ class AnalysisDB:
 
     def save_report_section(self, run_id: str, section: str, content: str) -> None:
         with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO report_sections (run_id, section, content) VALUES (?, ?, ?)",
-                (run_id, section, content),
-            )
-            self._conn.commit()
+            try:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO report_sections (run_id, section, content) VALUES (?, ?, ?)",
+                    (run_id, section, content),
+                )
+                self._conn.commit()
+            except sqlite3.IntegrityError:
+                # Parent run was deleted while this thread was still writing — ignore.
+                self._conn.rollback()
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -259,21 +271,30 @@ class AnalysisDB:
 
     def delete_run(self, run_id: str) -> bool:
         with self._lock:
-            cursor = self._conn.execute(
-                "DELETE FROM analysis_runs WHERE run_id=?", (run_id,)
-            )
-            self._conn.execute(
-                "DELETE FROM report_sections WHERE run_id=?", (run_id,)
-            )
-            self._conn.commit()
-            return cursor.rowcount > 0
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                # report_sections has ON DELETE CASCADE but we rely on explicit delete
+                # to be safe on older SQLite builds where FK cascade may be disabled at
+                # connection level.
+                self._conn.execute("DELETE FROM report_sections WHERE run_id=?", (run_id,))
+                cursor = self._conn.execute("DELETE FROM analysis_runs WHERE run_id=?", (run_id,))
+                self._conn.commit()
+                return cursor.rowcount > 0
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def delete_all_runs(self) -> int:
         with self._lock:
-            cursor = self._conn.execute("DELETE FROM analysis_runs")
-            self._conn.execute("DELETE FROM report_sections")
-            self._conn.commit()
-            return cursor.rowcount
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute("DELETE FROM report_sections")
+                cursor = self._conn.execute("DELETE FROM analysis_runs")
+                self._conn.commit()
+                return cursor.rowcount
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def delete_all_checkpoints(self) -> int:
         with self._lock:
@@ -335,20 +356,37 @@ class AnalysisDB:
             self._conn.commit()
 
     def insert_scan_result(self, scan_id: str, result: Dict[str, Any]) -> None:
+        # Validate values against DB CHECK constraints before writing so we get
+        # a clear error rather than a silent constraint violation.
+        direction = result.get("direction", "hold")
+        if direction not in ("buy", "sell", "hold"):
+            logger.error("insert_scan_result: invalid direction %r — forcing hold", direction)
+            direction = "hold"
+        confidence = result.get("confidence", "none")
+        if confidence not in ("high", "moderate", "low", "none"):
+            logger.error("insert_scan_result: invalid confidence %r — forcing none", confidence)
+            confidence = "none"
+        score = int(result.get("score", 0))
+        score = max(-10, min(10, score))
+        status = result.get("status", "failed")
+        if status not in ("completed", "failed", "cancelled", "unknown"):
+            status = "unknown"
+
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO scan_results "
-                "(scan_id, ticker, run_id, status, direction, confidence, score, decision_summary) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(scan_id, ticker, run_id, status, direction, confidence, score, decision_summary, signal_source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     scan_id,
                     result["ticker"],
                     result.get("run_id"),
-                    result.get("status", "failed"),
-                    result.get("direction", "unknown"),
-                    result.get("confidence", "none"),
-                    result.get("score", 0),
+                    status,
+                    direction,
+                    confidence,
+                    score,
                     result.get("decision_summary", ""),
+                    result.get("signal_source", "unknown"),
                 ),
             )
             self._conn.commit()
@@ -362,7 +400,7 @@ class AnalysisDB:
                 return None
             scan = dict(row)
             results = self._conn.execute(
-                "SELECT ticker, run_id, status, direction, confidence, score, decision_summary "
+                "SELECT ticker, run_id, status, direction, confidence, score, decision_summary, signal_source "
                 "FROM scan_results WHERE scan_id=? ORDER BY ABS(score) DESC",
                 (scan_id,),
             ).fetchall()
@@ -378,7 +416,7 @@ class AnalysisDB:
             for row in rows:
                 scan = dict(row)
                 results = self._conn.execute(
-                    "SELECT ticker, run_id, status, direction, confidence, score, decision_summary "
+                    "SELECT ticker, run_id, status, direction, confidence, score, decision_summary, signal_source "
                     "FROM scan_results WHERE scan_id=? ORDER BY ABS(score) DESC",
                     (scan["scan_id"],),
                 ).fetchall()

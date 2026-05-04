@@ -328,7 +328,7 @@ export function ScannerPage() {
             Market Scanner
           </h1>
           <p className="text-muted-foreground mt-1">
-            Scan all available Bybit USDT perpetual futures in batches of 10 and find the best trading opportunities.
+            Scan all available Bybit USDT perpetual futures and find the best trading opportunities.
           </p>
         </div>
         {activeScanId && isDone && (
@@ -730,9 +730,7 @@ export function ScannerPage() {
                   <h3 className="font-semibold">
                     {isRunning ? "Scanning Market..." : scan.status === "completed" ? "Scan Complete" : scan.status === "cancelled" ? "Scan Cancelled" : "Scan Failed"}
                   </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Batch {scan.current_batch} of {scan.total_batches}
-                  </p>
+
                 </div>
               </div>
               <div className="flex items-center gap-2">

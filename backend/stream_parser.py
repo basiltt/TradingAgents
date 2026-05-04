@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json as _json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterator, List, Optional, Union
@@ -172,7 +173,17 @@ def parse_stream_chunk(
         state.prev_debate = debate
 
     trader_plan = chunk.get("trader_investment_plan")
-    trader_str = str(trader_plan) if trader_plan else None
+    if trader_plan is not None:
+        # Serialize to JSON when possible so the signal parser can reliably decode it.
+        # str() on a dict produces Python repr which is NOT valid JSON.
+        if isinstance(trader_plan, dict):
+            trader_str = _json.dumps(trader_plan)
+        elif isinstance(trader_plan, str) and trader_plan.strip():
+            trader_str = trader_plan.strip()
+        else:
+            trader_str = None
+    else:
+        trader_str = None
     if trader_str and trader_str != state.prev_trader:
         events.append(ReportChunkEvent(section="trader", content=trader_str))
         events.append(AgentStatusEvent(agent="Trader", status="completed"))
@@ -195,7 +206,12 @@ def parse_stream_chunk(
         state.prev_risk = risk
 
     final = chunk.get("final_trade_decision")
-    final_str = str(final) if final else None
+    if isinstance(final, dict):
+        final_str = _json.dumps(final)
+    elif isinstance(final, str) and final.strip():
+        final_str = final.strip()
+    else:
+        final_str = None
     if final_str and final_str != state.prev_final and not risk:
         events.append(ReportChunkEvent(section="portfolio_manager", content=final_str))
         state.prev_final = final_str
