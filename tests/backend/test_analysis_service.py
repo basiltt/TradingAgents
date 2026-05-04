@@ -157,3 +157,74 @@ def test_error_sanitization(service, sample_request, event_loop, db):
             assert "secret" not in run["error"]
 
         event_loop.run_until_complete(_test())
+
+
+def test_persist_signal_sections_saves_pm_signal(tmp_path):
+    """_persist_signal_sections writes _pm_signal JSON when _pm_signal_data is present."""
+    import json
+    from unittest.mock import MagicMock
+    from pydantic import BaseModel
+    from backend.services.analysis_service import AnalysisService
+
+    class FakePMDecision(BaseModel):
+        rating: str = "Buy"
+        confidence: int = 8
+
+    db = MagicMock()
+    event_bus = MagicMock()
+    event_bus.get_snapshot.return_value = []
+    ws = MagicMock()
+    config_svc = MagicMock()
+    config_svc.get_config.return_value = {"resolved": {}}
+
+    service = AnalysisService(
+        persistence=db, event_bus=event_bus, ws_manager=ws, config_service=config_svc
+    )
+
+    last_chunk = {"_pm_signal_data": FakePMDecision(), "_trader_signal_data": None}
+    service._persist_signal_sections("run-123", last_chunk)
+
+    # Should have called save_report_section with "_pm_signal" and valid JSON
+    calls = {call[0][1]: call[0][2] for call in db.save_report_section.call_args_list}
+    assert "_pm_signal" in calls
+    data = json.loads(calls["_pm_signal"])
+    assert data["rating"] == "Buy"
+    assert data["confidence"] == 8
+
+
+def test_persist_signal_sections_skips_none_values(tmp_path):
+    """_persist_signal_sections does nothing when both signal objects are None."""
+    from unittest.mock import MagicMock
+    from backend.services.analysis_service import AnalysisService
+
+    db = MagicMock()
+    event_bus = MagicMock()
+    event_bus.get_snapshot.return_value = []
+    ws = MagicMock()
+    config_svc = MagicMock()
+    config_svc.get_config.return_value = {"resolved": {}}
+
+    service = AnalysisService(
+        persistence=db, event_bus=event_bus, ws_manager=ws, config_service=config_svc
+    )
+    service._persist_signal_sections("run-456", {"_pm_signal_data": None, "_trader_signal_data": None})
+    db.save_report_section.assert_not_called()
+
+
+def test_persist_signal_sections_handles_none_chunk(tmp_path):
+    """_persist_signal_sections does nothing when last_chunk is None."""
+    from unittest.mock import MagicMock
+    from backend.services.analysis_service import AnalysisService
+
+    db = MagicMock()
+    event_bus = MagicMock()
+    event_bus.get_snapshot.return_value = []
+    ws = MagicMock()
+    config_svc = MagicMock()
+    config_svc.get_config.return_value = {"resolved": {}}
+
+    service = AnalysisService(
+        persistence=db, event_bus=event_bus, ws_manager=ws, config_service=config_svc
+    )
+    service._persist_signal_sections("run-789", None)
+    db.save_report_section.assert_not_called()

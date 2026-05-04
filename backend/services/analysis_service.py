@@ -302,6 +302,34 @@ class AnalysisService:
         except Exception:
             logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
 
+    def _persist_signal_sections(self, run_id: str, last_chunk) -> None:
+        """Save _pm_signal and _trader_signal JSON sections from the final graph chunk.
+
+        Called from _execute_graph (runs in a thread), so sync DB calls are safe here.
+        """
+        if not last_chunk:
+            return
+        import json as _json_local
+        for key, section_name in (
+            ("_pm_signal_data", "_pm_signal"),
+            ("_trader_signal_data", "_trader_signal"),
+        ):
+            obj = last_chunk.get(key)
+            if obj is None:
+                continue
+            try:
+                if hasattr(obj, "model_dump_json"):
+                    json_str = obj.model_dump_json()
+                elif isinstance(obj, dict):
+                    json_str = _json_local.dumps(obj)
+                else:
+                    continue
+                self._db.save_report_section(run_id, section_name, json_str)
+            except Exception:
+                logger.warning(
+                    "Failed to persist %s for run %s", section_name, run_id, exc_info=True
+                )
+
     def _execute_graph(
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
         callback: Any, cancel_event: threading.Event,
@@ -342,6 +370,7 @@ class AnalysisService:
 
             last_chunk = chunk
 
+        self._persist_signal_sections(run_id, last_chunk)
         return last_chunk
 
     async def _reclaim_zombie_async(self, run_id: str) -> None:
