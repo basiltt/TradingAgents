@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import re
 import uuid
@@ -549,7 +550,29 @@ class ScannerService:
                 except Exception:
                     pass
 
-        signal = _parse_signal_from_reports(reports) if reports else _parse_signal_from_reports({"final_trade_decision": decision_text})
+        if status == "completed" and reports:
+            pm_json = reports.get("_pm_signal")
+            trader_json = reports.get("_trader_signal")
+
+            if pm_json:
+                try:
+                    pm_data = _json.loads(pm_json)
+                    trader_data = _json.loads(trader_json) if trader_json else {}
+                    signal = _extract_signal_from_structured(pm_data, trader_data)
+                    signal_source = "structured"
+                except Exception:
+                    logger.exception(
+                        "Failed to parse structured signal JSON for %s/%s — falling back",
+                        scan_id, run_id,
+                    )
+                    signal = _parse_signal_from_reports(reports)
+                    signal_source = "regex_fallback"
+            else:
+                signal = _parse_signal_from_reports(reports)
+                signal_source = "regex_fallback"
+        else:
+            signal = {"direction": "hold", "confidence": "none", "score": 0}
+            signal_source = "none"
 
         result = {
             "ticker": ticker,
@@ -559,6 +582,7 @@ class ScannerService:
             "confidence": signal["confidence"],
             "score": signal["score"],
             "decision_summary": decision_text[:500] if decision_text else "",
+            "signal_source": signal_source,
         }
 
         async with self._lock:

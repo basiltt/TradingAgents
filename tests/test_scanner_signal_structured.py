@@ -109,7 +109,7 @@ class TestCollectResultStructuredPath:
             "portfolio_manager": "some markdown that would confuse the regex",
         })
         run = {"status": "completed"}
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             scanner._collect_result("scan-1", "BTCUSDT", "run-99", run)
         )
         results = scanner._scans["scan-1"]["results"]
@@ -125,7 +125,7 @@ class TestCollectResultStructuredPath:
             "portfolio_manager": "Final decision: APPROVE. We go long. Confidence: 7/10.",
         })
         run = {"status": "completed"}
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             scanner._collect_result("scan-1", "ETHUSDT", "run-100", run)
         )
         results = scanner._scans["scan-1"]["results"]
@@ -138,7 +138,7 @@ class TestCollectResultStructuredPath:
         pm_json = _json.dumps({"rating": "Buy", "confidence": 9})
         scanner = _make_scanner({"_pm_signal": pm_json})
         run = {"status": "failed"}
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             scanner._collect_result("scan-1", "SOLUSDT", "run-101", run)
         )
         results = scanner._scans["scan-1"]["results"]
