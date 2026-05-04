@@ -405,6 +405,7 @@ class ScannerService:
             "asset_type": config.get("asset_type", "crypto"),
             "interval": config.get("interval", "D"),
             "provider": config.get("provider"),
+            "llm_api_key": config.get("llm_api_key"),
             "deep_think_llm": config.get("deep_think_llm"),
             "quick_think_llm": config.get("quick_think_llm"),
             "backend_url": config.get("backend_url"),

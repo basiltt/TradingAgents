@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 
 export type ConnStatus = "idle" | "checking" | "ok" | "error";
 
-export function useConnectivityCheck(url: string | undefined, debounceMs = 800) {
+export function useConnectivityCheck(url: string | undefined, apiKey?: string, debounceMs = 800) {
   const [status, setStatus] = useState<ConnStatus>("idle");
   const [latency, setLatency] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -29,7 +29,7 @@ export function useConnectivityCheck(url: string | undefined, debounceMs = 800) 
         const base = trimmed.replace(/\/+$/, "");
         const res = await fetch(`${base}/v1/models`, {
           signal: ac.signal,
-          headers: { Authorization: "Bearer dummy" },
+          headers: { Authorization: `Bearer ${apiKey || "dummy"}` },
         });
         const elapsed = Math.round(performance.now() - start);
         setLatency(elapsed);
@@ -52,7 +52,7 @@ export function useConnectivityCheck(url: string | undefined, debounceMs = 800) 
       clearTimeout(timer);
       ac.abort();
     };
-  }, [url, debounceMs]);
+  }, [url, apiKey, debounceMs]);
 
   return { status, latency, errorMsg };
 }

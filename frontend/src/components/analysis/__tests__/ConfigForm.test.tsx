@@ -135,6 +135,39 @@ describe("ConfigForm", () => {
     expect(mockStartAnalysis).not.toHaveBeenCalled();
   });
 
+  it("submits llm_api_key when provided in LLM settings", async () => {
+    const user = userEvent.setup();
+    mockStartAnalysis.mockResolvedValue({ run_id: "key-run", status: "running" });
+    render(<ConfigForm />, { wrapper: createWrapper() });
+
+    // Open LLM settings section
+    await user.click(screen.getByText(/LLM & Proxy Settings/i));
+
+    const apiKeyInput = screen.getByLabelText(/API Key/i);
+    await user.type(apiKeyInput, "sk-test-minimax-key");
+
+    await fillAndSubmit(user, "SPY");
+    await waitFor(() => {
+      expect(mockStartAnalysis).toHaveBeenCalledWith(
+        expect.objectContaining({ llm_api_key: "sk-test-minimax-key" }),
+      );
+    });
+  });
+
+  it("does not include llm_api_key when empty", async () => {
+    const user = userEvent.setup();
+    mockStartAnalysis.mockResolvedValue({ run_id: "no-key-run", status: "running" });
+    render(<ConfigForm />, { wrapper: createWrapper() });
+    await fillAndSubmit(user, "AAPL");
+    await waitFor(() => {
+      expect(mockStartAnalysis).toHaveBeenCalledWith(
+        expect.objectContaining({ ticker: "AAPL" }),
+      );
+      const call = mockStartAnalysis.mock.calls[0][0];
+      expect(call.llm_api_key).toBeUndefined();
+    });
+  });
+
   // Crypto-specific tests
   describe("crypto mode", () => {
     it("switches to crypto mode and shows trading pair label", async () => {

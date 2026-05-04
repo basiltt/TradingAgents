@@ -111,3 +111,34 @@ async def test_validation_errors(client):
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_analysis_with_llm_api_key(client):
+    with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value=None):
+        resp = await client.post(
+            "/api/v1/analysis",
+            json={
+                "ticker": "SPY",
+                "analysis_date": "2025-06-01",
+                "provider": "anthropic",
+                "llm_api_key": "sk-minimax-test",
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_llm_api_key_too_long_rejected(client):
+    resp = await client.post(
+        "/api/v1/analysis",
+        json={
+            "ticker": "SPY",
+            "analysis_date": "2025-06-01",
+            "provider": "anthropic",
+            "llm_api_key": "k" * 201,
+        },
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 422

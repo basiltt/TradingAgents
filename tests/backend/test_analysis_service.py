@@ -126,6 +126,26 @@ def test_research_depth_mapping(service):
     assert config["max_risk_discuss_rounds"] == 3
 
 
+def test_build_config_passes_llm_api_key(service):
+    config = service._build_config({
+        "ticker": "SPY",
+        "analysis_date": "2025-06-01",
+        "provider": "anthropic",
+        "llm_api_key": "sk-test-key-123",
+    })
+    assert config["llm_api_key"] == "sk-test-key-123"
+    assert config["llm_provider"] == "anthropic"
+
+
+def test_build_config_omits_llm_api_key_when_absent(service):
+    config = service._build_config({
+        "ticker": "SPY",
+        "analysis_date": "2025-06-01",
+        "provider": "anthropic",
+    })
+    assert "llm_api_key" not in config or config.get("llm_api_key") is None
+
+
 def test_error_sanitization(service, sample_request, event_loop, db):
     with patch("backend.services.analysis_service.AnalysisService._execute_graph", side_effect=RuntimeError("secret internal error")):
         async def _test():

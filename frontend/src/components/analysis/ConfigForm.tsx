@@ -35,7 +35,7 @@ const STORAGE_KEY = "tradingagents_settings";
 
 /* ---------- small helpers ---------- */
 
-function ConnBadge({ status, latency, error }: { status: ConnStatus; latency: number | null; error: string | null }) {
+function ConnBadge({ status, latency, error, label = "Connected" }: { status: ConnStatus; latency: number | null; error: string | null; label?: string }) {
   if (status === "idle") return null;
   if (status === "checking") {
     return (
@@ -54,7 +54,7 @@ function ConnBadge({ status, latency, error }: { status: ConnStatus; latency: nu
         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
-        Connected{latency != null && ` (${latency}ms)`}
+        {label}{latency != null && ` (${latency}ms)`}
       </span>
     );
   }
@@ -91,6 +91,7 @@ function SectionToggle({ label, open, onToggle, badge }: { label: string; open: 
 interface SavedSettings {
   asset_type?: AssetType;
   provider?: string;
+  llm_api_key?: string;
   backend_url?: string;
   deep_think_llm?: string;
   quick_think_llm?: string;
@@ -125,6 +126,7 @@ interface FormValues {
   ticker: string;
   analysis_date: string;
   provider: string;
+  llm_api_key: string;
   backend_url: string;
   deep_think_llm: string;
   quick_think_llm: string;
@@ -147,7 +149,7 @@ export function ConfigForm() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const saved = useMemo(() => loadSettings(), []);
 
-  const [showLLM, setShowLLM] = useState(!!(saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
+  const [showLLM, setShowLLM] = useState(!!(saved.llm_api_key || saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [showData, setShowData] = useState(false);
 
@@ -176,6 +178,7 @@ export function ConfigForm() {
       ticker: "",
       analysis_date: new Date().toISOString().split("T")[0],
       provider: saved.provider || envProvider,
+      llm_api_key: saved.llm_api_key || "",
       backend_url: saved.backend_url || "",
       deep_think_llm: saved.deep_think_llm || "",
       quick_think_llm: saved.quick_think_llm || "",
@@ -195,6 +198,7 @@ export function ConfigForm() {
   });
 
   const selectedProvider = watch("provider");
+  const watchedApiKey = watch("llm_api_key");
   const watchedAssetType = watch("asset_type");
   const watchedBackendUrl = watch("backend_url");
   const watchedDeep = watch("deep_think_llm");
@@ -220,6 +224,7 @@ export function ConfigForm() {
     saveSettings({
       asset_type: watchedAssetType,
       provider: selectedProvider,
+      llm_api_key: watchedApiKey,
       backend_url: watchedBackendUrl,
       deep_think_llm: watchedDeep,
       quick_think_llm: watchedQuick,
@@ -238,11 +243,11 @@ export function ConfigForm() {
         news_data: watchedVendorNews,
       },
     });
-  }, [watchedAssetType, selectedProvider, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
+  }, [watchedAssetType, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
 
   const trimmedBackendUrl = useMemo(() => watchedBackendUrl?.trim() || undefined, [watchedBackendUrl]);
-  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl);
-  const backendConn = useConnectivityCheck(trimmedBackendUrl);
+  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl, watchedApiKey?.trim() || undefined);
+  const backendConn = useConnectivityCheck(trimmedBackendUrl, watchedApiKey?.trim() || undefined);
 
   const deepOptions = useMemo(() => {
     if (proxyModels?.length) return proxyModels.map((m) => ({ label: m.name ?? m.id, value: m.id }));
@@ -267,6 +272,7 @@ export function ConfigForm() {
         analysis_date: data.analysis_date,
         asset_type: data.asset_type,
         provider: data.provider || undefined,
+        llm_api_key: data.llm_api_key.trim() || undefined,
         backend_url: data.backend_url.trim() || undefined,
         deep_think_llm: data.deep_think_llm.trim() || undefined,
         quick_think_llm: data.quick_think_llm.trim() || undefined,
@@ -612,6 +618,24 @@ export function ConfigForm() {
                 </div>
 
                 <div className="flex flex-col gap-2">
+                  <Label htmlFor="llm_api_key" className="font-medium text-sm flex items-center gap-2">
+                    API Key
+                    {watchedApiKey?.trim() && <ConnBadge status={backendConn.status} latency={null} error={backendConn.errorMsg} label="Authenticated" />}
+                  </Label>
+                  <Input
+                    id="llm_api_key"
+                    type="password"
+                    placeholder="Provider API key (overrides env var)"
+                    className="font-mono text-sm"
+                    {...register("llm_api_key")}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Overrides the environment variable for the selected provider.
+                    Useful for Anthropic-compatible endpoints like MiniMax.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-2">
                   <Label className="font-medium text-sm">Deep Think Model</Label>
                   <Controller
                     name="deep_think_llm"
@@ -744,6 +768,7 @@ export function ConfigForm() {
           asset_type: watchedAssetType,
           analysis_date: watch("analysis_date"),
           provider: selectedProvider,
+          llm_api_key: watchedApiKey,
           deep_think_llm: watchedDeep,
           quick_think_llm: watchedQuick,
           backend_url: watchedBackendUrl,

@@ -304,3 +304,40 @@ def test_stock_analysts_valid():
         analysts=["market", "news"],
     )
     assert len(req.analysts) == 2
+
+
+# ---------------------------------------------------------------------------
+# llm_api_key tests
+# ---------------------------------------------------------------------------
+
+def test_llm_api_key_accepted():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(
+        ticker="SPY", analysis_date="2025-06-01",
+        provider="anthropic", llm_api_key="sk-test-key-123",
+    )
+    assert req.llm_api_key == "sk-test-key-123"
+
+
+def test_llm_api_key_none_by_default():
+    from backend.schemas import AnalysisRequest
+    req = AnalysisRequest(ticker="SPY", analysis_date="2025-06-01")
+    assert req.llm_api_key is None
+
+
+def test_llm_api_key_too_long():
+    from backend.schemas import AnalysisRequest
+    with pytest.raises(Exception):
+        AnalysisRequest(
+            ticker="SPY", analysis_date="2025-06-01",
+            llm_api_key="k" * 201,
+        )
+
+
+def test_scan_request_llm_api_key():
+    from backend.schemas import ScanRequest
+    req = ScanRequest(
+        analysis_date="2025-06-01",
+        llm_api_key="sk-scan-key",
+    )
+    assert req.llm_api_key == "sk-scan-key"

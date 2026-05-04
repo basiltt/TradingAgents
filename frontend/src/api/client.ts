@@ -111,6 +111,7 @@ export interface StartAnalysisRequest {
   ticker: string;
   analysis_date: string;
   provider?: string;
+  llm_api_key?: string;
   deep_think_llm?: string;
   quick_think_llm?: string;
   backend_url?: string;
@@ -166,6 +167,7 @@ export interface ScanRequest {
   asset_type?: AssetType;
   interval?: CryptoInterval;
   provider?: string;
+  llm_api_key?: string;
   deep_think_llm?: string;
   quick_think_llm?: string;
   backend_url?: string;

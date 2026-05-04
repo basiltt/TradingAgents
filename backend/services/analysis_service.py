@@ -164,6 +164,8 @@ class AnalysisService:
 
         if request.get("provider"):
             config["llm_provider"] = request["provider"]
+        if request.get("llm_api_key"):
+            config["llm_api_key"] = request["llm_api_key"]
         if request.get("deep_think_llm"):
             config["deep_think_llm"] = request["deep_think_llm"]
         if request.get("quick_think_llm"):

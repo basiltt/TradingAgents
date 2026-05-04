@@ -42,6 +42,7 @@ function loadSavedSettings(): Record<string, string> {
 interface ScannerSettings {
   analysisDate?: string;
   provider?: string;
+  llmApiKey?: string;
   backendUrl?: string;
   deepModel?: string;
   quickModel?: string;
@@ -88,7 +89,7 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-function ConnBadge({ status, latency, error }: { status: ConnStatus; latency: number | null; error: string | null }) {
+function ConnBadge({ status, latency, error, label = "Connected" }: { status: ConnStatus; latency: number | null; error: string | null; label?: string }) {
   if (status === "idle") return null;
   if (status === "checking") {
     return (
@@ -107,7 +108,7 @@ function ConnBadge({ status, latency, error }: { status: ConnStatus; latency: nu
         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
-        Connected{latency != null && ` (${latency}ms)`}
+        {label}{latency != null && ` (${latency}ms)`}
       </span>
     );
   }
@@ -137,6 +138,7 @@ export function ScannerPage() {
   const [scanner] = useState(loadScannerSettings);
   const [analysisDate, setAnalysisDate] = useState(scanner.analysisDate ?? getToday());
   const [provider, setProvider] = useState(scanner.provider ?? saved.provider ?? "anthropic");
+  const [llmApiKey, setLlmApiKey] = useState(scanner.llmApiKey ?? saved.llm_api_key ?? "");
   const [backendUrl, setBackendUrl] = useState(scanner.backendUrl ?? saved.backend_url ?? "http://localhost:4141");
   const [deepModel, setDeepModel] = useState(scanner.deepModel ?? saved.deep_think_llm ?? "");
   const [quickModel, setQuickModel] = useState(scanner.quickModel ?? saved.quick_think_llm ?? "");
@@ -154,16 +156,16 @@ export function ScannerPage() {
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState<number>(0);
 
   useEffect(() => {
-    saveScannerSettings({ analysisDate, provider, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled });
-  }, [analysisDate, provider, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled]);
+    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled });
+  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled]);
 
   const setActiveScanId = (id: string | null) => {
     _setActiveScanId(id);
     saveActiveScanId(id);
   };
 
-  const conn = useConnectivityCheck(backendUrl);
-  const { data: remoteModels } = useModels(backendUrl);
+  const conn = useConnectivityCheck(backendUrl, llmApiKey || undefined);
+  const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined);
 
   const configQuery = useQuery({
     queryKey: ["config"],
@@ -228,6 +230,7 @@ export function ScannerPage() {
       asset_type: "crypto",
       interval,
       provider: provider || undefined,
+      llm_api_key: llmApiKey || undefined,
       deep_think_llm: deepModel || undefined,
       quick_think_llm: quickModel || undefined,
       backend_url: backendUrl || undefined,
@@ -476,7 +479,6 @@ export function ScannerPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
                 LLM &amp; Proxy Settings
-                <ConnBadge status={conn.status} latency={conn.latency} error={conn.errorMsg} />
               </button>
             </CardHeader>
             {showLlm && (
@@ -496,6 +498,21 @@ export function ScannerPage() {
                     {remoteIds.length > 0 && (
                       <span className="ml-1 text-primary">{remoteIds.length} models loaded</span>
                     )}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="font-medium">API Key</Label>
+                    {llmApiKey.trim() && <ConnBadge status={conn.status} latency={null} error={conn.errorMsg} label="Authenticated" />}
+                  </div>
+                  <Input
+                    type="password"
+                    value={llmApiKey}
+                    onChange={(e) => setLlmApiKey(e.target.value)}
+                    placeholder="Provider API key (overrides env var)"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Overrides the environment variable for the selected provider.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

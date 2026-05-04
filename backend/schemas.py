@@ -74,6 +74,7 @@ class AnalysisRequest(BaseModel):
     asset_type: Optional[str] = "stock"
     interval: Optional[str] = None
     provider: Optional[str] = None
+    llm_api_key: Optional[str] = Field(None, max_length=200)
     deep_think_llm: Optional[str] = None
     quick_think_llm: Optional[str] = None
     backend_url: Optional[str] = None
@@ -255,6 +256,7 @@ class ScanRequest(BaseModel):
     asset_type: Optional[str] = "crypto"
     interval: Optional[str] = "D"
     provider: Optional[str] = None
+    llm_api_key: Optional[str] = Field(None, max_length=200)
     deep_think_llm: Optional[str] = None
     quick_think_llm: Optional[str] = None
     backend_url: Optional[str] = None

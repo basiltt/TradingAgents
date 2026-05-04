@@ -370,6 +370,7 @@ export function HistoryList() {
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">CRYPTO</span>
                           )}
                           <span className="text-xs text-muted-foreground">{item.analysis_date}</span>
+                          <span className="text-xs text-muted-foreground/60">{new Date(item.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                         </div>
                         <p className="text-xs text-muted-foreground truncate font-mono">
                           {item.run_id}

@@ -49,3 +49,11 @@ def test_env_var_resolution(config_service, monkeypatch):
     monkeypatch.setenv("TRADINGAGENTS_LLM_PROVIDER", "google")
     result = config_service.get_config()
     assert result["resolved"]["llm_provider"] == "google"
+
+
+def test_llm_api_key_masked():
+    from backend.utils import mask_secrets
+    config = {"llm_provider": "anthropic", "llm_api_key": "sk-secret-123"}
+    masked = mask_secrets(config)
+    assert masked["llm_api_key"] == "***"
+    assert masked["llm_provider"] == "anthropic"

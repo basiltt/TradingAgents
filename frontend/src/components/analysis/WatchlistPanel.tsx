@@ -14,6 +14,7 @@ export interface BatchConfig {
   asset_type: "stock" | "crypto";
   analysis_date: string;
   provider: string;
+  llm_api_key: string;
   deep_think_llm: string;
   quick_think_llm: string;
   backend_url: string;
@@ -63,6 +64,7 @@ export function WatchlistPanel({ config }: WatchlistPanelProps) {
             ticker,
             analysis_date: config.analysis_date,
             provider: config.provider || undefined,
+            llm_api_key: config.llm_api_key || undefined,
             deep_think_llm: config.deep_think_llm || undefined,
             quick_think_llm: config.quick_think_llm || undefined,
             backend_url: config.backend_url || undefined,
