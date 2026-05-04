@@ -259,3 +259,52 @@ class TestUpdateAnalystStatuses:
         chunk = {}
         update_analyst_statuses(buf, chunk)
         assert buf.agent_status["Bull Researcher"] == "in_progress"
+
+
+class TestSaveReportToDisk:
+    def test_full_state(self, tmp_path):
+        from cli.main import save_report_to_disk
+        state = {
+            "market_report": "Market analysis",
+            "sentiment_report": "Social analysis",
+            "news_report": "News analysis",
+            "fundamentals_report": "Fundamentals analysis",
+            "investment_debate_state": {
+                "bull_history": "Bull case",
+                "bear_history": "Bear case",
+                "judge_decision": "Manager decision",
+            },
+            "trader_investment_plan": "Trade plan",
+            "risk_debate_state": {
+                "aggressive_history": "Aggressive view",
+                "conservative_history": "Conservative view",
+                "neutral_history": "Neutral view",
+                "judge_decision": "PM decision",
+            },
+        }
+        save_path = tmp_path / "report"
+        result = save_report_to_disk(state, "AAPL", save_path)
+        assert result.exists()
+        content = result.read_text()
+        assert "AAPL" in content
+        assert "Market Analyst" in content
+        assert (save_path / "1_analysts" / "market.md").exists()
+        assert (save_path / "2_research" / "bull.md").exists()
+        assert (save_path / "3_trading" / "trader.md").exists()
+        assert (save_path / "4_risk" / "aggressive.md").exists()
+        assert (save_path / "5_portfolio" / "decision.md").exists()
+
+    def test_empty_state(self, tmp_path):
+        from cli.main import save_report_to_disk
+        save_path = tmp_path / "report"
+        result = save_report_to_disk({}, "AAPL", save_path)
+        assert result.exists()
+        assert not (save_path / "1_analysts").exists()
+
+    def test_partial_state(self, tmp_path):
+        from cli.main import save_report_to_disk
+        state = {"market_report": "Market only"}
+        save_path = tmp_path / "report"
+        save_report_to_disk(state, "AAPL", save_path)
+        assert (save_path / "1_analysts" / "market.md").exists()
+        assert not (save_path / "2_research").exists()
