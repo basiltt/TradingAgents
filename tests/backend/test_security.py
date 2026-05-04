@@ -519,17 +519,14 @@ async def test_get_models_xss_in_provider_rejected(client):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_start_scanner_invalid_provider_accepted(client):
-    """R2-F11: ScanRequest has no provider validator — invalid provider currently accepted (documents gap)."""
-    # ScanRequest has no @field_validator for provider unlike AnalysisRequest
-    # This test documents the current behavior: invalid provider passes schema validation
+async def test_start_scanner_invalid_provider_rejected(client):
+    """R6: ScanRequest now validates provider — invalid provider returns 422."""
     resp = await client.post(
         "/api/v1/scanner",
         json={"analysis_date": "2025-06-01", "provider": "not_a_real_provider"},
         headers=CSRF,
     )
-    # Scanner may accept it (200/202) or reject during scan setup — not a 422
-    assert resp.status_code != 422
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -1117,4 +1114,67 @@ async def test_memory_page_zero_rejected(client):
 async def test_memory_page_negative_rejected(client):
     """R5: GET /api/v1/memory?page=-1 is rejected with 422."""
     resp = await client.get("/api/v1/memory?page=-1")
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# R6: ScanRequest now has validators — test them
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_scanner_model_id_injection_rejected(client):
+    """R6: ScanRequest deep_think_llm with injection chars is now rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "deep_think_llm": "gpt-4;rm -rf /"},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_output_language_xss_rejected(client):
+    """R6: ScanRequest output_language with XSS payload is now rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "output_language": "<script>alert(1)</script>"},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# R7: ScanRequest analysts and data_vendors validators
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_scanner_invalid_analyst_rejected(client):
+    """R7: ScanRequest with invalid analyst name is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "analysts": ["<script>evil</script>"]},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_invalid_vendor_category_rejected(client):
+    """R7: ScanRequest with invalid data_vendors category is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "data_vendors": {"evil_category": "yfinance"}},
+        headers=CSRF,
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_start_scanner_invalid_vendor_value_rejected(client):
+    """R7: ScanRequest with invalid data_vendors value is rejected with 422."""
+    resp = await client.post(
+        "/api/v1/scanner",
+        json={"analysis_date": "2025-06-01", "data_vendors": {"core_stock_apis": "evil_vendor"}},
+        headers=CSRF,
+    )
     assert resp.status_code == 422

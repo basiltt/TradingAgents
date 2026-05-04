@@ -277,3 +277,62 @@ class ScanRequest(BaseModel):
         if d > date.today():
             raise ValueError("Analysis date cannot be in the future")
         return v
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_PROVIDERS:
+            raise ValueError(f"Invalid provider: {v}")
+        return v
+
+    @field_validator("deep_think_llm", "quick_think_llm")
+    @classmethod
+    def validate_model_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not MODEL_ID_RE.match(v):
+            raise ValueError(
+                f"Invalid model ID: must match {MODEL_ID_RE.pattern}"
+            )
+        return v
+
+    @field_validator("output_language")
+    @classmethod
+    def validate_output_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v in PRESET_LANGUAGES:
+            return v
+        if len(v) > 30:
+            raise ValueError("Output language must be at most 30 characters")
+        if not CUSTOM_LANG_RE.match(v):
+            raise ValueError(
+                "Custom language must start with uppercase letter followed by lowercase, "
+                "with optional space/hyphen-separated words"
+            )
+        return v
+
+    @field_validator("data_vendors")
+    @classmethod
+    def validate_data_vendors(
+        cls, v: Optional[Dict[str, str]]
+    ) -> Optional[Dict[str, str]]:
+        if v is None:
+            return v
+        for cat, val in v.items():
+            if cat not in VALID_VENDOR_CATEGORIES:
+                raise ValueError(f"Invalid vendor category: {cat}")
+            if val not in VALID_VENDOR_VALUES:
+                raise ValueError(f"Invalid vendor value: {val}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_scan_analyst_type(self):
+        if self.analysts:
+            asset = self.asset_type or "crypto"
+            if asset == "crypto":
+                valid = {e.value for e in CryptoAnalystType}
+            else:
+                valid = {e.value for e in AnalystType}
+            for a in self.analysts:
+                if a not in valid:
+                    raise ValueError(f"Invalid analyst for {asset}: {a}, must be one of {sorted(valid)}")
+        return self
