@@ -383,3 +383,54 @@ def test_migration_skip_already_applied(tmp_path):
     result = db2.list_runs(page=1, limit=1)
     assert result["total"] == 0
     db2.close()
+
+
+def test_save_report_section_upsert_replaces(db, sample_run):
+    """R6-F1: save_report_section INSERT OR REPLACE updates existing section."""
+    db.insert_run(sample_run)
+    db.save_report_section(sample_run["run_id"], "market", "version 1")
+    db.save_report_section(sample_run["run_id"], "market", "version 2")
+    sections = db.get_report_sections(sample_run["run_id"])
+    market_sections = [s for s in sections if s["section"] == "market"]
+    assert len(market_sections) == 1
+    assert market_sections[0]["content"] == "version 2"
+
+
+def test_update_run_status_stores_error_message(db, sample_run):
+    """R6-F2: update_run_status persists the error field."""
+    db.insert_run(sample_run)
+    completed_at = "2025-01-10T00:00:00Z"
+    db.update_run_status(sample_run["run_id"], "failed", "timeout occurred", completed_at)
+    run = db.get_run(sample_run["run_id"])
+    assert run["error"] == "timeout occurred"
+
+
+def test_insert_run_invalid_status_raises(db):
+    """R6-F3: CHECK constraint on status rejects invalid values."""
+    import uuid
+    from datetime import datetime, timezone
+    with pytest.raises(Exception):
+        db.insert_run({
+            "run_id": str(uuid.uuid4()),
+            "ticker": "SPY",
+            "analysis_date": "2025-01-10",
+            "status": "invalid_status",
+            "config": "{}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        })
+
+
+def test_insert_run_invalid_asset_type_raises(db):
+    """R6-F4: CHECK constraint on asset_type rejects invalid values."""
+    import uuid
+    from datetime import datetime, timezone
+    with pytest.raises(Exception):
+        db.insert_run({
+            "run_id": str(uuid.uuid4()),
+            "ticker": "EURUSD",
+            "analysis_date": "2025-01-10",
+            "status": "running",
+            "config": "{}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "asset_type": "forex",
+        })

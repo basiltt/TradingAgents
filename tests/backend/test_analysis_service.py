@@ -619,3 +619,14 @@ def test_cancel_returns_false_for_db_running_run(service, db, event_loop):
         result = await service.cancel_analysis(run_id)
         assert result is False
     event_loop.run_until_complete(_test())
+
+
+def test_build_config_backend_url_from_env(service):
+    """R6-F1: _build_config reads TRADINGAGENTS_BACKEND_URL from env when request omits it."""
+    import os
+    from unittest.mock import patch as mpatch
+
+    with mpatch("backend.services.analysis_service.validate_backend_url", return_value="http://env-backend:8000"):
+        with mpatch.dict(os.environ, {"TRADINGAGENTS_BACKEND_URL": "http://env-backend:8000"}):
+            config = service._build_config({"ticker": "SPY", "analysis_date": "2025-01-10"})
+    assert config["backend_url"] == "http://env-backend:8000"

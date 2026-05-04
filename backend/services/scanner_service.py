@@ -194,7 +194,9 @@ class ScannerService:
             task = scan.get("task")
             if task and not task.done():
                 task.cancel()
-            return True
+        if self._db:
+            await asyncio.to_thread(self._db.update_scan, scan_id, status="cancelled")
+        return True
 
     async def list_scans(self) -> List[Dict[str, Any]]:
         async with self._lock:

@@ -814,3 +814,46 @@ class TestProcessTickerCancelDirect:
 
         # With batch_size=1 and cancel set after first, fewer than 5 tickers should run
         assert len(calls) < 5
+
+
+class TestCancelScanDBUpdate:
+    @pytest.mark.asyncio
+    async def test_cancel_scan_calls_db_update_scan(self, scanner):
+        """R6-F2: cancel_scan writes status='cancelled' to DB."""
+        with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+            scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
+        result = await scanner.cancel_scan(scan_id)
+        assert result is True
+        scanner._db.update_scan.assert_any_call(scan_id, status="cancelled")
+
+
+class TestInsertScanDuplicate:
+    @pytest.mark.asyncio
+    async def test_insert_scan_duplicate_raises(self, scanner):
+        """R6-F4: insert_scan with duplicate scan_id raises an exception."""
+        from backend.persistence import AnalysisDB
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = AnalysisDB(db_path=os.path.join(tmpdir, "test.db"))
+            from datetime import datetime, timezone
+            s = {
+                "scan_id": "dup-scan-1",
+                "status": "running",
+                "config": "{}",
+                "total": 0,
+                "completed": 0,
+                "failed": 0,
+                "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            }
+            db.insert_scan(s)
+            with pytest.raises(Exception):
+                db.insert_scan(s)
+            db.close()
+
+
+class TestPctZeroConfidence:
+    def test_zero_pct_confidence_uses_default(self):
+        """R6-F7: 0% confidence falls through to default conf_score."""
+        from backend.services.scanner_service import _parse_signal_from_reports
+        result = _parse_signal_from_reports({"final_trade_decision": "Buy with 0% confidence"})
+        assert result["confidence"] in ("low", "none")

@@ -190,3 +190,34 @@ def test_delete_all_runs_cascades_sections(db):
     assert count == 3
     result = db.list_runs(page=1, limit=10)
     assert result["total"] == 0
+
+
+def test_insert_scan_result_upsert_replaces(db):
+    """R6-F5: INSERT OR REPLACE on scan_results replaces same (scan_id, ticker)."""
+    s = _scan()
+    db.insert_scan(s)
+    result1 = {"ticker": "BTC", "status": "completed", "direction": "buy",
+                "confidence": "high", "score": 8, "decision_summary": "v1", "run_id": "r1"}
+    result2 = {"ticker": "BTC", "status": "completed", "direction": "sell",
+                "confidence": "low", "score": -3, "decision_summary": "v2", "run_id": "r2"}
+    db.insert_scan_result(s["scan_id"], result1)
+    db.insert_scan_result(s["scan_id"], result2)
+    scan = db.get_scan(s["scan_id"])
+    btc_results = [r for r in scan["results"] if r["ticker"] == "BTC"]
+    assert len(btc_results) == 1
+    assert btc_results[0]["direction"] == "sell"
+
+
+def test_get_scan_completed_tickers_nonexistent(db):
+    """R6-F6: get_scan_completed_tickers returns empty set for unknown scan_id."""
+    result = db.get_scan_completed_tickers("nonexistent-id")
+    assert result == set()
+
+
+def test_update_scan_completed_at(db):
+    """R6-F7: update_scan persists completed_at field."""
+    s = _scan()
+    db.insert_scan(s)
+    db.update_scan(s["scan_id"], status="completed", completed_at="2025-01-10T00:00:00Z")
+    scan = db.get_scan(s["scan_id"])
+    assert scan["completed_at"] == "2025-01-10T00:00:00Z"
