@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiClient, type ScanRequest, type ScanStatus, type ScanResultItem, type CryptoInterval } from "@/api/client";
@@ -26,6 +26,35 @@ const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "Frenc
 
 const STORAGE_KEY = "tradingagents_settings";
 const SCANNER_KEY = "tradingagents_scanner";
+const ENDPOINTS_KEY = "tradingagents_endpoints";
+
+interface EndpointProfile {
+  url: string;
+  apiKey?: string;
+  deepModel?: string;
+  quickModel?: string;
+}
+
+function loadEndpoints(): EndpointProfile[] {
+  try {
+    return JSON.parse(localStorage.getItem(ENDPOINTS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveEndpoint(ep: EndpointProfile) {
+  const list = loadEndpoints();
+  const idx = list.findIndex((e) => e.url === ep.url);
+  if (idx >= 0) list[idx] = ep;
+  else list.push(ep);
+  localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(list));
+}
+
+function removeEndpoint(url: string) {
+  const list = loadEndpoints().filter((e) => e.url !== url);
+  localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(list));
+}
 
 function getToday(): string {
   return new Date().toISOString().slice(0, 10);
@@ -154,10 +183,38 @@ export function ScannerPage() {
   const [showLlm, setShowLlm] = useState(true);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState<number>(0);
+  const [endpoints, setEndpoints] = useState(loadEndpoints);
+  const [showEndpoints, setShowEndpoints] = useState(false);
+  const endpointsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (endpointsRef.current && !endpointsRef.current.contains(e.target as Node)) setShowEndpoints(false);
+    }
+    if (showEndpoints) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showEndpoints]);
 
   useEffect(() => {
     saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled });
+    if (backendUrl.trim()) {
+      saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
+      setEndpoints(loadEndpoints());
+    }
   }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled]);
+
+  function selectEndpoint(ep: EndpointProfile) {
+    setBackendUrl(ep.url);
+    if (ep.apiKey != null) setLlmApiKey(ep.apiKey);
+    if (ep.deepModel) setDeepModel(ep.deepModel);
+    if (ep.quickModel) setQuickModel(ep.quickModel);
+    setShowEndpoints(false);
+  }
+
+  function deleteEndpoint(url: string) {
+    removeEndpoint(url);
+    setEndpoints(loadEndpoints());
+  }
 
   const setActiveScanId = (id: string | null) => {
     _setActiveScanId(id);
@@ -223,6 +280,12 @@ export function ScannerPage() {
   const scan: ScanStatus | undefined = scanQuery.data;
   const isRunning = scan?.status === "running";
   const isDone = scan?.status === "completed" || scan?.status === "cancelled" || scan?.status === "failed";
+
+  useEffect(() => {
+    if (scan?.status === "cancelled" && scan.results.length === 0) {
+      setActiveScanId(null);
+    }
+  }, [scan?.status, scan?.results.length]);
 
   const handleStart = () => {
     const body: ScanRequest = {
@@ -488,11 +551,60 @@ export function ScannerPage() {
                     <Label className="font-medium">Backend URL / Proxy Endpoint</Label>
                     <ConnBadge status={conn.status} latency={conn.latency} error={conn.errorMsg} />
                   </div>
-                  <Input
-                    value={backendUrl}
-                    onChange={(e) => setBackendUrl(e.target.value)}
-                    placeholder="http://localhost:4141"
-                  />
+                  <div className="relative" ref={endpointsRef}>
+                    <Input
+                      value={backendUrl}
+                      onChange={(e) => setBackendUrl(e.target.value)}
+                      onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
+                      placeholder="http://localhost:4141"
+                      className="pr-9"
+                    />
+                    {endpoints.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowEndpoints(!showEndpoints)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted transition-colors"
+                      >
+                        <svg className={cn("w-4 h-4 text-muted-foreground transition-transform", showEndpoints && "rotate-180")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    )}
+                    {showEndpoints && endpoints.length > 1 && (
+                      <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-lg overflow-hidden">
+                        {endpoints.map((ep) => (
+                          <div
+                            key={ep.url}
+                            className={cn(
+                              "flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-muted transition-colors",
+                              ep.url === backendUrl && "bg-primary/10 text-primary",
+                            )}
+                          >
+                            <button
+                              type="button"
+                              className="flex-1 text-left truncate font-mono text-xs"
+                              onClick={() => selectEndpoint(ep)}
+                            >
+                              {ep.url}
+                              {ep.deepModel && <span className="ml-2 text-muted-foreground">({ep.deepModel})</span>}
+                            </button>
+                            {ep.url !== backendUrl && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.url); }}
+                                className="ml-2 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                                title="Remove endpoint"
+                              >
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     Custom API endpoint. Models are fetched from <code className="text-[11px] px-1 py-0.5 rounded bg-muted">/v1/models</code> automatically.
                     {remoteIds.length > 0 && (
@@ -594,7 +706,7 @@ export function ScannerPage() {
       )}
 
       {/* Progress */}
-      {scan && (
+      {scan && scan.status !== "cancelled" && (
         <Card>
           <CardContent className="py-5 space-y-5">
             <div className="flex items-center justify-between">
