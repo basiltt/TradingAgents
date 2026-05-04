@@ -71,14 +71,11 @@ jobs:
     steps:
       - name: Configure SSH
         env:
-          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
-          ORACLE_PORT: ${{ secrets.ORACLE_PORT }}
           ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
         run: |
           install -d -m 700 ~/.ssh
           printf '%s\n' "$ORACLE_SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p "$ORACLE_PORT" "$ORACLE_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy application
         env:
@@ -90,7 +87,7 @@ jobs:
           REMOTE_CMD="set -euo pipefail; cd \"$ORACLE_APP_DIR\"; git fetch --all --prune; git pull --ff-only origin main; TRADINGAGENTS_HEALTHCHECK_URL=\"http://127.0.0.1:8877/api/v1/health\" bash ./scripts/deploy.sh"
 
           for attempt in $(seq 1 5); do
-            if ssh -o BatchMode=yes -o ConnectTimeout=30 -p "$ORACLE_PORT" "$ORACLE_USER@$ORACLE_HOST" "$REMOTE_CMD"; then
+            if ssh -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$ORACLE_PORT" "$ORACLE_USER@$ORACLE_HOST" "$REMOTE_CMD"; then
               exit 0
             fi
 
