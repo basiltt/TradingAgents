@@ -3,12 +3,17 @@
 .env
 .claude
 .idea
+.playwright-mcp
 .vscode
 .DS_Store
+.coverage
+.pytest_cache
 __pycache__
 *.egg-info
 build
 dist
+frontend/dist
+frontend/node_modules
 results
 eval_results
 Dockerfile

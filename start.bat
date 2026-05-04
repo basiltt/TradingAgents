@@ -8,13 +8,13 @@ echo ========================================
 echo.
 
 :: Start backend API server
-start "TradingAgents API" cmd /k "cd /d %~dp0 && python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend"
+start "TradingAgents API" cmd /k "cd /d %~dp0 && python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents"
 
 :: Wait a moment for backend to start
 timeout /t 3 /nobreak >nul
 
 :: Start frontend dev server
-start "TradingAgents Frontend" cmd /k "cd /d %~dp0\frontend && npm run dev"
+start "TradingAgents Frontend" cmd /k "cd /d %~dp0\frontend && npm run dev -- --host 0.0.0.0 --port 5177 --strictPort"
 
 echo Both servers starting...
 echo   Backend API : http://localhost:8877

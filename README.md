@@ -1,271 +1,471 @@
-<p align="center">
-  <img src="assets/TauricResearch.png" style="width: 60%; height: auto;">
-</p>
+# TradingAgents Web App
 
-<div align="center" style="line-height: 1;">
-  <a href="https://arxiv.org/abs/2412.20138" target="_blank"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2412.20138-B31B1B?logo=arxiv"/></a>
-  <a href="https://discord.com/invite/hk9PGKShPK" target="_blank"><img alt="Discord" src="https://img.shields.io/badge/Discord-TradingResearch-7289da?logo=discord&logoColor=white&color=7289da"/></a>
-  <a href="./assets/wechat.png" target="_blank"><img alt="WeChat" src="https://img.shields.io/badge/WeChat-TauricResearch-brightgreen?logo=wechat&logoColor=white"/></a>
-  <a href="https://x.com/TauricResearch" target="_blank"><img alt="X Follow" src="https://img.shields.io/badge/X-TauricResearch-white?logo=x&logoColor=white"/></a>
-  <br>
-  <a href="https://github.com/TauricResearch/" target="_blank"><img alt="Community" src="https://img.shields.io/badge/Join_GitHub_Community-TauricResearch-14C290?logo=discourse"/></a>
-</div>
+TradingAgents is now a web-based application for running multi-agent stock and crypto analysis from a browser.
 
-<div align="center">
-  <!-- Keep these links. Translations will automatically update with the README. -->
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=de">Deutsch</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=es">Español</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=fr">français</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=ja">日本語</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=ko">한국어</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=pt">Português</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=ru">Русский</a> | 
-  <a href="https://www.readme-i18n.com/TauricResearch/TradingAgents?lang=zh">中文</a>
-</div>
+This repository still contains the reusable `tradingagents` Python package and the original CLI, but the primary product surface is the web UI:
 
----
+- React + TypeScript frontend
+- FastAPI backend with REST + WebSocket streaming
+- TradingAgents/LangGraph orchestration layer
+- SQLite persistence for runs, reports, scans, and checkpoints
+- Markdown-based memory log for past decisions and reflections
 
-# TradingAgents: Multi-Agents LLM Financial Trading Framework
+## Highlights
 
-## News
-- [2026-04] **TradingAgents v0.2.4** released with structured-output agents (Research Manager, Trader, Portfolio Manager), LangGraph checkpoint resume, persistent decision log, DeepSeek/Qwen/GLM/Azure provider support, Docker, and a Windows UTF-8 encoding fix. See [CHANGELOG.md](CHANGELOG.md) for the full list.
-- [2026-03] **TradingAgents v0.2.3** released with multi-language support, GPT-5.4 family models, unified model catalog, backtesting date fidelity, and proxy support.
-- [2026-03] **TradingAgents v0.2.2** released with GPT-5.4/Gemini 3.1/Claude 4.6 model coverage, five-tier rating scale, OpenAI Responses API, Anthropic effort control, and cross-platform stability.
-- [2026-02] **TradingAgents v0.2.0** released with multi-provider LLM support (GPT-5.x, Gemini 3.x, Claude 4.x, Grok 4.x) and improved system architecture.
-- [2026-01] **Trading-R1** [Technical Report](https://arxiv.org/abs/2509.11420) released, with [Terminal](https://github.com/TauricResearch/Trading-R1) expected to land soon.
+- Launch stock or crypto analysis from a browser
+- Stream agent progress, messages, stats, and report sections in real time
+- Review saved run history, markdown reports, and final snapshots
+- Scan crypto markets in batches from the scanner page
+- Persist checkpoints and memory between runs
+- Inspect resolved config and runtime overrides from the UI
+- Manage browser-side watchlists for repeated analysis
+- Use OpenAI, Anthropic, Google, xAI, DeepSeek, Qwen, GLM, OpenRouter, Azure OpenAI, or Ollama
 
-<div align="center">
-<a href="https://www.star-history.com/#TauricResearch/TradingAgents&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=TauricResearch/TradingAgents&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=TauricResearch/TradingAgents&type=Date" />
-   <img alt="TradingAgents Star History" src="https://api.star-history.com/svg?repos=TauricResearch/TradingAgents&type=Date" style="width: 80%; height: auto;" />
- </picture>
-</a>
-</div>
+## Architecture
 
-> 🎉 **TradingAgents** officially released! We have received numerous inquiries about the work, and we would like to express our thanks for the enthusiasm in our community.
->
-> So we decided to fully open-source the framework. Looking forward to building impactful projects with you!
+```text
+Browser (http://localhost:5177)
+        |
+        v
+React/Vite frontend
+        |
+        +--> /api/*  -> FastAPI backend (http://localhost:8877)
+        +--> /ws/*   -> WebSocket stream for live run updates
+                         |
+                         v
+                TradingAgentsGraph / LangGraph
+                         |
+                         +--> LLM providers
+                         +--> Market data providers
+                         +--> SQLite + markdown memory log
+```
 
-<div align="center">
+## Repository Layout
 
-🚀 [TradingAgents](#tradingagents-framework) | ⚡ [Installation & CLI](#installation-and-cli) | 🎬 [Demo](https://www.youtube.com/watch?v=90gr5lwjIho) | 📦 [Package Usage](#tradingagents-package) | 🤝 [Contributing](#contributing) | 📄 [Citation](#citation)
+```text
+backend/         FastAPI app, routers, services, persistence, WebSocket manager
+frontend/        React + Vite web app
+tradingagents/   Core multi-agent trading framework
+cli/             Original CLI interface
+scripts/         Helper scripts, including Linux/macOS web startup
+Dockerfile       Container image for the web app
+docker-compose.yml
+start.bat        Windows helper to launch backend + frontend
+```
 
-</div>
+## Main URLs
 
-## TradingAgents Framework
+- Frontend: `http://localhost:5177`
+- Backend API: `http://localhost:8877`
+- Health check: `http://localhost:8877/api/v1/health`
 
-TradingAgents is a multi-agent trading framework that mirrors the dynamics of real-world trading firms. By deploying specialized LLM-powered agents: from fundamental analysts, sentiment experts, and technical analysts, to trader, risk management team, the platform collaboratively evaluates market conditions and informs trading decisions. Moreover, these agents engage in dynamic discussions to pinpoint the optimal strategy.
+## Prerequisites
 
-<p align="center">
-  <img src="assets/schema.png" style="width: 100%; height: auto;">
-</p>
+### Without Docker
 
-> TradingAgents framework is designed for research purposes. Trading performance may vary based on many factors, including the chosen backbone language models, model temperature, trading periods, the quality of data, and other non-deterministic factors. [It is not intended as financial, investment, or trading advice.](https://tauric.ai/disclaimer/)
+- Git
+- Python 3.10+ (`3.12` recommended)
+- Node.js LTS (`20+` recommended)
+- npm
+- At least one supported LLM provider API key, or a custom OpenAI-compatible backend
 
-Our framework decomposes complex trading tasks into specialized roles. This ensures the system achieves a robust, scalable approach to market analysis and decision-making.
+### With Docker
 
-### Analyst Team
-- Fundamentals Analyst: Evaluates company financials and performance metrics, identifying intrinsic values and potential red flags.
-- Sentiment Analyst: Analyzes social media and public sentiment using sentiment scoring algorithms to gauge short-term market mood.
-- News Analyst: Monitors global news and macroeconomic indicators, interpreting the impact of events on market conditions.
-- Technical Analyst: Utilizes technical indicators (like MACD and RSI) to detect trading patterns and forecast price movements.
+- Docker Desktop on Windows, or Docker Engine + Docker Compose plugin on Linux
+- At least one supported LLM provider API key, or a reachable custom backend
 
-<p align="center">
-  <img src="assets/analyst.png" width="100%" style="display: inline-block; margin: 0 2%;">
-</p>
+## Environment Setup
 
-### Researcher Team
-- Comprises both bullish and bearish researchers who critically assess the insights provided by the Analyst Team. Through structured debates, they balance potential gains against inherent risks.
+Copy the example environment file first:
 
-<p align="center">
-  <img src="assets/researcher.png" width="70%" style="display: inline-block; margin: 0 2%;">
-</p>
+### Windows PowerShell
 
-### Trader Agent
-- Composes reports from the analysts and researchers to make informed trading decisions. It determines the timing and magnitude of trades based on comprehensive market insights.
+```powershell
+Copy-Item .env.example .env
+Copy-Item .env.enterprise.example .env.enterprise
+```
 
-<p align="center">
-  <img src="assets/trader.png" width="70%" style="display: inline-block; margin: 0 2%;">
-</p>
+### Linux
 
-### Risk Management and Portfolio Manager
-- Continuously evaluates portfolio risk by assessing market volatility, liquidity, and other risk factors. The risk management team evaluates and adjusts trading strategies, providing assessment reports to the Portfolio Manager for final decision.
-- The Portfolio Manager approves/rejects the transaction proposal. If approved, the order will be sent to the simulated exchange and executed.
+```bash
+cp .env.example .env
+cp .env.enterprise.example .env.enterprise
+```
 
-<p align="center">
-  <img src="assets/risk.png" width="70%" style="display: inline-block; margin: 0 2%;">
-</p>
+Notes:
 
-## Installation and CLI
+- `.env.enterprise` is optional. Keep it only if you use Azure OpenAI or want a separate enterprise-specific env file.
+- The backend and CLI now load `.env` and `.env.enterprise` automatically on startup.
+- If you change `.env`, restart the backend process or restart `docker compose`.
 
-### Installation
+## Setup Without Docker
 
-Clone TradingAgents:
+### Windows
+
+1. Clone the repository and enter it.
+
+```powershell
+git clone https://github.com/TauricResearch/TradingAgents.git
+cd TradingAgents
+```
+
+2. Create and activate a virtual environment.
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+3. Install frontend dependencies.
+
+```powershell
+Set-Location frontend
+npm install
+Set-Location ..
+```
+
+4. Fill in `.env` with at least one provider key.
+
+5. Start the web app.
+
+```powershell
+.\start.bat
+```
+
+Manual startup is also available:
+
+```powershell
+python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents
+```
+
+In a second terminal:
+
+```powershell
+Set-Location frontend
+npm run dev -- --host 0.0.0.0 --port 5177 --strictPort
+```
+
+If PowerShell blocks virtual environment activation, use:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+### Linux
+
+1. Clone the repository and enter it.
+
 ```bash
 git clone https://github.com/TauricResearch/TradingAgents.git
 cd TradingAgents
 ```
 
-Create a virtual environment in any of your favorite environment managers:
+2. Create and activate a virtual environment.
+
 ```bash
-conda create -n tradingagents python=3.13
-conda activate tradingagents
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-Install the package and its dependencies:
+3. Install frontend dependencies.
+
 ```bash
-pip install .
+cd frontend
+npm install
+cd ..
+```
+
+4. Fill in `.env` with at least one provider key.
+
+5. Start the web app.
+
+```bash
+chmod +x scripts/start-web.sh
+./scripts/start-web.sh
+```
+
+Manual startup is also available:
+
+```bash
+python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents
+```
+
+In a second terminal:
+
+```bash
+cd frontend
+npm run dev -- --host 0.0.0.0 --port 5177 --strictPort
+```
+
+## Setup With Docker
+
+The checked-in Docker assets now target the web app instead of the old CLI-only container.
+
+### Windows PowerShell
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+### Linux
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+When the containers are ready:
+
+- Frontend: `http://localhost:5177`
+- Backend: `http://localhost:8877`
+
+Useful commands:
+
+```bash
+docker compose down
+docker compose down -v
+docker compose logs -f
+```
+
+Notes:
+
+- Run data is persisted in the named Docker volume `tradingagents_data`.
+- The container starts both the backend and the frontend dev server.
+- If you use Ollama from a Dockerized backend, point the backend to a reachable host/service URL instead of plain container `localhost`. On Docker Desktop, `http://host.docker.internal:11434/v1` is the usual host-machine target.
+
+## Environment Variable Reference
+
+### Provider Credentials
+
+Set the key for the provider you actually plan to use.
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Using OpenAI models | Auth for native OpenAI requests |
+| `GOOGLE_API_KEY` | Using Gemini models | Auth for Google Generative AI |
+| `ANTHROPIC_API_KEY` | Using Claude models | Auth for Anthropic |
+| `XAI_API_KEY` | Using Grok/xAI models | Auth for xAI |
+| `DEEPSEEK_API_KEY` | Using DeepSeek models | Auth for DeepSeek |
+| `DASHSCOPE_API_KEY` | Using Qwen models | Auth for Alibaba DashScope/Qwen |
+| `ZHIPU_API_KEY` | Using GLM models | Auth for Zhipu/GLM |
+| `OPENROUTER_API_KEY` | Using OpenRouter | Auth for OpenRouter |
+| `AZURE_OPENAI_API_KEY` | Using Azure OpenAI | Azure key |
+| `AZURE_OPENAI_ENDPOINT` | Using Azure OpenAI | Azure endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | Using Azure OpenAI | Azure deployment name |
+| `OPENAI_API_VERSION` | Optional for Azure OpenAI | Azure/OpenAI API version override |
+
+### Optional Data Provider Credentials
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `ALPHA_VANTAGE_API_KEY` | Any stock data vendor is set to `alpha_vantage` | Enables Alpha Vantage stock data |
+| `BYBIT_API_KEY` | Optional only | Private Bybit endpoints, if you extend beyond public market data |
+| `BYBIT_API_SECRET` | Optional only | Private Bybit endpoints, if you extend beyond public market data |
+
+### App Defaults and Runtime Controls
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TRADINGAGENTS_LLM_PROVIDER` | `openai` | Default provider shown/resolved by the backend |
+| `TRADINGAGENTS_DEEP_THINK_LLM` | `gpt-5.4` | Default long-form reasoning model |
+| `TRADINGAGENTS_QUICK_THINK_LLM` | `gpt-5.4-mini` | Default short/fast model |
+| `TRADINGAGENTS_BACKEND_URL` | unset | Optional OpenAI-compatible backend base URL |
+| `TRADINGAGENTS_RESULTS_DIR` | `~/.tradingagents/logs` | Result/log output directory |
+| `TRADINGAGENTS_CACHE_DIR` | `~/.tradingagents/cache` | Cache root, including checkpoint databases |
+| `TRADINGAGENTS_MEMORY_LOG_PATH` | `~/.tradingagents/memory/trading_memory.md` | Memory log path |
+| `TRADINGAGENTS_WEB_DB_PATH` | `~/.tradingagents/cache/web_runs.db` | SQLite file for web runs and scans |
+| `WEB_CORS_ORIGIN` | `http://localhost:5177` | Allowed browser origin(s), comma-separated |
+| `WEB_CSP_CONNECT_SRC` | `'self' ws://localhost:8877 wss://localhost:8877` | CSP `connect-src` override emitted by the backend |
+| `LLM_MAX_CONCURRENT` | `0` | Maximum concurrent LLM calls; `0` means unlimited |
+| `COINGECKO_MAX_CONCURRENT` | `2` | Maximum concurrent CoinGecko requests from the backend |
+
+### Frontend-Specific Environment
+
+The frontend client also supports:
+
+| Variable | Where to define it | Purpose |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | Frontend shell env or `frontend/.env.local` | Overrides relative `/api` calls when you are not using the local Vite proxy |
+
+Important:
+
+- `VITE_API_BASE_URL` is not read from the repo-root `.env` when you run `npm run dev` inside `frontend/`.
+- The WebSocket client uses the same host as the loaded page. If your frontend and backend live on different origins in production, put them behind a reverse proxy or same-host gateway so `/ws/...` still resolves correctly.
+
+## Configuration Resolution Order
+
+Runtime config is resolved in this order:
+
+1. `tradingagents/default_config.py`
+2. Environment variables from `.env` / `.env.enterprise`
+3. Persisted runtime overrides stored by the web app
+4. Per-request overrides from the analysis/scanner UI
+
+This means you can keep sensible defaults in env vars and still override provider, model, language, depth, and vendor choices from the UI when launching a run.
+
+## Persistence and Storage
+
+By default, TradingAgents writes data under `~/.tradingagents`:
+
+| Path | Purpose |
+| --- | --- |
+| `~/.tradingagents/cache/web_runs.db` | SQLite database for analyses, report sections, and scans |
+| `~/.tradingagents/cache/checkpoints/` | LangGraph checkpoint databases |
+| `~/.tradingagents/memory/trading_memory.md` | Markdown memory log used by the portfolio manager |
+| `~/.tradingagents/logs` | General results/log output |
+
+Additional persistence:
+
+- Browser `localStorage` stores UI preferences and watchlists
+- Docker stores the backend state in the `tradingagents_data` named volume
+
+## Web App Pages
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Home dashboard |
+| `/analysis/new` | Start a new stock or crypto analysis |
+| `/analysis/{run_id}` | Live analysis view with agent status, messages, stats, and reports |
+| `/history` | Saved run history |
+| `/scanner` | Batch market scanner for crypto symbols |
+| `/config` | Resolved backend config and runtime overrides |
+| `/memory` | Browse memory log entries |
+
+## API Overview
+
+### Core REST Endpoints
+
+- `GET /api/v1/health`
+- `POST /api/v1/analysis`
+- `GET /api/v1/analysis`
+- `GET /api/v1/analysis/{run_id}`
+- `GET /api/v1/analysis/{run_id}/report`
+- `GET /api/v1/analysis/{run_id}/snapshot`
+- `POST /api/v1/analysis/{run_id}/cancel`
+- `DELETE /api/v1/analysis/{run_id}`
+- `DELETE /api/v1/analysis`
+- `GET /api/v1/config`
+- `PATCH /api/v1/config`
+- `GET /api/v1/models/{provider}`
+- `GET /api/v1/providers`
+- `GET /api/v1/memory`
+- `GET /api/v1/checkpoints`
+- `DELETE /api/v1/checkpoints`
+- `DELETE /api/v1/checkpoints/{ticker}`
+- `GET /api/v1/symbols?asset_type=crypto`
+- `POST /api/v1/scanner`
+- `GET /api/v1/scanner`
+- `GET /api/v1/scanner/{scan_id}`
+- `POST /api/v1/scanner/{scan_id}/cancel`
+
+### WebSocket
+
+- `WS /ws/v1/analysis/{run_id}`
+
+The WebSocket stream carries:
+
+- progress events
+- agent status updates
+- message stream entries
+- token/tool statistics
+- report chunks
+
+### CSRF / Request Header Requirement
+
+The backend rejects mutating requests that do not include:
+
+```http
+X-Requested-With: XMLHttpRequest
+```
+
+The shipped frontend client already sends this header for you. Add it yourself if you call the API from custom scripts or tools.
+
+## Model and Provider Notes
+
+- Native provider selection is supported for OpenAI, Anthropic, Google, xAI, DeepSeek, Qwen, GLM, OpenRouter, Azure OpenAI, and Ollama.
+- `TRADINGAGENTS_BACKEND_URL` lets you route model traffic through an OpenAI-compatible gateway.
+- When a custom backend URL is set, the app can use a per-request API key from the UI instead of a provider env var.
+- Stock data vendors are currently `yfinance` and `alpha_vantage`.
+- Crypto analysis uses public market/fundamental sources such as Bybit and CoinGecko.
+
+## Development Commands
+
+### Backend / Python
+
+```bash
+python -m pytest
+python main.py
+tradingagents
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm test
+npm run build
+npm run lint
 ```
 
 ### Docker
 
-Alternatively, run with Docker:
 ```bash
-cp .env.example .env  # add your API keys
-docker compose run --rm tradingagents
+docker compose up --build
+docker compose down
 ```
 
-For local models with Ollama:
-```bash
-docker compose --profile ollama run --rm tradingagents-ollama
-```
+## Legacy Interfaces
 
-### Required APIs
+The repository still includes:
 
-TradingAgents supports multiple LLM providers. Set the API key for your chosen provider:
+- the `tradingagents` CLI entrypoint
+- the Python package for direct library use
+- `main.py` as a simple script example
 
-```bash
-export OPENAI_API_KEY=...          # OpenAI (GPT)
-export GOOGLE_API_KEY=...          # Google (Gemini)
-export ANTHROPIC_API_KEY=...       # Anthropic (Claude)
-export XAI_API_KEY=...             # xAI (Grok)
-export DEEPSEEK_API_KEY=...        # DeepSeek
-export DASHSCOPE_API_KEY=...       # Qwen (Alibaba DashScope)
-export ZHIPU_API_KEY=...           # GLM (Zhipu)
-export OPENROUTER_API_KEY=...      # OpenRouter
-export ALPHA_VANTAGE_API_KEY=...   # Alpha Vantage
-```
+Those interfaces are still usable, but this README is written around the web app because that is now the primary scope of the project.
 
-For enterprise providers (e.g. Azure OpenAI, AWS Bedrock), copy `.env.enterprise.example` to `.env.enterprise` and fill in your credentials.
+## Troubleshooting
 
-For local models, configure Ollama with `llm_provider: "ollama"` in your config.
+### `API key not set` when starting a run
 
-Alternatively, copy `.env.example` to `.env` and fill in your keys:
-```bash
-cp .env.example .env
-```
+The backend validates provider auth before creating a run.
 
-### CLI Usage
+Fix one of these:
 
-Launch the interactive CLI:
-```bash
-tradingagents          # installed command
-python -m cli.main     # alternative: run directly from source
-```
-You will see a screen where you can select your desired tickers, analysis date, LLM provider, research depth, and more.
+- set the matching provider key in `.env`
+- switch to a provider whose key is already configured
+- provide a custom `backend_url` and API key through the UI
 
-<p align="center">
-  <img src="assets/cli/cli_init.png" width="100%" style="display: inline-block; margin: 0 2%;">
-</p>
+### Frontend loads but runs never start
 
-An interface will appear showing results as they load, letting you track the agent's progress as it runs.
+Check:
 
-<p align="center">
-  <img src="assets/cli/cli_news.png" width="100%" style="display: inline-block; margin: 0 2%;">
-</p>
+- backend health at `http://localhost:8877/api/v1/health`
+- that `WEB_CORS_ORIGIN` includes your frontend origin
+- that you restarted the backend after changing `.env`
 
-<p align="center">
-  <img src="assets/cli/cli_transaction.png" width="100%" style="display: inline-block; margin: 0 2%;">
-</p>
+### Alpha Vantage errors
 
-## TradingAgents Package
+If any data vendor is switched to `alpha_vantage`, you must set `ALPHA_VANTAGE_API_KEY`. Otherwise keep the vendor on `yfinance`.
 
-### Implementation Details
+### Docker is running but the page is not ready yet
 
-We built TradingAgents with LangGraph to ensure flexibility and modularity. The framework supports multiple LLM providers: OpenAI, Google, Anthropic, xAI, DeepSeek, Qwen (Alibaba DashScope), GLM (Zhipu), OpenRouter, Ollama for local models, and Azure OpenAI for enterprise.
-
-### Python Usage
-
-To use TradingAgents inside your code, you can import the `tradingagents` module and initialize a `TradingAgentsGraph()` object. The `.propagate()` function will return a decision. You can run `main.py`, here's also a quick example:
-
-```python
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
-
-ta = TradingAgentsGraph(debug=True, config=DEFAULT_CONFIG.copy())
-
-# forward propagate
-_, decision = ta.propagate("NVDA", "2026-01-15")
-print(decision)
-```
-
-You can also adjust the default configuration to set your own choice of LLMs, debate rounds, etc.
-
-```python
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
-
-config = DEFAULT_CONFIG.copy()
-config["llm_provider"] = "openai"        # openai, google, anthropic, xai, deepseek, qwen, glm, openrouter, ollama, azure
-config["deep_think_llm"] = "gpt-5.4"     # Model for complex reasoning
-config["quick_think_llm"] = "gpt-5.4-mini" # Model for quick tasks
-config["max_debate_rounds"] = 2
-
-ta = TradingAgentsGraph(debug=True, config=config)
-_, decision = ta.propagate("NVDA", "2026-01-15")
-print(decision)
-```
-
-See `tradingagents/default_config.py` for all configuration options.
-
-## Persistence and Recovery
-
-TradingAgents persists two kinds of state across runs.
-
-### Decision log
-
-The decision log is always on. Each completed run appends its decision to `~/.tradingagents/memory/trading_memory.md`. On the next run for the same ticker, TradingAgents fetches the realised return (raw and alpha vs SPY), generates a one-paragraph reflection, and injects the most recent same-ticker decisions plus recent cross-ticker lessons into the Portfolio Manager prompt, so each analysis carries forward what worked and what didn't.
-
-Override the path with `TRADINGAGENTS_MEMORY_LOG_PATH`.
-
-### Checkpoint resume
-
-Checkpoint resume is opt-in via `--checkpoint`. When enabled, LangGraph saves state after each node so a crashed or interrupted run resumes from the last successful step instead of starting over. On a resume run you will see `Resuming from step N for <TICKER> on <date>` in the logs; on a new run you will see `Starting fresh`. Checkpoints are cleared automatically on successful completion.
-
-Per-ticker SQLite databases live at `~/.tradingagents/cache/checkpoints/<TICKER>.db` (override the base with `TRADINGAGENTS_CACHE_DIR`). Use `--clear-checkpoints` to reset all of them before a run.
+The first `docker compose up --build` has to install both Python and Node dependencies. Wait for the frontend to finish startup, or inspect:
 
 ```bash
-tradingagents analyze --checkpoint           # enable for this run
-tradingagents analyze --clear-checkpoints    # reset before running
+docker compose logs -f
 ```
 
-```python
-config = DEFAULT_CONFIG.copy()
-config["checkpoint_enabled"] = True
-ta = TradingAgentsGraph(config=config)
-_, decision = ta.propagate("NVDA", "2026-01-15")
-```
+### Ollama from Docker
 
-## Contributing
+Inside Docker, `localhost` means the container itself. If Ollama is running on the host machine, point the backend to a host-reachable URL such as `http://host.docker.internal:11434/v1` on Docker Desktop.
 
-We welcome contributions from the community! Whether it's fixing a bug, improving documentation, or suggesting a new feature, your input helps make this project better. If you are interested in this line of research, please consider joining our open-source financial AI research community [Tauric Research](https://tauric.ai/).
+## Reference
 
-Past contributions, including code, design feedback, and bug reports, are credited per release in [`CHANGELOG.md`](CHANGELOG.md).
-
-## Citation
-
-Please reference our work if you find *TradingAgents* provides you with some help :)
-
-```
-@misc{xiao2025tradingagentsmultiagentsllmfinancial,
-      title={TradingAgents: Multi-Agents LLM Financial Trading Framework}, 
-      author={Yijia Xiao and Edward Sun and Di Luo and Wei Wang},
-      year={2025},
-      eprint={2412.20138},
-      archivePrefix={arXiv},
-      primaryClass={q-fin.TR},
-      url={https://arxiv.org/abs/2412.20138}, 
-}
-```
+- Original paper: [TradingAgents](https://arxiv.org/abs/2412.20138)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)

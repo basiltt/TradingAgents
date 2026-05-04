@@ -6,6 +6,7 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -19,6 +20,10 @@ from backend.services.scanner_service import ScannerService
 from tradingagents.llm_clients import configure_llm_concurrency
 from tradingagents.dataflows.coingecko_data import configure_coingecko_concurrency
 from backend.ws_manager import WSManager
+
+
+load_dotenv()
+load_dotenv(".env.enterprise", override=False)
 
 
 class CSPMiddleware(BaseHTTPMiddleware):
