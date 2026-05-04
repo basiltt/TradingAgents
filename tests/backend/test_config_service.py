@@ -49,3 +49,28 @@ def test_env_var_resolution(config_service, monkeypatch):
     monkeypatch.setenv("TRADINGAGENTS_LLM_PROVIDER", "google")
     result = config_service.get_config()
     assert result["resolved"]["llm_provider"] == "google"
+
+
+def test_forbidden_key_rejected(config_service):
+    with pytest.raises(ValueError, match="Cannot override"):
+        config_service.update_config({"backend_url": "http://evil.com"})
+
+
+def test_type_mismatch_rejected(config_service):
+    with pytest.raises(ValueError, match="invalid type"):
+        config_service.update_config({"max_debate_rounds": "not_an_int"})
+
+
+def test_bool_as_int_rejected(config_service):
+    with pytest.raises(ValueError, match="invalid type.*expected int"):
+        config_service.update_config({"max_debate_rounds": True})
+
+
+def test_value_too_large(config_service):
+    with pytest.raises(ValueError, match="exceeds maximum"):
+        config_service.update_config({"max_debate_rounds": 2_000_000})
+
+
+def test_string_too_long(config_service):
+    with pytest.raises(ValueError, match="exceeds maximum length"):
+        config_service.update_config({"llm_provider": "x" * 2000})
