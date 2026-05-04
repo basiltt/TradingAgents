@@ -135,3 +135,127 @@ class TestCreateLayout:
         from rich.layout import Layout
         layout = create_layout()
         assert isinstance(layout, Layout)
+
+
+class TestExtractContentString:
+    def _call(self, content):
+        from cli.main import extract_content_string
+        return extract_content_string(content)
+
+    def test_none(self):
+        assert self._call(None) is None
+
+    def test_empty_string(self):
+        assert self._call("") is None
+
+    def test_whitespace_only(self):
+        assert self._call("   ") is None
+
+    def test_plain_string(self):
+        assert self._call("hello world") == "hello world"
+
+    def test_string_with_whitespace(self):
+        assert self._call("  hello  ") == "hello"
+
+    def test_dict_with_text(self):
+        assert self._call({"text": "content"}) == "content"
+
+    def test_dict_with_empty_text(self):
+        assert self._call({"text": ""}) is None
+
+    def test_list_of_text_items(self):
+        items = [
+            {"type": "text", "text": "hello"},
+            {"type": "text", "text": "world"},
+        ]
+        assert self._call(items) == "hello world"
+
+    def test_list_with_string(self):
+        assert self._call(["hello", "world"]) == "hello world"
+
+    def test_empty_list_string(self):
+        assert self._call("[]") is None
+
+    def test_non_parseable_string(self):
+        assert self._call("just some text") == "just some text"
+
+    def test_other_type(self):
+        assert self._call(42) == "42"
+
+
+class TestClassifyMessageType:
+    def test_human_continue(self):
+        from langchain_core.messages import HumanMessage
+        from cli.main import classify_message_type
+        typ, content = classify_message_type(HumanMessage(content="Continue"))
+        assert typ == "Control"
+
+    def test_human_regular(self):
+        from langchain_core.messages import HumanMessage
+        from cli.main import classify_message_type
+        typ, content = classify_message_type(HumanMessage(content="Hello"))
+        assert typ == "User"
+        assert content == "Hello"
+
+    def test_tool_message(self):
+        from langchain_core.messages import ToolMessage
+        from cli.main import classify_message_type
+        typ, content = classify_message_type(ToolMessage(content="data", tool_call_id="t1"))
+        assert typ == "Data"
+
+    def test_ai_message(self):
+        from langchain_core.messages import AIMessage
+        from cli.main import classify_message_type
+        typ, content = classify_message_type(AIMessage(content="analysis"))
+        assert typ == "Agent"
+
+    def test_unknown_type(self):
+        from unittest.mock import MagicMock
+        from cli.main import classify_message_type
+        msg = MagicMock()
+        msg.content = "test"
+        typ, content = classify_message_type(msg)
+        assert typ == "System"
+
+
+class TestFormatToolArgs:
+    def test_short(self):
+        from cli.main import format_tool_args
+        assert format_tool_args({"a": 1}) == "{'a': 1}"
+
+    def test_truncated(self):
+        from cli.main import format_tool_args
+        long = "x" * 100
+        result = format_tool_args(long, max_length=20)
+        assert len(result) == 20
+        assert result.endswith("...")
+
+
+class TestUpdateAnalystStatuses:
+    def test_sets_first_analyst_in_progress(self):
+        from cli.main import MessageBuffer, update_analyst_statuses
+        buf = MessageBuffer()
+        buf.init_for_analysis(["market", "news"])
+        chunk = {}
+        update_analyst_statuses(buf, chunk)
+        assert buf.agent_status["Market Analyst"] == "in_progress"
+        assert buf.agent_status["News Analyst"] == "pending"
+
+    def test_completed_when_report_present(self):
+        from cli.main import MessageBuffer, update_analyst_statuses
+        buf = MessageBuffer()
+        buf.init_for_analysis(["market", "news"])
+        chunk = {"market_report": "Analysis done"}
+        update_analyst_statuses(buf, chunk)
+        assert buf.agent_status["Market Analyst"] == "completed"
+        assert buf.agent_status["News Analyst"] == "in_progress"
+
+    def test_all_done_triggers_bull_researcher(self):
+        from cli.main import MessageBuffer, update_analyst_statuses
+        buf = MessageBuffer()
+        buf.init_for_analysis(["market"])
+        buf.report_sections["market_report"] = "done"
+        buf.agent_status["Market Analyst"] = "completed"
+        chunk = {}
+        update_analyst_statuses(buf, chunk)
+        assert buf.agent_status["Bull Researcher"] == "in_progress"
