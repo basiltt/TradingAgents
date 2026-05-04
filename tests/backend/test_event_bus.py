@@ -84,6 +84,35 @@ def test_cleanup_run(bus, event_loop):
     assert bus.get_snapshot("run1") == []
 
 
+def test_drain_after_cleanup_raises(bus, event_loop):
+    async def _test():
+        bus.emit("run1", {"type": "message"})
+        bus.cleanup_run("run1")
+        with pytest.raises(StopAsyncIteration):
+            await bus.drain("run1")
+
+    event_loop.run_until_complete(_test())
+
+
+def test_emit_on_cleaned_run_is_noop(bus, event_loop):
+    bus.emit("run1", {"type": "message"})
+    bus.cleanup_run("run1")
+    bus.emit("run1", {"type": "message2"})
+    assert bus.get_snapshot("run1") == []
+
+
+def test_cleanup_with_full_queue(bus, event_loop):
+    async def _test():
+        small_queue = asyncio.Queue(maxsize=1)
+        small_queue.put_nowait({"type": "blocking"})
+        bus._queues["run1"] = small_queue
+        bus.cleanup_run("run1")
+        with pytest.raises(StopAsyncIteration):
+            await bus.drain("run1")
+
+    event_loop.run_until_complete(_test())
+
+
 def test_thread_safe_emit(bus, event_loop):
     import threading
 

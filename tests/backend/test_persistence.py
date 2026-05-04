@@ -284,3 +284,49 @@ def test_list_runs_filter_asset_type(db):
 def test_asset_type_sql_injection_safe(db):
     result = db.list_runs(asset_type="'; DROP TABLE analysis_runs; --")
     assert result["total"] == 0
+
+
+def test_delete_run(db, sample_run):
+    db.insert_run(sample_run)
+    assert db.delete_run(sample_run["run_id"]) is True
+    assert db.get_run(sample_run["run_id"]) is None
+
+
+def test_delete_run_not_found(db):
+    assert db.delete_run("nonexistent") is False
+
+
+def test_delete_all_runs(db, sample_run):
+    db.insert_run(sample_run)
+    run2 = sample_run.copy()
+    run2["run_id"] = str(uuid.uuid4())
+    db.insert_run(run2)
+    count = db.delete_all_runs()
+    assert count == 2
+
+
+def test_delete_all_checkpoints(db, sample_run):
+    db.insert_run(sample_run)
+    db.update_run_status(sample_run["run_id"], "completed", None, "2025-01-10T00:00:00Z")
+    run2 = sample_run.copy()
+    run2["run_id"] = str(uuid.uuid4())
+    db.insert_run(run2)
+    count = db.delete_all_checkpoints()
+    assert count == 1
+    assert db.get_run(run2["run_id"]) is not None
+
+
+def test_delete_ticker_checkpoints(db, sample_run):
+    db.insert_run(sample_run)
+    db.update_run_status(sample_run["run_id"], "failed", "error", "2025-01-10T00:00:00Z")
+    count = db.delete_ticker_checkpoints("SPY")
+    assert count == 1
+
+
+def test_health_check(db):
+    assert db.health_check() == "ok"
+
+
+def test_checkpoint(db, sample_run):
+    db.insert_run(sample_run)
+    db.checkpoint()  # should not raise
