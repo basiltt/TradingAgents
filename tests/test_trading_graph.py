@@ -4,6 +4,130 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+class TestConstructor:
+    @patch("tradingagents.graph.trading_graph.set_config")
+    @patch("tradingagents.graph.trading_graph.os.makedirs")
+    @patch("tradingagents.graph.trading_graph.create_llm_client")
+    @patch("tradingagents.graph.trading_graph.TradingMemoryLog")
+    @patch("tradingagents.graph.trading_graph.ConditionalLogic")
+    @patch("tradingagents.graph.trading_graph.GraphSetup")
+    @patch("tradingagents.graph.trading_graph.Propagator")
+    @patch("tradingagents.graph.trading_graph.Reflector")
+    @patch("tradingagents.graph.trading_graph.SignalProcessor")
+    def test_stock_init(self, mock_sp, mock_ref, mock_prop, mock_gs, mock_cl,
+                        mock_ml, mock_llm, mock_mkdirs, mock_set_cfg):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        mock_client = MagicMock()
+        mock_client.get_llm.return_value = MagicMock()
+        mock_llm.return_value = mock_client
+        mock_gs_inst = MagicMock()
+        mock_gs_inst.setup_graph.return_value = MagicMock()
+        mock_gs_inst.setup_graph.return_value.compile.return_value = MagicMock()
+        mock_gs.return_value = mock_gs_inst
+
+        config = {
+            "llm_provider": "openai",
+            "deep_think_llm": "gpt-4o",
+            "quick_think_llm": "gpt-4o-mini",
+            "data_cache_dir": "/tmp/cache",
+            "results_dir": "/tmp/results",
+            "max_debate_rounds": 3,
+            "max_risk_discuss_rounds": 3,
+            "asset_type": "stock",
+        }
+        obj = TradingAgentsGraph(selected_analysts=["market"], config=config)
+        assert obj.debug is False
+        assert mock_llm.call_count == 2
+        mock_mkdirs.assert_called()
+        mock_gs_inst.setup_graph.assert_called_once_with(["market"])
+
+    @patch("tradingagents.graph.trading_graph.set_config")
+    @patch("tradingagents.graph.trading_graph.os.makedirs")
+    @patch("tradingagents.graph.trading_graph.create_llm_client")
+    @patch("tradingagents.graph.trading_graph.TradingMemoryLog")
+    @patch("tradingagents.graph.trading_graph.ConditionalLogic")
+    @patch("tradingagents.graph.trading_graph.GraphSetup")
+    @patch("tradingagents.graph.trading_graph.Propagator")
+    @patch("tradingagents.graph.trading_graph.Reflector")
+    @patch("tradingagents.graph.trading_graph.SignalProcessor")
+    def test_crypto_init(self, mock_sp, mock_ref, mock_prop, mock_gs, mock_cl,
+                         mock_ml, mock_llm, mock_mkdirs, mock_set_cfg):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        mock_client = MagicMock()
+        mock_client.get_llm.return_value = MagicMock()
+        mock_llm.return_value = mock_client
+        mock_gs_inst = MagicMock()
+        mock_gs_inst.setup_crypto_graph.return_value = MagicMock()
+        mock_gs_inst.setup_crypto_graph.return_value.compile.return_value = MagicMock()
+        mock_gs.return_value = mock_gs_inst
+
+        config = {
+            "llm_provider": "openai",
+            "deep_think_llm": "gpt-4o",
+            "quick_think_llm": "gpt-4o-mini",
+            "data_cache_dir": "/tmp/cache",
+            "results_dir": "/tmp/results",
+            "max_debate_rounds": 3,
+            "max_risk_discuss_rounds": 3,
+            "asset_type": "crypto",
+        }
+
+        with patch("tradingagents.agents.utils.crypto_agent_utils.make_crypto_tools", return_value=[]), \
+             patch("tradingagents.agents.utils.coingecko_tools.make_coingecko_tools", return_value=[]), \
+             patch("tradingagents.dataflows.bybit_data.BybitRateLimiter"), \
+             patch("tradingagents.dataflows.bybit_data.BybitCircuitBreaker"), \
+             patch("tradingagents.agents.crypto_analysts.create_crypto_trader", return_value=MagicMock()), \
+             patch("tradingagents.agents.crypto_analysts.create_crypto_risk_bull_debater", return_value=MagicMock()), \
+             patch("tradingagents.agents.crypto_analysts.create_crypto_risk_bear_debater", return_value=MagicMock()), \
+             patch("tradingagents.agents.crypto_analysts.create_crypto_portfolio_manager", return_value=MagicMock()):
+            obj = TradingAgentsGraph(
+                selected_analysts=["crypto_technical", "crypto_news"],
+                config=config,
+            )
+            mock_gs_inst.setup_crypto_graph.assert_called_once()
+
+    @patch("tradingagents.graph.trading_graph.set_config")
+    @patch("tradingagents.graph.trading_graph.os.makedirs")
+    @patch("tradingagents.graph.trading_graph.create_llm_client")
+    @patch("tradingagents.graph.trading_graph.TradingMemoryLog")
+    @patch("tradingagents.graph.trading_graph.ConditionalLogic")
+    @patch("tradingagents.graph.trading_graph.GraphSetup")
+    @patch("tradingagents.graph.trading_graph.Propagator")
+    @patch("tradingagents.graph.trading_graph.Reflector")
+    @patch("tradingagents.graph.trading_graph.SignalProcessor")
+    def test_with_callbacks(self, mock_sp, mock_ref, mock_prop, mock_gs, mock_cl,
+                            mock_ml, mock_llm, mock_mkdirs, mock_set_cfg):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        mock_client = MagicMock()
+        mock_client.get_llm.return_value = MagicMock()
+        mock_llm.return_value = mock_client
+        mock_gs_inst = MagicMock()
+        mock_gs_inst.setup_graph.return_value.compile.return_value = MagicMock()
+        mock_gs.return_value = mock_gs_inst
+
+        cb = MagicMock()
+        config = {
+            "llm_provider": "openai",
+            "deep_think_llm": "gpt-4o",
+            "quick_think_llm": "gpt-4o-mini",
+            "data_cache_dir": "/tmp/cache",
+            "results_dir": "/tmp/results",
+            "max_debate_rounds": 3,
+            "max_risk_discuss_rounds": 3,
+        }
+        obj = TradingAgentsGraph(config=config, callbacks=[cb])
+        call_kwargs = mock_llm.call_args_list[0][1]
+        assert "callbacks" in call_kwargs
+
+
+class TestCreateToolNodes:
+    def test_returns_four_nodes(self):
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+        obj = object.__new__(TradingAgentsGraph)
+        nodes = obj._create_tool_nodes()
+        assert set(nodes.keys()) == {"market", "social", "news", "fundamentals"}
+
+
 class TestGetProviderKwargs:
     def _make_graph_with_config(self, config):
         from tradingagents.graph.trading_graph import TradingAgentsGraph
