@@ -74,3 +74,72 @@ class TestMarketAnalyst:
             result = node(state)
 
         assert result["market_report"] == ""
+
+
+def _test_analyst_node(module_path, create_fn_name, report_key, patches):
+    """Generic helper to test any analyst node following the standard pattern."""
+    import importlib
+    mod = importlib.import_module(module_path)
+    create_fn = getattr(mod, create_fn_name)
+
+    mock_llm, mock_chain = _make_mock_llm(content="Report content", tool_calls=[])
+    node = create_fn(mock_llm)
+
+    with patch(f"{module_path}.ChatPromptTemplate") as mock_pt:
+        for p in patches:
+            patch(p, return_value="").start()
+        mock_prompt = MagicMock()
+        mock_prompt.partial.return_value = mock_prompt
+        mock_prompt.__or__ = MagicMock(return_value=mock_chain)
+        mock_pt.from_messages.return_value = mock_prompt
+
+        state = {
+            "trade_date": "2025-01-10",
+            "company_of_interest": "AAPL",
+            "messages": [],
+        }
+        result = node(state)
+
+    assert result[report_key] == "Report content"
+    assert "messages" in result
+    # Cleanup patches
+    patch.stopall()
+
+
+class TestNewsAnalyst:
+    def test_returns_report(self):
+        _test_analyst_node(
+            "tradingagents.agents.analysts.news_analyst",
+            "create_news_analyst",
+            "news_report",
+            [
+                "tradingagents.agents.analysts.news_analyst.get_language_instruction",
+                "tradingagents.agents.analysts.news_analyst.build_instrument_context",
+            ],
+        )
+
+
+class TestSocialMediaAnalyst:
+    def test_returns_report(self):
+        _test_analyst_node(
+            "tradingagents.agents.analysts.social_media_analyst",
+            "create_social_media_analyst",
+            "sentiment_report",
+            [
+                "tradingagents.agents.analysts.social_media_analyst.get_language_instruction",
+                "tradingagents.agents.analysts.social_media_analyst.build_instrument_context",
+            ],
+        )
+
+
+class TestFundamentalsAnalyst:
+    def test_returns_report(self):
+        _test_analyst_node(
+            "tradingagents.agents.analysts.fundamentals_analyst",
+            "create_fundamentals_analyst",
+            "fundamentals_report",
+            [
+                "tradingagents.agents.analysts.fundamentals_analyst.get_language_instruction",
+                "tradingagents.agents.analysts.fundamentals_analyst.build_instrument_context",
+            ],
+        )
