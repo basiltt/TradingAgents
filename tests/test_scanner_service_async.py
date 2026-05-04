@@ -543,3 +543,37 @@ class TestRunScanEdgeCases:
         scan = await scanner.get_scan(scan_id)
         # Should be cancelled or completed
         assert scan is not None
+
+
+class TestProcessTickerCancelDirect:
+    @pytest.mark.asyncio
+    async def test_process_ticker_sees_cancel_before_semaphore(self, scanner):
+        """Covers scanner_service.py:345: ticker processing returns early when cancel=True."""
+        from backend import services as svc_pkg
+        import backend.services.scanner_service as svc_mod
+
+        # Reduce batch size to 1 so tickers are processed one at a time
+        orig_batch = svc_mod._BATCH_SIZE
+        svc_mod._BATCH_SIZE = 1
+        try:
+            calls = []
+
+            async def slow_run_single(scan_id, ticker):
+                calls.append(ticker)
+                await asyncio.sleep(0.1)
+
+            with patch.object(scanner, "_run_single", side_effect=slow_run_single):
+                with patch("tradingagents.dataflows.bybit_data.get_valid_symbols",
+                           return_value=["A", "B", "C", "D", "E"]):
+                    scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
+                    await asyncio.sleep(0.05)  # let first ticker start
+                    # Set cancel flag while first ticker is running
+                    async with scanner._lock:
+                        if scan_id in scanner._scans:
+                            scanner._scans[scan_id]["cancel"] = True
+                    await asyncio.sleep(0.5)
+        finally:
+            svc_mod._BATCH_SIZE = orig_batch
+
+        # With batch_size=1 and cancel set after first, fewer than 5 tickers should run
+        assert len(calls) < 5

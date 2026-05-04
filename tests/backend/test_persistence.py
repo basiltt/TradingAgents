@@ -360,3 +360,19 @@ def test_migration_rollback_on_bad_sql(tmp_path):
     finally:
         pers._MIGRATIONS.clear()
         pers._MIGRATIONS.extend(original)
+
+
+def test_migration_skip_already_applied(tmp_path):
+    """Covers persistence.py:120: version <= current causes 'continue' in migration loop."""
+    from backend.persistence import AnalysisDB
+
+    db_path = str(tmp_path / "incremental.db")
+    # First init: applies all migrations
+    db1 = AnalysisDB(db_path=db_path)
+    db1.close()
+    # Second init: all migrations already at current version, all should be skipped
+    db2 = AnalysisDB(db_path=db_path)
+    # Should work without errors; the 'continue' path was exercised
+    result = db2.list_runs(page=1, limit=1)
+    assert result["total"] == 0
+    db2.close()
