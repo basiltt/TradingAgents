@@ -108,3 +108,116 @@ class TestResumeIncompleteScans:
     async def test_no_db_returns_zero(self, scanner_no_db):
         result = await scanner_no_db.resume_incomplete_scans()
         assert result == 0
+
+
+class TestRunSingle:
+    @pytest.mark.asyncio
+    async def test_start_analysis_failure(self, scanner):
+        scanner._analysis.start_analysis.side_effect = Exception("failed")
+        # Create a scan in memory
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._run_single("s1", "BTCUSDT")
+        assert scanner._scans["s1"]["failed"] == 1
+        assert len(scanner._scans["s1"]["results"]) == 1
+        assert scanner._scans["s1"]["results"][0]["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_before_start(self, scanner):
+        """When cancel=True before _run_single starts, it returns immediately."""
+        scanner._analysis.start_analysis.return_value = "run-1"
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": True,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._run_single("s1", "BTCUSDT")
+        # cancel=True at start means the method returns before calling start_analysis
+        scanner._analysis.start_analysis.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_completed_run_collects_result(self, scanner):
+        scanner._analysis.start_analysis.return_value = "run-1"
+        scanner._analysis.get_run.return_value = {"status": "completed"}
+        scanner._analysis.get_snapshot = AsyncMock(return_value=None)
+        scanner._analysis.get_report = AsyncMock(return_value="Buy BTCUSDT")
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
+            await scanner._run_single("s1", "BTCUSDT")
+        assert scanner._scans["s1"]["completed"] == 1
+
+
+class TestCollectResult:
+    @pytest.mark.asyncio
+    async def test_completed_with_snapshot(self, scanner):
+        scanner._analysis.get_snapshot = AsyncMock(return_value={
+            "reports": {"final_trade_decision": "Buy with high confidence", "trader": '{"trade_type": "long", "confidence": 8}'}
+        })
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "completed"})
+        assert scanner._scans["s1"]["completed"] == 1
+        assert len(scanner._scans["s1"]["results"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_run(self, scanner):
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "failed": 0, "completed": 0, "results": [],
+            "current_tickers": [],
+        }
+        await scanner._collect_result("s1", "BTCUSDT", "run-1", {"status": "failed"})
+        assert scanner._scans["s1"]["failed"] == 1
+
+
+class TestRunScan:
+    @pytest.mark.asyncio
+    async def test_symbols_override(self, scanner):
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {"analysis_date": "2025-01-10"},
+            "total": 0, "completed": 0, "failed": 0,
+            "current_batch": 0, "total_batches": 0,
+            "current_tickers": [], "results": [],
+            "started_at": "2025-01-10", "completed_at": None,
+            "task": None,
+        }
+        with patch.object(scanner, "_run_single", new_callable=AsyncMock):
+            await scanner._run_scan("s1", symbols_override=["BTCUSDT", "ETHUSDT"])
+        assert scanner._scans["s1"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_symbol_fetch_failure(self, scanner):
+        scanner._scans["s1"] = {
+            "scan_id": "s1", "status": "running", "cancel": False,
+            "config": {}, "total": 0, "completed": 0, "failed": 0,
+            "current_batch": 0, "total_batches": 0,
+            "current_tickers": [], "results": [],
+            "started_at": "", "completed_at": None, "task": None,
+        }
+        call_count = 0
+        original_to_thread = asyncio.to_thread
+
+        async def mock_to_thread(fn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("network")
+            return fn(*args, **kwargs)
+
+        with patch("backend.services.scanner_service.asyncio.to_thread", side_effect=mock_to_thread):
+            await scanner._run_scan("s1")
+        assert scanner._scans["s1"]["status"] == "failed"
