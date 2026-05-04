@@ -16,6 +16,50 @@ _POLL_INTERVAL = 5  # seconds between polling for batch completion
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
+def _rating_to_direction(rating: str) -> str:
+    """Map 5-tier PortfolioRating string to 3-tier scanner direction."""
+    r = rating.lower().strip()
+    if r in ("buy", "overweight"):
+        return "buy"
+    if r in ("sell", "underweight"):
+        return "sell"
+    return "hold"
+
+
+def _extract_signal_from_structured(
+    pm_data: Dict[str, Any],
+    trader_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a validated signal dict from pre-parsed structured agent output.
+
+    pm_data: dict from PortfolioDecision.model_dump() — keys: rating, confidence, ...
+    trader_data: dict from TraderProposal.model_dump() — keys: action, confidence, ...
+    """
+    rating = str(pm_data.get("rating") or "Hold")
+    direction = _rating_to_direction(rating)
+
+    if direction == "hold":
+        return {"direction": "hold", "confidence": "none", "score": 0}
+
+    # PM confidence is authoritative; fall back to trader's if absent
+    conf_score = pm_data.get("confidence") or trader_data.get("confidence")
+    if conf_score is None:
+        conf_score = 5  # neutral default when direction is known but conviction isn't
+    conf_score = max(1, min(10, int(conf_score)))
+
+    if conf_score >= 7:
+        confidence = "high"
+    elif conf_score >= 4:
+        confidence = "moderate"
+    else:
+        confidence = "low"
+
+    sign = 1 if direction == "buy" else -1
+    score = sign * conf_score
+
+    return {"direction": direction, "confidence": confidence, "score": score}
+
+
 def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
     """Extract signal from structured report data instead of regex on free text.
 
