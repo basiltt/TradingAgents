@@ -85,12 +85,25 @@ jobs:
           ORACLE_APP_DIR: ${{ secrets.ORACLE_APP_DIR }}
         run: |
           REMOTE_CMD="set -euo pipefail; cd \"$ORACLE_APP_DIR\"; git fetch --all --prune; git pull --ff-only origin main; TRADINGAGENTS_HEALTHCHECK_URL=\"http://127.0.0.1:8877/api/v1/health\" bash ./scripts/deploy.sh"
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=90
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=12
+            -o TCPKeepAlive=yes
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -p "$ORACLE_PORT"
+          )
 
           for attempt in $(seq 1 5); do
-            if ssh -o BatchMode=yes -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$ORACLE_PORT" "$ORACLE_USER@$ORACLE_HOST" "$REMOTE_CMD"; then
+            echo "Starting SSH deploy attempt ${attempt}/5..."
+
+            if ssh "${SSH_OPTS[@]}" "$ORACLE_USER@$ORACLE_HOST" "$REMOTE_CMD"; then
               exit 0
             fi
 
+            echo "SSH deploy attempt ${attempt}/5 failed. Retrying in 15 seconds..." >&2
             sleep 15
           done
 
