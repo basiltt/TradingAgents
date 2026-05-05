@@ -71,6 +71,7 @@ export function HistoryList() {
     queryKey: ["analyses"],
     queryFn: ({ signal }) => apiClient.listAnalyses({ limit: 10000 }, signal),
     staleTime: 30_000,
+    refetchInterval: 30_000, // poll every 30s so deletes/changes on other devices sync
   });
 
   const deleteMutation = useMutation({
@@ -351,29 +352,104 @@ export function HistoryList() {
         </Card>
       ) : (
         <>
-          <div className="space-y-2">
+          {/* ── Desktop: table layout ── */}
+          <div className="hidden md:block rounded-xl border border-border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+                  <th className="text-left px-4 py-2.5 font-medium">Ticker</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Status</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Signal</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Date</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Run ID</th>
+                  <th className="px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map((item) => {
+                  const cfg = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.pending;
+                  return (
+                    <tr key={item.run_id} className="group border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2.5">
+                        <Link to="/analysis/$runId" params={{ runId: item.run_id }} className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
+                            <span className="font-mono font-bold text-[10px] text-foreground">{item.ticker.slice(0, 4)}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold font-mono text-sm">{item.ticker}</span>
+                            {item.asset_type === "crypto" && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium leading-none">CRYPTO</span>
+                            )}
+                          </div>
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Badge variant={cfg.variant} className="gap-1 text-[10px] py-0.5 h-auto leading-none">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                          {item.status}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {item.status === "completed"
+                          ? <TradeScoreDisplay card={scoreMap.get(item.run_id)} />
+                          : <span className="text-xs text-muted-foreground">—</span>
+                        }
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                        {item.analysis_date}{" "}
+                        <span className="text-muted-foreground/60">
+                          {new Date(item.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground/50 font-mono max-w-[180px] truncate">
+                        {item.run_id}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {item.status === "running" && (
+                            <button
+                              onClick={() => cancelMutation.mutate(item.run_id)}
+                              disabled={cancelMutation.isPending}
+                              className="px-2 py-1 text-xs font-medium rounded-md border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                            >
+                              {cancelMutation.isPending ? "…" : "Cancel"}
+                            </button>
+                          )}
+                          {confirmId === item.run_id ? (
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => deleteMutation.mutate(item.run_id)} disabled={deleteMutation.isPending} className="px-2 py-1 text-xs font-medium rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50">
+                                {deleteMutation.isPending ? "…" : "Delete"}
+                              </button>
+                              <button onClick={() => setConfirmId(null)} className="px-2 py-1 text-xs font-medium rounded bg-muted text-muted-foreground hover:opacity-90">No</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setConfirmId(item.run_id)} className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all" title="Delete">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* ── Mobile: card layout ── */}
+          <div className="md:hidden space-y-2">
             {paged.map((item) => {
               const cfg = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.pending;
               return (
-                <Card
-                  key={item.run_id}
-                  className="group hover:shadow-md hover:border-primary/30 transition-all duration-200"
-                >
-                  <CardContent className="py-3 px-3 sm:px-4">
-                    {/* Main row: avatar + info */}
-                    <div className="flex items-start gap-3">
-                      {/* Avatar */}
-                      <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors mt-0.5">
+                <Card key={item.run_id} className="group hover:shadow-md hover:border-primary/30 transition-all duration-200">
+                  <CardContent className="py-3 px-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
                         <span className="font-mono font-bold text-xs text-foreground">{item.ticker.slice(0, 4)}</span>
                       </div>
-
-                      {/* Info block — fills available space */}
-                      <Link
-                        to="/analysis/$runId"
-                        params={{ runId: item.run_id }}
-                        className="flex-1 min-w-0 cursor-pointer"
-                      >
-                        {/* Ticker + badges */}
+                      <Link to="/analysis/$runId" params={{ runId: item.run_id }} className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-semibold font-mono text-sm">{item.ticker}</span>
                           {item.asset_type === "crypto" && (
@@ -385,53 +461,28 @@ export function HistoryList() {
                           </Badge>
                           {item.status === "completed" && <TradeScoreDisplay card={scoreMap.get(item.run_id)} />}
                         </div>
-
-                        {/* Date + Run ID */}
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-muted-foreground">{item.analysis_date}</span>
                           <span className="text-xs text-muted-foreground/60">
                             {new Date(item.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </span>
-                          <span className="text-xs text-muted-foreground/50 font-mono truncate max-w-[140px] sm:max-w-none">
-                            {item.run_id}
-                          </span>
                         </div>
                       </Link>
-
-                      {/* Actions — right-aligned, always visible on mobile */}
-                      <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         {item.status === "running" && (
-                          <button
-                            onClick={() => cancelMutation.mutate(item.run_id)}
-                            disabled={cancelMutation.isPending}
-                            className="px-2 py-1 text-xs font-medium rounded-md border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
-                            title="Cancel analysis"
-                          >
+                          <button onClick={() => cancelMutation.mutate(item.run_id)} disabled={cancelMutation.isPending} className="px-2 py-1 text-xs font-medium rounded-md border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-50">
                             {cancelMutation.isPending ? "…" : "Cancel"}
                           </button>
                         )}
                         {confirmId === item.run_id ? (
                           <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => deleteMutation.mutate(item.run_id)}
-                              disabled={deleteMutation.isPending}
-                              className="px-2 py-1 text-xs font-medium rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
-                            >
+                            <button onClick={() => deleteMutation.mutate(item.run_id)} disabled={deleteMutation.isPending} className="px-2 py-1 text-xs font-medium rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50">
                               {deleteMutation.isPending ? "…" : "Delete"}
                             </button>
-                            <button
-                              onClick={() => setConfirmId(null)}
-                              className="px-2 py-1 text-xs font-medium rounded bg-muted text-muted-foreground hover:opacity-90"
-                            >
-                              No
-                            </button>
+                            <button onClick={() => setConfirmId(null)} className="px-2 py-1 text-xs font-medium rounded bg-muted text-muted-foreground hover:opacity-90">No</button>
                           </div>
                         ) : (
-                          <button
-                            onClick={() => setConfirmId(item.run_id)}
-                            className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
-                            title="Delete analysis"
-                          >
+                          <button onClick={() => setConfirmId(item.run_id)} className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all" title="Delete">
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
@@ -444,6 +495,7 @@ export function HistoryList() {
               );
             })}
           </div>
+          {/* end mobile cards */}
 
           {/* ── Pagination ── */}
           {filtered.length > pageSize && (

@@ -586,7 +586,7 @@ def test_execute_graph_streaming_loop(service, db, bus):
         def __init__(self, config=None, selected_analysts=None):
             self.graph = type("G", (), {"stream": lambda self, s, **kw: FakeStream()})()
             self.propagator = type("P", (), {
-                "create_initial_state": lambda self, t, d, asset_type="stock": {},
+                "create_initial_state": lambda self, t, d, asset_type="stock", past_context="": {},
                 "get_graph_args": lambda self, callbacks=None: {},
             })()
 
@@ -622,7 +622,7 @@ def test_execute_graph_cancel_mid_loop(service):
         def __init__(self, config=None, selected_analysts=None):
             self.graph = type("G", (), {"stream": lambda self, s, **kw: SlowStream()})()
             self.propagator = type("P", (), {
-                "create_initial_state": lambda self, t, d, asset_type="stock": {},
+                "create_initial_state": lambda self, t, d, asset_type="stock", past_context="": {},
                 "get_graph_args": lambda self, callbacks=None: {},
             })()
 

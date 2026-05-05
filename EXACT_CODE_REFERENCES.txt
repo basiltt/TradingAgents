@@ -1,0 +1,229 @@
+================================================================================
+EXACT CODE REFERENCES - TradingAgents Investigation
+================================================================================
+
+1. AUTO-SCROLL BEHAVIOR
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: frontend/src/components/analysis/MessagesPanel.tsx
+LINES: 103-177 (full component)
+
+SPECIFIC AUTO-SCROLL CODE:
+
+  Line 104:
+    const bottomRef = useRef<HTMLDivElement>(null);
+
+  Lines 108-110:
+    useEffect(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages.length]);
+
+  Line 177 (scroll target):
+    <div ref={bottomRef} />
+
+CONTEXT IN COMPONENT:
+  • Line 103: Component defined as memo()
+  • Line 104: Ref created for scroll target
+  • Lines 112-121: Secondary useEffect for announcements
+  • Line 159: ScrollArea container with h-[28rem] height
+  • Lines 160-176: Messages loop rendering
+  • Line 177: Scroll target div
+
+
+2. CONFIGURATION FETCHING
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: frontend/src/components/analysis/AnalysisDashboard.tsx
+LINES: 67-72
+
+CODE:
+  const { data: runDetails } = useQuery({
+    queryKey: ["analysis", runId, "details"],
+    queryFn: ({ signal }) => apiClient.getAnalysis(runId, signal),
+    staleTime: 10_000,
+    refetchInterval: status === "connected" ? 15_000 : false,
+  });
+
+WHAT'S USED FROM runDetails:
+  Line 132:   h1 ticker: {runDetails?.ticker ? `${runDetails.ticker}...`
+  Line 140:   startedAt={runDetails?.started_at}
+  Line 141:   completedAt={runDetails?.completed_at}
+
+WHAT'S NOT USED:
+  runDetails?.config (NEVER REFERENCED AGAIN)
+
+
+3. API CLIENT INTERFACE
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: frontend/src/api/client.ts
+LINES: 91-101
+
+INTERFACE DEFINITION:
+  export interface AnalysisRun {
+    run_id: string;
+    ticker: string;
+    analysis_date: string;
+    status: string;
+    config: Record<string, unknown>;  ← HERE
+    started_at: string;
+    completed_at?: string;
+    error?: string;
+    asset_type?: AssetType;
+  }
+
+API METHOD:
+  Lines 239-244:
+    getAnalysis: (runId: string, signal?: AbortSignal) =>
+      request<AnalysisRun>(
+        `/api/v1/analysis/${encodeURIComponent(runId)}`,
+        undefined,
+        signal,
+      ),
+
+
+4. BACKEND ENDPOINT
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: backend/routers/analysis.py
+LINES: 75-81
+
+CODE:
+  @router.get("/analysis/{run_id}")
+  async def get_analysis(request: Request, run_id: str):
+    _validate_run_id(run_id)
+    run = await request.app.state.analysis_service.get_run(run_id)
+    if not run:
+      raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+RESPONSE TYPE: AnalysisRun (includes config)
+
+
+5. BACKEND SERVICE
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: backend/services/analysis_service.py
+
+FETCH METHOD (Lines 118-119):
+  async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    return await asyncio.to_thread(self._db.get_run, run_id)
+
+CONFIG BUILDING (Lines 160-214):
+  def _build_config(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    config = copy.deepcopy(self._config.get_config()["resolved"])
+    
+    # Provider
+    if request.get("provider"):
+      config["llm_provider"] = request["provider"]
+    if request.get("deep_think_llm"):
+      config["deep_think_llm"] = request["deep_think_llm"]
+    if request.get("quick_think_llm"):
+      config["quick_think_llm"] = request["quick_think_llm"]
+    
+    # Parameters
+    if request.get("research_depth") is not None:
+      config["research_depth"] = request["research_depth"]
+    if request.get("output_language"):
+      config["output_language"] = request["output_language"]
+    if request.get("max_debate_rounds") is not None:
+      config["max_debate_rounds"] = request["max_debate_rounds"]
+    if request.get("max_risk_discuss_rounds") is not None:
+      config["max_risk_discuss_rounds"] = request["max_risk_discuss_rounds"]
+    if request.get("max_recur_limit") is not None:
+      config["max_recur_limit"] = request["max_recur_limit"]
+    if request.get("checkpoint_enabled") is not None:
+      config["checkpoint_enabled"] = request["checkpoint_enabled"]
+    
+    # Asset type
+    if request.get("asset_type"):
+      config["asset_type"] = request["asset_type"]
+    if request.get("interval"):
+      config["crypto_interval"] = request["interval"]
+    
+    # Backend URL
+    backend_url = request.get("backend_url") or os.getenv("TRADINGAGENTS_BACKEND_URL")
+    if backend_url:
+      config["backend_url"] = validate_backend_url(backend_url, server_port=8000)
+    
+    return config
+
+STORAGE (Line 70 in start_analysis):
+  await asyncio.to_thread(self._db.insert_run, {
+    "run_id": run_id,
+    "ticker": request["ticker"],
+    "analysis_date": request["analysis_date"],
+    "status": "running",
+    "config": _safe_json(safe_config),  ← STORED HERE
+    "started_at": now,
+    "asset_type": request.get("asset_type", "stock"),
+  })
+
+MASKING (Line 63 in start_analysis):
+  safe_config = mask_secrets(config_snapshot)
+
+
+6. BACKEND SCHEMA
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE: backend/schemas.py
+LINES: 188-198
+
+CODE:
+  class AnalysisResponse(BaseModel):
+    run_id: str
+    ticker: str
+    analysis_date: str
+    status: str
+    config: Dict[str, Any]      ← HERE
+    started_at: str
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+    asset_type: Optional[str] = None
+
+
+SUMMARY OF FINDINGS
+═══════════════════════════════════════════════════════════════════════════════
+
+AUTO-SCROLL:
+  ✅ Found at MessagesPanel.tsx:108-110
+  ✅ Uses scrollIntoView({ behavior: "smooth" })
+  ✅ Targets empty div ref at line 177
+  ✅ Triggers on messages.length change
+
+CONFIGURATION:
+  ✅ Built at backend/services/analysis_service.py:160-214
+  ✅ Stored in database at line 70
+  ✅ Masked for security at line 63
+  ✅ Returned by API endpoint at backend/routers/analysis.py:75-81
+  ✅ Received by frontend at AnalysisDashboard.tsx:67-72
+  ❌ NEVER DISPLAYED in UI
+
+CONFIGURATION FIELDS:
+  • llm_provider
+  • deep_think_llm
+  • quick_think_llm
+  • research_depth
+  • output_language
+  • max_debate_rounds
+  • max_risk_discuss_rounds
+  • max_recur_limit
+  • checkpoint_enabled
+  • asset_type
+  • crypto_interval (for crypto)
+  • data_vendors
+  • backend_url
+
+API RESPONSE INCLUDES:
+  interface AnalysisRun {
+    run_id: string
+    ticker: string
+    analysis_date: string
+    status: string
+    config: Record<string, unknown>  ← FULL CONFIG
+    started_at: string
+    completed_at?: string
+    error?: string
+    asset_type?: AssetType
+  }
+

@@ -68,7 +68,7 @@ class TradingMemoryLog:
         """Return entries with outcome:pending (for Phase B)."""
         return [e for e in self.load_entries() if e.get("pending")]
 
-    def get_past_context(self, ticker: str, n_same: int = 5, n_cross: int = 3) -> str:
+    def get_past_context(self, ticker: str, n_same: int = 10, n_cross: int = 3) -> str:
         """Return formatted past context string for agent prompt injection."""
         entries = [e for e in self.load_entries() if not e.get("pending")]
         if not entries:
@@ -88,7 +88,24 @@ class TradingMemoryLog:
 
         parts = []
         if same:
-            parts.append(f"Past analyses of {ticker} (most recent first):")
+            wins, losses, pending = 0, 0, 0
+            for e in same:
+                raw = e.get("raw")
+                if raw is None:
+                    pending += 1
+                else:
+                    try:
+                        val = float(str(raw).replace("%", "").replace("+", "").strip())
+                        if val > 0:
+                            wins += 1
+                        elif val < 0:
+                            losses += 1
+                    except (ValueError, TypeError):
+                        pending += 1
+            parts.append(
+                f"Past analyses of {ticker} (most recent first) — "
+                f"Track record: {wins}W / {losses}L / {pending} pending:"
+            )
             parts.extend(self._format_full(e) for e in same)
         if cross:
             parts.append("Recent cross-ticker lessons:")

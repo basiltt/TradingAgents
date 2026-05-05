@@ -83,16 +83,32 @@ class TradingAgentsGraph:
         if self.callbacks:
             llm_kwargs["callbacks"] = self.callbacks
 
+        # Pin temperature for deterministic trading signals.
+        # Reasoning models (o1/o3/o4-mini etc.) reject temperature — skip for those.
+        deep_model = self.config["deep_think_llm"].lower()
+        quick_model = self.config["quick_think_llm"].lower()
+        _reasoning_prefixes = ("o1", "o3", "o4")
+
+        def _is_reasoning(model: str) -> bool:
+            return any(model.startswith(p) for p in _reasoning_prefixes)
+
+        llm_kwargs.pop("temperature", None)
+
+        deep_temp = {} if _is_reasoning(deep_model) else {"temperature": 0}
+        quick_temp = {} if _is_reasoning(quick_model) else {"temperature": 0.2}
+
         deep_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["deep_think_llm"],
             base_url=self.config.get("backend_url"),
+            **deep_temp,
             **llm_kwargs,
         )
         quick_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["quick_think_llm"],
             base_url=self.config.get("backend_url"),
+            **quick_temp,
             **llm_kwargs,
         )
 
@@ -147,6 +163,7 @@ class TradingAgentsGraph:
             create_crypto_risk_bull_debater,
             create_crypto_risk_bear_debater,
             create_crypto_portfolio_manager,
+            create_confluence_checker,
         )
         from tradingagents.dataflows.bybit_data import BybitRateLimiter, BybitCircuitBreaker
 
@@ -157,6 +174,12 @@ class TradingAgentsGraph:
         cache: dict = {}
         limiter = BybitRateLimiter()
         cb = BybitCircuitBreaker()
+
+        # Store shared resources so _run_graph can fetch live price context
+        self._crypto_shared = {
+            "cache": cache, "limiter": limiter, "circuit_breaker": cb,
+            "api_key": api_key, "api_secret": api_secret,
+        }
 
         crypto_tools = make_crypto_tools(
             cache=cache, limiter=limiter, circuit_breaker=cb,
@@ -212,6 +235,7 @@ class TradingAgentsGraph:
         bull_debater = create_crypto_risk_bull_debater(self.quick_thinking_llm)
         bear_debater = create_crypto_risk_bear_debater(self.quick_thinking_llm)
         pm_node = create_crypto_portfolio_manager(self.deep_thinking_llm, max_leverage=max_leverage)
+        confluence_node = create_confluence_checker(self.quick_thinking_llm)
 
         return self.graph_setup.setup_crypto_graph(
             selected_analysts=selected_analysts,
@@ -221,6 +245,7 @@ class TradingAgentsGraph:
             crypto_bull_debater=bull_debater,
             crypto_bear_debater=bear_debater,
             crypto_portfolio_manager=pm_node,
+            confluence_checker_node=confluence_node,
         )
 
     def _get_provider_kwargs(self) -> Dict[str, Any]:
@@ -404,6 +429,19 @@ class TradingAgentsGraph:
             company_name, trade_date, past_context=past_context,
             asset_type=self.config.get("asset_type", "stock"),
         )
+
+        # For crypto: fetch live price + lower-timeframe candles BEFORE agents run
+        if self.config.get("asset_type") == "crypto" and hasattr(self, "_crypto_shared"):
+            from tradingagents.dataflows.bybit_data import build_current_price_context
+            try:
+                price_ctx = build_current_price_context(company_name, **self._crypto_shared)
+            except Exception as exc:
+                logger.warning("Failed to fetch current price context for %s: %s", company_name, exc)
+                price_ctx = f"Current price data unavailable: {exc}"
+            init_agent_state["current_price_context"] = price_ctx
+        else:
+            init_agent_state["current_price_context"] = ""
+
         args = self.propagator.get_graph_args()
 
         # Inject thread_id so same ticker+date resumes, different date starts fresh.

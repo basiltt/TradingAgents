@@ -35,8 +35,8 @@ DEFAULT_CONFIG = {
     # Users on pay-as-you-go plans can leave this at 0.
     "llm_max_concurrent": 0,
     # Debate and discussion settings
-    "max_debate_rounds": 1,
-    "max_risk_discuss_rounds": 1,
+    "max_debate_rounds": 2,
+    "max_risk_discuss_rounds": 2,
     "max_recur_limit": 100,
     # Asset type: "stock" (default) or "crypto"
     "asset_type": "stock",

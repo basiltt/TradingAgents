@@ -376,10 +376,30 @@ class AnalysisService:
             ))],
         )
 
+        past_context = ""
+        if hasattr(graph, "memory_log"):
+            try:
+                past_context = graph.memory_log.get_past_context(request["ticker"])
+            except Exception:
+                logger.warning("Failed to load past trading context for %s", request["ticker"], exc_info=True)
+
         init_state = graph.propagator.create_initial_state(
             request["ticker"], request["analysis_date"],
+            past_context=past_context,
             asset_type=config.get("asset_type", "stock"),
         )
+
+        # For crypto: fetch live price + lower-timeframe candles so all agents
+        # are aware of the current market price, not just historical klines.
+        if config.get("asset_type") == "crypto" and hasattr(graph, "_crypto_shared"):
+            from tradingagents.dataflows.bybit_data import build_current_price_context
+            try:
+                price_ctx = build_current_price_context(request["ticker"], **graph._crypto_shared)
+            except Exception as exc:
+                logger.warning("Failed to fetch current price context: %s", exc)
+                price_ctx = f"Current price data unavailable: {exc}"
+            init_state["current_price_context"] = price_ctx
+
         args = graph.propagator.get_graph_args(callbacks=[callback])
 
         last_chunk = None

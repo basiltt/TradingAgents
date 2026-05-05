@@ -52,13 +52,15 @@ class WebCallbackHandler(BaseCallbackHandler):
         completion_tokens = token_usage.get("completion_tokens", 0)
 
         # Fall back to generation-level usage_metadata (Anthropic, newer LangChain)
+        # generations is a list-of-lists: [[ChatGeneration, ...], ...]
         if not prompt_tokens and not completion_tokens:
-            for gen in getattr(response, "generations", []):
-                msg = getattr(gen, "message", None)
-                if msg:
-                    um = getattr(msg, "usage_metadata", None) or {}
-                    prompt_tokens += um.get("input_tokens", 0)
-                    completion_tokens += um.get("output_tokens", 0)
+            for gen_list in getattr(response, "generations", []):
+                for gen in (gen_list if isinstance(gen_list, list) else [gen_list]):
+                    msg = getattr(gen, "message", None)
+                    if msg:
+                        um = getattr(msg, "usage_metadata", None) or {}
+                        prompt_tokens += um.get("input_tokens", 0)
+                        completion_tokens += um.get("output_tokens", 0)
 
         self._tokens_in += prompt_tokens
         self._tokens_out += completion_tokens

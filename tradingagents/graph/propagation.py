@@ -55,6 +55,9 @@ class Propagator:
             "fundamentals_report": "",
             "sentiment_report": "",
             "news_report": "",
+            "current_price_context": "",
+            "confluence_summary": "",
+            "crypto_fundamentals_report": "",
         }
 
     def get_graph_args(self, callbacks: Optional[List] = None) -> Dict[str, Any]:

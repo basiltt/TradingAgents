@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiClient, type ScanRequest, type ScanStatus, type ScanResultItem, type CryptoInterval } from "@/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ModelSelect } from "@/components/ui/model-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -642,26 +643,22 @@ export function ScannerPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium">Deep Think Model</Label>
-                    <Select value={deepModel} onValueChange={(value) => setDeepModel(value ?? "")}>
-                      <SelectTrigger><SelectValue placeholder="Select model..." /></SelectTrigger>
-                      <SelectContent>
-                        {deepOptions.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <ModelSelect
+                      options={deepOptions}
+                      value={deepModel}
+                      onChange={(value) => setDeepModel(value ?? "")}
+                      placeholder="Select model..."
+                    />
                     <p className="text-xs text-muted-foreground">Model for complex reasoning tasks</p>
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium">Quick Think Model</Label>
-                    <Select value={quickModel} onValueChange={(value) => setQuickModel(value ?? "")}>
-                      <SelectTrigger><SelectValue placeholder="Select model..." /></SelectTrigger>
-                      <SelectContent>
-                        {quickOptions.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <ModelSelect
+                      options={quickOptions}
+                      value={quickModel}
+                      onChange={(value) => setQuickModel(value ?? "")}
+                      placeholder="Select model..."
+                    />
                     <p className="text-xs text-muted-foreground">Model for fast, lightweight tasks</p>
                   </div>
                 </div>
@@ -818,6 +815,7 @@ export function ScannerPage() {
               <MobileCollapse
                 storageKey="scanner:collapse:buy"
                 defaultOpen
+                className="md:hidden"
                 title={
                   <span className="text-sm font-semibold flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
@@ -849,6 +847,7 @@ export function ScannerPage() {
               <MobileCollapse
                 storageKey="scanner:collapse:sell"
                 defaultOpen
+                className="md:hidden"
                 title={
                   <span className="text-sm font-semibold flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
@@ -879,6 +878,7 @@ export function ScannerPage() {
               <MobileCollapse
                 storageKey="scanner:collapse:hold"
                 defaultOpen={false}
+                className="md:hidden"
                 title={
                   <span className="text-sm font-semibold flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />

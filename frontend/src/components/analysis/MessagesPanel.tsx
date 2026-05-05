@@ -105,9 +105,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
   const [announced, setAnnounced] = useState(0);
   const lastAnnouncedRef = useRef(0);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  // No auto-scroll — let the user control scroll position manually.
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -146,13 +144,14 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
           ))}
         </div>
       ) : messages.length === 0 ? (
-        <div className="flex flex-col items-center py-6 text-center">
-          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-2">
-            <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="flex flex-col items-center justify-center py-10 min-h-[12rem] text-center">
+          <div className="w-12 h-12 rounded-xl bg-muted/80 flex items-center justify-center mb-3 ring-1 ring-border/50">
+            <svg className="w-6 h-6 text-muted-foreground animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
           </div>
-          <p className="text-sm text-muted-foreground">No messages yet</p>
+          <p className="text-sm font-medium text-muted-foreground">No messages yet</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">Messages will stream in as agents work</p>
         </div>
       ) : (
         <ScrollArea className="h-[28rem]" role="log">
@@ -186,6 +185,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
       <MobileCollapse
         defaultOpen
         storageKey="collapse:messages"
+        className="md:hidden"
         title={
           <span className="text-sm font-semibold flex items-center gap-2">
             <MsgIcon />

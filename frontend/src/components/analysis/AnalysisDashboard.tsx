@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect, useMemo } from "react";
 import { apiClient, type AnalysisSnapshot } from "@/api/client";
 import { useAnalysisWebSocket, emptyWsState, type WsState } from "@/hooks/useAnalysisWebSocket";
 import { AgentStatusTable } from "./AgentStatusTable";
@@ -9,6 +10,75 @@ import { ReconnectionIndicator } from "./ReconnectionIndicator";
 import { AnalysisStatusBadge } from "./AnalysisStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+const DEEP_THINK_AGENTS = new Set(["Research Manager", "Portfolio Manager"]);
+
+function ConfigSummary({ config }: { config: Record<string, unknown> }) {
+  const [open, setOpen] = useState(false);
+  const deepModel = String(config.deep_think_llm ?? "");
+  const quickModel = String(config.quick_think_llm ?? "");
+  const provider = String(config.llm_provider ?? "");
+
+  const extras = useMemo(() => {
+    const c = config;
+    const pairs: [string, string][] = [];
+    if (c.backend_url) pairs.push(["Backend URL", String(c.backend_url)]);
+    if (c.asset_type) pairs.push(["Asset Type", String(c.asset_type)]);
+    if (c.output_language && c.output_language !== "English") pairs.push(["Language", String(c.output_language)]);
+    if (c.max_debate_rounds) pairs.push(["Debate Rounds", String(c.max_debate_rounds)]);
+    if (c.max_risk_discuss_rounds) pairs.push(["Risk Rounds", String(c.max_risk_discuss_rounds)]);
+    if (c.crypto_interval) pairs.push(["Interval", String(c.crypto_interval)]);
+    if (c.checkpoint_enabled) pairs.push(["Checkpoints", "Enabled"]);
+    return pairs;
+  }, [config]);
+
+  if (!deepModel && !quickModel && !provider) return null;
+
+  return (
+    <div className="rounded-xl border border-border/50 bg-card/50 px-4 py-2.5">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-3 w-full text-left flex-wrap"
+      >
+        <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        {provider && (
+          <span className="text-xs font-medium text-muted-foreground capitalize">{provider}</span>
+        )}
+        {deepModel && (
+          <span className="inline-flex items-center gap-1.5 text-xs">
+            <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-semibold text-[10px] uppercase tracking-wide">Deep</span>
+            <span className="font-mono font-medium">{deepModel}</span>
+          </span>
+        )}
+        {quickModel && (
+          <span className="inline-flex items-center gap-1.5 text-xs">
+            <span className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 font-semibold text-[10px] uppercase tracking-wide">Quick</span>
+            <span className="font-mono font-medium">{quickModel}</span>
+          </span>
+        )}
+        {extras.length > 0 && (
+          <svg className={`w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        )}
+      </button>
+      {open && extras.length > 0 && (
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-1.5 text-xs border-t border-border/50 pt-2">
+          {extras.map(([k, v]) => (
+            <div key={k} className="flex gap-1.5 min-w-0">
+              <span className="text-muted-foreground shrink-0">{k}:</span>
+              <span className="font-medium truncate">{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface AnalysisDashboardProps {
   runId: string;
 }
@@ -16,6 +86,41 @@ interface AnalysisDashboardProps {
 const EMPTY_AGENTS: Record<string, string> = {};
 const EMPTY_MESSAGES: Array<{ sender: string; content: string; seq: number }> = [];
 const EMPTY_REPORTS: Record<string, string> = {};
+
+function formatDuration(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function DurationBadge({ startedAt, completedAt, isTerminal }: { startedAt?: string; completedAt?: string; isTerminal: boolean }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (isTerminal || !startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isTerminal, startedAt]);
+
+  if (!startedAt) return null;
+
+  const start = new Date(startedAt).getTime();
+  const end = completedAt ? new Date(completedAt).getTime() : now;
+  const elapsed = Math.max(0, end - start);
+
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono tabular-nums">
+      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      {formatDuration(elapsed)}
+    </span>
+  );
+}
 
 export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
   const { status, attempt } = useAnalysisWebSocket(runId);
@@ -35,8 +140,18 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
     refetchInterval: status === "connected" ? 15_000 : false,
   });
 
+  const parsedConfig = useMemo<Record<string, unknown>>(() => {
+    const raw = runDetails?.config;
+    if (!raw) return {};
+    if (typeof raw === "string") {
+      try { return JSON.parse(raw); } catch { return {}; }
+    }
+    return raw as Record<string, unknown>;
+  }, [runDetails?.config]);
+
   // Fetch saved report for completed runs
-  const isTerminal = runDetails?.status === "completed" || runDetails?.status === "failed" || runDetails?.status === "cancelled";
+  const isTerminal = runDetails?.status === "completed" || runDetails?.status === "failed" || runDetails?.status === "cancelled"
+    || ["completed", "failed", "cancelled"].includes(wsData?.progress?.phase ?? "");
   const { data: savedReport, isLoading: isLoadingReport } = useQuery({
     queryKey: ["analysis", runId, "report"],
     queryFn: ({ signal }) => apiClient.getReport(runId, signal),
@@ -94,7 +209,16 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
               {runDetails?.ticker ? `${runDetails.ticker} Analysis` : "Analysis"}
             </h1>
-            <AnalysisStatusBadge status={runDetails?.status} />
+            <AnalysisStatusBadge status={
+              ["completed", "failed", "cancelled"].includes(wsData?.progress?.phase ?? "")
+                ? wsData!.progress!.phase
+                : runDetails?.status
+            } />
+            <DurationBadge
+              startedAt={runDetails?.started_at}
+              completedAt={runDetails?.completed_at}
+              isTerminal={isTerminal}
+            />
             {/* Reconnection indicator inline on mobile, pushed right on sm+ */}
             <div className="sm:hidden">
               <ReconnectionIndicator status={status} attempt={attempt} />
@@ -106,6 +230,11 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
           <ReconnectionIndicator status={status} attempt={attempt} />
         </div>
       </div>
+
+      {/* Config summary */}
+      {Object.keys(parsedConfig).length > 0 && (
+        <ConfigSummary config={parsedConfig} />
+      )}
 
       {/* Running indicator */}
       {!isTerminal && !isLoading && (
@@ -144,7 +273,7 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
         <>
           <StatsBar stats={stats} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4">
-            <AgentStatusTable agents={agents} isLoading={isLoadingSnapshot} />
+            <AgentStatusTable agents={agents} isLoading={isLoadingSnapshot} config={parsedConfig} />
             <MessagesPanel messages={messages} isLoading={isLoadingSnapshot} />
           </div>
           <ReportPanel reports={reports} isLoading={isLoadingReport || isLoadingSnapshot} />

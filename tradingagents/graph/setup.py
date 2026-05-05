@@ -1,6 +1,6 @@
 # TradingAgents/graph/setup.py
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -8,6 +8,35 @@ from tradingagents.agents import *
 from tradingagents.agents.utils.agent_states import AgentState
 
 from .conditional_logic import ConditionalLogic
+
+
+def _build_analyst_subgraph(
+    analyst_type: str,
+    analyst_node: Callable,
+    tool_node: ToolNode,
+    delete_node: Callable,
+    should_continue_fn: Callable,
+) -> Any:
+    """Build a compiled subgraph for a single analyst's tool-call loop.
+
+    The subgraph encapsulates: Analyst → [tools ↔ Analyst] → Msg Clear → END
+    so the parent graph can fan out to multiple analysts in parallel.
+    """
+    sg = StateGraph(AgentState)
+    sg.add_node("Analyst", analyst_node)
+    sg.add_node("tools", tool_node)
+    sg.add_node("Msg Clear", delete_node)
+
+    sg.add_edge(START, "Analyst")
+    sg.add_conditional_edges(
+        "Analyst",
+        should_continue_fn,
+        {"tools": "tools", "Msg Clear": "Msg Clear"},
+    )
+    sg.add_edge("tools", "Analyst")
+    sg.add_edge("Msg Clear", END)
+
+    return sg.compile()
 
 
 class GraphSetup:
@@ -26,53 +55,36 @@ class GraphSetup:
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
 
+    def _analyst_should_continue(self, analyst_type: str) -> Callable:
+        """Return a should_continue function adapted for the subgraph node names."""
+        original_fn = getattr(self.conditional_logic, f"should_continue_{analyst_type}")
+
+        def _wrapper(state: AgentState) -> str:
+            result = original_fn(state)
+            if result == f"tools_{analyst_type}":
+                return "tools"
+            return "Msg Clear"
+
+        return _wrapper
+
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
     ):
         """Set up and compile the agent workflow graph.
 
-        Args:
-            selected_analysts (list): List of analyst types to include. Options are:
-                - "market": Market analyst
-                - "social": Social media analyst
-                - "news": News analyst
-                - "fundamentals": Fundamentals analyst
+        Analysts run in parallel via compiled subgraphs, then fan-in
+        to the Bull Researcher for the debate phase.
         """
         if len(selected_analysts) == 0:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
 
-        # Create analyst nodes
-        analyst_nodes = {}
-        delete_nodes = {}
-        tool_nodes = {}
-
-        if "market" in selected_analysts:
-            analyst_nodes["market"] = create_market_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["market"] = create_msg_delete()
-            tool_nodes["market"] = self.tool_nodes["market"]
-
-        if "social" in selected_analysts:
-            analyst_nodes["social"] = create_social_media_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["social"] = create_msg_delete()
-            tool_nodes["social"] = self.tool_nodes["social"]
-
-        if "news" in selected_analysts:
-            analyst_nodes["news"] = create_news_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["news"] = create_msg_delete()
-            tool_nodes["news"] = self.tool_nodes["news"]
-
-        if "fundamentals" in selected_analysts:
-            analyst_nodes["fundamentals"] = create_fundamentals_analyst(
-                self.quick_thinking_llm
-            )
-            delete_nodes["fundamentals"] = create_msg_delete()
-            tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
+        # Build analyst factory map
+        analyst_factories = {
+            "market": create_market_analyst,
+            "social": create_social_media_analyst,
+            "news": create_news_analyst,
+            "fundamentals": create_fundamentals_analyst,
+        }
 
         # Create researcher and manager nodes
         bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
@@ -89,13 +101,18 @@ class GraphSetup:
         # Create workflow
         workflow = StateGraph(AgentState)
 
-        # Add analyst nodes to the graph
-        for analyst_type, node in analyst_nodes.items():
-            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
-            workflow.add_node(
-                f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type]
+        # Add each analyst as a parallel subgraph node
+        for analyst_type in selected_analysts:
+            subgraph = _build_analyst_subgraph(
+                analyst_type=analyst_type,
+                analyst_node=analyst_factories[analyst_type](self.quick_thinking_llm),
+                tool_node=self.tool_nodes[analyst_type],
+                delete_node=create_msg_delete(),
+                should_continue_fn=self._analyst_should_continue(analyst_type),
             )
-            workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
+            workflow.add_node(f"{analyst_type}_analysis", subgraph)
+            workflow.add_edge(START, f"{analyst_type}_analysis")
+            workflow.add_edge(f"{analyst_type}_analysis", "Bull Researcher")
 
         # Add other nodes
         workflow.add_node("Bull Researcher", bull_researcher_node)
@@ -106,32 +123,6 @@ class GraphSetup:
         workflow.add_node("Neutral Analyst", neutral_analyst)
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
-
-        # Define edges
-        # Start with the first analyst
-        first_analyst = selected_analysts[0]
-        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
-
-        # Connect analysts in sequence
-        for i, analyst_type in enumerate(selected_analysts):
-            current_analyst = f"{analyst_type.capitalize()} Analyst"
-            current_tools = f"tools_{analyst_type}"
-            current_clear = f"Msg Clear {analyst_type.capitalize()}"
-
-            # Add conditional edges for current analyst
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                [current_tools, current_clear],
-            )
-            workflow.add_edge(current_tools, current_analyst)
-
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
-            if i < len(selected_analysts) - 1:
-                next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
-                workflow.add_edge(current_clear, next_analyst)
-            else:
-                workflow.add_edge(current_clear, "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(
@@ -190,46 +181,41 @@ class GraphSetup:
         crypto_bull_debater: Any,
         crypto_bear_debater: Any,
         crypto_portfolio_manager: Any,
+        confluence_checker_node: Any = None,
     ):
-        """Set up a crypto futures graph with bull/bear 2-party debate."""
+        """Set up a crypto futures graph with bull/bear 2-party debate.
+
+        Analysts run in parallel via compiled subgraphs, then fan-in
+        to Trader (or Confluence Checker) for the debate phase.
+        """
         if not selected_analysts:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
 
+        # Determine the fan-in target after analysts complete
+        fan_in_target = "Confluence Checker" if confluence_checker_node else "Trader"
+
         workflow = StateGraph(AgentState)
 
-        delete_nodes = {}
+        # Add each analyst as a parallel subgraph node
         for analyst_type in selected_analysts:
-            node = crypto_analyst_nodes[analyst_type]
-            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
-            delete_nodes[analyst_type] = create_msg_delete()
-            workflow.add_node(f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type])
-            workflow.add_node(f"tools_{analyst_type}", crypto_tool_nodes[analyst_type])
+            subgraph = _build_analyst_subgraph(
+                analyst_type=analyst_type,
+                analyst_node=crypto_analyst_nodes[analyst_type],
+                tool_node=crypto_tool_nodes[analyst_type],
+                delete_node=create_msg_delete(),
+                should_continue_fn=self._analyst_should_continue(analyst_type),
+            )
+            workflow.add_node(f"{analyst_type}_analysis", subgraph)
+            workflow.add_edge(START, f"{analyst_type}_analysis")
+            workflow.add_edge(f"{analyst_type}_analysis", fan_in_target)
 
         workflow.add_node("Trader", crypto_trader_node)
+        if confluence_checker_node:
+            workflow.add_node("Confluence Checker", confluence_checker_node)
+            workflow.add_edge("Confluence Checker", "Trader")
         workflow.add_node("Bull Analyst", crypto_bull_debater)
         workflow.add_node("Bear Analyst", crypto_bear_debater)
         workflow.add_node("Portfolio Manager", crypto_portfolio_manager)
-
-        first_analyst = selected_analysts[0]
-        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
-
-        for i, analyst_type in enumerate(selected_analysts):
-            current_analyst = f"{analyst_type.capitalize()} Analyst"
-            current_tools = f"tools_{analyst_type}"
-            current_clear = f"Msg Clear {analyst_type.capitalize()}"
-
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                [current_tools, current_clear],
-            )
-            workflow.add_edge(current_tools, current_analyst)
-
-            if i < len(selected_analysts) - 1:
-                next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
-                workflow.add_edge(current_clear, next_analyst)
-            else:
-                workflow.add_edge(current_clear, "Trader")
 
         workflow.add_edge("Trader", "Bull Analyst")
         workflow.add_conditional_edges(

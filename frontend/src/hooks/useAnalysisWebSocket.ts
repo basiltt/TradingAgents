@@ -101,6 +101,23 @@ export function useAnalysisWebSocket(runId: string) {
               currentAgent: undefined,
             }),
           );
+          // Mark all in-progress agents as completed
+          updateCacheRef.current((prev) => {
+            const updatedAgents = { ...prev.agents };
+            for (const [agent, agentStatus] of Object.entries(updatedAgents)) {
+              if (agentStatus === "in_progress" || agentStatus === "in progress") {
+                updatedAgents[agent] = "completed";
+              }
+            }
+            return {
+              ...prev,
+              agents: updatedAgents,
+              progress: { phase, detail: data.detail as string },
+            };
+          });
+          queryClient.invalidateQueries({ queryKey: ["analysis", runId, "details"] });
+          queryClient.invalidateQueries({ queryKey: ["analysis", runId, "report"] });
+          queryClient.invalidateQueries({ queryKey: ["analysis", runId, "snapshot"] });
           ws.close(1000, "Run terminal");
           setStatus("disconnected");
           return;

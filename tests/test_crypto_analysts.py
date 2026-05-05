@@ -30,6 +30,7 @@ def _base_state():
         "news_report": "",
         "fundamentals_report": "",
         "investment_plan": "",
+        "current_price_context": "Last Traded Price: $100000.00",
         "trader_investment_plan": "",
         "risk_debate_state": {
             "history": "",
@@ -289,9 +290,9 @@ class TestCryptoSocialAnalyst:
 
 
 class TestCryptoToolCallsBranch:
-    def test_technical_with_tool_calls_empty_report(self):
+    def test_technical_with_tool_calls_preserves_content(self):
         from tradingagents.agents.crypto_analysts import create_crypto_technical_analyst
-        result_msg = AIMessage(content="content", tool_calls=[{"name": "x", "args": {}, "id": "1"}])
+        result_msg = AIMessage(content="Analysis report here", tool_calls=[{"name": "x", "args": {}, "id": "1"}])
         llm = MagicMock()
         llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
         t1 = MagicMock(); t1.name = "get_crypto_klines"
@@ -304,7 +305,7 @@ class TestCryptoToolCallsBranch:
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
             mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
             result = node(_base_state())
-            assert result["market_report"] == ""
+            assert result["market_report"] == "Analysis report here"
 
 
 class TestCryptoDebaterExtraReports:

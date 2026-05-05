@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ import { useModels } from "@/hooks/useModels";
 import { useSymbols } from "@/hooks/useSymbols";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
+import { ModelSelect } from "@/components/ui/model-select";
 import { WatchlistPanel } from "./WatchlistPanel";
 
 const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
@@ -92,6 +93,7 @@ interface SavedSettings {
   provider?: string;
   llm_api_key?: string;
   backend_url?: string;
+  ticker?: string;
   deep_think_llm?: string;
   quick_think_llm?: string;
   analysts?: string[];
@@ -116,6 +118,38 @@ function loadSettings(): SavedSettings {
 
 function saveSettings(s: SavedSettings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+/* ---------- shared endpoint profiles (same storage as ScannerPage) ---------- */
+
+const ENDPOINTS_KEY = "tradingagents_endpoints";
+
+interface EndpointProfile {
+  url: string;
+  apiKey?: string;
+  deepModel?: string;
+  quickModel?: string;
+}
+
+function loadEndpoints(): EndpointProfile[] {
+  try {
+    return JSON.parse(localStorage.getItem(ENDPOINTS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveEndpoint(ep: EndpointProfile) {
+  const list = loadEndpoints();
+  const idx = list.findIndex((e) => e.url === ep.url);
+  if (idx >= 0) list[idx] = ep;
+  else list.push(ep);
+  localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(list));
+}
+
+function removeEndpoint(url: string) {
+  const list = loadEndpoints().filter((e) => e.url !== url);
+  localStorage.setItem(ENDPOINTS_KEY, JSON.stringify(list));
 }
 
 /* ---------- form values ---------- */
@@ -151,6 +185,9 @@ export function ConfigForm() {
   const [showLLM, setShowLLM] = useState(!!(saved.llm_api_key || saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [showData, setShowData] = useState(false);
+  const [endpoints, setEndpoints] = useState(loadEndpoints);
+  const [showEndpoints, setShowEndpoints] = useState(false);
+  const endpointsRef = useRef<HTMLDivElement>(null);
 
   const { data: configData } = useQuery({
     queryKey: ["config"],
@@ -174,7 +211,7 @@ export function ConfigForm() {
   } = useForm<FormValues>({
     defaultValues: {
       asset_type: saved.asset_type || "stock",
-      ticker: "",
+      ticker: saved.ticker || "",
       analysis_date: new Date().toISOString().split("T")[0],
       provider: saved.provider || envProvider,
       llm_api_key: saved.llm_api_key || "",
@@ -210,6 +247,7 @@ export function ConfigForm() {
   const watchedRecur = watch("max_recur_limit");
   const watchedCheckpoint = watch("checkpoint_enabled");
   const watchedInterval = watch("interval");
+  const watchedTicker = watch("ticker");
   const watchedVendorCore = watch("data_vendor_core");
   const watchedVendorTech = watch("data_vendor_technical");
   const watchedVendorFund = watch("data_vendor_fundamental");
@@ -222,6 +260,7 @@ export function ConfigForm() {
   useEffect(() => {
     saveSettings({
       asset_type: watchedAssetType,
+      ticker: watchedTicker,
       provider: selectedProvider,
       llm_api_key: watchedApiKey,
       backend_url: watchedBackendUrl,
@@ -242,7 +281,46 @@ export function ConfigForm() {
         news_data: watchedVendorNews,
       },
     });
-  }, [watchedAssetType, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
+  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
+
+  useEffect(() => {
+    if (watchedBackendUrl?.trim()) {
+      saveEndpoint({
+        url: watchedBackendUrl.trim(),
+        apiKey: watchedApiKey?.trim() || undefined,
+        deepModel: watchedDeep?.trim() || undefined,
+        quickModel: watchedQuick?.trim() || undefined,
+      });
+      setEndpoints(loadEndpoints());
+    }
+  }, [watchedBackendUrl, watchedApiKey, watchedDeep, watchedQuick]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (endpointsRef.current && !endpointsRef.current.contains(e.target as Node)) setShowEndpoints(false);
+    }
+    if (showEndpoints) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showEndpoints]);
+
+  const selectEndpoint = useCallback(
+    (ep: EndpointProfile) => {
+      setValue("backend_url", ep.url);
+      if (ep.apiKey != null) setValue("llm_api_key", ep.apiKey);
+      if (ep.deepModel) setValue("deep_think_llm", ep.deepModel);
+      if (ep.quickModel) setValue("quick_think_llm", ep.quickModel);
+      setShowEndpoints(false);
+    },
+    [setValue],
+  );
+
+  const deleteEndpoint = useCallback(
+    (url: string) => {
+      removeEndpoint(url);
+      setEndpoints(loadEndpoints());
+    },
+    [],
+  );
 
   const trimmedBackendUrl = useMemo(() => watchedBackendUrl?.trim() || undefined, [watchedBackendUrl]);
   const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl, watchedApiKey?.trim() || undefined);
@@ -606,7 +684,59 @@ export function ConfigForm() {
                     Backend URL / Proxy Endpoint
                     <ConnBadge status={backendConn.status} latency={backendConn.latency} error={backendConn.errorMsg} />
                   </Label>
-                  <Input id="backend_url" placeholder={envBackendUrl || "http://localhost:4141"} className="font-mono text-sm" {...register("backend_url")} />
+                  <div ref={endpointsRef} className="relative">
+                    <div className="relative">
+                      <Input
+                        id="backend_url"
+                        placeholder={envBackendUrl || "http://localhost:4141"}
+                        className="font-mono text-sm pr-9"
+                        autoComplete="off"
+                        {...register("backend_url")}
+                        onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
+                      />
+                      {endpoints.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowEndpoints(!showEndpoints)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted transition-colors"
+                        >
+                          <svg className={`w-4 h-4 text-muted-foreground transition-transform ${showEndpoints ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    {showEndpoints && endpoints.length > 1 && (
+                      <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                        {endpoints.map((ep) => (
+                          <div
+                            key={ep.url}
+                            className={`flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-muted transition-colors ${ep.url === watchedBackendUrl ? "bg-primary/10 text-primary" : ""}`}
+                          >
+                            <button
+                              type="button"
+                              className="flex-1 text-left truncate font-mono text-xs"
+                              onClick={() => selectEndpoint(ep)}
+                            >
+                              {ep.url}
+                              {ep.deepModel && <span className="ml-2 text-muted-foreground">({ep.deepModel})</span>}
+                            </button>
+                            {ep.url !== watchedBackendUrl && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.url); }}
+                                className="ml-2 p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     Custom API endpoint. Models are fetched from <code className="px-1 py-0.5 rounded bg-muted">/v1/models</code> automatically.
                     {modelsLoading && <span className="ml-1 text-primary font-medium">Loading models...</span>}
@@ -641,14 +771,12 @@ export function ConfigForm() {
                     control={control}
                     render={({ field }) =>
                       deepOptions.length > 0 ? (
-                        <Select value={field.value} onValueChange={field.onChange}>
-                          <SelectTrigger className="font-mono text-sm"><SelectValue placeholder={envDeepThink || "Select model"} /></SelectTrigger>
-                          <SelectContent className="min-w-[28rem] max-h-72">
-                            {deepOptions.map((m) => (
-                              <SelectItem key={m.value} value={m.value} className="font-mono text-sm">{m.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <ModelSelect
+                          options={deepOptions}
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder={envDeepThink || "Select model"}
+                        />
                       ) : (
                         <Input placeholder={envDeepThink || "e.g. claude-opus-4-6"} className="font-mono text-sm" value={field.value} onChange={field.onChange} />
                       )
@@ -667,14 +795,12 @@ export function ConfigForm() {
                     control={control}
                     render={({ field }) =>
                       quickOptions.length > 0 ? (
-                        <Select value={field.value} onValueChange={field.onChange}>
-                          <SelectTrigger className="font-mono text-sm"><SelectValue placeholder={envQuickThink || "Select model"} /></SelectTrigger>
-                          <SelectContent className="min-w-[28rem] max-h-72">
-                            {quickOptions.map((m) => (
-                              <SelectItem key={m.value} value={m.value} className="font-mono text-sm">{m.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <ModelSelect
+                          options={quickOptions}
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder={envQuickThink || "Select model"}
+                        />
                       ) : (
                         <Input placeholder={envQuickThink || "e.g. claude-sonnet-4-6"} className="font-mono text-sm" value={field.value} onChange={field.onChange} />
                       )

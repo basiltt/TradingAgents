@@ -592,3 +592,93 @@ def get_bybit_indicators(
     if cache is not None:
         cache[cache_key] = result
     return result
+
+
+# ---------------------------------------------------------------------------
+# build_current_price_context — live ticker + recent 5-min candles
+# ---------------------------------------------------------------------------
+
+def build_current_price_context(
+    symbol: str,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> str:
+    """Fetch live ticker + last ~2 hours of 5-min candles for immediate price context.
+
+    This gives all agents awareness of the CURRENT price and very recent
+    price action (lower timeframe), not just the historical klines used
+    for technical analysis.
+    """
+    import time as _time
+
+    symbol = normalize_bybit_symbol(symbol)
+    parts: list[str] = []
+    now_ms = int(_time.time() * 1000)
+
+    # 1) Live ticker
+    try:
+        ticker_str = get_bybit_ticker(
+            symbol, cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        parts.append("## LIVE PRICE SNAPSHOT (real-time)")
+        parts.append(ticker_str)
+    except Exception as exc:
+        parts.append(f"## LIVE PRICE SNAPSHOT\nUnavailable: {exc}")
+
+    # 2) Recent 5-min klines (last 2 hours = 24 candles)
+    try:
+        two_hours_ago = now_ms - (2 * 60 * 60 * 1000)
+        recent_klines = get_bybit_klines(
+            symbol, "5", two_hours_ago, now_ms,
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        parts.append("\n## RECENT 5-MIN CANDLES (last ~2 hours)")
+        parts.append(recent_klines)
+    except Exception as exc:
+        parts.append(f"\n## RECENT 5-MIN CANDLES\nUnavailable: {exc}")
+
+    # 3) Recent 15-min klines (last 6 hours = 24 candles)
+    try:
+        six_hours_ago = now_ms - (6 * 60 * 60 * 1000)
+        recent_15m = get_bybit_klines(
+            symbol, "15", six_hours_ago, now_ms,
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        parts.append("\n## RECENT 15-MIN CANDLES (last ~6 hours)")
+        parts.append(recent_15m)
+    except Exception as exc:
+        parts.append(f"\n## RECENT 15-MIN CANDLES\nUnavailable: {exc}")
+
+    # 4) 4-hour klines (last 48 hours = 12 candles) — medium-term trend
+    try:
+        two_days_ago = now_ms - (48 * 60 * 60 * 1000)
+        recent_4h = get_bybit_klines(
+            symbol, "240", two_days_ago, now_ms,
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        parts.append("\n## 4-HOUR CANDLES (last ~48 hours)")
+        parts.append(recent_4h)
+    except Exception as exc:
+        parts.append(f"\n## 4-HOUR CANDLES\nUnavailable: {exc}")
+
+    # 5) Daily klines (last 30 days) — higher-timeframe trend context
+    try:
+        thirty_days_ago = now_ms - (30 * 24 * 60 * 60 * 1000)
+        recent_1d = get_bybit_klines(
+            symbol, "D", thirty_days_ago, now_ms,
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        parts.append("\n## DAILY CANDLES (last ~30 days)")
+        parts.append(recent_1d)
+    except Exception as exc:
+        parts.append(f"\n## DAILY CANDLES\nUnavailable: {exc}")
+
+    return "\n".join(parts)

@@ -20,7 +20,7 @@ class TestValidateSignal:
             "confidence": 7,
             "leverage": 5,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is True
         assert errs == []
 
@@ -33,7 +33,7 @@ class TestValidateSignal:
             "confidence": 3,
             "leverage": 10,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is True
 
     def test_no_trade_with_nulls(self):
@@ -57,7 +57,7 @@ class TestValidateSignal:
             "confidence": 5,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
         assert any("stop" in e.lower() for e in errs)
 
@@ -70,7 +70,7 @@ class TestValidateSignal:
             "confidence": 5,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
 
     def test_confidence_out_of_range(self):
@@ -82,7 +82,7 @@ class TestValidateSignal:
             "confidence": 11,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
         assert any("confidence" in e.lower() for e in errs)
 
@@ -95,7 +95,7 @@ class TestValidateSignal:
             "confidence": 5,
             "leverage": 25,
         }
-        ok, errs = self._validate(sig, max_leverage=20)
+        ok, errs = self._validate(sig, max_leverage=20, current_price=100.0)
         assert ok is False
         assert any("leverage" in e.lower() for e in errs)
 
@@ -108,7 +108,7 @@ class TestValidateSignal:
             "confidence": 0,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
 
     def test_invalid_trade_type(self):
@@ -126,7 +126,7 @@ class TestValidateSignal:
             "confidence": 5,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
         assert any("entry_price" in e for e in errs)
 
@@ -139,7 +139,7 @@ class TestValidateSignal:
             "confidence": 5,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
         assert any("take_profit" in e for e in errs)
 
@@ -152,9 +152,107 @@ class TestValidateSignal:
             "confidence": 5,
             "leverage": 2,
         }
-        ok, errs = self._validate(sig)
+        ok, errs = self._validate(sig, current_price=100.0)
         assert ok is False
         assert any("stop_loss" in e for e in errs)
+
+    def test_no_current_price_allows_trade(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [95],
+            "take_profits": [110],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is True
+
+    def test_fractional_leverage_rejected(self):
+        sig = {
+            "trade_type": "No Trade",
+            "confidence": 5,
+            "leverage": 5.5,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is False
+        assert any("whole number" in e.lower() for e in errs)
+
+    def test_entry_too_far_from_current_price(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [95],
+            "take_profits": [110],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig, current_price=80.0)
+        assert ok is False
+        assert any("deviates" in e for e in errs)
+
+    def test_bad_risk_reward_ratio_rejected(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [80.0],
+            "take_profits": [105.0],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig, current_price=100.0)
+        assert ok is False
+        assert any("risk:reward" in e.lower() for e in errs)
+
+    def test_acceptable_risk_reward_passes(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [95.0],
+            "take_profits": [103.0],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig, current_price=100.0)
+        assert ok is True
+
+    def test_wide_stop_loss_rejected(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [85.0],
+            "take_profits": [120.0],
+            "confidence": 7,
+            "leverage": 5,
+        }
+        ok, errs = self._validate(sig, current_price=100.0)
+        assert ok is False
+        assert any("10%" in e for e in errs)
+
+    def test_high_leverage_low_confidence_rejected(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [97.0],
+            "take_profits": [106.0],
+            "confidence": 3,
+            "leverage": 15,
+        }
+        ok, errs = self._validate(sig, current_price=100.0)
+        assert ok is False
+        assert any("leverage" in e.lower() and "confidence" in e.lower() for e in errs)
+
+    def test_high_leverage_high_confidence_passes(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [97.0],
+            "take_profits": [106.0],
+            "confidence": 7,
+            "leverage": 15,
+        }
+        ok, errs = self._validate(sig, current_price=100.0)
+        assert ok is True
 
     def test_confidence_bool_rejected(self):
         sig = {
