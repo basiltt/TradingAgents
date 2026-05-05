@@ -46,6 +46,7 @@ async def test_start_scan_success(client):
 @pytest.mark.asyncio
 async def test_start_scan_missing_api_key(client, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TRADINGAGENTS_BACKEND_URL", raising=False)
     resp = await client.post(
         "/api/v1/scanner",
         json={"analysis_date": "2025-06-01", "provider": "openai"},

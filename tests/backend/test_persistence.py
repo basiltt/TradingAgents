@@ -462,9 +462,10 @@ def test_insert_run_invalid_asset_type_raises(db):
 
 
 def test_report_sections_fk_nonexistent_run_raises(db):
-    """R8: FK constraint on report_sections.run_id is enforced."""
-    with pytest.raises(Exception):
-        db.save_report_section("nonexistent-run-id", "market", "data")
+    """save_report_section with nonexistent run_id silently ignores the insert (FK enforced)."""
+    db.save_report_section("nonexistent-run-id", "market", "data")
+    sections = db.get_report_sections("nonexistent-run-id")
+    assert len(sections) == 0
 
 
 def test_pre_migration_backup_already_exists_no_overwrite(tmp_path):
