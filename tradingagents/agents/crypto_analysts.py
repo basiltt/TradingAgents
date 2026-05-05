@@ -27,15 +27,6 @@ from tradingagents.agents.utils.signal_validation import (
 
 logger = logging.getLogger(__name__)
 
-_ANALYST_VERDICT_BLOCK = (
-    "\n\nAt the END of your report, you MUST include a structured verdict block:\n"
-    "```\n"
-    "VERDICT: NEUTRAL | BULLISH | BEARISH\n"
-    "SCORE: <1-10> (1=strongly bearish, 5=neutral, 10=strongly bullish)\n"
-    "KEY_FACTOR: <one-sentence reason for your verdict>\n"
-    "```\n"
-    "This verdict is critical — downstream agents depend on it for decision-making."
-)
 
 _ANALYST_SYSTEM_PREFIX = (
     "You are a helpful AI assistant, collaborating with other assistants."
@@ -67,7 +58,7 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             "and potential entry/exit zones. Include the current price and data timestamp in "
             "your report. Call get_crypto_klines first, then get_crypto_indicators."
             " Write a detailed report with a Markdown summary table at the end."
-            + _ANALYST_VERDICT_BLOCK
+
             + get_language_instruction()
         )
 
@@ -108,7 +99,7 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
             "sentiment and potential liquidation cascades, and current market snapshot. "
             "If any data source is unavailable, acknowledge it and continue with available data."
             " Write a detailed report with a Markdown summary table at the end."
-            + _ANALYST_VERDICT_BLOCK
+
             + get_language_instruction()
         )
 
@@ -146,7 +137,7 @@ def create_crypto_news_analyst(llm):
             "'Ethereum'), related futures/derivatives news, and broader crypto market events. "
             "Use get_news for targeted searches and get_global_news for macro context. "
             "Write a comprehensive report with a Markdown summary table at the end."
-            + _ANALYST_VERDICT_BLOCK
+
             + get_language_instruction()
         )
 
@@ -190,7 +181,7 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
             "Compare to major benchmarks (BTC, ETH) where relevant. "
             "If data is unavailable, acknowledge it and continue with what you have. "
             "Write a detailed report with a Markdown summary table at the end."
-            + _ANALYST_VERDICT_BLOCK
+
             + get_language_instruction()
         )
 
@@ -234,7 +225,7 @@ def create_crypto_social_analyst(llm, coingecko_tools: list):
             "Assess whether social momentum supports or contradicts the price action. "
             "If data is unavailable, acknowledge it and continue with what you have. "
             "Write a detailed report with a Markdown summary table at the end."
-            + _ANALYST_VERDICT_BLOCK
+
             + get_language_instruction()
         )
 
@@ -285,19 +276,19 @@ def create_confluence_checker(llm):
         prompt = (
             "You are a Confluence Checker. Your job is to cross-validate the analyst reports below "
             "and produce a structured consensus summary.\n\n"
-            "Each analyst report ends with a VERDICT block (BULLISH/BEARISH/NEUTRAL + SCORE 1-10). "
-            "Use these verdicts as the primary input — they represent each analyst's bottom-line view.\n\n"
+            "Read each analyst report carefully and identify the directional lean from the "
+            "evidence presented (bullish, bearish, or neutral).\n\n"
             f"Current price context:\n{price_context}\n\n"
             f"Analyst Reports:{reports}\n\n"
             "Produce a structured summary with these sections:\n"
-            "1. **VERDICT TALLY**: List each analyst's verdict and score in a table\n"
+            "1. **ANALYST LEANS**: For each analyst, state the directional lean you inferred from their report\n"
             "2. **AGREEMENTS**: Points where 2+ analysts agree (bullish or bearish)\n"
             "3. **CONTRADICTIONS**: Points where analysts disagree — state both sides\n"
-            "4. **CONSENSUS DIRECTION**: Choose exactly one based on the weighted verdicts:\n"
-            "   - Bullish (majority of analysts scored >= 6)\n"
-            "   - Bearish (majority of analysts scored <= 4)\n"
-            "   - Neutral (scores cluster around 5, no strong lean)\n"
-            "   - Conflicting (analysts actively disagree — e.g. one scored >= 7 while another scored <= 3)\n"
+            "4. **CONSENSUS DIRECTION**: Choose exactly one:\n"
+            "   - Bullish (majority of analysts lean bullish)\n"
+            "   - Bearish (majority of analysts lean bearish)\n"
+            "   - Neutral (no strong lean in either direction)\n"
+            "   - Conflicting (analysts actively disagree)\n"
             "5. **CONSENSUS CONFIDENCE**: 1-10 based on how much the analysts agree\n"
             "6. **KEY RISK**: The single biggest risk that could invalidate the consensus\n\n"
             "IMPORTANT: If analysts contradict each other, say 'Conflicting' — do NOT force a direction. "
@@ -314,6 +305,182 @@ def create_confluence_checker(llm):
     return node
 
 
+# ---------------------------------------------------------------------------
+# Crypto Bull/Bear Researchers — debate layer between Confluence and RM
+# ---------------------------------------------------------------------------
+
+
+def create_crypto_bull_researcher(llm):
+    def node(state):
+        investment_debate_state = state["investment_debate_state"]
+        history = investment_debate_state.get("history", "")
+        bull_history = investment_debate_state.get("bull_history", "")
+        current_response = investment_debate_state.get("current_response", "")
+
+        market_report = state.get("market_report", "")
+        news_report = state.get("news_report", "")
+        fundamentals_report = state.get("fundamentals_report", "")
+        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
+        sentiment_report = state.get("sentiment_report", "")
+        confluence_summary = state.get("confluence_summary", "")
+        price_context = state.get("current_price_context", "")
+
+        prompt = f"""You are a Bull Researcher advocating for a long position in this crypto asset. Build an evidence-based case emphasizing upside potential, favorable market structure, and positive catalysts.
+
+Key points to focus on:
+- Upside Potential: Highlight favorable funding rates, bullish OI trends, strong volume, and positive technical setups.
+- Fundamental Strengths: Emphasize tokenomics health, growing adoption, developer activity, and strong community engagement.
+- Positive Catalysts: Use recent news, social sentiment momentum, and macro tailwinds as evidence.
+- Bear Counterpoints: Critically analyze the bear argument with specific data, showing why the bull case holds merit.
+- Intellectual Honesty: If the data does not support a bullish case, acknowledge that rather than fabricating arguments.
+
+Resources available:
+Market/Technical report: {market_report}
+Social sentiment report: {sentiment_report}
+News report: {news_report}
+Derivatives report: {fundamentals_report}
+Crypto fundamentals report: {crypto_fundamentals_report}
+Confluence summary: {confluence_summary}
+Current price data: {price_context}
+Debate history: {history}
+Last bear argument: {current_response}
+
+Present the evidence-based bull case for this asset."""
+
+        response = llm.invoke(prompt)
+        argument = f"Bull Analyst: {response.content}"
+
+        new_state = {
+            "history": history + "\n" + argument,
+            "bull_history": bull_history + "\n" + argument,
+            "bear_history": investment_debate_state.get("bear_history", ""),
+            "current_response": argument,
+            "count": investment_debate_state["count"] + 1,
+        }
+
+        return {"investment_debate_state": new_state}
+
+    return node
+
+
+def create_crypto_bear_researcher(llm):
+    def node(state):
+        investment_debate_state = state["investment_debate_state"]
+        history = investment_debate_state.get("history", "")
+        bear_history = investment_debate_state.get("bear_history", "")
+        current_response = investment_debate_state.get("current_response", "")
+
+        market_report = state.get("market_report", "")
+        news_report = state.get("news_report", "")
+        fundamentals_report = state.get("fundamentals_report", "")
+        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
+        sentiment_report = state.get("sentiment_report", "")
+        confluence_summary = state.get("confluence_summary", "")
+        price_context = state.get("current_price_context", "")
+
+        prompt = f"""You are a Bear Researcher making the case against a long position in this crypto asset. Present an evidence-based argument emphasizing downside risks, structural weaknesses, and negative indicators.
+
+Key points to focus on:
+- Downside Risks: Highlight unfavorable funding rates, declining OI, bearish technical patterns, and liquidation risks.
+- Fundamental Weaknesses: Emphasize tokenomics concerns (inflation, concentration), declining developer activity, or weak community metrics.
+- Negative Catalysts: Use adverse news, regulatory threats, declining social sentiment, or macro headwinds.
+- Bull Counterpoints: Critically analyze the bull argument with specific data, exposing over-optimistic assumptions.
+- Intellectual Honesty: If the data genuinely supports a bullish case, acknowledge that rather than manufacturing bearish arguments.
+
+Resources available:
+Market/Technical report: {market_report}
+Social sentiment report: {sentiment_report}
+News report: {news_report}
+Derivatives report: {fundamentals_report}
+Crypto fundamentals report: {crypto_fundamentals_report}
+Confluence summary: {confluence_summary}
+Current price data: {price_context}
+Debate history: {history}
+Last bull argument: {current_response}
+
+Present the evidence-based bear case for this asset."""
+
+        response = llm.invoke(prompt)
+        argument = f"Bear Analyst: {response.content}"
+
+        new_state = {
+            "history": history + "\n" + argument,
+            "bear_history": bear_history + "\n" + argument,
+            "bull_history": investment_debate_state.get("bull_history", ""),
+            "current_response": argument,
+            "count": investment_debate_state["count"] + 1,
+        }
+
+        return {"investment_debate_state": new_state}
+
+    return node
+
+
+# ---------------------------------------------------------------------------
+# Crypto Research Manager — judges the bull/bear debate
+# ---------------------------------------------------------------------------
+
+
+def create_crypto_research_manager(llm):
+    from tradingagents.agents.schemas import ResearchPlan, render_research_plan
+    from tradingagents.agents.utils.agent_utils import build_instrument_context
+    from tradingagents.agents.utils.structured import (
+        bind_structured,
+        invoke_structured_or_freetext,
+    )
+
+    structured_llm = bind_structured(llm, ResearchPlan, "Crypto Research Manager")
+
+    def node(state):
+        instrument_context = build_instrument_context(state["company_of_interest"])
+        investment_debate_state = state["investment_debate_state"]
+        history = investment_debate_state.get("history", "")
+
+        prompt = f"""As the Crypto Research Manager and debate facilitator, critically evaluate the bull/bear debate and deliver a clear, actionable investment plan for the crypto trader.
+
+{instrument_context}
+
+---
+
+**Rating Scale** (use exactly one):
+- **Buy**: Strong conviction in the bull thesis; recommend taking or growing the position
+- **Overweight**: Constructive view; recommend gradually increasing exposure
+- **Hold**: Balanced view; recommend maintaining the current position
+- **Underweight**: Cautious view; recommend trimming exposure
+- **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
+
+Commit to a clear stance based on the weight of evidence. Hold is a fully valid recommendation when the evidence is balanced or insufficient — not a last resort.
+
+---
+
+**Debate History:**
+{history}"""
+
+        investment_plan, _ = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_research_plan,
+            "Crypto Research Manager",
+        )
+
+        new_investment_debate_state = {
+            "judge_decision": investment_plan,
+            "history": investment_debate_state.get("history", ""),
+            "bear_history": investment_debate_state.get("bear_history", ""),
+            "bull_history": investment_debate_state.get("bull_history", ""),
+            "current_response": investment_plan,
+            "count": investment_debate_state["count"],
+        }
+
+        return {
+            "investment_debate_state": new_investment_debate_state,
+            "investment_plan": investment_plan,
+        }
+
+    return node
+
+
 def create_crypto_trader(llm, max_leverage: int = 20):
     signal_schema_str = json.dumps(SIGNAL_SCHEMA, indent=2)
 
@@ -322,40 +489,41 @@ def create_crypto_trader(llm, max_leverage: int = 20):
         instrument_context = build_instrument_context(company)
         price_context = state.get("current_price_context", "")
         investment_plan = state.get("investment_plan", "")
-        market_report = state.get("market_report", "")
-        news_report = state.get("news_report", "")
-        fundamentals_report = state.get("fundamentals_report", "")
-        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
-        sentiment_report = state.get("sentiment_report", "")
         confluence_summary = state.get("confluence_summary", "")
 
-        analyst_context = ""
-        if market_report:
-            analyst_context += f"\n\n## Market/Technical Report\n{market_report}"
-        if news_report:
-            analyst_context += f"\n\n## News Report\n{news_report}"
-        if fundamentals_report:
-            analyst_context += f"\n\n## Fundamentals/Derivatives Report\n{fundamentals_report}"
-        if crypto_fundamentals_report:
-            analyst_context += f"\n\n## Crypto Fundamentals Report\n{crypto_fundamentals_report}"
-        if sentiment_report:
-            analyst_context += f"\n\n## Social Sentiment Report\n{sentiment_report}"
+        if not investment_plan or not investment_plan.strip():
+            logger.warning(
+                "CryptoTrader: no investment_plan received for %s; "
+                "defaulting to No Trade.",
+                company,
+            )
+            no_trade_signal = {
+                "trade_type": "No Trade",
+                "confidence": 1,
+                "reasoning": "No investment plan received from Research Manager. Cannot determine direction.",
+            }
+            return {
+                "messages": [AIMessage(content=json.dumps(no_trade_signal, indent=2))],
+                "trader_investment_plan": json.dumps(no_trade_signal, indent=2),
+                "sender": "CryptoTrader",
+            }
 
-        confluence_section = f"\n\n## Confluence Analysis\n{confluence_summary}" if confluence_summary else ""
+        market_report = state.get("market_report", "")
 
         base_prompt = (
-            f"You are a crypto futures trader analyzing {company}. {instrument_context}\n\n"
+            f"You are a crypto futures execution trader for {company}. {instrument_context}\n\n"
+            f"The directional decision has ALREADY been made by the Research Manager. "
+            f"Your job is to translate their investment plan into precise execution levels.\n\n"
+            f"## Research Manager's Investment Plan\n{investment_plan}\n\n"
+            f"## Confluence Summary\n{confluence_summary}\n\n"
+            f"## Technical Analysis (use for support/resistance levels when setting SL/TP)\n"
+            f"{market_report if market_report else 'Not available'}\n\n"
             f"IMPORTANT — CURRENT PRICE DATA (base your entry/SL/TP on this):\n{price_context}\n\n"
-            f"HOW TO READ ANALYST REPORTS:\n"
-            f"Each analyst report ends with a VERDICT block containing their direction "
-            f"(BULLISH/BEARISH/NEUTRAL) and a score (1-10). Use these as your primary inputs:\n"
-            f"- If 3+ analysts agree AND no analyst actively contradicts (opposite direction with score >= 6), lean that way\n"
-            f"- If analysts are split, contradicting, or mostly NEUTRAL, consider No Trade\n"
-            f"- The confluence summary tallies these verdicts — use it as a quick reference\n\n"
-            f"DECISION RULES:\n"
-            f"- Evaluate the data objectively. If the evidence clearly supports a direction, output the corresponding signal. "
-            f"If the evidence is genuinely conflicting or insufficient, output 'No Trade'.\n"
-            f"- Both trading and not trading are valid outcomes — choose based on the data, not caution.\n\n"
+            f"EXECUTION RULES:\n"
+            f"- If the RM recommends Buy or Overweight, output a Long signal\n"
+            f"- If the RM recommends Sell or Underweight, output a Short signal\n"
+            f"- If the RM recommends Hold, output 'No Trade'\n"
+            f"- Do NOT override the RM's direction — focus on execution levels only\n\n"
             f"PRICE ANCHORING RULES (mandatory when trading):\n"
             f"- Your entry_price MUST be within 2% of the current last-traded price.\n"
             f"- You must provide at least 1 stop_loss and at least 1 take_profit.\n"
@@ -365,15 +533,12 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             f"- Risk:reward ratio must be at least 0.5 (TP distance >= half of SL distance).\n"
             f"- Leverage above 10x requires confidence >= 5.\n\n"
             f"CONFIDENCE CALIBRATION (1-10 scale):\n"
-            f"- 1-3: Conflicting or insufficient data\n"
-            f"- 4-5: Mixed signals with slight directional lean\n"
-            f"- 6-7: Multiple aligned signals with minor concerns\n"
-            f"- 8-9: Strong multi-timeframe alignment, clear trend + volume confirmation\n"
+            f"- 1-3: Weak conviction from RM, conservative sizing\n"
+            f"- 4-5: Moderate conviction, standard sizing\n"
+            f"- 6-7: Strong conviction, can size up\n"
+            f"- 8-9: Very strong conviction across all signals\n"
             f"- 10: Exceptional — rarely appropriate\n\n"
             f"You MUST output a JSON object matching this schema:\n{signal_schema_str}\n\n"
-            f"Research plan: {investment_plan}"
-            f"{analyst_context}"
-            f"{confluence_section}\n\n"
             f"Output ONLY the JSON inside a ```json``` code block."
         )
 
@@ -440,12 +605,11 @@ def create_crypto_risk_bull_debater(llm):
         prompt = (
             f"As the Bullish Risk Analyst for crypto futures, your role is to identify "
             f"upside opportunity in the current market using evidence from the reports.\n\n"
-            f"- If the trader proposes a Long/Short: argue in favor, emphasizing upside "
-            f"potential, favorable risk-reward, and supportive conditions.\n"
-            f"- If the trader proposes 'No Trade': challenge that decision — argue that "
-            f"there IS a tradeable opportunity being missed.\n\n"
-            f"You must be intellectually honest — if the data does not support "
-            f"a bullish case, acknowledge weaknesses rather than fabricating arguments.\n\n"
+            f"- Present the strongest evidence-based case for why this trade has favorable "
+            f"risk-reward, citing specific data points from the reports.\n"
+            f"- If the data genuinely does not support a bullish case, acknowledge that "
+            f"honestly rather than fabricating arguments.\n"
+            f"- Your job is to stress-test the bear's concerns, not to force a trade.\n\n"
             f"CURRENT PRICE DATA:\n{price_context}\n\n"
             f"Trader's decision: {trader_decision}\n"
             f"Market report: {market_report}\n"
@@ -454,7 +618,7 @@ def create_crypto_risk_bull_debater(llm):
             f"{extra_context}"
             f"Debate history: {history}\n"
             f"Bear analyst's last response: {bear_response}\n\n"
-            f"Counter the bear's arguments with evidence."
+            f"Present the evidence-based bull case."
         )
 
         response = llm.invoke(prompt)
@@ -500,10 +664,11 @@ def create_crypto_risk_bear_debater(llm):
         prompt = (
             f"As the Bearish Risk Analyst for crypto futures, identify specific downside "
             f"risks using DATA from the reports — cite numbers, levels, and indicators.\n\n"
-            f"- If the trader proposes a Long/Short: argue against using specific evidence "
-            f"(e.g. resistance levels, declining volume, negative funding rates, bearish divergence).\n"
-            f"- If the trader proposes 'No Trade': support that caution with specific data "
-            f"points showing why conditions are too uncertain.\n\n"
+            f"- Present the strongest evidence-based case for why this trade carries "
+            f"unfavorable risk (e.g. resistance levels, declining volume, negative funding rates).\n"
+            f"- If the data genuinely supports the trade, acknowledge that honestly "
+            f"rather than manufacturing bearish arguments.\n"
+            f"- Your job is to stress-test the bull's optimism, not to force a no-trade.\n\n"
             f"RULES:\n"
             f"- Every claim must reference a specific data point from the reports.\n"
             f"- Do NOT use generic fear language ('crash', 'catastrophic', 'wipeout') — "
@@ -518,7 +683,7 @@ def create_crypto_risk_bear_debater(llm):
             f"{extra_context}"
             f"Debate history: {history}\n"
             f"Bull analyst's last response: {bull_response}\n\n"
-            f"Counter the bull's arguments with evidence of downside risks."
+            f"Present the evidence-based bear case."
         )
 
         response = llm.invoke(prompt)

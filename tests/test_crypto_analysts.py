@@ -357,6 +357,16 @@ class TestCryptoTraderAllReports:
         llm = MagicMock()
         llm.invoke.return_value = AIMessage(content="not json at all")
         node = create_crypto_trader(llm)
-        result = node(_base_state())
+        state = _base_state()
+        state["investment_plan"] = "Buy BTC"
+        result = node(state)
         assert "Error" in result["trader_investment_plan"]
         assert llm.invoke.call_count == 2
+
+    def test_empty_investment_plan_returns_no_trade(self):
+        from tradingagents.agents.crypto_analysts import create_crypto_trader
+        llm = MagicMock()
+        node = create_crypto_trader(llm)
+        result = node(_base_state())
+        assert "No Trade" in result["trader_investment_plan"]
+        assert llm.invoke.call_count == 0

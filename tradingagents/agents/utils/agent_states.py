@@ -85,3 +85,10 @@ class AgentState(MessagesState):
     # Never written to logs, memory, or rendered markdown.
     _pm_signal_data: Annotated[Optional[Any], _last]
     _trader_signal_data: Annotated[Optional[Any], _last]
+
+    # Compliance Officer result (pre-trade gate)
+    compliance_result: Annotated[Optional[str], _last]
+    _compliance_verdict: Annotated[Optional[str], _last]
+
+    # Execution Monitor notes (post-decision addendum)
+    execution_notes: Annotated[Optional[str], _last]

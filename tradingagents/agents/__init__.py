@@ -18,6 +18,9 @@ from .managers.portfolio_manager import create_portfolio_manager
 
 from .trader.trader import create_trader
 
+from .compliance.compliance_officer import create_compliance_officer
+from .compliance.execution_monitor import create_execution_monitor
+
 __all__ = [
     "AgentState",
     "create_msg_delete",
@@ -35,4 +38,6 @@ __all__ = [
     "create_conservative_debator",
     "create_social_media_analyst",
     "create_trader",
+    "create_compliance_officer",
+    "create_execution_monitor",
 ]

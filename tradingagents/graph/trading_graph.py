@@ -143,14 +143,29 @@ class TradingAgentsGraph:
 
         # Set up the graph based on asset type
         asset_type = self.config.get("asset_type", "stock")
+
+        # Create compliance + execution monitor nodes for both flows
+        from tradingagents.agents.compliance import (
+            create_compliance_officer,
+            create_execution_monitor,
+        )
+        compliance_node = create_compliance_officer(self.quick_thinking_llm)
+        monitor_node = create_execution_monitor(self.quick_thinking_llm)
+
         if asset_type == "crypto":
-            self.workflow = self._setup_crypto_workflow(selected_analysts)
+            self.workflow = self._setup_crypto_workflow(
+                selected_analysts, compliance_node, monitor_node,
+            )
         else:
-            self.workflow = self.graph_setup.setup_graph(selected_analysts)
+            self.workflow = self.graph_setup.setup_graph(
+                selected_analysts,
+                compliance_officer_node=compliance_node,
+                execution_monitor_node=monitor_node,
+            )
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _setup_crypto_workflow(self, selected_analysts):
+    def _setup_crypto_workflow(self, selected_analysts, compliance_node=None, monitor_node=None):
         from tradingagents.agents.utils.crypto_agent_utils import make_crypto_tools
         from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
         from tradingagents.agents.crypto_analysts import (
@@ -163,6 +178,9 @@ class TradingAgentsGraph:
             create_crypto_risk_bull_debater,
             create_crypto_risk_bear_debater,
             create_crypto_portfolio_manager,
+            create_crypto_bull_researcher,
+            create_crypto_bear_researcher,
+            create_crypto_research_manager,
             create_confluence_checker,
         )
         from tradingagents.dataflows.bybit_data import BybitRateLimiter, BybitCircuitBreaker
@@ -237,6 +255,10 @@ class TradingAgentsGraph:
         pm_node = create_crypto_portfolio_manager(self.deep_thinking_llm, max_leverage=max_leverage)
         confluence_node = create_confluence_checker(self.quick_thinking_llm)
 
+        bull_researcher = create_crypto_bull_researcher(self.quick_thinking_llm)
+        bear_researcher = create_crypto_bear_researcher(self.quick_thinking_llm)
+        research_manager = create_crypto_research_manager(self.deep_thinking_llm)
+
         return self.graph_setup.setup_crypto_graph(
             selected_analysts=selected_analysts,
             crypto_analyst_nodes=analyst_nodes,
@@ -246,6 +268,11 @@ class TradingAgentsGraph:
             crypto_bear_debater=bear_debater,
             crypto_portfolio_manager=pm_node,
             confluence_checker_node=confluence_node,
+            crypto_bull_researcher=bull_researcher,
+            crypto_bear_researcher=bear_researcher,
+            crypto_research_manager=research_manager,
+            compliance_officer_node=compliance_node,
+            execution_monitor_node=monitor_node,
         )
 
     def _get_provider_kwargs(self) -> Dict[str, Any]:

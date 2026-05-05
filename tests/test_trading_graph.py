@@ -39,7 +39,9 @@ class TestConstructor:
         assert obj.debug is False
         assert mock_llm.call_count == 2
         mock_mkdirs.assert_called()
-        mock_gs_inst.setup_graph.assert_called_once_with(["market"])
+        mock_gs_inst.setup_graph.assert_called_once()
+        call_args = mock_gs_inst.setup_graph.call_args
+        assert call_args[0][0] == ["market"]
 
     @patch("tradingagents.graph.trading_graph.set_config")
     @patch("tradingagents.graph.trading_graph.os.makedirs")

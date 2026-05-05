@@ -32,7 +32,7 @@ def create_research_manager(llm):
 - **Underweight**: Cautious view; recommend trimming exposure
 - **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
 
-Commit to a clear stance whenever the debate's strongest arguments warrant one; reserve Hold for situations where the evidence on both sides is genuinely balanced.
+Commit to a clear stance based on the weight of evidence. Hold is a fully valid recommendation when the evidence is balanced or insufficient — not a last resort.
 
 ---
 

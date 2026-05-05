@@ -10,6 +10,26 @@ from tradingagents.agents.utils.agent_states import AgentState
 from .conditional_logic import ConditionalLogic
 
 
+def _compliance_router(state) -> str:
+    """Route based on compliance verdict: fail-closed — only Pass/Flag proceed."""
+    verdict = state.get("_compliance_verdict")
+    if verdict in ("Pass", "Flag"):
+        return "risk_debate"
+    return "blocked"
+
+
+def _blocked_trade_node(state) -> dict:
+    """Terminal node for compliance-blocked trades. Writes a clear rejection."""
+    compliance_result = state.get("compliance_result", "No details available.")
+    return {
+        "final_trade_decision": (
+            "## TRADE BLOCKED BY COMPLIANCE\n\n"
+            "This trade was blocked by the Compliance Officer and **must not be executed**.\n\n"
+            f"### Compliance Review\n{compliance_result}"
+        ),
+    }
+
+
 def _build_analyst_subgraph(
     analyst_type: str,
     analyst_node: Callable,
@@ -68,7 +88,10 @@ class GraphSetup:
         return _wrapper
 
     def setup_graph(
-        self, selected_analysts=["market", "social", "news", "fundamentals"]
+        self,
+        selected_analysts=["market", "social", "news", "fundamentals"],
+        compliance_officer_node=None,
+        execution_monitor_node=None,
     ):
         """Set up and compile the agent workflow graph.
 
@@ -142,7 +165,24 @@ class GraphSetup:
             },
         )
         workflow.add_edge("Research Manager", "Trader")
-        workflow.add_edge("Trader", "Aggressive Analyst")
+
+        # Compliance gate between Trader and Risk Analysts
+        if compliance_officer_node:
+            workflow.add_node("Compliance Officer", compliance_officer_node)
+            workflow.add_node("Blocked Trade", _blocked_trade_node)
+            workflow.add_edge("Trader", "Compliance Officer")
+            workflow.add_conditional_edges(
+                "Compliance Officer",
+                _compliance_router,
+                {
+                    "risk_debate": "Aggressive Analyst",
+                    "blocked": "Blocked Trade",
+                },
+            )
+            workflow.add_edge("Blocked Trade", END)
+        else:
+            workflow.add_edge("Trader", "Aggressive Analyst")
+
         workflow.add_conditional_edges(
             "Aggressive Analyst",
             self.conditional_logic.should_continue_risk_analysis,
@@ -168,7 +208,13 @@ class GraphSetup:
             },
         )
 
-        workflow.add_edge("Portfolio Manager", END)
+        # Execution monitor after PM
+        if execution_monitor_node:
+            workflow.add_node("Execution Monitor", execution_monitor_node)
+            workflow.add_edge("Portfolio Manager", "Execution Monitor")
+            workflow.add_edge("Execution Monitor", END)
+        else:
+            workflow.add_edge("Portfolio Manager", END)
 
         return workflow
 
@@ -182,17 +228,31 @@ class GraphSetup:
         crypto_bear_debater: Any,
         crypto_portfolio_manager: Any,
         confluence_checker_node: Any = None,
+        crypto_bull_researcher: Any = None,
+        crypto_bear_researcher: Any = None,
+        crypto_research_manager: Any = None,
+        compliance_officer_node: Any = None,
+        execution_monitor_node: Any = None,
     ):
         """Set up a crypto futures graph with bull/bear 2-party debate.
 
-        Analysts run in parallel via compiled subgraphs, then fan-in
-        to Trader (or Confluence Checker) for the debate phase.
+        Analysts run in parallel via compiled subgraphs, then fan-in to the
+        next stage. When researchers + RM are provided, the flow is:
+        Analysts → Confluence → Bull/Bear Researchers → RM → Trader → Risk Debate → PM
         """
         if not selected_analysts:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
 
-        # Determine the fan-in target after analysts complete
-        fan_in_target = "Confluence Checker" if confluence_checker_node else "Trader"
+        has_research_layer = (
+            crypto_bull_researcher is not None
+            and crypto_bear_researcher is not None
+            and crypto_research_manager is not None
+        )
+
+        # Fan-in target after analysts complete
+        fan_in_target = "Confluence Checker" if confluence_checker_node else (
+            "Bull Researcher" if has_research_layer else "Trader"
+        )
 
         workflow = StateGraph(AgentState)
 
@@ -209,15 +269,58 @@ class GraphSetup:
             workflow.add_edge(START, f"{analyst_type}_analysis")
             workflow.add_edge(f"{analyst_type}_analysis", fan_in_target)
 
-        workflow.add_node("Trader", crypto_trader_node)
         if confluence_checker_node:
             workflow.add_node("Confluence Checker", confluence_checker_node)
-            workflow.add_edge("Confluence Checker", "Trader")
+            if has_research_layer:
+                workflow.add_edge("Confluence Checker", "Bull Researcher")
+            else:
+                workflow.add_edge("Confluence Checker", "Trader")
+
+        if has_research_layer:
+            workflow.add_node("Bull Researcher", crypto_bull_researcher)
+            workflow.add_node("Bear Researcher", crypto_bear_researcher)
+            workflow.add_node("Research Manager", crypto_research_manager)
+
+            workflow.add_conditional_edges(
+                "Bull Researcher",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bear Researcher": "Bear Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Bear Researcher",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bull Researcher": "Bull Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
+            workflow.add_edge("Research Manager", "Trader")
+
+        workflow.add_node("Trader", crypto_trader_node)
         workflow.add_node("Bull Analyst", crypto_bull_debater)
         workflow.add_node("Bear Analyst", crypto_bear_debater)
         workflow.add_node("Portfolio Manager", crypto_portfolio_manager)
 
-        workflow.add_edge("Trader", "Bull Analyst")
+        # Compliance gate between Trader and Risk Debate
+        if compliance_officer_node:
+            workflow.add_node("Compliance Officer", compliance_officer_node)
+            workflow.add_node("Blocked Trade", _blocked_trade_node)
+            workflow.add_edge("Trader", "Compliance Officer")
+            workflow.add_conditional_edges(
+                "Compliance Officer",
+                _compliance_router,
+                {
+                    "risk_debate": "Bull Analyst",
+                    "blocked": "Blocked Trade",
+                },
+            )
+            workflow.add_edge("Blocked Trade", END)
+        else:
+            workflow.add_edge("Trader", "Bull Analyst")
+
         workflow.add_conditional_edges(
             "Bull Analyst",
             self.conditional_logic.should_continue_risk_analysis,
@@ -234,6 +337,12 @@ class GraphSetup:
                 "Portfolio Manager": "Portfolio Manager",
             },
         )
-        workflow.add_edge("Portfolio Manager", END)
+        # Execution monitor after PM
+        if execution_monitor_node:
+            workflow.add_node("Execution Monitor", execution_monitor_node)
+            workflow.add_edge("Portfolio Manager", "Execution Monitor")
+            workflow.add_edge("Execution Monitor", END)
+        else:
+            workflow.add_edge("Portfolio Manager", END)
 
         return workflow

@@ -53,6 +53,46 @@ class TraderAction(str, Enum):
     SELL = "Sell"
 
 
+class OrderType(str, Enum):
+    """Order type for the Trader's execution strategy."""
+
+    MARKET = "Market"
+    LIMIT = "Limit"
+    STOP_LIMIT = "Stop-Limit"
+
+
+# ---------------------------------------------------------------------------
+# Trader — intermediate schema for Call 1 (directional decision)
+# ---------------------------------------------------------------------------
+
+
+class TraderDirection(BaseModel):
+    """Directional decision produced by the Trader's first pass.
+
+    Synthesizes the 4 analyst reports and the Research Manager's plan
+    into a conviction call before any price-level calculation.
+    """
+
+    action: TraderAction = Field(
+        description="The transaction direction. Exactly one of Buy / Hold / Sell.",
+    )
+    confidence: int = Field(
+        description=(
+            "Conviction level from 1 (lowest) to 10 (highest) reflecting how "
+            "strongly the combined analyst evidence supports this action. "
+            "1-3 = weak/conflicting signals, 4-6 = moderate, 7-10 = strong alignment."
+        ),
+    )
+    reasoning: str = Field(
+        description=(
+            "The case for this action, synthesizing all four analyst reports "
+            "and the research plan. Cite specific signals (e.g. RSI level, "
+            "sentiment %, earnings surprise) that drove the decision. "
+            "Three to five sentences."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Research Manager
 # ---------------------------------------------------------------------------
@@ -167,6 +207,36 @@ class TraderProposal(BaseModel):
         default=None,
         description="Recommended holding period, e.g. '2-4 weeks' or '3-6 months'.",
     )
+    order_type: Optional[OrderType] = Field(
+        default=None,
+        description=(
+            "Preferred order type for execution. Market for immediate fills, "
+            "Limit for price-sensitive entries, Stop-Limit for breakout entries."
+        ),
+    )
+    scaling_plan: Optional[str] = Field(
+        default=None,
+        description=(
+            "How to scale into or out of the position across the take-profit "
+            "levels. E.g. '50% at TP1, 30% at TP2, 20% at TP3' or "
+            "'DCA in 3 equal tranches over 48 hours'."
+        ),
+    )
+    invalidation_thesis: Optional[str] = Field(
+        default=None,
+        description=(
+            "What would make this trade wrong — the specific condition or "
+            "price level that invalidates the thesis and warrants exiting "
+            "regardless of stop-loss. One to two sentences."
+        ),
+    )
+    catalyst_timing: Optional[str] = Field(
+        default=None,
+        description=(
+            "Key upcoming event or catalyst that affects timing, e.g. "
+            "'Earnings report on May 15 — enter before or wait for reaction'."
+        ),
+    )
 
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
@@ -200,6 +270,14 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
     if proposal.time_horizon:
         parts.extend(["", f"**Time Horizon**: {proposal.time_horizon}"])
+    if proposal.order_type is not None:
+        parts.extend(["", f"**Order Type**: {proposal.order_type.value}"])
+    if proposal.scaling_plan:
+        parts.extend(["", f"**Scaling Plan**: {proposal.scaling_plan}"])
+    if proposal.invalidation_thesis:
+        parts.extend(["", f"**Invalidation Thesis**: {proposal.invalidation_thesis}"])
+    if proposal.catalyst_timing:
+        parts.extend(["", f"**Catalyst/Timing**: {proposal.catalyst_timing}"])
     parts.extend([
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
@@ -280,4 +358,51 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
         parts.extend(["", f"**Price Target**: {decision.price_target}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Compliance Officer
+# ---------------------------------------------------------------------------
+
+
+class ComplianceVerdict(str, Enum):
+    """Outcome of a compliance check."""
+
+    PASS = "Pass"
+    FLAG = "Flag"
+    BLOCK = "Block"
+
+
+class ComplianceFinding(BaseModel):
+    """A single compliance finding."""
+
+    check: str = Field(description="Name of the check (e.g. 'Position Size', 'Leverage Cap').")
+    verdict: ComplianceVerdict = Field(description="Pass, Flag, or Block.")
+    detail: str = Field(description="Explanation of the finding.")
+
+
+class ComplianceCheck(BaseModel):
+    """Structured output from the Compliance Officer."""
+
+    overall_verdict: ComplianceVerdict = Field(
+        description=(
+            "Overall compliance verdict. Block if ANY finding is Block. "
+            "Flag if any finding is Flag but none are Block. Pass otherwise."
+        ),
+    )
+    findings: list[ComplianceFinding] = Field(
+        description="List of individual compliance check results.",
+    )
+    summary: str = Field(
+        description="One-paragraph summary of the compliance review.",
+    )
+
+
+def render_compliance_check(check: ComplianceCheck) -> str:
+    """Render a ComplianceCheck to markdown."""
+    parts = [f"**Overall Verdict**: {check.overall_verdict.value}", ""]
+    for f in check.findings:
+        parts.append(f"- **{f.check}** [{f.verdict.value}]: {f.detail}")
+    parts.extend(["", f"**Summary**: {check.summary}"])
     return "\n".join(parts)
