@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,23 @@ const RATING_STYLES: Record<string, string> = {
   Sell:        "text-red-400",
 };
 
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.cssText = "position:fixed;top:0;left:0;opacity:0;font-size:16px;";
+    document.body.appendChild(el);
+    el.focus();
+    el.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    ok ? resolve() : reject(new Error("execCommand failed"));
+  });
+}
+
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(100, value * 10));
   const color = value >= 7 ? "bg-emerald-500" : value >= 4 ? "bg-amber-500" : "bg-red-500";
@@ -31,38 +48,94 @@ function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
-function PriceLevel({ label, value, color, icon }: { label: string; value: number; color: string; icon: string }) {
-  return (
-    <div className={cn("flex items-center gap-3 px-4 py-3 rounded-lg bg-muted/20 border border-border/20")}>
-      <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", color.replace("text-", "bg-").replace(/\d00/, "500/15"))}>
-        <svg className={cn("w-4 h-4", color)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
-        </svg>
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-medium">{label}</p>
-        <p className={cn("text-sm font-semibold tabular-nums", color)}>{formatPrice(value)}</p>
-      </div>
-    </div>
-  );
-}
-
 function formatPrice(n: number): string {
   if (n >= 1000) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (n >= 1) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 8 });
 }
 
-function MetricPill({ label, value }: { label: string; value: string }) {
+function CopyCheckIcon() {
+  return (
+    <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+function PriceLevel({
+  label, value, color, icon, copied, onCopy,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  icon: string;
+  copied: boolean;
+  onCopy: (raw: number) => void;
+}) {
+  const formatted = formatPrice(value);
+  return (
+    <div className={cn("flex items-center gap-3 px-4 py-3 rounded-lg bg-muted/20 border border-border/20")}>
+      <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", color.replace("text-", "bg-").replace(/\d00/, "500/15"))}>
+        <svg className={cn("w-4 h-4", color)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+        </svg>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-medium">{label}</p>
+        <button
+          type="button"
+          onClick={() => onCopy(value)}
+          title="Tap to copy"
+          className={cn(
+            "text-sm font-semibold tabular-nums transition-all duration-150 rounded px-1 -mx-1 active:scale-95 flex items-center gap-1",
+            copied ? "text-emerald-400" : cn(color, "hover:opacity-70"),
+          )}
+        >
+          {copied && <CopyCheckIcon />}
+          {formatted}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MetricPill({
+  label, value, copied, onCopy,
+}: {
+  label: string;
+  value: string;
+  copied: boolean;
+  onCopy: (v: string) => void;
+}) {
   return (
     <div className="px-3.5 py-2 rounded-lg bg-muted/20 border border-border/20">
       <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-medium">{label}</p>
-      <p className="text-sm font-medium text-foreground/80 mt-0.5">{value}</p>
+      <button
+        type="button"
+        onClick={() => onCopy(value)}
+        title="Tap to copy"
+        className={cn(
+          "text-sm font-medium mt-0.5 transition-all duration-150 rounded px-1 -mx-1 active:scale-95 flex items-center gap-1",
+          copied ? "text-emerald-400" : "text-foreground/80 hover:opacity-70",
+        )}
+      >
+        {copied && <CopyCheckIcon />}
+        {value}
+      </button>
     </div>
   );
 }
 
 export const TradingCard = memo(function TradingCard({ data }: { data: TradeCardData }) {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopy = useCallback((key: string, text: string) => {
+    copyToClipboard(text).then(() => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 1500);
+    });
+  }, []);
+
   const actionStyle = ACTION_STYLES[data.action ?? ""] ?? ACTION_STYLES.Hold;
   const ratingColor = RATING_STYLES[data.rating ?? ""] ?? "text-muted-foreground";
 
@@ -114,7 +187,14 @@ export const TradingCard = memo(function TradingCard({ data }: { data: TradeCard
               <p className="text-xs font-medium text-muted-foreground/60 mb-3 uppercase tracking-wider">Price Levels</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {data.entryPrice != null && (
-                  <PriceLevel label="Entry" value={data.entryPrice} color="text-blue-400" icon="M12 4v16m0-16l-4 4m4-4l4 4" />
+                  <PriceLevel
+                    label="Entry"
+                    value={data.entryPrice}
+                    color="text-blue-400"
+                    icon="M12 4v16m0-16l-4 4m4-4l4 4"
+                    copied={copiedKey === "entry"}
+                    onCopy={(v) => handleCopy("entry", String(v))}
+                  />
                 )}
                 {slLevels.map((sl, i) => (
                   <PriceLevel
@@ -123,6 +203,8 @@ export const TradingCard = memo(function TradingCard({ data }: { data: TradeCard
                     value={sl}
                     color="text-red-400"
                     icon="M19 14l-7 7m0 0l-7-7m7 7V3"
+                    copied={copiedKey === `sl-${i}`}
+                    onCopy={(v) => handleCopy(`sl-${i}`, String(v))}
                   />
                 ))}
                 {tpLevels.map((tp, i) => (
@@ -132,6 +214,8 @@ export const TradingCard = memo(function TradingCard({ data }: { data: TradeCard
                     value={tp}
                     color="text-emerald-400"
                     icon="M5 10l7-7m0 0l7 7m-7-7v18"
+                    copied={copiedKey === `tp-${i}`}
+                    onCopy={(v) => handleCopy(`tp-${i}`, String(v))}
                   />
                 ))}
               </div>
@@ -142,13 +226,28 @@ export const TradingCard = memo(function TradingCard({ data }: { data: TradeCard
           {hasMetrics && (
             <div className="flex flex-wrap gap-2.5">
               {data.riskRewardRatio != null && (
-                <MetricPill label="Risk/Reward" value={`1:${data.riskRewardRatio}`} />
+                <MetricPill
+                  label="Risk/Reward"
+                  value={`1:${data.riskRewardRatio}`}
+                  copied={copiedKey === "rr"}
+                  onCopy={(v) => handleCopy("rr", v)}
+                />
               )}
               {data.positionSizing && (
-                <MetricPill label="Position Size" value={data.positionSizing} />
+                <MetricPill
+                  label="Position Size"
+                  value={data.positionSizing}
+                  copied={copiedKey === "pos"}
+                  onCopy={(v) => handleCopy("pos", v)}
+                />
               )}
               {data.timeHorizon && (
-                <MetricPill label="Time Horizon" value={data.timeHorizon} />
+                <MetricPill
+                  label="Time Horizon"
+                  value={data.timeHorizon}
+                  copied={copiedKey === "th"}
+                  onCopy={(v) => handleCopy("th", v)}
+                />
               )}
             </div>
           )}

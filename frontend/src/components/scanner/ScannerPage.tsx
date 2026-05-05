@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useModels } from "@/hooks/useModels";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
+import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 
 const PROVIDERS = ["openai", "anthropic", "google", "deepseek", "xai", "qwen", "glm", "openrouter", "azure", "ollama"] as const;
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
@@ -154,12 +155,12 @@ function ConnBadge({ status, latency, error, label = "Connected" }: { status: Co
 const SCAN_ID_KEY = "tradingagents_active_scan";
 
 function loadActiveScanId(): string | null {
-  return sessionStorage.getItem(SCAN_ID_KEY);
+  return localStorage.getItem(SCAN_ID_KEY);
 }
 
 function saveActiveScanId(id: string | null) {
-  if (id) sessionStorage.setItem(SCAN_ID_KEY, id);
-  else sessionStorage.removeItem(SCAN_ID_KEY);
+  if (id) localStorage.setItem(SCAN_ID_KEY, id);
+  else localStorage.removeItem(SCAN_ID_KEY);
 }
 
 export function ScannerPage() {
@@ -220,6 +221,17 @@ export function ScannerPage() {
     _setActiveScanId(id);
     saveActiveScanId(id);
   };
+
+  // On mount, if no scan ID is stored locally, discover any running scan from the
+  // backend so other devices on the network automatically attach to the active scan.
+  useEffect(() => {
+    if (activeScanId) return;
+    apiClient.listScans().then((data) => {
+      const running = data.scans.find((s) => s.status === "running");
+      if (running) setActiveScanId(running.scan_id);
+    }).catch(() => { /* network unavailable — ignore */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const conn = useConnectivityCheck(backendUrl, llmApiKey || undefined);
   const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined);
@@ -801,47 +813,94 @@ export function ScannerPage() {
         <>
           {/* Buy signals */}
           {buyResults.length > 0 && (
-            <Card className="border-emerald-500/20">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Buy Signals ({buyResults.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
+            <>
+              {/* Mobile: collapsible */}
+              <MobileCollapse
+                storageKey="scanner:collapse:buy"
+                defaultOpen
+                title={
+                  <span className="text-sm font-semibold flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span className="text-emerald-500">Buy Signals</span>
+                    <span className="text-xs text-muted-foreground font-normal">({buyResults.length})</span>
+                  </span>
+                }
+              >
                 <ResultsTable results={buyResults} />
-              </CardContent>
-            </Card>
+              </MobileCollapse>
+              {/* Desktop: original card */}
+              <Card className="hidden md:block border-emerald-500/20">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    Buy Signals ({buyResults.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ResultsTable results={buyResults} />
+                </CardContent>
+              </Card>
+            </>
           )}
 
           {/* Sell signals */}
           {sellResults.length > 0 && (
-            <Card className="border-red-500/20">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-500" />
-                  Sell Signals ({sellResults.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
+            <>
+              <MobileCollapse
+                storageKey="scanner:collapse:sell"
+                defaultOpen
+                title={
+                  <span className="text-sm font-semibold flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                    <span className="text-red-500">Sell Signals</span>
+                    <span className="text-xs text-muted-foreground font-normal">({sellResults.length})</span>
+                  </span>
+                }
+              >
                 <ResultsTable results={sellResults} />
-              </CardContent>
-            </Card>
+              </MobileCollapse>
+              <Card className="hidden md:block border-red-500/20">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    Sell Signals ({sellResults.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ResultsTable results={sellResults} />
+                </CardContent>
+              </Card>
+            </>
           )}
 
           {/* Hold / Unknown */}
           {holdResults.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-500" />
-                  Hold / Neutral ({holdResults.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
+            <>
+              <MobileCollapse
+                storageKey="scanner:collapse:hold"
+                defaultOpen={false}
+                title={
+                  <span className="text-sm font-semibold flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                    <span className="text-amber-500">Hold / Neutral</span>
+                    <span className="text-xs text-muted-foreground font-normal">({holdResults.length})</span>
+                  </span>
+                }
+              >
                 <ResultsTable results={holdResults} />
-              </CardContent>
-            </Card>
+              </MobileCollapse>
+              <Card className="hidden md:block">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    Hold / Neutral ({holdResults.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ResultsTable results={holdResults} />
+                </CardContent>
+              </Card>
+            </>
           )}
         </>
       )}
@@ -849,7 +908,36 @@ export function ScannerPage() {
   );
 }
 
+function copyToClipboard(text: string): Promise<void> {
+  // Modern async clipboard API (HTTPS / localhost)
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  // iOS Safari + legacy fallback
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.cssText = "position:fixed;top:0;left:0;opacity:0;font-size:16px;";
+    document.body.appendChild(el);
+    el.focus();
+    // iOS requires setSelectionRange after focus
+    el.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    ok ? resolve() : reject(new Error("execCommand failed"));
+  });
+}
+
 function ResultsTable({ results }: { results: ScanResultItem[] }) {
+  const [copiedTicker, setCopiedTicker] = useState<string | null>(null);
+
+  function handleCopy(ticker: string) {
+    copyToClipboard(ticker).then(() => {
+      setCopiedTicker(ticker);
+      setTimeout(() => setCopiedTicker(null), 1500);
+    });
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -857,28 +945,50 @@ function ResultsTable({ results }: { results: ScanResultItem[] }) {
           <tr className="border-b border-border/50 text-xs text-muted-foreground">
             <th className="text-left px-4 py-2.5 font-medium">#</th>
             <th className="text-left px-4 py-2.5 font-medium">Symbol</th>
-            <th className="text-left px-4 py-2.5 font-medium">Signal</th>
-            <th className="text-left px-4 py-2.5 font-medium">Confidence</th>
+            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Signal</th>
+            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Confidence</th>
             <th className="text-left px-4 py-2.5 font-medium">Strength</th>
-            <th className="text-left px-4 py-2.5 font-medium">Status</th>
+            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Status</th>
             <th className="text-right px-4 py-2.5 font-medium"></th>
           </tr>
         </thead>
         <tbody>
           {results.map((r, i) => {
             const dir = DIRECTION_CONFIG[r.direction] ?? DIRECTION_CONFIG.unknown;
+            const copied = copiedTicker === r.ticker;
             return (
               <tr key={r.ticker} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
                 <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
-                <td className="px-4 py-3 font-mono font-semibold">{r.ticker}</td>
                 <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(r.ticker)}
+                    title="Tap to copy"
+                    className={cn(
+                      "font-mono font-semibold transition-all duration-150 rounded px-1 -mx-1 active:scale-95",
+                      copied
+                        ? "text-emerald-400 bg-emerald-500/10"
+                        : "hover:text-primary hover:bg-primary/10",
+                    )}
+                  >
+                    {copied ? (
+                      <span className="flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        {r.ticker}
+                      </span>
+                    ) : r.ticker}
+                  </button>
+                </td>
+                <td className="px-4 py-3 hidden md:table-cell">
                   <span className={cn("px-2 py-0.5 rounded text-xs font-bold", dir.bg, dir.color)}>
                     {dir.label}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-xs capitalize">{r.confidence}</td>
+                <td className="px-4 py-3 text-xs capitalize hidden md:table-cell">{r.confidence}</td>
                 <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 hidden md:table-cell">
                   <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs">
                     {r.status}
                   </Badge>

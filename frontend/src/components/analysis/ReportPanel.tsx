@@ -2,12 +2,15 @@ import { memo, useState, useMemo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { TradingCard } from "./TradingCard";
 import { parseTradeCard } from "./parseTradeCard";
+import { MobileCollapse } from "./MobileCollapse";
 
 interface ReportPanelProps {
   reports: Record<string, string>;
+  isLoading?: boolean;
 }
 
 /* ── Section metadata ───────────────────────────────────────────────── */
@@ -214,7 +217,7 @@ function SidebarGroupLabel({ name }: { name: string }) {
 
 /* ── Main panel ─────────────────────────────────────────────────────── */
 
-export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelProps) {
+export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: ReportPanelProps) {
   const entries = Object.entries(reports);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const tradeCardData = useMemo(() => parseTradeCard(reports), [reports]);
@@ -227,6 +230,41 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
       : reports.final_trade_decision
         ? "final_trade_decision"
       : entries[0]?.[0] ?? null;
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Skeleton className="w-8 h-8 rounded-xl" />
+          <Skeleton className="h-6 w-40 rounded-lg" />
+        </div>
+        {/* Mobile: stacked section skeletons */}
+        <div className="md:hidden space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl border border-border overflow-hidden">
+              <Skeleton className="h-12 w-full rounded-none" />
+            </div>
+          ))}
+        </div>
+        {/* Desktop: sidebar + content skeleton */}
+        <div className="hidden md:flex rounded-xl border border-border/40 overflow-hidden min-h-[500px]">
+          <div className="w-52 shrink-0 border-r border-border/30 p-3 space-y-2">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-9 rounded-lg" />
+            ))}
+          </div>
+          <div className="flex-1 p-6 space-y-4">
+            <Skeleton className="h-7 w-48 rounded-lg" />
+            <Skeleton className="h-4 w-full rounded" />
+            <Skeleton className="h-4 w-5/6 rounded" />
+            <Skeleton className="h-4 w-4/6 rounded" />
+            <Skeleton className="h-4 w-full rounded" />
+            <Skeleton className="h-4 w-3/4 rounded" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (entries.length === 0) {
     return (
@@ -281,8 +319,48 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
         </div>
       </div>
 
-      {/* Tab layout: sidebar + content */}
-      <div className="flex rounded-xl border border-border/40 bg-card/20 overflow-hidden min-h-[500px]">
+      {/* Mobile: collapsible report sections */}
+      <div className="md:hidden space-y-2">
+        {sortedGroups.flatMap(([, groupEntries]) =>
+          groupEntries.map(([section, content]) => {
+            const meta = SECTION_META[section] ?? { label: section, accent: "text-primary", bg: "bg-primary/10", icon: "", group: "Other" };
+            const isDecision = section === "final_trade_decision";
+            const isTrader = section === "trader";
+            return (
+              <MobileCollapse
+                key={section}
+                defaultOpen={isDecision || isTrader}
+                storageKey={`collapse:report:${section}`}
+                title={
+                  <span className={cn("text-sm font-semibold flex items-center gap-2", isDecision ? "text-yellow-400" : "text-foreground")}>
+                    <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0", meta.bg)}>
+                      {meta.icon && (
+                        <svg className={cn("w-3.5 h-3.5", meta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d={meta.icon} />
+                        </svg>
+                      )}
+                    </div>
+                    {meta.label}
+                    {isDecision && <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0" />}
+                  </span>
+                }
+              >
+                <div className="px-4 py-4">
+                  {isTrader && tradeCardData && (
+                    <div className="mb-5">
+                      <TradingCard data={tradeCardData} />
+                    </div>
+                  )}
+                  <MarkdownContent content={content} />
+                </div>
+              </MobileCollapse>
+            );
+          })
+        )}
+      </div>
+
+      {/* Desktop: sidebar + content layout */}
+      <div className="hidden md:flex rounded-xl border border-border/40 bg-card/20 overflow-hidden min-h-[500px]">
         {/* Sidebar tabs */}
         <div className="w-52 flex-shrink-0 border-r border-border/30 bg-muted/5 py-2 overflow-y-auto">
           {sortedGroups.map(([group, groupEntries]) => (
@@ -305,7 +383,6 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
         <div className="flex-1 overflow-y-auto">
           {activeContent && activeMeta ? (
             <div>
-              {/* Content header */}
               <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-sm border-b border-border/25 px-7 py-4 flex items-center gap-3">
                 <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", activeMeta.bg)}>
                   {activeMeta.icon && (
@@ -321,15 +398,11 @@ export const ReportPanel = memo(function ReportPanel({ reports }: ReportPanelPro
                   {activeMeta.label}
                 </h3>
               </div>
-
-              {/* Trade Setup card for trader section */}
               {effectiveTab === "trader" && tradeCardData && (
                 <div className="px-7 pt-6 sm:px-8 sm:pt-7">
                   <TradingCard data={tradeCardData} />
                 </div>
               )}
-
-              {/* Markdown content */}
               <div className="px-7 py-6 sm:px-8 sm:py-7">
                 <MarkdownContent content={activeContent} />
               </div>

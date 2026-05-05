@@ -59,12 +59,17 @@ export function useAnalysisWebSocket(runId: string) {
     }
     const ws = new WebSocket(getWsUrl(runId));
     wsRef.current = ws;
+    const isReconnect = attemptRef.current > 0;
 
     ws.onopen = () => {
       if (!mountedRef.current) return;
       setStatus("connected");
       attemptRef.current = 0;
-      updateCacheRef.current(() => emptyWsState());
+      // Only wipe state on the very first connect — on reconnects keep
+      // existing data visible while the server replay streams back in.
+      if (!isReconnect) {
+        updateCacheRef.current(() => emptyWsState());
+      }
       ws.send(JSON.stringify({ type: "replay" }));
     };
 
@@ -198,8 +203,26 @@ export function useAnalysisWebSocket(runId: string) {
     mountedRef.current = true;
     connect();
 
+    // Android Chrome kills the WS when the app is backgrounded.
+    // Reconnect immediately when the tab becomes visible again instead
+    // of waiting for the exponential backoff timer.
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "visible") return;
+      const ws = wsRef.current;
+      const dead = !ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED;
+      if (!dead) return;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      connect();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       mountedRef.current = false;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;

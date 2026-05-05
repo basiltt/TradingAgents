@@ -304,6 +304,9 @@ export const apiClient = {
   startScan: (body: ScanRequest) =>
     mutate<{ scan_id: string; status: string }>("POST", "/api/v1/scanner", body),
 
+  listScans: (signal?: AbortSignal) =>
+    request<{ scans: Array<{ scan_id: string; status: string }> }>("/api/v1/scanner", undefined, signal),
+
   getScan: (scanId: string, signal?: AbortSignal) =>
     request<ScanStatus>(`/api/v1/scanner/${encodeURIComponent(scanId)}`, undefined, signal),
 

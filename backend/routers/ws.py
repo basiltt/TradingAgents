@@ -19,7 +19,21 @@ def _check_origin(websocket: WebSocket) -> bool:
     if not origin:
         return False
     allowed = set(websocket.app.state.cors_origins)
-    return origin in allowed
+    if origin in allowed:
+        return True
+    # Also allow any origin whose port matches a configured CORS origin's port.
+    # This lets browsers on other LAN devices connect through the Vite proxy
+    # (which preserves the Origin header but rewrites Host).
+    try:
+        from urllib.parse import urlparse
+        origin_port = urlparse(origin).port
+        if origin_port is not None:
+            for a in allowed:
+                if urlparse(a).port == origin_port:
+                    return True
+    except Exception:
+        pass
+    return False
 
 
 @router.websocket("/ws/v1/analysis/{run_id}")

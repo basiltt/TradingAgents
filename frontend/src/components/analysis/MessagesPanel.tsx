@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { MobileCollapse } from "./MobileCollapse";
 
 interface Message {
   sender: string;
@@ -13,6 +15,7 @@ interface Message {
 
 interface MessagesPanelProps {
   messages: Message[];
+  isLoading?: boolean;
 }
 
 const SENDER_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
@@ -97,7 +100,7 @@ function MessageContent({ content }: { content: string }) {
   );
 }
 
-export const MessagesPanel = memo(function MessagesPanel({ messages }: MessagesPanelProps) {
+export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }: MessagesPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [announced, setAnnounced] = useState(0);
   const lastAnnouncedRef = useRef(0);
@@ -117,56 +120,94 @@ export const MessagesPanel = memo(function MessagesPanel({ messages }: MessagesP
     return () => clearInterval(interval);
   }, [messages.length]);
 
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-          </svg>
-          Messages
-          {messages.length > 0 && (
-            <Badge variant="secondary" className="ml-auto text-xs">{messages.length}</Badge>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <span className="sr-only" aria-live="polite">
-          {announced > 0 ? `${announced} new messages` : ""}
-        </span>
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center py-6 text-center">
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-2">
-              <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-              </svg>
+  const MsgIcon = () => (
+    <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+    </svg>
+  );
+
+  const countBadge = messages.length > 0
+    ? <Badge variant="secondary" className="text-xs">{messages.length}</Badge>
+    : null;
+
+  const body = (
+    <>
+      <span className="sr-only" aria-live="polite">
+        {announced > 0 ? `${announced} new messages` : ""}
+      </span>
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="rounded-lg border border-border/50 p-3 space-y-2">
+              <Skeleton className="h-5 w-28 rounded-md" />
+              <Skeleton className="h-3 w-full rounded" />
+              <Skeleton className="h-3 w-4/5 rounded" />
             </div>
-            <p className="text-sm text-muted-foreground">No messages yet</p>
+          ))}
+        </div>
+      ) : messages.length === 0 ? (
+        <div className="flex flex-col items-center py-6 text-center">
+          <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-2">
+            <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
           </div>
-        ) : (
-          <ScrollArea className="h-[28rem]" role="log">
-            <div className="space-y-2 pr-4">
-              {messages.map((msg) => {
-                const cfg = SENDER_CONFIG[msg.sender];
-                const colorClass = cfg?.color ?? "text-primary";
-                const bgClass = cfg?.bg ?? "bg-muted";
-                return (
-                  <div key={msg.seq} className="rounded-lg border border-border/50 p-3 hover:bg-muted/30 transition-colors">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-md ${bgClass} ${colorClass}`}>
-                        {formatSender(msg.sender)}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground font-mono">#{msg.seq}</span>
-                    </div>
-                    <MessageContent content={msg.content} />
+          <p className="text-sm text-muted-foreground">No messages yet</p>
+        </div>
+      ) : (
+        <ScrollArea className="h-[28rem]" role="log">
+          <div className="space-y-2 pr-4">
+            {messages.map((msg) => {
+              const cfg = SENDER_CONFIG[msg.sender];
+              const colorClass = cfg?.color ?? "text-primary";
+              const bgClass = cfg?.bg ?? "bg-muted";
+              return (
+                <div key={msg.seq} className="rounded-lg border border-border/50 p-3 hover:bg-muted/30 transition-colors">
+                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                    <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-md ${bgClass} ${colorClass}`}>
+                      {formatSender(msg.sender)}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground font-mono">#{msg.seq}</span>
                   </div>
-                );
-              })}
-              <div ref={bottomRef} />
-            </div>
-          </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
+                  <MessageContent content={msg.content} />
+                </div>
+              );
+            })}
+            <div ref={bottomRef} />
+          </div>
+        </ScrollArea>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile: collapsible */}
+      <MobileCollapse
+        defaultOpen
+        storageKey="collapse:messages"
+        title={
+          <span className="text-sm font-semibold flex items-center gap-2">
+            <MsgIcon />
+            Messages
+          </span>
+        }
+        badge={countBadge}
+      >
+        <div className="p-3">{body}</div>
+      </MobileCollapse>
+
+      {/* Desktop: original Card */}
+      <Card className="hidden md:block">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <MsgIcon />
+            Messages
+            {countBadge && <div className="ml-auto">{countBadge}</div>}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>{body}</CardContent>
+      </Card>
+    </>
   );
 });
