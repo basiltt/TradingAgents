@@ -9,6 +9,16 @@ import pytest
 import requests
 
 
+@pytest.fixture(autouse=True)
+def _mock_valid_symbols():
+    """Prevent live Bybit API calls for symbol validation in all tests."""
+    with patch(
+        "tradingagents.dataflows.bybit_data.get_valid_symbols",
+        return_value={"BTCUSDT", "ETHUSDT"},
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # TASK-001: BybitRateLimiter tests
 # ---------------------------------------------------------------------------
@@ -437,7 +447,7 @@ class TestGetBybitFundingRates:
         cb = BybitCircuitBreaker()
         with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
             mock_session.get.return_value = _mock_response(resp_data)
-            with pytest.raises(ValueError, match="Invalid symbol"):
+            with pytest.raises(ValueError, match="not available"):
                 get_bybit_funding_rates(
                     "INVALID", 1700000000000, 1700100000000,
                     cache={}, limiter=limiter, circuit_breaker=cb,
@@ -523,7 +533,7 @@ class TestGetBybitTicker:
         cb = BybitCircuitBreaker()
         with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
             mock_session.get.return_value = _mock_response(resp_data)
-            with pytest.raises(ValueError, match="Invalid symbol"):
+            with pytest.raises(ValueError, match="not available"):
                 get_bybit_ticker(
                     "INVALID",
                     cache={}, limiter=limiter, circuit_breaker=cb,
@@ -634,3 +644,64 @@ class TestHMACSigning:
         assert "mykey123" not in str(scrubbed)
         assert "abc123" not in str(scrubbed)
         assert "linear" in str(scrubbed)
+
+
+# ---------------------------------------------------------------------------
+# TASK-008: _fetch_valid_symbols and normalize_bybit_symbol
+# ---------------------------------------------------------------------------
+
+class TestFetchValidSymbolsUnit:
+    @patch("tradingagents.dataflows.bybit_data._session")
+    def test_single_page(self, mock_session):
+        from tradingagents.dataflows.bybit_data import _fetch_valid_symbols
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {"symbol": "BTCUSDT", "status": "Trading", "contractType": "LinearPerpetual"},
+                    {"symbol": "ETHUSDT", "status": "Trading", "contractType": "LinearPerpetual"},
+                    {"symbol": "BADSTATUS", "status": "Stopped", "contractType": "LinearPerpetual"},
+                    {"symbol": "BADTYPE", "status": "Trading", "contractType": "InversePerpetual"},
+                    {"symbol": "ETHBTC", "status": "Trading", "contractType": "LinearPerpetual"},
+                ],
+                "nextPageCursor": "",
+            }
+        }
+        mock_session.get.return_value = mock_resp
+        result = _fetch_valid_symbols()
+        assert result == {"BTCUSDT", "ETHUSDT"}
+
+    @patch("tradingagents.dataflows.bybit_data._session")
+    def test_api_error_code(self, mock_session):
+        from tradingagents.dataflows.bybit_data import _fetch_valid_symbols
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"retCode": 10001, "retMsg": "error"}
+        mock_session.get.return_value = mock_resp
+        result = _fetch_valid_symbols()
+        assert result == set()
+
+    @patch("tradingagents.dataflows.bybit_data._session")
+    def test_network_error(self, mock_session):
+        from tradingagents.dataflows.bybit_data import _fetch_valid_symbols
+        mock_session.get.side_effect = Exception("timeout")
+        result = _fetch_valid_symbols()
+        assert result == set()
+
+
+class TestNormalizeBybitSymbolUnit:
+    @patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value={"BTCUSDT", "1000PEPEUSDT"})
+    def test_exact_match(self, mock_valid):
+        from tradingagents.dataflows.bybit_data import normalize_bybit_symbol
+        assert normalize_bybit_symbol("btcusdt") == "BTCUSDT"
+
+    @patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value={"1000PEPEUSDT"})
+    def test_1000x_prefix(self, mock_valid):
+        from tradingagents.dataflows.bybit_data import normalize_bybit_symbol
+        assert normalize_bybit_symbol("PEPEUSDT") == "1000PEPEUSDT"
+
+    @patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value={"BTCUSDT"})
+    def test_invalid_raises(self, mock_valid):
+        from tradingagents.dataflows.bybit_data import normalize_bybit_symbol, InvalidSymbolError
+        with pytest.raises(InvalidSymbolError):
+            normalize_bybit_symbol("FAKEUSDT")

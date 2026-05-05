@@ -284,3 +284,232 @@ def test_list_runs_filter_asset_type(db):
 def test_asset_type_sql_injection_safe(db):
     result = db.list_runs(asset_type="'; DROP TABLE analysis_runs; --")
     assert result["total"] == 0
+
+
+def test_delete_run(db, sample_run):
+    db.insert_run(sample_run)
+    assert db.delete_run(sample_run["run_id"]) is True
+    assert db.get_run(sample_run["run_id"]) is None
+
+
+def test_delete_run_not_found(db):
+    assert db.delete_run("nonexistent") is False
+
+
+def test_delete_all_runs(db, sample_run):
+    db.insert_run(sample_run)
+    run2 = sample_run.copy()
+    run2["run_id"] = str(uuid.uuid4())
+    db.insert_run(run2)
+    count = db.delete_all_runs()
+    assert count == 2
+
+
+def test_delete_all_checkpoints(db, sample_run):
+    db.insert_run(sample_run)
+    db.update_run_status(sample_run["run_id"], "completed", None, "2025-01-10T00:00:00Z")
+    run2 = sample_run.copy()
+    run2["run_id"] = str(uuid.uuid4())
+    db.insert_run(run2)
+    count = db.delete_all_checkpoints()
+    assert count == 1
+    assert db.get_run(run2["run_id"]) is not None
+
+
+def test_delete_ticker_checkpoints(db, sample_run):
+    db.insert_run(sample_run)
+    db.update_run_status(sample_run["run_id"], "failed", "error", "2025-01-10T00:00:00Z")
+    count = db.delete_ticker_checkpoints("SPY")
+    assert count == 1
+
+
+def test_health_check(db):
+    assert db.health_check() == "ok"
+
+
+def test_health_check_degraded(tmp_path):
+    from backend.persistence import AnalysisDB
+    db2 = AnalysisDB(db_path=str(tmp_path / "degraded.db"))
+    db2._conn.close()
+    assert db2.health_check() == "degraded"
+
+
+def test_checkpoint(db, sample_run):
+    db.insert_run(sample_run)
+    db.checkpoint()  # should not raise
+
+
+def test_migration_rollback_on_bad_sql(tmp_path):
+    """Covers persistence.py:129-131: migration exception triggers rollback."""
+    import sqlite3
+    from backend import persistence as pers
+
+    db_path = str(tmp_path / "migrate_fail.db")
+    original = pers._MIGRATIONS[:]
+    # Add a bad migration at version 9998 (above current)
+    bad_migration = (9998, "INVALID SQL THAT WILL FAIL;")
+    pers._MIGRATIONS.append(bad_migration)
+    try:
+        with pytest.raises(Exception):
+            pers.AnalysisDB(db_path=db_path)
+        # Verify DB version was not advanced
+        conn = sqlite3.connect(db_path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert version != 9998
+    finally:
+        pers._MIGRATIONS.clear()
+        pers._MIGRATIONS.extend(original)
+
+
+def test_insert_run_duplicate_raises_value_error(db, sample_run):
+    """R3-F14: insert_run twice with same run_id raises ValueError."""
+    db.insert_run(sample_run)
+    with pytest.raises(ValueError, match=sample_run["run_id"]):
+        db.insert_run(sample_run)
+
+
+def test_migration_skip_already_applied(tmp_path):
+    """Covers persistence.py:120: version <= current causes 'continue' in migration loop."""
+    from backend.persistence import AnalysisDB
+
+    db_path = str(tmp_path / "incremental.db")
+    # First init: applies all migrations
+    db1 = AnalysisDB(db_path=db_path)
+    db1.close()
+    # Second init: all migrations already at current version, all should be skipped
+    db2 = AnalysisDB(db_path=db_path)
+    # Should work without errors; the 'continue' path was exercised
+    result = db2.list_runs(page=1, limit=1)
+    assert result["total"] == 0
+
+
+def test_migration_continue_skips_lower_version(tmp_path):
+    """R8: persistence.py:120 — continue branch when version <= current in mid-migration."""
+    import sqlite3
+    from backend import persistence as pers
+
+    db_path = str(tmp_path / "mid.db")
+    # Apply migration 1 (creates analysis_runs and report_sections) manually
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA user_version = 1")
+    for stmt in pers._MIGRATIONS[0][1].split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            conn.execute(stmt)
+    conn.commit()
+    conn.close()
+
+    # AnalysisDB should skip migration 1 (continue branch) and apply migrations 2-5
+    db = pers.AnalysisDB(db_path=db_path)
+    with db._lock:
+        tables = [r[0] for r in db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+    assert "scans" in tables  # migration 4 created scans table
+    db.close()
+
+
+def test_save_report_section_upsert_replaces(db, sample_run):
+    """R6-F1: save_report_section INSERT OR REPLACE updates existing section."""
+    db.insert_run(sample_run)
+    db.save_report_section(sample_run["run_id"], "market", "version 1")
+    db.save_report_section(sample_run["run_id"], "market", "version 2")
+    sections = db.get_report_sections(sample_run["run_id"])
+    market_sections = [s for s in sections if s["section"] == "market"]
+    assert len(market_sections) == 1
+    assert market_sections[0]["content"] == "version 2"
+
+
+def test_update_run_status_stores_error_message(db, sample_run):
+    """R6-F2: update_run_status persists the error field."""
+    db.insert_run(sample_run)
+    completed_at = "2025-01-10T00:00:00Z"
+    db.update_run_status(sample_run["run_id"], "failed", "timeout occurred", completed_at)
+    run = db.get_run(sample_run["run_id"])
+    assert run["error"] == "timeout occurred"
+
+
+def test_insert_run_invalid_status_raises(db):
+    """R6-F3: CHECK constraint on status rejects invalid values."""
+    import uuid
+    from datetime import datetime, timezone
+    with pytest.raises(Exception):
+        db.insert_run({
+            "run_id": str(uuid.uuid4()),
+            "ticker": "SPY",
+            "analysis_date": "2025-01-10",
+            "status": "invalid_status",
+            "config": "{}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        })
+
+
+def test_insert_run_invalid_asset_type_raises(db):
+    """R6-F4: CHECK constraint on asset_type rejects invalid values."""
+    import uuid
+    from datetime import datetime, timezone
+    with pytest.raises(Exception):
+        db.insert_run({
+            "run_id": str(uuid.uuid4()),
+            "ticker": "EURUSD",
+            "analysis_date": "2025-01-10",
+            "status": "running",
+            "config": "{}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "asset_type": "forex",
+        })
+
+
+def test_report_sections_fk_nonexistent_run_raises(db):
+    """R8: FK constraint on report_sections.run_id is enforced."""
+    with pytest.raises(Exception):
+        db.save_report_section("nonexistent-run-id", "market", "data")
+
+
+def test_pre_migration_backup_already_exists_no_overwrite(tmp_path):
+    """R8: pre-migration backup is skipped (no overwrite) when backup file already exists."""
+    from backend.persistence import AnalysisDB
+    import os
+
+    db_path = str(tmp_path / "test.db")
+    backup_path = db_path + ".backup.v0"
+
+    # Pre-create the backup with sentinel content
+    with open(backup_path, "w") as f:
+        f.write("sentinel")
+
+    # Open a v0 DB and apply migrations
+    conn = __import__("sqlite3").connect(db_path)
+    conn.execute("PRAGMA user_version = 0")
+    conn.close()
+
+    db2 = AnalysisDB(db_path=db_path)
+    db2.close()
+
+    # Sentinel content should still be intact (not overwritten)
+    with open(backup_path) as f:
+        assert f.read() == "sentinel"
+
+
+def test_update_run_status_nonexistent_run_returns_false(db):
+    """R8: update_run_status with a run_id that does not exist returns False."""
+    result = db.update_run_status("nonexistent-run-id", "completed", None, "2025-01-10T00:00:00Z")
+    assert result is False
+
+
+def test_delete_ticker_checkpoints_preserves_running_runs(db, sample_run):
+    """R8: delete_ticker_checkpoints only removes terminal runs, keeps running ones."""
+    # Insert a completed run
+    completed_run = sample_run.copy()
+    completed_run["run_id"] = str(uuid.uuid4())
+    db.insert_run(completed_run)
+    db.update_run_status(completed_run["run_id"], "completed", None, "2025-01-10T00:00:00Z")
+    # Insert a running run for the same ticker
+    running_run = sample_run.copy()
+    running_run["run_id"] = str(uuid.uuid4())
+    db.insert_run(running_run)
+    # Delete checkpoints — should only delete the completed one
+    count = db.delete_ticker_checkpoints("SPY")
+    assert count == 1
+    assert db.get_run(running_run["run_id"]) is not None

@@ -54,3 +54,18 @@ async def test_delete_ticker_checkpoints_without_confirm(client):
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_delete_ticker_checkpoints_with_confirm(client):
+    resp = await client.delete(
+        "/api/v1/checkpoints/SPY?confirm=true",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_get_checkpoint_invalid_ticker(client):
+    resp = await client.get("/api/v1/checkpoints?ticker=../../../etc&date=2025-06-01")
+    assert resp.status_code == 400

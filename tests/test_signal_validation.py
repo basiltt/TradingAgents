@@ -111,6 +111,69 @@ class TestValidateSignal:
         ok, errs = self._validate(sig)
         assert ok is False
 
+    def test_invalid_trade_type(self):
+        sig = {"trade_type": "YOLO", "confidence": 5, "leverage": 1}
+        ok, errs = self._validate(sig)
+        assert ok is False
+        assert any("trade_type" in e.lower() for e in errs)
+
+    def test_long_missing_entry_price(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": None,
+            "stop_losses": [95],
+            "take_profits": [110],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is False
+        assert any("entry_price" in e for e in errs)
+
+    def test_long_tp_below_entry(self):
+        sig = {
+            "trade_type": "Long",
+            "entry_price": 100.0,
+            "stop_losses": [95],
+            "take_profits": [90],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is False
+        assert any("take_profit" in e for e in errs)
+
+    def test_short_sl_below_entry(self):
+        sig = {
+            "trade_type": "Short",
+            "entry_price": 100.0,
+            "stop_losses": [95],
+            "take_profits": [90],
+            "confidence": 5,
+            "leverage": 2,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is False
+        assert any("stop_loss" in e for e in errs)
+
+    def test_confidence_bool_rejected(self):
+        sig = {
+            "trade_type": "No Trade",
+            "confidence": True,
+            "leverage": 1,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is False
+
+    def test_leverage_bool_rejected(self):
+        sig = {
+            "trade_type": "No Trade",
+            "confidence": 5,
+            "leverage": True,
+        }
+        ok, errs = self._validate(sig)
+        assert ok is False
+
 
 class TestParseSignalFromLLMOutput:
     def _parse(self, text):
@@ -137,3 +200,18 @@ class TestParseSignalFromLLMOutput:
         text = 'Small: {"a":1}\nBig: {"trade_type":"Long","entry_price":100,"stop_losses":[95],"take_profits":[110]}'
         result = self._parse(text)
         assert "trade_type" in result
+
+    def test_malformed_json_in_markdown_block(self):
+        text = '```json\n{invalid json here}\n```'
+        result = self._parse(text)
+        assert result == {}
+
+    def test_bare_json_with_decode_errors(self):
+        text = '{not valid} and also {nope}'
+        result = self._parse(text)
+        assert result == {}
+
+    def test_markdown_block_without_json_label(self):
+        text = '```\n{"trade_type": "Long"}\n```'
+        result = self._parse(text)
+        assert result["trade_type"] == "Long"

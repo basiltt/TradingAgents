@@ -99,3 +99,84 @@ def test_reject_ipv6_loopback_self_request():
 
     with pytest.raises(ValueError, match="self"):
         validate_backend_url("http://[::1]:8000", server_port=8000)
+
+
+def test_reject_no_hostname():
+    from backend.validators import validate_backend_url
+
+    with pytest.raises(ValueError, match="hostname"):
+        validate_backend_url("http://", server_port=8000)
+
+
+def test_reject_unresolvable():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+    import socket
+
+    with patch("backend.validators.socket.getaddrinfo", side_effect=socket.gaierror):
+        with pytest.raises(ValueError, match="Cannot resolve"):
+            validate_backend_url("http://doesnotexist.invalid", server_port=8000)
+
+
+def test_reject_no_addresses():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo", return_value=[]):
+        with pytest.raises(ValueError, match="No addresses"):
+            validate_backend_url("http://example.com", server_port=8000)
+
+
+def test_loopback_default_port_80():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [(None, None, None, None, ("127.0.0.1", None))]
+        with pytest.raises(ValueError, match="self-request"):
+            validate_backend_url("http://localhost", server_port=80)
+
+
+def test_loopback_default_port_443():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [(None, None, None, None, ("127.0.0.1", None))]
+        with pytest.raises(ValueError, match="self-request"):
+            validate_backend_url("https://localhost", server_port=443)
+
+
+def test_ipv6_mapped_private():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [(None, None, None, None, ("::ffff:192.168.1.1", None))]
+        with pytest.raises(ValueError, match="private|internal"):
+            validate_backend_url("http://example.com:9999", server_port=8000)
+
+
+def test_invalid_resolved_ip():
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [(None, None, None, None, ("", None))]
+        with pytest.raises(ValueError, match="Invalid resolved IP"):
+            validate_backend_url("http://example.com:9999", server_port=8000)
+
+
+def test_ipv6_mapped_private_blocked():
+    """Covers validators.py:62-64: IPv6 mapped IPv4 private address."""
+    from backend.validators import validate_backend_url
+    from unittest.mock import patch
+    import socket
+
+    # ::ffff:192.168.1.1 is an IPv4-mapped IPv6 address in a private range
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [
+            (socket.AF_INET6, None, None, None, ("::ffff:192.168.1.1", None, 0, 0))
+        ]
+        with pytest.raises(ValueError, match="private"):
+            validate_backend_url("http://example.com:9999", server_port=8000)
