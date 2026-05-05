@@ -76,6 +76,7 @@ SECTION_KEYS = frozenset([
     "trader",
     "risk_aggressive", "risk_conservative", "risk_neutral",
     "portfolio_manager",
+    "compliance", "execution_monitor", "confluence",
 ])
 
 _DEBATE_FIELD_MAP = {
@@ -112,6 +113,19 @@ class StreamParserState:
         self.prev_trader: Optional[str] = None
         self.prev_final: Optional[str] = None
         self.prev_analyst_reports: Dict[str, str] = {}
+        self.prev_compliance: Optional[str] = None
+        self.prev_execution_notes: Optional[str] = None
+        self.prev_confluence: Optional[str] = None
+        self.seen_in_progress: set = set()
+
+    def _ensure_in_progress(self, events: List, agent: str) -> None:
+        """Emit an in_progress event before completed if this agent hasn't been seen running."""
+        if agent not in self.seen_in_progress:
+            events.append(AgentStatusEvent(agent=agent, status="in_progress"))
+        self.seen_in_progress.add(agent)
+
+    def mark_in_progress(self, agent: str) -> None:
+        self.seen_in_progress.add(agent)
 
 
 def parse_stream_chunk(
@@ -155,8 +169,9 @@ def parse_stream_chunk(
         if isinstance(val, str) and val.strip():
             prev_val = state.prev_analyst_reports.get(field_name, "")
             if val.strip() != prev_val:
+                state._ensure_in_progress(events, agent)
                 events.append(AgentStatusEvent(agent=agent, status="completed"))
-                events.append(ReportChunkEvent(section=section, content=val.strip()))
+                events.append(ReportChunkEvent(section=section, content=val.strip(), append=False))
                 state.prev_analyst_reports[field_name] = val.strip()
 
     debate = chunk.get("investment_debate_state")
@@ -165,29 +180,65 @@ def parse_stream_chunk(
             val = debate.get(field_name, "").strip()
             prev_val = (state.prev_debate or {}).get(field_name, "").strip() if state.prev_debate else ""
             if val and val != prev_val:
+                state.mark_in_progress(agent)
                 events.append(AgentStatusEvent(agent=agent, status="in_progress"))
                 events.append(ReportChunkEvent(section=section, content=val))
         if debate.get("judge_decision", "").strip():
-            events.append(AgentStatusEvent(agent="Research Manager", status="completed"))
-            events.append(AgentStatusEvent(agent="Trader", status="in_progress"))
+            prev_judge = (state.prev_debate or {}).get("judge_decision", "").strip() if state.prev_debate else ""
+            if debate["judge_decision"].strip() != prev_judge:
+                state._ensure_in_progress(events, "Bull Researcher")
+                events.append(AgentStatusEvent(agent="Bull Researcher", status="completed"))
+                state._ensure_in_progress(events, "Bear Researcher")
+                events.append(AgentStatusEvent(agent="Bear Researcher", status="completed"))
+                state._ensure_in_progress(events, "Research Manager")
+                events.append(AgentStatusEvent(agent="Research Manager", status="completed"))
+                events.append(AgentStatusEvent(agent="Trader", status="in_progress"))
+                state.mark_in_progress("Trader")
         state.prev_debate = debate
 
     trader_plan = chunk.get("trader_investment_plan")
     if trader_plan is not None:
-        # Serialize to JSON when possible so the signal parser can reliably decode it.
-        # str() on a dict produces Python repr which is NOT valid JSON.
         if isinstance(trader_plan, dict):
-            trader_str = _json.dumps(trader_plan)
+            trader_str = _json.dumps(trader_plan, sort_keys=True)
         elif isinstance(trader_plan, str) and trader_plan.strip():
-            trader_str = trader_plan.strip()
+            # Normalize: parse then re-serialize so dedup comparison is stable
+            try:
+                trader_str = _json.dumps(_json.loads(trader_plan.strip()), sort_keys=True)
+            except (_json.JSONDecodeError, ValueError):
+                trader_str = trader_plan.strip()
         else:
             trader_str = None
     else:
         trader_str = None
     if trader_str and trader_str != state.prev_trader:
-        events.append(ReportChunkEvent(section="trader", content=trader_str))
+        events.append(ReportChunkEvent(section="trader", content=trader_str, append=False))
+        state._ensure_in_progress(events, "Trader")
         events.append(AgentStatusEvent(agent="Trader", status="completed"))
+        events.append(AgentStatusEvent(agent="Compliance Officer", status="in_progress"))
+        state.mark_in_progress("Compliance Officer")
         state.prev_trader = trader_str
+
+    # Compliance Officer result
+    compliance_val = chunk.get("compliance_result")
+    if isinstance(compliance_val, str) and compliance_val.strip():
+        if compliance_val.strip() != state.prev_compliance:
+            state._ensure_in_progress(events, "Compliance Officer")
+            events.append(AgentStatusEvent(agent="Compliance Officer", status="completed"))
+            events.append(ReportChunkEvent(section="compliance", content=compliance_val.strip(), append=False))
+            state.prev_compliance = compliance_val.strip()
+
+    # Confluence summary
+    confluence_val = chunk.get("confluence_summary")
+    if isinstance(confluence_val, str) and confluence_val.strip():
+        if confluence_val.strip() != state.prev_confluence:
+            state._ensure_in_progress(events, "Confluence Checker")
+            events.append(AgentStatusEvent(agent="Confluence Checker", status="completed"))
+            events.append(ReportChunkEvent(section="confluence", content=confluence_val.strip(), append=False))
+            events.append(AgentStatusEvent(agent="Bull Researcher", status="in_progress"))
+            state.mark_in_progress("Bull Researcher")
+            events.append(AgentStatusEvent(agent="Bear Researcher", status="in_progress"))
+            state.mark_in_progress("Bear Researcher")
+            state.prev_confluence = confluence_val.strip()
 
     risk = chunk.get("risk_debate_state")
     if risk and risk != state.prev_risk:
@@ -195,25 +246,48 @@ def parse_stream_chunk(
             val = risk.get(field_name, "").strip()
             prev_val = (state.prev_risk or {}).get(field_name, "").strip() if state.prev_risk else ""
             if val and val != prev_val:
+                state.mark_in_progress(agent)
                 events.append(AgentStatusEvent(agent=agent, status="in_progress"))
                 events.append(ReportChunkEvent(section=section, content=val))
         judge = risk.get("judge_decision", "").strip()
         prev_judge = (state.prev_risk or {}).get("judge_decision", "").strip() if state.prev_risk else ""
         if judge and judge != prev_judge:
-            events.append(ReportChunkEvent(section="portfolio_manager", content=judge))
-            for agent in ["Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager"]:
+            events.append(ReportChunkEvent(section="portfolio_manager", content=judge, append=False))
+            for agent in [
+                "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst",
+                "Bull Analyst", "Bear Analyst",
+            ]:
+                state._ensure_in_progress(events, agent)
                 events.append(AgentStatusEvent(agent=agent, status="completed"))
+            events.append(AgentStatusEvent(agent="Portfolio Manager", status="in_progress"))
+            state.mark_in_progress("Portfolio Manager")
         state.prev_risk = risk
 
     final = chunk.get("final_trade_decision")
     if isinstance(final, dict):
-        final_str = _json.dumps(final)
+        final_str = _json.dumps(final, sort_keys=True)
     elif isinstance(final, str) and final.strip():
-        final_str = final.strip()
+        try:
+            final_str = _json.dumps(_json.loads(final.strip()), sort_keys=True)
+        except (_json.JSONDecodeError, ValueError):
+            final_str = final.strip()
     else:
         final_str = None
     if final_str and final_str != state.prev_final and not risk:
-        events.append(ReportChunkEvent(section="portfolio_manager", content=final_str))
+        events.append(ReportChunkEvent(section="portfolio_manager", content=final_str, append=False))
+        state._ensure_in_progress(events, "Portfolio Manager")
+        events.append(AgentStatusEvent(agent="Portfolio Manager", status="completed"))
+        events.append(AgentStatusEvent(agent="Execution Monitor", status="in_progress"))
+        state.mark_in_progress("Execution Monitor")
         state.prev_final = final_str
+
+    # Execution Monitor notes
+    exec_notes = chunk.get("execution_notes")
+    if isinstance(exec_notes, str) and exec_notes.strip():
+        if exec_notes.strip() != state.prev_execution_notes:
+            state._ensure_in_progress(events, "Execution Monitor")
+            events.append(AgentStatusEvent(agent="Execution Monitor", status="completed"))
+            events.append(ReportChunkEvent(section="execution_monitor", content=exec_notes.strip(), append=False))
+            state.prev_execution_notes = exec_notes.strip()
 
     return events

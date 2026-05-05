@@ -85,6 +85,7 @@ interface ScannerSettings {
   maxRiskRounds?: number;
   maxRecurLimit?: number;
   checkpointEnabled?: boolean;
+  maxParallel?: number;
 }
 
 function loadScannerSettings(): ScannerSettings {
@@ -181,6 +182,7 @@ export function ScannerPage() {
   const [maxRiskRounds, setMaxRiskRounds] = useState(scanner.maxRiskRounds ?? 1);
   const [maxRecurLimit, setMaxRecurLimit] = useState(scanner.maxRecurLimit ?? 100);
   const [checkpointEnabled, setCheckpointEnabled] = useState(scanner.checkpointEnabled ?? false);
+  const [maxParallel, setMaxParallel] = useState(scanner.maxParallel ?? 10);
   const [activeScanId, _setActiveScanId] = useState<string | null>(loadActiveScanId);
   const [showLlm, setShowLlm] = useState(true);
   const [showWorkflow, setShowWorkflow] = useState(false);
@@ -198,12 +200,12 @@ export function ScannerPage() {
   }, [showEndpoints]);
 
   useEffect(() => {
-    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled });
+    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel });
     if (backendUrl.trim()) {
       saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
       setEndpoints(loadEndpoints());
     }
-  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled]);
+  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel]);
 
   function selectEndpoint(ep: EndpointProfile) {
     setBackendUrl(ep.url);
@@ -313,10 +315,11 @@ export function ScannerPage() {
       analysts,
       research_depth: researchDepth,
       output_language: outputLanguage !== "English" ? outputLanguage : undefined,
-      max_debate_rounds: maxDebateRounds !== 1 ? maxDebateRounds : undefined,
-      max_risk_discuss_rounds: maxRiskRounds !== 1 ? maxRiskRounds : undefined,
+      max_debate_rounds: maxDebateRounds,
+      max_risk_discuss_rounds: maxRiskRounds,
       max_recur_limit: maxRecurLimit !== 100 ? maxRecurLimit : undefined,
       checkpoint_enabled: checkpointEnabled || undefined,
+      max_parallel: maxParallel !== 10 ? maxParallel : undefined,
     };
     startMutation.mutate(body);
   };
@@ -522,6 +525,12 @@ export function ScannerPage() {
                   <Label className="font-medium text-sm">Max Recursion Limit</Label>
                   <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} />
                   <p className="text-xs text-muted-foreground">Upper bound on LangGraph recursion steps</p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label className="font-medium text-sm">Max Parallel Analyses</Label>
+                  <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(25, Math.max(1, Number(e.target.value))))} />
+                  <p className="text-xs text-muted-foreground">How many symbols to analyse concurrently (1–25)</p>
                 </div>
 
                 <label className="flex items-start gap-3 cursor-pointer">

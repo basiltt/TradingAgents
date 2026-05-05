@@ -12,6 +12,50 @@ interface AgentStatusTableProps {
 
 const DEEP_THINK_AGENTS = new Set(["Research Manager", "Portfolio Manager"]);
 
+/**
+ * Canonical pipeline stage order — agents are displayed in this order
+ * regardless of when their first status event arrives.
+ * Agents not in this list are appended at the end in arrival order.
+ */
+const PIPELINE_ORDER: readonly string[] = [
+  // Analysts (parallel)
+  "Market Analyst",
+  "Social Analyst",
+  "News Analyst",
+  "Fundamentals Analyst",
+  "Crypto Fundamentals Analyst",
+  // Confluence
+  "Confluence Checker",
+  // Research debate
+  "Bull Researcher",
+  "Bear Researcher",
+  "Research Manager",
+  // Trader
+  "Trader",
+  // Compliance gate
+  "Compliance Officer",
+  // Risk debate (stock 3-party)
+  "Aggressive Analyst",
+  "Conservative Analyst",
+  "Neutral Analyst",
+  // Risk debate (crypto 2-party — same position as stock risk)
+  "Bull Analyst",
+  "Bear Analyst",
+  // Final decision
+  "Portfolio Manager",
+  "Execution Monitor",
+] as const;
+
+const _orderIndex = new Map(PIPELINE_ORDER.map((name, i) => [name, i]));
+
+function sortedAgentEntries(agents: Record<string, string>): [string, string][] {
+  return Object.entries(agents).sort(([a], [b]) => {
+    const ai = _orderIndex.get(a) ?? 999;
+    const bi = _orderIndex.get(b) ?? 999;
+    return ai - bi;
+  });
+}
+
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   in_progress: "default",
   completed: "secondary",
@@ -31,7 +75,7 @@ const AgentsIcon = () => (
 );
 
 export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoading, config }: AgentStatusTableProps) {
-  const entries = Object.entries(agents);
+  const entries = sortedAgentEntries(agents);
   const deepModel = config?.deep_think_llm ? String(config.deep_think_llm) : "";
   const quickModel = config?.quick_think_llm ? String(config.quick_think_llm) : "";
 

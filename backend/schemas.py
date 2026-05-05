@@ -268,6 +268,7 @@ class ScanRequest(BaseModel):
     max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
     checkpoint_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
+    max_parallel: Optional[int] = Field(None, ge=1, le=25)
 
     @field_validator("analysis_date")
     @classmethod

@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_BATCH_SIZE = 10
+_BATCH_SIZE = 10  # default; overridden by config max_parallel (1–25)
+_MAX_PARALLEL_CAP = 25
 _POLL_INTERVAL = 5  # seconds between polling for batch completion
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
@@ -519,14 +520,15 @@ class ScannerService:
             scan = self._scans.get(scan_id)
             if not scan:
                 return
+            batch_size = min(int(scan["config"].get("max_parallel", _BATCH_SIZE) or _BATCH_SIZE), _MAX_PARALLEL_CAP)
             if symbols_override is None:
                 scan["total"] = len(symbols)
-            scan["total_batches"] = (len(symbols) + _BATCH_SIZE - 1) // _BATCH_SIZE
+            scan["total_batches"] = (len(symbols) + batch_size - 1) // batch_size
 
         if self._db and symbols_override is None:
             await asyncio.to_thread(self._db.update_scan, scan_id, total=len(symbols))
 
-        sem = asyncio.Semaphore(_BATCH_SIZE)
+        sem = asyncio.Semaphore(batch_size)
         scan_error = False
 
         async def _process_ticker(ticker: str) -> None:

@@ -179,6 +179,7 @@ export interface ScanRequest {
   max_recur_limit?: number;
   checkpoint_enabled?: boolean;
   data_vendors?: Record<string, string>;
+  max_parallel?: number;
 }
 
 export interface ScanResultItem {

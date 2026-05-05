@@ -27,6 +27,8 @@ function getWsUrl(runId: string): string {
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
+const MIN_IN_PROGRESS_MS = 1500;
+
 export function useAnalysisWebSocket(runId: string) {
   const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
@@ -35,6 +37,7 @@ export function useAnalysisWebSocket(runId: string) {
   const attemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const agentInProgressAt = useRef<Record<string, number>>({});
 
   const updateCache = useCallback(
     (updater: (prev: WsState) => WsState) => {
@@ -169,9 +172,54 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       if (type === "agent_status") {
+        const agent = data.agent as string;
+        const newStatus = data.status as string;
+
+        if (newStatus === "in_progress") {
+          if (!agentInProgressAt.current[agent]) {
+            agentInProgressAt.current[agent] = Date.now();
+          }
+          updateCacheRef.current((prev) => ({
+            ...prev,
+            agents: { ...prev.agents, [agent]: "in_progress" },
+          }));
+          return;
+        }
+
+        if (newStatus === "completed") {
+          const startedAt = agentInProgressAt.current[agent];
+          const elapsed = startedAt ? Date.now() - startedAt : 0;
+          const remaining = MIN_IN_PROGRESS_MS - elapsed;
+
+          const applyCompleted = () => {
+            if (!mountedRef.current) return;
+            updateCacheRef.current((p) => ({
+              ...p,
+              agents: { ...p.agents, [agent]: "completed" },
+            }));
+          };
+
+          if (!startedAt) {
+            // Never saw in_progress — show it briefly first
+            agentInProgressAt.current[agent] = Date.now();
+            updateCacheRef.current((prev) => ({
+              ...prev,
+              agents: { ...prev.agents, [agent]: "in_progress" },
+            }));
+            setTimeout(applyCompleted, MIN_IN_PROGRESS_MS);
+          } else if (remaining > 0) {
+            // in_progress hasn't been visible long enough — delay completed
+            setTimeout(applyCompleted, remaining);
+          } else {
+            applyCompleted();
+          }
+          return;
+        }
+
+        // Other statuses (failed, etc.)
         updateCacheRef.current((prev) => ({
           ...prev,
-          agents: { ...prev.agents, [data.agent as string]: data.status as string },
+          agents: { ...prev.agents, [agent]: newStatus },
         }));
         return;
       }

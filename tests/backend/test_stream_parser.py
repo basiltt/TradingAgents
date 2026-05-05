@@ -64,7 +64,17 @@ def test_parse_risk_debate():
     }
     events = parse_stream_chunk(chunk)
     completed = [e for e in events if isinstance(e, AgentStatusEvent) and e.status == "completed"]
-    assert len(completed) == 4
+    # 3 stock risk analysts + 2 crypto risk analysts = 5 completed
+    assert len(completed) == 5
+    completed_names = {e.agent for e in completed}
+    assert "Aggressive Analyst" in completed_names
+    assert "Conservative Analyst" in completed_names
+    assert "Neutral Analyst" in completed_names
+    assert "Bull Analyst" in completed_names
+    assert "Bear Analyst" in completed_names
+    # PM should be in_progress, not completed (completed when final_trade_decision arrives)
+    pm_events = [e for e in events if isinstance(e, AgentStatusEvent) and e.agent == "Portfolio Manager"]
+    assert any(e.status == "in_progress" for e in pm_events)
 
 
 def test_unknown_chunk_skipped():
@@ -180,3 +190,43 @@ def test_debate_chunk_with_judge_decision():
     agents = [e.agent for e in agent_events]
     assert "Research Manager" in agents
     assert "Trader" in agents
+
+
+def test_in_progress_emitted_before_completed_for_analysts():
+    """Every agent gets an in_progress event before completed."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState()
+    chunk = {"market_report": "Analysis data"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    agent_events = [e for e in events if isinstance(e, AgentStatusEvent) and e.agent == "Market Analyst"]
+    statuses = [e.status for e in agent_events]
+    assert statuses == ["in_progress", "completed"]
+
+
+def test_in_progress_emitted_before_completed_for_confluence():
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState()
+    chunk = {"confluence_summary": "Summary data"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    cc_events = [e for e in events if isinstance(e, AgentStatusEvent) and e.agent == "Confluence Checker"]
+    statuses = [e.status for e in cc_events]
+    assert statuses == ["in_progress", "completed"]
+
+
+def test_in_progress_not_duplicated_on_second_chunk():
+    """If agent was already seen in_progress, don't emit in_progress again before completed."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState()
+    state.seen_in_progress.add("Compliance Officer")
+
+    chunk = {"compliance_result": "Pass"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    co_events = [e for e in events if isinstance(e, AgentStatusEvent) and e.agent == "Compliance Officer"]
+    statuses = [e.status for e in co_events]
+    assert statuses == ["completed"]

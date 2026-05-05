@@ -23,7 +23,7 @@ from backend.ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
 
-_MAX_CONCURRENT = 10
+_MAX_CONCURRENT = 25
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
@@ -50,7 +50,7 @@ class AnalysisService:
             active = sum(1 for r in self._active_runs.values() if r["status"] == "running")
             if active >= _MAX_CONCURRENT:
                 raise ConcurrencyLimitError(
-                    f"Maximum {_MAX_CONCURRENT} concurrent analyses. "
+                    f"Maximum {_MAX_CONCURRENT} concurrent analyses reached. "
                     f"Please wait for a running analysis to complete."
                 )
             if self._zombie_count >= _MAX_ZOMBIES:

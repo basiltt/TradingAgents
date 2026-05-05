@@ -8,6 +8,7 @@ from tradingagents.agents import *
 from tradingagents.agents.utils.agent_states import AgentState
 
 from .conditional_logic import ConditionalLogic
+from .parallel_debate import create_parallel_risk_round1, create_parallel_researcher_round1
 
 
 def _compliance_router(state) -> str:
@@ -124,6 +125,16 @@ class GraphSetup:
         # Create workflow
         workflow = StateGraph(AgentState)
 
+        # Parallel round-1 researcher node: bull + bear run simultaneously
+        parallel_research_r1 = create_parallel_researcher_round1(
+            bull_researcher_node, bear_researcher_node,
+        )
+
+        # Parallel round-1 risk node: all 3 debaters run simultaneously
+        parallel_risk_r1 = create_parallel_risk_round1(
+            [aggressive_analyst, conservative_analyst, neutral_analyst],
+        )
+
         # Add each analyst as a parallel subgraph node
         for analyst_type in selected_analysts:
             subgraph = _build_analyst_subgraph(
@@ -135,19 +146,25 @@ class GraphSetup:
             )
             workflow.add_node(f"{analyst_type}_analysis", subgraph)
             workflow.add_edge(START, f"{analyst_type}_analysis")
-            workflow.add_edge(f"{analyst_type}_analysis", "Bull Researcher")
+            workflow.add_edge(f"{analyst_type}_analysis", "Parallel Research R1")
 
-        # Add other nodes
+        # Research debate: parallel round 1, then sequential continuation
+        workflow.add_node("Parallel Research R1", parallel_research_r1)
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
         workflow.add_node("Research Manager", research_manager_node)
         workflow.add_node("Trader", trader_node)
-        workflow.add_node("Aggressive Analyst", aggressive_analyst)
-        workflow.add_node("Neutral Analyst", neutral_analyst)
-        workflow.add_node("Conservative Analyst", conservative_analyst)
-        workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
-        # Add remaining edges
+        # After parallel round 1, check if more debate rounds needed
+        workflow.add_conditional_edges(
+            "Parallel Research R1",
+            self.conditional_logic.should_continue_debate,
+            {
+                "Bear Researcher": "Bear Researcher",
+                "Bull Researcher": "Bull Researcher",
+                "Research Manager": "Research Manager",
+            },
+        )
         workflow.add_conditional_edges(
             "Bull Researcher",
             self.conditional_logic.should_continue_debate,
@@ -166,7 +183,14 @@ class GraphSetup:
         )
         workflow.add_edge("Research Manager", "Trader")
 
-        # Compliance gate between Trader and Risk Analysts
+        # Risk debate: parallel round 1, then sequential continuation
+        workflow.add_node("Parallel Risk R1", parallel_risk_r1)
+        workflow.add_node("Aggressive Analyst", aggressive_analyst)
+        workflow.add_node("Neutral Analyst", neutral_analyst)
+        workflow.add_node("Conservative Analyst", conservative_analyst)
+        workflow.add_node("Portfolio Manager", portfolio_manager_node)
+
+        # Compliance gate between Trader and Risk Debate
         if compliance_officer_node:
             workflow.add_node("Compliance Officer", compliance_officer_node)
             workflow.add_node("Blocked Trade", _blocked_trade_node)
@@ -175,14 +199,25 @@ class GraphSetup:
                 "Compliance Officer",
                 _compliance_router,
                 {
-                    "risk_debate": "Aggressive Analyst",
+                    "risk_debate": "Parallel Risk R1",
                     "blocked": "Blocked Trade",
                 },
             )
             workflow.add_edge("Blocked Trade", END)
         else:
-            workflow.add_edge("Trader", "Aggressive Analyst")
+            workflow.add_edge("Trader", "Parallel Risk R1")
 
+        # After parallel risk round 1, route to more debate or PM
+        workflow.add_conditional_edges(
+            "Parallel Risk R1",
+            self.conditional_logic.should_continue_risk_analysis,
+            {
+                "Conservative Analyst": "Conservative Analyst",
+                "Neutral Analyst": "Neutral Analyst",
+                "Aggressive Analyst": "Aggressive Analyst",
+                "Portfolio Manager": "Portfolio Manager",
+            },
+        )
         workflow.add_conditional_edges(
             "Aggressive Analyst",
             self.conditional_logic.should_continue_risk_analysis,
@@ -251,7 +286,7 @@ class GraphSetup:
 
         # Fan-in target after analysts complete
         fan_in_target = "Confluence Checker" if confluence_checker_node else (
-            "Bull Researcher" if has_research_layer else "Trader"
+            "Parallel Research R1" if has_research_layer else "Trader"
         )
 
         workflow = StateGraph(AgentState)
@@ -272,15 +307,28 @@ class GraphSetup:
         if confluence_checker_node:
             workflow.add_node("Confluence Checker", confluence_checker_node)
             if has_research_layer:
-                workflow.add_edge("Confluence Checker", "Bull Researcher")
+                workflow.add_edge("Confluence Checker", "Parallel Research R1")
             else:
                 workflow.add_edge("Confluence Checker", "Trader")
 
         if has_research_layer:
+            parallel_research_r1 = create_parallel_researcher_round1(
+                crypto_bull_researcher, crypto_bear_researcher,
+            )
+            workflow.add_node("Parallel Research R1", parallel_research_r1)
             workflow.add_node("Bull Researcher", crypto_bull_researcher)
             workflow.add_node("Bear Researcher", crypto_bear_researcher)
             workflow.add_node("Research Manager", crypto_research_manager)
 
+            workflow.add_conditional_edges(
+                "Parallel Research R1",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bear Researcher": "Bear Researcher",
+                    "Bull Researcher": "Bull Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
             workflow.add_conditional_edges(
                 "Bull Researcher",
                 self.conditional_logic.should_continue_debate,
@@ -299,7 +347,13 @@ class GraphSetup:
             )
             workflow.add_edge("Research Manager", "Trader")
 
+        # Parallel round-1 risk node: bull + bear run simultaneously
+        parallel_risk_r1 = create_parallel_risk_round1(
+            [crypto_bull_debater, crypto_bear_debater],
+        )
+
         workflow.add_node("Trader", crypto_trader_node)
+        workflow.add_node("Parallel Risk R1", parallel_risk_r1)
         workflow.add_node("Bull Analyst", crypto_bull_debater)
         workflow.add_node("Bear Analyst", crypto_bear_debater)
         workflow.add_node("Portfolio Manager", crypto_portfolio_manager)
@@ -313,14 +367,24 @@ class GraphSetup:
                 "Compliance Officer",
                 _compliance_router,
                 {
-                    "risk_debate": "Bull Analyst",
+                    "risk_debate": "Parallel Risk R1",
                     "blocked": "Blocked Trade",
                 },
             )
             workflow.add_edge("Blocked Trade", END)
         else:
-            workflow.add_edge("Trader", "Bull Analyst")
+            workflow.add_edge("Trader", "Parallel Risk R1")
 
+        # After parallel risk round 1, route to more debate or PM
+        workflow.add_conditional_edges(
+            "Parallel Risk R1",
+            self.conditional_logic.should_continue_risk_analysis,
+            {
+                "Bear Analyst": "Bear Analyst",
+                "Bull Analyst": "Bull Analyst",
+                "Portfolio Manager": "Portfolio Manager",
+            },
+        )
         workflow.add_conditional_edges(
             "Bull Analyst",
             self.conditional_logic.should_continue_risk_analysis,
