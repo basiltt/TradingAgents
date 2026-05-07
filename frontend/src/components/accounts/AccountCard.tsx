@@ -20,6 +20,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
 
   const pnl = parseFloat(card.total_perp_upl || "0");
   const equity = parseFloat(card.total_equity || "0");
+  const todayPnl = parseFloat(card.today_pnl || "0");
 
   return (
     <div
@@ -52,6 +53,12 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
             <span className="text-sm text-muted-foreground">Unrealised PnL</span>
             <span className={`text-sm font-medium ${pnl >= 0 ? "text-green-600" : "text-red-600"}`}>
               ${pnl.toFixed(2)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-sm text-muted-foreground">Today's PnL</span>
+            <span className={`text-sm font-medium ${todayPnl >= 0 ? "text-green-600" : "text-red-600"}`}>
+              ${todayPnl.toFixed(2)}
             </span>
           </div>
           <div className="flex justify-between">

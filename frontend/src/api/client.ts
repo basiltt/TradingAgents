@@ -419,6 +419,7 @@ export interface DashboardCard {
   is_active: boolean;
   total_equity?: string;
   total_perp_upl?: string;
+  today_pnl?: string;
   positions_count: number;
   last_connected_at?: string;
   last_error?: string;

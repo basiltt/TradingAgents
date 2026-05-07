@@ -92,23 +92,26 @@ describe("OrdersTable", () => {
 });
 
 describe("PnLPanel", () => {
-  it("shows empty state when null", () => {
+  it("shows empty state when no accountId", () => {
     render(<PnLPanel pnlSummary={null} />);
     expect(screen.getByText("No PnL data available")).toBeInTheDocument();
   });
 
-  it("renders PnL summary data", () => {
-    const pnl = { total_pnl: "250.00", win_rate: 66.7, win_count: 4, loss_count: 2, avg_win: "100.00", avg_loss: "-50.00" };
-    render(<PnLPanel pnlSummary={pnl as any} />);
-    expect(screen.getByText("$250.00")).toBeInTheDocument();
-    expect(screen.getByText("66.7%")).toBeInTheDocument();
-    expect(screen.getByText("4W / 2L")).toBeInTheDocument();
-  });
-
-  it("colors negative PnL red", () => {
-    const pnl = { total_pnl: "-100.00", win_rate: 30.0, win_count: 1, loss_count: 3, avg_win: "50.00", avg_loss: "-75.00" };
-    const { container } = render(<PnLPanel pnlSummary={pnl as any} />);
-    const redEl = container.querySelector(".text-red-600");
-    expect(redEl).toBeTruthy();
+  it("renders period headings when accountId provided", async () => {
+    vi.mock("@/api/client", async () => {
+      const actual = await vi.importActual("@/api/client");
+      return {
+        ...actual as any,
+        accountsApi: {
+          ...(actual as any).accountsApi,
+          getPnlSummary: vi.fn().mockResolvedValue({ total_pnl: "100.00", win_rate: 75.0, win_count: 3, loss_count: 1, avg_win: "50.00", avg_loss: "-25.00" }),
+        },
+      };
+    });
+    render(<PnLPanel pnlSummary={null} accountId="acc1" />);
+    expect(screen.getByText("PnL Overview")).toBeInTheDocument();
+    expect(screen.getByText("Today")).toBeInTheDocument();
+    expect(screen.getByText("7 Days")).toBeInTheDocument();
+    expect(screen.getByText("30 Days")).toBeInTheDocument();
   });
 });

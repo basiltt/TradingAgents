@@ -242,22 +242,27 @@ class AccountsService:
     async def get_dashboard(self) -> List[Dict[str, Any]]:
         accounts = self._db.list_accounts()
         cards = []
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_start_ms = _date_to_ms(today_str)
+        today_end_ms = today_start_ms + (24 * 60 * 60 * 1000 - 1)
 
         for acc in accounts:
             if not acc["is_active"]:
-                card = {**acc, "total_equity": None, "total_perp_upl": None, "positions_count": 0, "status": "disabled"}
+                card = {**acc, "total_equity": None, "total_perp_upl": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
                 cards.append(card)
                 continue
 
             try:
                 wallet = await self.get_wallet(acc["id"])
                 positions = await self.get_positions(acc["id"])
+                today_summary = self._db.get_closed_pnl_summary(acc["id"], today_start_ms, today_end_ms)
                 status = "active"
                 cards.append({
                     **acc,
                     "total_equity": wallet.get("totalEquity", "0"),
                     "total_perp_upl": wallet.get("totalPerpUPL", "0"),
                     "positions_count": len(positions),
+                    "today_pnl": today_summary.get("total_pnl", "0"),
                     "status": status,
                 })
             except Exception as e:
@@ -266,6 +271,7 @@ class AccountsService:
                     "total_equity": None,
                     "total_perp_upl": None,
                     "positions_count": 0,
+                    "today_pnl": None,
                     "status": "error",
                     "last_error": _sanitize_error(str(e)),
                 })
