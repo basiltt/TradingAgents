@@ -7,6 +7,8 @@ import { WalletPanel } from "./WalletPanel";
 import { PositionsTable } from "./PositionsTable";
 import { OrdersTable } from "./OrdersTable";
 import { PnLPanel } from "./PnLPanel";
+import { useAppDispatch } from "@/store";
+import { removeAccount } from "@/store/accounts-slice";
 
 interface AccountDetailViewProps {
   accountId: string;
@@ -14,6 +16,7 @@ interface AccountDetailViewProps {
 
 export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const [wallet, setWallet] = useState<WalletBalance | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<OpenOrder[]>([]);
@@ -21,6 +24,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("wallet");
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,7 +83,25 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/accounts" })}>
           ← Back
         </Button>
-        <h1 className="text-xl font-bold">Account Detail</h1>
+        <h1 className="text-xl font-bold flex-1">Account Detail</h1>
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={deleting}
+          onClick={async () => {
+            if (!confirm("Delete this account? This cannot be undone.")) return;
+            setDeleting(true);
+            try {
+              await accountsApi.delete(accountId);
+              dispatch(removeAccount(accountId));
+              navigate({ to: "/accounts" });
+            } catch {
+              setDeleting(false);
+            }
+          }}
+        >
+          {deleting ? "Deleting..." : "Delete"}
+        </Button>
       </div>
 
       {/* Wallet Summary */}
@@ -128,7 +150,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         </TabsContent>
 
         <TabsContent value="pnl">
-          <PnLPanel pnlSummary={pnlSummary} />
+          <PnLPanel pnlSummary={pnlSummary} accountId={accountId} />
         </TabsContent>
       </Tabs>
     </div>

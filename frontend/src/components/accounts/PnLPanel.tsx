@@ -1,17 +1,55 @@
-import type { PnlSummary } from "@/api/client";
+import { useState } from "react";
+import { accountsApi, type PnlSummary } from "@/api/client";
+import { Button } from "@/components/ui/button";
 
 interface PnLPanelProps {
   pnlSummary: PnlSummary | null;
+  accountId?: string;
 }
 
-export function PnLPanel({ pnlSummary }: PnLPanelProps) {
-  if (!pnlSummary) {
+export function PnLPanel({ pnlSummary: initialSummary, accountId }: PnLPanelProps) {
+  const today = new Date().toISOString().split("T")[0];
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+
+  const [startDate, setStartDate] = useState(sevenDaysAgo);
+  const [endDate, setEndDate] = useState(today);
+  const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(initialSummary);
+  const [loading, setLoading] = useState(false);
+
+  const fetchRange = async () => {
+    if (!accountId) return;
+    setLoading(true);
+    try {
+      const result = await accountsApi.getPnlSummary(accountId, startDate, endDate);
+      setPnlSummary(result);
+    } catch {
+      // keep existing data
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!pnlSummary && !accountId) {
     return <p className="text-muted-foreground text-center py-8">No PnL data available</p>;
   }
 
   return (
     <div className="space-y-4">
-      <h3 className="font-semibold">7-Day PnL Summary</h3>
+      {accountId && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm" aria-label="Start date" />
+          <span className="text-sm">to</span>
+          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm" aria-label="End date" />
+          <Button size="sm" variant="outline" onClick={fetchRange} disabled={loading}>
+            {loading ? "Loading..." : "Apply"}
+          </Button>
+        </div>
+      )}
+      {!pnlSummary ? (
+        <p className="text-muted-foreground text-center py-8">No PnL data available</p>
+      ) : (
+      <>
+      <h3 className="font-semibold">PnL Summary</h3>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div className="rounded-lg border p-3">
           <p className="text-xs text-muted-foreground">Total PnL</p>
@@ -33,6 +71,8 @@ export function PnLPanel({ pnlSummary }: PnLPanelProps) {
           </p>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
