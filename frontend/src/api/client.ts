@@ -138,6 +138,8 @@ export interface StartAnalysisRequest {
   interval?: CryptoInterval;
   workflow_mode?: "quick_trade" | "deep_analysis";
   agent_model_overrides?: Record<string, string>;
+  ta_prefilter_enabled?: boolean;
+  ta_prefilter_threshold?: number;
 }
 
 export interface ConfigResponse {
@@ -195,6 +197,8 @@ export interface ScanRequest {
   max_parallel?: number;
   workflow_mode?: "quick_trade" | "deep_analysis";
   agent_model_overrides?: Record<string, string>;
+  ta_prefilter_enabled?: boolean;
+  ta_prefilter_threshold?: number;
 }
 
 export interface ScanResultItem {

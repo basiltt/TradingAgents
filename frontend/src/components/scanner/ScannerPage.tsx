@@ -88,6 +88,8 @@ interface ScannerSettings {
   checkpointEnabled?: boolean;
   maxParallel?: number;
   workflowMode?: "quick_trade" | "deep_analysis";
+  taPrefilterEnabled?: boolean;
+  taPrefilterThreshold?: number;
 }
 
 function loadScannerSettings(): ScannerSettings {
@@ -221,6 +223,8 @@ export function ScannerPage() {
   const [checkpointEnabled, setCheckpointEnabled] = useState(scanner.checkpointEnabled ?? false);
   const [maxParallel, setMaxParallel] = useState(scanner.maxParallel ?? 10);
   const [workflowMode, setWorkflowMode] = useState<"quick_trade" | "deep_analysis">(scanner.workflowMode ?? "deep_analysis");
+  const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(scanner.taPrefilterEnabled ?? false);
+  const [taPrefilterThreshold, setTaPrefilterThreshold] = useState(scanner.taPrefilterThreshold ?? 40);
   const [activeScanId, _setActiveScanId] = useState<string | null>(loadActiveScanId);
   const [showLlm, setShowLlm] = useState(true);
   const [showWorkflow, setShowWorkflow] = useState(false);
@@ -246,12 +250,12 @@ export function ScannerPage() {
   }, [showEndpoints]);
 
   useEffect(() => {
-    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode });
+    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold });
     if (backendUrl.trim()) {
       saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
       setEndpoints(loadEndpoints());
     }
-  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode]);
+  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold]);
 
   function selectEndpoint(ep: EndpointProfile) {
     setBackendUrl(ep.url);
@@ -367,6 +371,8 @@ export function ScannerPage() {
       checkpoint_enabled: checkpointEnabled || undefined,
       max_parallel: maxParallel !== 10 ? maxParallel : undefined,
       workflow_mode: workflowMode !== "deep_analysis" ? workflowMode : undefined,
+      ta_prefilter_enabled: taPrefilterEnabled,
+      ta_prefilter_threshold: taPrefilterEnabled ? taPrefilterThreshold : undefined,
       agent_model_overrides: (() => {
         const filtered = filterOverridesForAssetType(agentModelOverrides, "crypto");
         return Object.keys(filtered).length > 0 ? filtered : undefined;
@@ -501,6 +507,40 @@ export function ScannerPage() {
                     ? "Analysts → Research Debate → Trade Card"
                     : "Full pipeline with risk debate, compliance & portfolio management"}
                 </p>
+              </div>
+
+              {/* Smart Pre-Screen */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="scanner_ta_prefilter"
+                    checked={taPrefilterEnabled}
+                    onChange={(e) => setTaPrefilterEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <Label htmlFor="scanner_ta_prefilter" className="font-medium cursor-pointer">
+                    Smart Pre-Screen
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Run TA analysis first per symbol. Skips LLM calls for assets with no clear signal — saves costs on bulk scans.
+                </p>
+                {taPrefilterEnabled && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Label htmlFor="scanner_ta_threshold" className="text-xs whitespace-nowrap">Threshold</Label>
+                    <Input
+                      id="scanner_ta_threshold"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={taPrefilterThreshold}
+                      onChange={(e) => setTaPrefilterThreshold(Number(e.target.value))}
+                      className="w-20 h-7 text-xs"
+                    />
+                    <span className="text-xs text-muted-foreground">/ 100</span>
+                  </div>
+                )}
               </div>
 
               {/* Analyst team */}
@@ -932,18 +972,16 @@ export function ScannerPage() {
               >
                 <ResultsTable results={buyResults} />
               </MobileCollapse>
-              {/* Desktop: original card */}
-              <Card className="hidden md:block border-emerald-500/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    Buy Signals ({buyResults.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <ResultsTable results={buyResults} />
-                </CardContent>
-              </Card>
+              {/* Desktop: collapsible card */}
+              <CollapsibleResultCard
+                className="hidden md:block border-emerald-500/20"
+                storageKey="scanner:collapse:buy:desktop"
+                defaultOpen
+                color="emerald"
+                title={`Buy Signals (${buyResults.length})`}
+              >
+                <ResultsTable results={buyResults} />
+              </CollapsibleResultCard>
             </>
           )}
 
@@ -964,17 +1002,15 @@ export function ScannerPage() {
               >
                 <ResultsTable results={sellResults} />
               </MobileCollapse>
-              <Card className="hidden md:block border-red-500/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-red-500" />
-                    Sell Signals ({sellResults.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <ResultsTable results={sellResults} />
-                </CardContent>
-              </Card>
+              <CollapsibleResultCard
+                className="hidden md:block border-red-500/20"
+                storageKey="scanner:collapse:sell:desktop"
+                defaultOpen
+                color="red"
+                title={`Sell Signals (${sellResults.length})`}
+              >
+                <ResultsTable results={sellResults} />
+              </CollapsibleResultCard>
             </>
           )}
 
@@ -995,22 +1031,79 @@ export function ScannerPage() {
               >
                 <ResultsTable results={holdResults} />
               </MobileCollapse>
-              <Card className="hidden md:block">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-500" />
-                    Hold / Neutral ({holdResults.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <ResultsTable results={holdResults} />
-                </CardContent>
-              </Card>
+              <CollapsibleResultCard
+                className="hidden md:block"
+                storageKey="scanner:collapse:hold:desktop"
+                defaultOpen={false}
+                color="amber"
+                title={`Hold / Neutral (${holdResults.length})`}
+              >
+                <ResultsTable results={holdResults} />
+              </CollapsibleResultCard>
             </>
           )}
         </>
       )}
     </div>
+  );
+}
+
+const COLOR_MAP: Record<string, string> = {
+  emerald: "bg-emerald-500",
+  red: "bg-red-500",
+  amber: "bg-amber-500",
+};
+
+function CollapsibleResultCard({
+  className,
+  storageKey,
+  defaultOpen,
+  color,
+  title,
+  children,
+}: {
+  className?: string;
+  storageKey: string;
+  defaultOpen: boolean;
+  color: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(storageKey);
+      return v !== null ? v === "true" : defaultOpen;
+    } catch {
+      return defaultOpen;
+    }
+  });
+
+  function toggle() {
+    setOpen((prev) => {
+      localStorage.setItem(storageKey, String(!prev));
+      return !prev;
+    });
+  }
+
+  return (
+    <Card className={className}>
+      <CardHeader className="pb-3">
+        <button type="button" onClick={toggle} className="flex items-center gap-2 w-full text-left">
+          <svg className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          <CardTitle className="text-base flex items-center gap-2">
+            <span className={cn("w-2 h-2 rounded-full", COLOR_MAP[color] ?? "bg-muted-foreground")} />
+            {title}
+          </CardTitle>
+        </button>
+      </CardHeader>
+      {open && (
+        <CardContent className="p-0">
+          {children}
+        </CardContent>
+      )}
+    </Card>
   );
 }
 

@@ -49,6 +49,9 @@ DEFAULT_CONFIG = {
             "api_secret": os.getenv("BYBIT_API_SECRET") or None,
         },
     },
+    # TA Pre-Filter: run technical analysis before LLM calls (crypto only)
+    "ta_prefilter_enabled": False,
+    "ta_prefilter_threshold": 40,
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
     "data_vendors": {

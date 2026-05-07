@@ -613,6 +613,8 @@ class ScannerService:
             "data_vendors": config.get("data_vendors"),
             "workflow_mode": config.get("workflow_mode"),
             "agent_model_overrides": config.get("agent_model_overrides"),
+            "ta_prefilter_enabled": config.get("ta_prefilter_enabled"),
+            "ta_prefilter_threshold": config.get("ta_prefilter_threshold"),
         }
 
         try:
@@ -705,6 +707,12 @@ class ScannerService:
                         or reports.get("trader", "")
                         or reports.get("final_trade_decision", "")
                     )
+                    if not decision_text and reports.get("_ta_prefilter"):
+                        try:
+                            pf = _json.loads(reports["_ta_prefilter"])
+                            decision_text = pf.get("reason", reports["_ta_prefilter"])
+                        except (_json.JSONDecodeError, TypeError):
+                            decision_text = reports["_ta_prefilter"]
             except Exception:
                 logger.exception("Failed to fetch snapshot for %s/%s", scan_id, run_id)
 
@@ -717,10 +725,12 @@ class ScannerService:
                     pass
 
         if status == "completed" and reports:
-            pm_json = reports.get("_pm_signal")
-            trader_json = reports.get("_trader_signal")
-
-            if pm_json:
+            # TA prefilter-skipped runs have no agent signals — short-circuit
+            if reports.get("_ta_prefilter") and not reports.get("_pm_signal") and not reports.get("_trader_signal"):
+                signal = {"direction": "hold", "confidence": "none", "score": 0}
+                signal_source = "ta_prefilter"
+            elif (pm_json := reports.get("_pm_signal")):
+                trader_json = reports.get("_trader_signal")
                 try:
                     pm_data = _json.loads(pm_json)
                     trader_data = _json.loads(trader_json) if trader_json else {}
@@ -733,7 +743,7 @@ class ScannerService:
                     )
                     signal = _parse_signal_from_reports(reports)
                     signal_source = "regex_fallback"
-            elif trader_json:
+            elif reports.get("_trader_signal"):
                 signal = _parse_signal_from_reports(reports)
                 signal_source = "regex_fallback"
             else:

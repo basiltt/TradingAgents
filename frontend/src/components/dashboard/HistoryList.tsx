@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { apiClient } from "@/api/client";
@@ -57,11 +57,29 @@ function TradeScoreDisplay({ card }: { card: TradeCardData | null | undefined })
   );
 }
 
+const SIGNAL_FILTERS = ["buy", "sell", "hold"] as const;
+const ASSET_TYPE_FILTERS = ["crypto", "stock"] as const;
+const CONFIDENCE_RANGES = [
+  { value: "any", label: "Any" },
+  { value: "high", label: "High (7-10)" },
+  { value: "medium", label: "Medium (4-6)" },
+  { value: "low", label: "Low (1-3)" },
+  { value: "none", label: "No signal" },
+] as const;
+
+type ConfidenceRange = (typeof CONFIDENCE_RANGES)[number]["value"];
+
 export function HistoryList() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
+  const [signalFilter, setSignalFilter] = useState<Set<string>>(new Set());
+  const [assetTypeFilter, setAssetTypeFilter] = useState<Set<string>>(new Set());
+  const [confidenceRange, setConfidenceRange] = useState<ConfidenceRange>("any");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [sort, setSort] = useState<SortOption>("newest");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(25);
@@ -104,8 +122,17 @@ export function HistoryList() {
     [allItems]
   );
 
+  // Only fetch scores in batches — prioritize current page, then progressively load rest
+  const BATCH_SIZE = 50;
+  const [scoreBatchIndex, setScoreBatchIndex] = useState(0);
+
+  const scoreBatchIds = useMemo(
+    () => completedRunIds.slice(0, (scoreBatchIndex + 1) * BATCH_SIZE),
+    [completedRunIds, scoreBatchIndex]
+  );
+
   const scoreQueries = useQueries({
-    queries: completedRunIds.map((runId) => ({
+    queries: scoreBatchIds.map((runId) => ({
       queryKey: ["trade-score", runId],
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
         const snap = await apiClient.getSnapshot(runId, signal);
@@ -116,13 +143,28 @@ export function HistoryList() {
     })),
   });
 
+  // Progressively load more batches
+  const allBatchesLoaded = scoreBatchIds.length >= completedRunIds.length;
+  const currentBatchDone = scoreQueries.every((q) => !q.isLoading);
+  useEffect(() => {
+    if (currentBatchDone && !allBatchesLoaded) {
+      const t = setTimeout(() => setScoreBatchIndex((i) => i + 1), 100);
+      return () => clearTimeout(t);
+    }
+  }, [currentBatchDone, allBatchesLoaded]);
+
   const scoreMap = useMemo(() => {
-    const map = new Map<string, TradeCardData | null>();
-    completedRunIds.forEach((id, i) => {
-      map.set(id, scoreQueries[i]?.data ?? null);
+    const map = new Map<string, TradeCardData | null | undefined>();
+    // Mark all completed as undefined first
+    completedRunIds.forEach((id) => map.set(id, undefined));
+    // Then fill in loaded ones
+    scoreBatchIds.forEach((id, i) => {
+      const q = scoreQueries[i];
+      if (!q || q.isLoading) return;
+      map.set(id, q.data ?? null);
     });
     return map;
-  }, [completedRunIds, scoreQueries]);
+  }, [completedRunIds, scoreBatchIds, scoreQueries]);
 
   const getConfidence = (runId: string): number => scoreMap.get(runId)?.confidence ?? 0;
   const getSignalStrength = (runId: string): number => {
@@ -151,6 +193,48 @@ export function HistoryList() {
       items = items.filter((i) => statusFilter.has(i.status));
     }
 
+    if (signalFilter.size > 0) {
+      items = items.filter((i) => {
+        if (i.status !== "completed") return false;
+        const card = scoreMap.get(i.run_id);
+        if (card === undefined) return false; // score not loaded yet — hide until confirmed
+        if (!card) return signalFilter.has("hold");
+        const action = (card.action ?? card.rating ?? "hold").toLowerCase();
+        if (action === "buy" || action === "long") return signalFilter.has("buy");
+        if (action === "sell" || action === "short") return signalFilter.has("sell");
+        return signalFilter.has("hold");
+      });
+    }
+
+    if (assetTypeFilter.size > 0) {
+      items = items.filter((i) => {
+        const at = i.asset_type ?? "crypto";
+        return assetTypeFilter.has(at);
+      });
+    }
+
+    if (confidenceRange !== "any") {
+      items = items.filter((i) => {
+        if (scoreMap.get(i.run_id) === undefined) return false; // not loaded yet
+        const conf = getConfidence(i.run_id);
+        switch (confidenceRange) {
+          case "high": return conf >= 7;
+          case "medium": return conf >= 4 && conf <= 6;
+          case "low": return conf >= 1 && conf <= 3;
+          case "none": return conf === 0;
+          default: return true;
+        }
+      });
+    }
+
+    if (dateFrom) {
+      items = items.filter((i) => (i.analysis_date ?? i.started_at ?? "") >= dateFrom);
+    }
+    if (dateTo) {
+      const toEnd = dateTo + "T23:59:59";
+      items = items.filter((i) => (i.analysis_date ?? i.started_at ?? "") <= toEnd);
+    }
+
     items.sort((a, b) => {
       switch (sort) {
         case "oldest":
@@ -172,7 +256,7 @@ export function HistoryList() {
     });
 
     return items;
-  }, [allItems, search, statusFilter, sort, scoreMap]);
+  }, [allItems, search, statusFilter, signalFilter, assetTypeFilter, confidenceRange, dateFrom, dateTo, sort, scoreMap]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
@@ -185,6 +269,38 @@ export function HistoryList() {
       else next.add(s);
       return next;
     });
+    setPage(0);
+  };
+
+  const toggleSignal = (s: string) => {
+    setSignalFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+    setPage(0);
+  };
+
+  const toggleAssetType = (s: string) => {
+    setAssetTypeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+    setPage(0);
+  };
+
+  const activeFilterCount = signalFilter.size + assetTypeFilter.size + (confidenceRange !== "any" ? 1 : 0) + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0);
+
+  const clearAllFilters = () => {
+    setStatusFilter(new Set());
+    setSignalFilter(new Set());
+    setAssetTypeFilter(new Set());
+    setConfidenceRange("any");
+    setDateFrom("");
+    setDateTo("");
     setPage(0);
   };
 
@@ -202,6 +318,9 @@ export function HistoryList() {
                   ? `${filtered.length} of ${allItems.length}`
                   : `${allItems.length} total`}
               </span>
+            )}
+            {(signalFilter.size > 0 || confidenceRange !== "any") && !allBatchesLoaded && (
+              <span className="ml-1.5 text-muted-foreground text-xs animate-pulse">loading scores…</span>
             )}
           </p>
         </div>
@@ -305,7 +424,123 @@ export function HistoryList() {
                 Clear
               </button>
             )}
+            <span className="mx-1 w-px h-4 bg-border" />
+            <button
+              onClick={() => setShowAdvancedFilters((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                showAdvancedFilters || activeFilterCount > 0
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
           </div>
+
+          {/* Advanced Filters Panel */}
+          {showAdvancedFilters && (
+            <div className="rounded-lg border border-border bg-card p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Advanced Filters</span>
+                {activeFilterCount > 0 && (
+                  <button onClick={clearAllFilters} className="text-xs text-primary hover:underline">
+                    Clear all filters
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* Signal Direction */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Signal</label>
+                  <div className="flex flex-wrap gap-1">
+                    {SIGNAL_FILTERS.map((s) => {
+                      const active = signalFilter.has(s);
+                      const colors: Record<string, string> = { buy: "text-emerald-500", sell: "text-red-500", hold: "text-amber-500" };
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => toggleSignal(s)}
+                          className={`px-2 py-1 text-xs font-medium rounded border transition-colors capitalize ${
+                            active
+                              ? "border-primary bg-primary/10 text-primary"
+                              : `border-border ${colors[s]} hover:border-primary/40`
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Confidence */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Confidence</label>
+                  <select
+                    value={confidenceRange}
+                    onChange={(e) => { setConfidenceRange(e.target.value as ConfidenceRange); setPage(0); }}
+                    className="w-full px-2 py-1.5 text-xs rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    {CONFIDENCE_RANGES.map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Asset Type */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Asset Type</label>
+                  <div className="flex flex-wrap gap-1">
+                    {ASSET_TYPE_FILTERS.map((at) => {
+                      const active = assetTypeFilter.has(at);
+                      return (
+                        <button
+                          key={at}
+                          onClick={() => toggleAssetType(at)}
+                          className={`px-2 py-1 text-xs font-medium rounded border transition-colors capitalize ${
+                            active
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border text-muted-foreground hover:border-primary/40"
+                          }`}
+                        >
+                          {at}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Date Range */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Date Range</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => { setDateFrom(e.target.value); setPage(0); }}
+                      className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                    <span className="text-xs text-muted-foreground">→</span>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => { setDateTo(e.target.value); setPage(0); }}
+                      className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

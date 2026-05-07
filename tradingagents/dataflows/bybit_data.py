@@ -95,16 +95,21 @@ class BybitUnavailableError(Exception):
 
 
 class BybitCircuitBreaker:
-    """Simple consecutive-failure circuit breaker. Thread-safe."""
+    """Simple consecutive-failure circuit breaker with auto-reset. Thread-safe."""
 
-    def __init__(self, failure_threshold: int = 3):
+    def __init__(self, failure_threshold: int = 3, reset_after: float = 60.0):
         self._threshold = failure_threshold
+        self._reset_after = reset_after
         self._consecutive_failures = 0
+        self._last_failure_time: float = 0.0
         self._lock = threading.Lock()
 
     def check(self) -> None:
         with self._lock:
             if self._consecutive_failures >= self._threshold:
+                if time.monotonic() - self._last_failure_time > self._reset_after:
+                    self._consecutive_failures = 0
+                    return
                 raise BybitUnavailableError(
                     f"Circuit breaker open: {self._consecutive_failures} "
                     f"consecutive failures"
@@ -113,6 +118,7 @@ class BybitCircuitBreaker:
     def record_failure(self) -> None:
         with self._lock:
             self._consecutive_failures += 1
+            self._last_failure_time = time.monotonic()
 
     def record_success(self) -> None:
         with self._lock:
@@ -403,8 +409,10 @@ def get_bybit_klines(
         prev_min_ts = min_ts
         current_end = min_ts - 1
 
+    # Bybit returns [startTime, open, high, low, close, volume, turnover] — 7 fields.
+    # Only keep the first 6 to match our header.
     csv_lines = [
-        ",".join(str(v) for v in row)
+        ",".join(str(v) for v in row[:6])
         for row in all_rows
     ]
     csv_result = "timestamp,open,high,low,close,volume\n" + "\n".join(csv_lines)

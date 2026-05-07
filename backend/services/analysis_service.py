@@ -44,6 +44,9 @@ class AnalysisService:
         self._active_runs: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._zombie_count = 0
+        self._prefilter_limiter: Any = None
+        self._prefilter_cb: Any = None
+        self._prefilter_init_lock = threading.Lock()
 
     async def start_analysis(self, request: Dict[str, Any]) -> str:
         async with self._lock:
@@ -213,6 +216,11 @@ class AnalysisService:
             config["max_recur_limit"] = request["max_recur_limit"]
         if request.get("checkpoint_enabled") is not None:
             config["checkpoint_enabled"] = request["checkpoint_enabled"]
+
+        if request.get("ta_prefilter_enabled") is not None:
+            config["ta_prefilter_enabled"] = request["ta_prefilter_enabled"]
+        if request.get("ta_prefilter_threshold") is not None:
+            config["ta_prefilter_threshold"] = request["ta_prefilter_threshold"]
 
         config["workflow_mode"] = request.get("workflow_mode") or "deep_analysis"
 
@@ -390,6 +398,42 @@ class AnalysisService:
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
         callback: Any, cancel_event: threading.Event,
     ) -> Optional[Dict[str, Any]]:
+        # --- TA Pre-Filter gate (crypto only) ---
+        if config.get("ta_prefilter_enabled") and config.get("asset_type") == "crypto":
+            try:
+                from tradingagents.ta_prefilter import TAPreFilterEngine
+                from tradingagents.dataflows.bybit_data import BybitRateLimiter, BybitCircuitBreaker
+                with self._prefilter_init_lock:
+                    if self._prefilter_limiter is None:
+                        self._prefilter_limiter = BybitRateLimiter()
+                        self._prefilter_cb = BybitCircuitBreaker()
+                threshold = config.get("ta_prefilter_threshold", 40)
+                engine = TAPreFilterEngine(
+                    symbol=request["ticker"],
+                    interval=config.get("crypto_interval", "D"),
+                    threshold=threshold,
+                    cache={},
+                    limiter=self._prefilter_limiter,
+                    circuit_breaker=self._prefilter_cb,
+                )
+                pf_result = engine.run()
+                # Emit prefilter result as a progress event
+                self._bus.emit_threadsafe(run_id, ProgressEvent(
+                    phase="ta_prefilter",
+                    detail=pf_result.reason,
+                ))
+                if not pf_result.should_proceed:
+                    # Save prefilter result and skip LLM analysis
+                    import json as _json
+                    self._db.save_report_section(
+                        run_id, "_ta_prefilter",
+                        _json.dumps(pf_result.to_dict()),
+                    )
+                    return {"final_trade_decision": f"SKIPPED by TA Pre-Filter: {pf_result.reason}",
+                            "ta_prefilter": pf_result.to_dict()}
+            except Exception as exc:
+                logger.warning("TA pre-filter error for %s, proceeding anyway: %s", request["ticker"], exc)
+
         try:
             from tradingagents.graph.trading_graph import TradingAgentsGraph
         except ImportError:

@@ -107,6 +107,8 @@ interface SavedSettings {
   interval?: CryptoInterval;
   data_vendors?: Record<string, string>;
   workflow_mode?: "quick_trade" | "deep_analysis";
+  ta_prefilter_enabled?: boolean;
+  ta_prefilter_threshold?: number;
 }
 
 function loadSettings(): SavedSettings {
@@ -178,6 +180,8 @@ interface FormValues {
   data_vendor_fundamental: string;
   data_vendor_news: string;
   workflow_mode: "quick_trade" | "deep_analysis";
+  ta_prefilter_enabled: boolean;
+  ta_prefilter_threshold: number;
 }
 
 export function ConfigForm() {
@@ -242,6 +246,8 @@ export function ConfigForm() {
       data_vendor_fundamental: saved.data_vendors?.fundamental_data || "yfinance",
       data_vendor_news: saved.data_vendors?.news_data || "yfinance",
       workflow_mode: saved.workflow_mode || "deep_analysis",
+      ta_prefilter_enabled: saved.ta_prefilter_enabled ?? false,
+      ta_prefilter_threshold: saved.ta_prefilter_threshold ?? 40,
     },
   });
 
@@ -265,6 +271,8 @@ export function ConfigForm() {
   const watchedVendorFund = watch("data_vendor_fundamental");
   const watchedVendorNews = watch("data_vendor_news");
   const watchedWorkflowMode = watch("workflow_mode");
+  const watchedPrefilter = watch("ta_prefilter_enabled");
+  const watchedPrefilterThreshold = watch("ta_prefilter_threshold");
 
   const isCrypto = watchedAssetType === "crypto";
   const activeAnalysts = isCrypto ? CRYPTO_ANALYSTS : STOCK_ANALYSTS;
@@ -294,8 +302,10 @@ export function ConfigForm() {
         news_data: watchedVendorNews,
       },
       workflow_mode: watchedWorkflowMode,
+      ta_prefilter_enabled: watchedPrefilter,
+      ta_prefilter_threshold: watchedPrefilterThreshold,
     });
-  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews, watchedWorkflowMode]);
+  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews, watchedWorkflowMode, watchedPrefilter, watchedPrefilterThreshold]);
 
   useEffect(() => {
     if (watchedBackendUrl?.trim()) {
@@ -385,6 +395,8 @@ export function ConfigForm() {
         max_recur_limit: data.max_recur_limit !== 100 ? data.max_recur_limit : undefined,
         checkpoint_enabled: data.checkpoint_enabled || undefined,
         workflow_mode: data.workflow_mode !== "deep_analysis" ? data.workflow_mode : undefined,
+        ta_prefilter_enabled: isCryptoSubmit ? data.ta_prefilter_enabled : undefined,
+        ta_prefilter_threshold: isCryptoSubmit && data.ta_prefilter_enabled ? data.ta_prefilter_threshold : undefined,
         ...(isCryptoSubmit
           ? { interval: data.interval }
           : {
@@ -496,6 +508,45 @@ export function ConfigForm() {
                   : "Full pipeline with risk debate, compliance & portfolio management"}
               </p>
             </div>
+
+            {/* TA Pre-Screen (crypto only) */}
+            {isCrypto && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <Controller
+                    name="ta_prefilter_enabled"
+                    control={control}
+                    render={({ field }) => (
+                      <Checkbox
+                        id="ta_prefilter_enabled"
+                        checked={field.value}
+                        onCheckedChange={(checked) => field.onChange(!!checked)}
+                      />
+                    )}
+                  />
+                  <Label htmlFor="ta_prefilter_enabled" className="font-medium cursor-pointer">
+                    Smart Pre-Screen
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Run technical analysis first and skip LLM calls if no clear opportunity is detected. Saves API costs on low-signal assets.
+                </p>
+                {watch("ta_prefilter_enabled") && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Label htmlFor="ta_prefilter_threshold" className="text-xs whitespace-nowrap">Threshold</Label>
+                    <Input
+                      id="ta_prefilter_threshold"
+                      type="number"
+                      min={0}
+                      max={100}
+                      className="w-20 h-7 text-xs"
+                      {...register("ta_prefilter_threshold", { valueAsNumber: true })}
+                    />
+                    <span className="text-xs text-muted-foreground">/ 100 (lower = more permissive)</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Ticker */}
             <div className="flex flex-col gap-2">

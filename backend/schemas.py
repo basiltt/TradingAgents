@@ -108,6 +108,8 @@ class AnalysisRequest(BaseModel):
     data_vendors: Optional[Dict[str, str]] = None
     workflow_mode: Optional[str] = None
     agent_model_overrides: Optional[Dict[str, str]] = None
+    ta_prefilter_enabled: Optional[bool] = None
+    ta_prefilter_threshold: Optional[int] = Field(None, ge=0, le=100)
 
     @field_validator("workflow_mode")
     @classmethod
@@ -324,6 +326,8 @@ class ScanRequest(BaseModel):
     max_parallel: Optional[int] = Field(None, ge=1, le=25)
     workflow_mode: Optional[str] = None
     agent_model_overrides: Optional[Dict[str, str]] = None
+    ta_prefilter_enabled: Optional[bool] = None
+    ta_prefilter_threshold: Optional[int] = Field(None, ge=0, le=100)
 
     @field_validator("workflow_mode")
     @classmethod
