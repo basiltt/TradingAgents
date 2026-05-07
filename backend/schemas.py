@@ -38,6 +38,7 @@ VALID_PROVIDERS = frozenset(
         "anthropic",
         "xai",
         "deepseek",
+        "nvidia",
         "qwen",
         "glm",
         "openrouter",
@@ -63,9 +64,28 @@ class CryptoAnalystType(str, Enum):
     CRYPTO_TECHNICAL = "crypto_technical"
     CRYPTO_DERIVATIVES = "crypto_derivatives"
     CRYPTO_NEWS = "crypto_news"
+    CRYPTO_FUNDAMENTALS = "crypto_fundamentals"
+    CRYPTO_SOCIAL = "crypto_social"
 
 
 VALID_CRYPTO_INTERVALS = frozenset(["15", "60", "240", "D"])
+
+VALID_STOCK_AGENT_KEYS = frozenset([
+    "market", "social", "news", "fundamentals",
+    "bull_researcher", "bear_researcher", "research_manager",
+    "trader", "compliance_officer",
+    "aggressive_analyst", "neutral_analyst", "conservative_analyst",
+    "portfolio_manager", "execution_monitor",
+])
+
+VALID_CRYPTO_AGENT_KEYS = frozenset([
+    "crypto_technical", "crypto_derivatives", "crypto_news",
+    "crypto_fundamentals", "crypto_social", "confluence_checker",
+    "bull_researcher", "bear_researcher", "research_manager",
+    "trader", "compliance_officer",
+    "bull_analyst", "bear_analyst",
+    "portfolio_manager", "execution_monitor",
+])
 
 
 class AnalysisRequest(BaseModel):
@@ -86,6 +106,29 @@ class AnalysisRequest(BaseModel):
     max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
     checkpoint_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
+    workflow_mode: Optional[str] = None
+    agent_model_overrides: Optional[Dict[str, str]] = None
+
+    @field_validator("workflow_mode")
+    @classmethod
+    def validate_workflow_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("quick_trade", "deep_analysis"):
+            raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
+        return v
+
+    @field_validator("agent_model_overrides")
+    @classmethod
+    def validate_agent_model_overrides(
+        cls, v: Optional[Dict[str, str]]
+    ) -> Optional[Dict[str, str]]:
+        if v is None:
+            return v
+        for agent_key, model_id in v.items():
+            if not MODEL_ID_RE.match(model_id):
+                raise ValueError(
+                    f"Invalid model ID for agent '{agent_key}': must match {MODEL_ID_RE.pattern}"
+                )
+        return v
 
     @field_validator("ticker")
     @classmethod
@@ -177,6 +220,16 @@ class AnalysisRequest(BaseModel):
                         raise ValueError(f"Invalid stock analyst: {a}, must be one of {sorted(valid)}")
         else:
             raise ValueError(f"Invalid asset_type: {asset}, must be 'stock' or 'crypto'")
+
+        if self.agent_model_overrides:
+            valid_keys = VALID_CRYPTO_AGENT_KEYS if asset == "crypto" else VALID_STOCK_AGENT_KEYS
+            for key in self.agent_model_overrides:
+                if key not in valid_keys:
+                    raise ValueError(
+                        f"Invalid agent key '{key}' for {asset} analysis, "
+                        f"must be one of {sorted(valid_keys)}"
+                    )
+
         return self
 
 
@@ -269,6 +322,29 @@ class ScanRequest(BaseModel):
     checkpoint_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
     max_parallel: Optional[int] = Field(None, ge=1, le=25)
+    workflow_mode: Optional[str] = None
+    agent_model_overrides: Optional[Dict[str, str]] = None
+
+    @field_validator("workflow_mode")
+    @classmethod
+    def validate_scan_workflow_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("quick_trade", "deep_analysis"):
+            raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
+        return v
+
+    @field_validator("agent_model_overrides")
+    @classmethod
+    def validate_scan_agent_model_overrides(
+        cls, v: Optional[Dict[str, str]]
+    ) -> Optional[Dict[str, str]]:
+        if v is None:
+            return v
+        for agent_key, model_id in v.items():
+            if not MODEL_ID_RE.match(model_id):
+                raise ValueError(
+                    f"Invalid model ID for agent '{agent_key}': must match {MODEL_ID_RE.pattern}"
+                )
+        return v
 
     @field_validator("analysis_date")
     @classmethod
@@ -340,6 +416,16 @@ class ScanRequest(BaseModel):
             for a in self.analysts:
                 if a not in valid:
                     raise ValueError(f"Invalid analyst for {asset}: {a}, must be one of {sorted(valid)}")
+
+        if self.agent_model_overrides:
+            valid_keys = VALID_CRYPTO_AGENT_KEYS if asset == "crypto" else VALID_STOCK_AGENT_KEYS
+            for key in self.agent_model_overrides:
+                if key not in valid_keys:
+                    raise ValueError(
+                        f"Invalid agent key '{key}' for {asset} scan, "
+                        f"must be one of {sorted(valid_keys)}"
+                    )
+
         return self
 
 

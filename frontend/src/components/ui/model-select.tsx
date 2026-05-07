@@ -1,6 +1,23 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+
+const RECENT_MODELS_KEY = "tradingagents_recent_models";
+const MAX_RECENT = 50;
+
+interface RecentEntry { value: string; ts: number }
+
+function loadRecents(): RecentEntry[] {
+  try { return JSON.parse(localStorage.getItem(RECENT_MODELS_KEY) ?? "[]"); }
+  catch { return []; }
+}
+
+function saveRecent(modelValue: string) {
+  const recents = loadRecents().filter((r) => r.value !== modelValue);
+  recents.unshift({ value: modelValue, ts: Date.now() });
+  if (recents.length > MAX_RECENT) recents.length = MAX_RECENT;
+  localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(recents));
+}
 
 interface ModelOption {
   label: string;
@@ -23,10 +40,26 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
   const wrapperRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [recentVersion, setRecentVersion] = useState(0);
 
-  const filtered = search
-    ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()) || o.value.toLowerCase().includes(search.toLowerCase()))
-    : options;
+  const recencyMap = useMemo(() => {
+    void recentVersion;
+    const map = new Map<string, number>();
+    for (const r of loadRecents()) map.set(r.value, r.ts);
+    return map;
+  }, [recentVersion]);
+
+  const sorted = useMemo(() => {
+    const base = search
+      ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()) || o.value.toLowerCase().includes(search.toLowerCase()))
+      : options;
+    return [...base].sort((a, b) => {
+      const ta = recencyMap.get(a.value) ?? 0;
+      const tb = recencyMap.get(b.value) ?? 0;
+      if (ta !== tb) return tb - ta;
+      return 0;
+    });
+  }, [options, search, recencyMap]);
 
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value;
 
@@ -48,8 +81,9 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
 
   useEffect(() => {
     if (!open) return;
-    function reposition() {
+    function reposition(e: Event) {
       if (!wrapperRef.current) return;
+      if ((e.target as Element)?.closest?.("[data-model-select-portal]")) return;
       const rect = wrapperRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       if (spaceBelow >= 280) {
@@ -90,14 +124,16 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
 
   const select = useCallback((opt: ModelOption) => {
     onChange(opt.value);
+    saveRecent(opt.value);
+    setRecentVersion((v) => v + 1);
     setOpen(false);
     setSearch("");
   }, [onChange]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") { e.preventDefault(); setHighlightIdx((i) => Math.min(i + 1, filtered.length - 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlightIdx((i) => Math.min(i + 1, sorted.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHighlightIdx((i) => Math.max(i - 1, 0)); }
-    else if (e.key === "Enter" && filtered[highlightIdx]) { e.preventDefault(); select(filtered[highlightIdx]); }
+    else if (e.key === "Enter" && sorted[highlightIdx]) { e.preventDefault(); select(sorted[highlightIdx]); }
     else if (e.key === "Escape") { setOpen(false); setSearch(""); }
   }
 
@@ -124,10 +160,12 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
         </div>
       </div>
       <div ref={listRef} className="max-h-56 overflow-y-auto py-1">
-        {filtered.length === 0 ? (
+        {sorted.length === 0 ? (
           <div className="px-3 py-4 text-center text-sm text-muted-foreground">No models found</div>
         ) : (
-          filtered.map((opt, i) => (
+          sorted.map((opt, i) => {
+            const isRecent = recencyMap.has(opt.value);
+            return (
             <button
               key={opt.value}
               type="button"
@@ -139,9 +177,15 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
                 opt.value === value && "font-semibold text-primary",
               )}
             >
-              {opt.label}
+              <span className="flex items-center gap-2">
+                {opt.label}
+                {isRecent && !search && (
+                  <span className="text-[10px] text-muted-foreground/60 font-sans">recent</span>
+                )}
+              </span>
             </button>
-          ))
+            );
+          })
         )}
       </div>
     </div>

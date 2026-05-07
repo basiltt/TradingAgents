@@ -2,7 +2,14 @@ import { useEffect, useState, useRef } from "react";
 
 export type ConnStatus = "idle" | "checking" | "ok" | "error";
 
-export function useConnectivityCheck(url: string | undefined, apiKey?: string, debounceMs = 800) {
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+
+export function useConnectivityCheck(
+  url: string | undefined,
+  apiKey?: string,
+  debounceMs = 800,
+  provider?: string,
+) {
   const [status, setStatus] = useState<ConnStatus>("idle");
   const [latency, setLatency] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -14,7 +21,13 @@ export function useConnectivityCheck(url: string | undefined, apiKey?: string, d
     setErrorMsg(null);
 
     const trimmed = url?.trim();
-    if (!trimmed) {
+
+    // Need either a custom URL or a provider+key to check
+    if (!trimmed && !provider) {
+      setStatus("idle");
+      return;
+    }
+    if (!trimmed && !apiKey?.trim()) {
       setStatus("idle");
       return;
     }
@@ -24,27 +37,37 @@ export function useConnectivityCheck(url: string | undefined, apiKey?: string, d
     abortRef.current = ac;
 
     const timer = setTimeout(async () => {
-      const start = performance.now();
       try {
-        const base = trimmed.replace(/\/+$/, "");
-        const res = await fetch(`${base}/v1/models`, {
+        const res = await fetch(`${BASE_URL}/api/v1/connectivity-check`, {
+          method: "POST",
           signal: ac.signal,
-          headers: { Authorization: `Bearer ${apiKey || "dummy"}` },
+          headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+          body: JSON.stringify({
+            provider: provider || "",
+            api_key: apiKey || null,
+            custom_url: trimmed || null,
+          }),
         });
-        const elapsed = Math.round(performance.now() - start);
-        setLatency(elapsed);
-        if (res.ok) {
+        if (!res.ok) {
+          setStatus("error");
+          setErrorMsg(`Backend error: HTTP ${res.status}`);
+          return;
+        }
+        const data = await res.json();
+        if (data.status === "ok") {
           setStatus("ok");
+          setLatency(data.latency_ms ?? null);
           setErrorMsg(null);
         } else {
           setStatus("error");
-          setErrorMsg(`HTTP ${res.status}`);
+          setLatency(data.latency_ms ?? null);
+          setErrorMsg(data.error || "Unknown error");
         }
       } catch (err) {
         if (ac.signal.aborted) return;
         setStatus("error");
         setLatency(null);
-        setErrorMsg(err instanceof TypeError ? "Connection refused" : String(err));
+        setErrorMsg("Backend unavailable");
       }
     }, debounceMs);
 
@@ -52,7 +75,7 @@ export function useConnectivityCheck(url: string | undefined, apiKey?: string, d
       clearTimeout(timer);
       ac.abort();
     };
-  }, [url, apiKey, debounceMs]);
+  }, [url, apiKey, debounceMs, provider]);
 
   return { status, latency, errorMsg };
 }

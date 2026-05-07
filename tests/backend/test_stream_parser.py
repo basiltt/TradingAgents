@@ -230,3 +230,40 @@ def test_in_progress_not_duplicated_on_second_chunk():
     co_events = [e for e in events if isinstance(e, AgentStatusEvent) and e.agent == "Compliance Officer"]
     statuses = [e.status for e in co_events]
     assert statuses == ["completed"]
+
+
+def test_quick_trade_skips_compliance_on_trader_complete():
+    """In quick_trade mode, Trader completion should NOT emit Compliance Officer in_progress."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState(workflow_mode="quick_trade")
+    chunk = {"trader_investment_plan": "Buy SPY"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    assert any(isinstance(e, AgentStatusEvent) and e.agent == "Trader" and e.status == "completed" for e in events)
+    assert not any(isinstance(e, AgentStatusEvent) and e.agent == "Compliance Officer" for e in events)
+
+
+def test_deep_analysis_emits_compliance_on_trader_complete():
+    """In deep_analysis mode, Trader completion should emit Compliance Officer in_progress."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState(workflow_mode="deep_analysis")
+    chunk = {"trader_investment_plan": "Buy SPY"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    assert any(isinstance(e, AgentStatusEvent) and e.agent == "Trader" and e.status == "completed" for e in events)
+    assert any(isinstance(e, AgentStatusEvent) and e.agent == "Compliance Officer" and e.status == "in_progress" for e in events)
+
+
+def test_quick_trade_skips_pm_and_exec_monitor_on_final_decision():
+    """In quick_trade mode, final_trade_decision should NOT emit PM/Execution Monitor events."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent, ReportChunkEvent
+
+    state = StreamParserState(workflow_mode="quick_trade")
+    chunk = {"final_trade_decision": "Buy AAPL"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    assert not any(isinstance(e, AgentStatusEvent) and e.agent == "Portfolio Manager" for e in events)
+    assert not any(isinstance(e, AgentStatusEvent) and e.agent == "Execution Monitor" for e in events)
+    assert not any(isinstance(e, ReportChunkEvent) and e.section == "portfolio_manager" for e in events)

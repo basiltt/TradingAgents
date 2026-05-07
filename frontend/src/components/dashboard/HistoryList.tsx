@@ -360,6 +360,7 @@ export function HistoryList() {
                   <th className="text-left px-4 py-2.5 font-medium">Ticker</th>
                   <th className="text-left px-4 py-2.5 font-medium">Status</th>
                   <th className="text-left px-4 py-2.5 font-medium">Signal</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Models</th>
                   <th className="text-left px-4 py-2.5 font-medium">Date</th>
                   <th className="text-left px-4 py-2.5 font-medium">Run ID</th>
                   <th className="px-4 py-2.5" />
@@ -394,6 +395,23 @@ export function HistoryList() {
                           ? <TradeScoreDisplay card={scoreMap.get(item.run_id)} />
                           : <span className="text-xs text-muted-foreground">—</span>
                         }
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {(() => {
+                          const cfg = item.config ?? {};
+                          const deep = String(cfg.deep_think_llm ?? "");
+                          const quick = String(cfg.quick_think_llm ?? "");
+                          if (!deep && !quick) return <span className="text-xs text-muted-foreground">—</span>;
+                          if (deep === quick) {
+                            return <span className="text-[10px] font-mono text-muted-foreground">{deep}</span>;
+                          }
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              {deep && <span className="text-[10px] font-mono text-muted-foreground" title="Deep think model">{deep}</span>}
+                              {quick && quick !== deep && <span className="text-[10px] font-mono text-muted-foreground/60" title="Quick think model">{quick}</span>}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                         {item.analysis_date}{" "}

@@ -9,6 +9,7 @@ import { StatsBar } from "./StatsBar";
 import { ReconnectionIndicator } from "./ReconnectionIndicator";
 import { AnalysisStatusBadge } from "./AnalysisStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 const DEEP_THINK_AGENTS = new Set(["Research Manager", "Portfolio Manager"]);
 
@@ -22,6 +23,7 @@ function ConfigSummary({ config }: { config: Record<string, unknown> }) {
     const c = config;
     const pairs: [string, string][] = [];
     if (c.backend_url) pairs.push(["Backend URL", String(c.backend_url)]);
+    if (c.workflow_mode) pairs.push(["Mode", c.workflow_mode === "quick_trade" ? "Quick Trade" : "Deep Analysis"]);
     if (c.asset_type) pairs.push(["Asset Type", String(c.asset_type)]);
     if (c.output_language && c.output_language !== "English") pairs.push(["Language", String(c.output_language)]);
     if (c.max_debate_rounds) pairs.push(["Debate Rounds", String(c.max_debate_rounds)]);
@@ -46,6 +48,16 @@ function ConfigSummary({ config }: { config: Record<string, unknown> }) {
         </svg>
         {provider && (
           <span className="text-xs font-medium text-muted-foreground capitalize">{provider}</span>
+        )}
+        {config.workflow_mode && (
+          <span className={cn(
+            "px-1.5 py-0.5 rounded font-semibold text-[10px] uppercase tracking-wide",
+            config.workflow_mode === "quick_trade"
+              ? "bg-amber-500/15 text-amber-400"
+              : "bg-emerald-500/15 text-emerald-400",
+          )}>
+            {config.workflow_mode === "quick_trade" ? "Quick Trade" : "Deep Analysis"}
+          </span>
         )}
         {deepModel && (
           <span className="inline-flex items-center gap-1.5 text-xs">
@@ -201,6 +213,16 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              className="w-8 h-8 rounded-xl bg-muted/60 hover:bg-muted flex items-center justify-center shrink-0 transition-colors"
+              title="Go back"
+            >
+              <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
             <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
               <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -272,7 +294,7 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
       ) : (
         <>
           <StatsBar stats={stats} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4 items-stretch">
             <AgentStatusTable agents={agents} isLoading={isLoadingSnapshot} config={parsedConfig} />
             <MessagesPanel messages={messages} isLoading={isLoadingSnapshot} />
           </div>

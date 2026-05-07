@@ -12,6 +12,28 @@ interface AgentStatusTableProps {
 
 const DEEP_THINK_AGENTS = new Set(["Research Manager", "Portfolio Manager"]);
 
+const AGENT_NAME_TO_KEY: Record<string, string> = {
+  "Market Analyst": "market",
+  "Social Analyst": "social",
+  "News Analyst": "news",
+  "Fundamentals Analyst": "fundamentals",
+  "Technical Analyst": "crypto_technical",
+  "Derivatives Analyst": "crypto_derivatives",
+  "Bull Researcher": "bull_researcher",
+  "Bear Researcher": "bear_researcher",
+  "Research Manager": "research_manager",
+  "Trader": "trader",
+  "Compliance Officer": "compliance_officer",
+  "Execution Monitor": "execution_monitor",
+  "Confluence Checker": "confluence_checker",
+  "Bull Analyst": "bull_analyst",
+  "Bear Analyst": "bear_analyst",
+  "Portfolio Manager": "portfolio_manager",
+  "Aggressive Analyst": "aggressive_analyst",
+  "Neutral Analyst": "neutral_analyst",
+  "Conservative Analyst": "conservative_analyst",
+};
+
 /**
  * Canonical pipeline stage order — agents are displayed in this order
  * regardless of when their first status event arrives.
@@ -79,6 +101,8 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
   const deepModel = config?.deep_think_llm ? String(config.deep_think_llm) : "";
   const quickModel = config?.quick_think_llm ? String(config.quick_think_llm) : "";
 
+  const overrides = (config?.agent_model_overrides as Record<string, string>) || {};
+
   const body = isLoading ? (
     <div className="space-y-2">
       {[1, 2, 3, 4].map((i) => (
@@ -101,7 +125,10 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
         <div className="space-y-2">
           {entries.map(([name, status]) => {
             const isDeep = DEEP_THINK_AGENTS.has(name);
-            const model = isDeep ? deepModel : quickModel;
+            const agentKey = AGENT_NAME_TO_KEY[name];
+            const overrideModel = agentKey ? overrides[agentKey] : undefined;
+            const model = overrideModel || (isDeep ? deepModel : quickModel);
+            const isOverridden = !!overrideModel;
             return (
             <div
               key={name}
@@ -111,7 +138,7 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
                 <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT_COLOR[status] ?? "bg-muted-foreground"}`} />
                 <span className="text-sm font-medium truncate">{name}</span>
                 {model && (
-                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[140px] ${isDeep ? "bg-purple-500/15 text-purple-400" : "bg-sky-500/15 text-sky-400"}`}>
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[140px] ${isOverridden ? "bg-amber-500/15 text-amber-400" : isDeep ? "bg-purple-500/15 text-purple-400" : "bg-sky-500/15 text-sky-400"}`}>
                     {model}
                   </span>
                 )}
@@ -132,7 +159,7 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
     : null;
 
   return (
-    <>
+    <div className="md:min-h-[28rem]">
       {/* Mobile: collapsible */}
       <MobileCollapse
         defaultOpen
@@ -150,7 +177,7 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
       </MobileCollapse>
 
       {/* Desktop: original Card */}
-      <Card className="hidden md:block">
+      <Card className="hidden md:block h-full">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <AgentsIcon />
@@ -160,6 +187,6 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
         </CardHeader>
         <CardContent>{body}</CardContent>
       </Card>
-    </>
+    </div>
   );
 });

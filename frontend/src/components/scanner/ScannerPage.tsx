@@ -14,8 +14,9 @@ import { useModels } from "@/hooks/useModels";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
 import { MobileCollapse } from "@/components/analysis/MobileCollapse";
+import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 
-const PROVIDERS = ["openai", "anthropic", "google", "deepseek", "xai", "qwen", "glm", "openrouter", "azure", "ollama"] as const;
+const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
 const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
   { value: "15", label: "15 min" },
@@ -86,6 +87,7 @@ interface ScannerSettings {
   maxRecurLimit?: number;
   checkpointEnabled?: boolean;
   maxParallel?: number;
+  workflowMode?: "quick_trade" | "deep_analysis";
 }
 
 function loadScannerSettings(): ScannerSettings {
@@ -154,6 +156,41 @@ function ConnBadge({ status, latency, error, label = "Connected" }: { status: Co
   );
 }
 
+function formatDuration(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function ScanDurationBadge({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string | null; isRunning: boolean }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!isRunning || !startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isRunning, startedAt]);
+
+  if (!startedAt) return null;
+
+  const start = new Date(startedAt).getTime();
+  const end = completedAt ? new Date(completedAt).getTime() : now;
+  const elapsed = Math.max(0, end - start);
+
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono tabular-nums">
+      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      {formatDuration(elapsed)}
+    </span>
+  );
+}
+
 const SCAN_ID_KEY = "tradingagents_active_scan";
 
 function loadActiveScanId(): string | null {
@@ -183,13 +220,22 @@ export function ScannerPage() {
   const [maxRecurLimit, setMaxRecurLimit] = useState(scanner.maxRecurLimit ?? 100);
   const [checkpointEnabled, setCheckpointEnabled] = useState(scanner.checkpointEnabled ?? false);
   const [maxParallel, setMaxParallel] = useState(scanner.maxParallel ?? 10);
+  const [workflowMode, setWorkflowMode] = useState<"quick_trade" | "deep_analysis">(scanner.workflowMode ?? "deep_analysis");
   const [activeScanId, _setActiveScanId] = useState<string | null>(loadActiveScanId);
   const [showLlm, setShowLlm] = useState(true);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState<number>(0);
   const [endpoints, setEndpoints] = useState(loadEndpoints);
   const [showEndpoints, setShowEndpoints] = useState(false);
+  const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
   const endpointsRef = useRef<HTMLDivElement>(null);
+
+  const { data: providersData } = useQuery({
+    queryKey: ["providers"],
+    queryFn: ({ signal }) => apiClient.getProviders(signal),
+    staleTime: 300_000,
+  });
+  const PROVIDERS = providersData?.providers ?? PROVIDERS_FALLBACK;
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -200,12 +246,12 @@ export function ScannerPage() {
   }, [showEndpoints]);
 
   useEffect(() => {
-    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel });
+    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode });
     if (backendUrl.trim()) {
       saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
       setEndpoints(loadEndpoints());
     }
-  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel]);
+  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode]);
 
   function selectEndpoint(ep: EndpointProfile) {
     setBackendUrl(ep.url);
@@ -236,7 +282,7 @@ export function ScannerPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const conn = useConnectivityCheck(backendUrl, llmApiKey || undefined);
+  const conn = useConnectivityCheck(backendUrl, llmApiKey || undefined, 800, provider);
   const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined);
 
   const configQuery = useQuery({
@@ -320,6 +366,11 @@ export function ScannerPage() {
       max_recur_limit: maxRecurLimit !== 100 ? maxRecurLimit : undefined,
       checkpoint_enabled: checkpointEnabled || undefined,
       max_parallel: maxParallel !== 10 ? maxParallel : undefined,
+      workflow_mode: workflowMode !== "deep_analysis" ? workflowMode : undefined,
+      agent_model_overrides: (() => {
+        const filtered = filterOverridesForAssetType(agentModelOverrides, "crypto");
+        return Object.keys(filtered).length > 0 ? filtered : undefined;
+      })(),
     };
     startMutation.mutate(body);
   };
@@ -421,6 +472,37 @@ export function ScannerPage() {
                 </div>
               </div>
 
+              {/* Workflow Mode Toggle */}
+              <div className="flex flex-col gap-2">
+                <Label className="font-medium">Workflow Mode</Label>
+                <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Workflow mode">
+                  {([
+                    { value: "quick_trade" as const, label: "Quick Trade" },
+                    { value: "deep_analysis" as const, label: "Deep Analysis" },
+                  ]).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={workflowMode === opt.value}
+                      className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                        workflowMode === opt.value
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-background hover:bg-muted"
+                      }`}
+                      onClick={() => setWorkflowMode(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {workflowMode === "quick_trade"
+                    ? "Analysts → Research Debate → Trade Card"
+                    : "Full pipeline with risk debate, compliance & portfolio management"}
+                </p>
+              </div>
+
               {/* Analyst team */}
               <div className="flex flex-col gap-2">
                 <Label className="font-medium">Analyst Team</Label>
@@ -508,17 +590,19 @@ export function ScannerPage() {
                   <p className="text-xs text-muted-foreground">Language for the final report (agent debate stays in English)</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className={`grid ${workflowMode === "quick_trade" ? "grid-cols-1" : "grid-cols-2"} gap-4`}>
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium text-sm">Max Debate Rounds</Label>
                     <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} />
                     <p className="text-xs text-muted-foreground">Bull vs Bear debate iterations</p>
                   </div>
+                  {workflowMode !== "quick_trade" && (
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium text-sm">Max Risk Rounds</Label>
                     <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} />
                     <p className="text-xs text-muted-foreground">Risk team discussion iterations</p>
                   </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-2">
@@ -578,8 +662,8 @@ export function ScannerPage() {
                       value={backendUrl}
                       onChange={(e) => setBackendUrl(e.target.value)}
                       onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
-                      placeholder="http://localhost:4141"
-                      className="pr-9"
+                      placeholder="Enter your LLM provider override URL"
+                      className="pr-9 placeholder:text-muted-foreground/40"
                     />
                     {endpoints.length > 1 && (
                       <button
@@ -691,6 +775,18 @@ export function ScannerPage() {
             )}
           </Card>
 
+          {/* Agent Model Overrides */}
+          <Card className="shadow-sm">
+            <CardContent className="pt-5">
+              <AgentModelOverrides
+                assetType="crypto"
+                modelOptions={deepOptions}
+                overrides={agentModelOverrides}
+                onChange={setAgentModelOverrides}
+              />
+            </CardContent>
+          </Card>
+
           {/* Start button */}
           <Button
             onClick={handleStart}
@@ -745,8 +841,9 @@ export function ScannerPage() {
                   </div>
                 )}
                 <div>
-                  <h3 className="font-semibold">
+                  <h3 className="font-semibold flex items-center gap-3">
                     {isRunning ? "Scanning Market..." : scan.status === "completed" ? "Scan Complete" : scan.status === "cancelled" ? "Scan Cancelled" : "Scan Failed"}
+                    <ScanDurationBadge startedAt={scan.started_at} completedAt={scan.completed_at} isRunning={isRunning} />
                   </h3>
 
                 </div>

@@ -16,10 +16,11 @@ import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCh
 import { getModelOptions } from "@/lib/model-catalog";
 import { ModelSelect } from "@/components/ui/model-select";
 import { WatchlistPanel } from "./WatchlistPanel";
+import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "./AgentModelOverrides";
 
 const TICKER_REGEX = /^[A-Z0-9.\-^]{1,15}$/;
 const CRYPTO_TICKER_REGEX = /^[A-Z0-9]{2,20}$/;
-const PROVIDERS = ["openai", "anthropic", "google", "deepseek", "xai", "qwen", "glm", "openrouter", "azure", "ollama"] as const;
+const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const STOCK_ANALYSTS = ["market", "social", "news", "fundamentals"] as const;
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
 const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
@@ -105,6 +106,7 @@ interface SavedSettings {
   checkpoint_enabled?: boolean;
   interval?: CryptoInterval;
   data_vendors?: Record<string, string>;
+  workflow_mode?: "quick_trade" | "deep_analysis";
 }
 
 function loadSettings(): SavedSettings {
@@ -175,6 +177,7 @@ interface FormValues {
   data_vendor_technical: string;
   data_vendor_fundamental: string;
   data_vendor_news: string;
+  workflow_mode: "quick_trade" | "deep_analysis";
 }
 
 export function ConfigForm() {
@@ -187,6 +190,7 @@ export function ConfigForm() {
   const [showData, setShowData] = useState(false);
   const [endpoints, setEndpoints] = useState(loadEndpoints);
   const [showEndpoints, setShowEndpoints] = useState(false);
+  const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
   const endpointsRef = useRef<HTMLDivElement>(null);
 
   const { data: configData } = useQuery({
@@ -194,6 +198,13 @@ export function ConfigForm() {
     queryFn: ({ signal }) => apiClient.getConfig(signal),
     staleTime: 60_000,
   });
+
+  const { data: providersData } = useQuery({
+    queryKey: ["providers"],
+    queryFn: ({ signal }) => apiClient.getProviders(signal),
+    staleTime: 300_000,
+  });
+  const PROVIDERS = providersData?.providers ?? PROVIDERS_FALLBACK;
 
   const resolved = configData?.resolved ?? {};
   const envProvider = String(resolved.llm_provider ?? "openai");
@@ -230,6 +241,7 @@ export function ConfigForm() {
       data_vendor_technical: saved.data_vendors?.technical_indicators || "yfinance",
       data_vendor_fundamental: saved.data_vendors?.fundamental_data || "yfinance",
       data_vendor_news: saved.data_vendors?.news_data || "yfinance",
+      workflow_mode: saved.workflow_mode || "deep_analysis",
     },
   });
 
@@ -252,6 +264,7 @@ export function ConfigForm() {
   const watchedVendorTech = watch("data_vendor_technical");
   const watchedVendorFund = watch("data_vendor_fundamental");
   const watchedVendorNews = watch("data_vendor_news");
+  const watchedWorkflowMode = watch("workflow_mode");
 
   const isCrypto = watchedAssetType === "crypto";
   const activeAnalysts = isCrypto ? CRYPTO_ANALYSTS : STOCK_ANALYSTS;
@@ -280,8 +293,9 @@ export function ConfigForm() {
         fundamental_data: watchedVendorFund,
         news_data: watchedVendorNews,
       },
+      workflow_mode: watchedWorkflowMode,
     });
-  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews]);
+  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews, watchedWorkflowMode]);
 
   useEffect(() => {
     if (watchedBackendUrl?.trim()) {
@@ -324,7 +338,7 @@ export function ConfigForm() {
 
   const trimmedBackendUrl = useMemo(() => watchedBackendUrl?.trim() || undefined, [watchedBackendUrl]);
   const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl, watchedApiKey?.trim() || undefined);
-  const backendConn = useConnectivityCheck(trimmedBackendUrl, watchedApiKey?.trim() || undefined);
+  const backendConn = useConnectivityCheck(trimmedBackendUrl, watchedApiKey?.trim() || undefined, 800, selectedProvider);
 
   const deepOptions = useMemo(() => {
     if (proxyModels?.length) return proxyModels.map((m) => ({ label: m.name ?? m.id, value: m.id }));
@@ -335,6 +349,16 @@ export function ConfigForm() {
     if (proxyModels?.length) return proxyModels.map((m) => ({ label: m.name ?? m.id, value: m.id }));
     return getModelOptions(selectedProvider, "quick");
   }, [proxyModels, selectedProvider]);
+
+  // Reset model selections when provider changes and current value isn't in new options
+  useEffect(() => {
+    if (deepOptions.length && watchedDeep && !deepOptions.some((o) => o.value === watchedDeep)) {
+      setValue("deep_think_llm", deepOptions[0].value);
+    }
+    if (quickOptions.length && watchedQuick && !quickOptions.some((o) => o.value === watchedQuick)) {
+      setValue("quick_think_llm", quickOptions[0].value);
+    }
+  }, [deepOptions, quickOptions, watchedDeep, watchedQuick, setValue]);
 
   async function onSubmit(data: FormValues) {
     setSubmitError(null);
@@ -360,6 +384,7 @@ export function ConfigForm() {
         max_risk_discuss_rounds: data.max_risk_discuss_rounds,
         max_recur_limit: data.max_recur_limit !== 100 ? data.max_recur_limit : undefined,
         checkpoint_enabled: data.checkpoint_enabled || undefined,
+        workflow_mode: data.workflow_mode !== "deep_analysis" ? data.workflow_mode : undefined,
         ...(isCryptoSubmit
           ? { interval: data.interval }
           : {
@@ -370,6 +395,10 @@ export function ConfigForm() {
                 news_data: data.data_vendor_news,
               },
             }),
+        agent_model_overrides: (() => {
+          const filtered = filterOverridesForAssetType(agentModelOverrides, isCryptoSubmit ? "crypto" : "stock");
+          return Object.keys(filtered).length > 0 ? filtered : undefined;
+        })(),
       };
       const result = await apiClient.startAnalysis(body);
       navigate({ to: "/analysis/$runId", params: { runId: result.run_id } });
@@ -429,6 +458,43 @@ export function ConfigForm() {
                   </div>
                 )}
               />
+            </div>
+
+            {/* Workflow Mode Toggle */}
+            <div className="flex flex-col gap-2">
+              <Label className="font-medium">Workflow Mode</Label>
+              <Controller
+                name="workflow_mode"
+                control={control}
+                render={({ field }) => (
+                  <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Workflow mode">
+                    {([
+                      { value: "quick_trade" as const, label: "Quick Trade", desc: "Analysts → Research → Trade Card" },
+                      { value: "deep_analysis" as const, label: "Deep Analysis", desc: "Full pipeline with risk & compliance" },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={field.value === opt.value}
+                        className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                          field.value === opt.value
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-background hover:bg-muted"
+                        }`}
+                        onClick={() => field.onChange(opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                {watchedWorkflowMode === "quick_trade"
+                  ? "Analysts → Research Debate → Trade Card"
+                  : "Full pipeline with risk debate, compliance & portfolio management"}
+              </p>
             </div>
 
             {/* Ticker */}
@@ -633,17 +699,19 @@ export function ConfigForm() {
             <SectionToggle label="Workflow Settings" open={showWorkflow} onToggle={() => setShowWorkflow(!showWorkflow)} />
             {showWorkflow && (
               <div className="mt-4 space-y-4 pl-1">
-                <div className="grid grid-cols-2 gap-4">
+                <div className={`grid ${watchedWorkflowMode === "quick_trade" ? "grid-cols-1" : "grid-cols-2"} gap-4`}>
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium text-sm">Max Debate Rounds</Label>
                     <Input type="number" min={1} max={10} {...register("max_debate_rounds", { valueAsNumber: true })} />
                     <p className="text-xs text-muted-foreground">Bull vs Bear debate iterations</p>
                   </div>
+                  {watchedWorkflowMode !== "quick_trade" && (
                   <div className="flex flex-col gap-2">
                     <Label className="font-medium text-sm">Max Risk Rounds</Label>
                     <Input type="number" min={1} max={10} {...register("max_risk_discuss_rounds", { valueAsNumber: true })} />
                     <p className="text-xs text-muted-foreground">Risk team discussion iterations</p>
                   </div>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   <Label className="font-medium text-sm">Max Recursion Limit</Label>
@@ -688,8 +756,8 @@ export function ConfigForm() {
                     <div className="relative">
                       <Input
                         id="backend_url"
-                        placeholder={envBackendUrl || "http://localhost:4141"}
-                        className="font-mono text-sm pr-9"
+                        placeholder="Enter your LLM provider override URL"
+                        className="font-mono text-sm pr-9 placeholder:text-muted-foreground/40"
                         autoComplete="off"
                         {...register("backend_url")}
                         onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
@@ -816,6 +884,18 @@ export function ConfigForm() {
           </CardContent>
         </Card>
 
+        {/* ── Agent Model Overrides ── */}
+        <Card className="shadow-sm">
+          <CardContent className="pt-5">
+            <AgentModelOverrides
+              assetType={isCrypto ? "crypto" : "stock"}
+              modelOptions={deepOptions}
+              overrides={agentModelOverrides}
+              onChange={setAgentModelOverrides}
+            />
+          </CardContent>
+        </Card>
+
         {/* ── Data Sources (stock only) ── */}
         {!isCrypto && (
         <Card className="shadow-sm">
@@ -907,6 +987,10 @@ export function ConfigForm() {
             fundamental_data: watchedVendorFund,
             news_data: watchedVendorNews,
           },
+          agent_model_overrides: (() => {
+            const filtered = filterOverridesForAssetType(agentModelOverrides, watchedAssetType);
+            return Object.keys(filtered).length > 0 ? filtered : undefined;
+          })(),
         }}
       />
     </div>

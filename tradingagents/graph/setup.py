@@ -1,6 +1,6 @@
 # TradingAgents/graph/setup.py
 
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -69,12 +69,14 @@ class GraphSetup:
         deep_thinking_llm: Any,
         tool_nodes: Dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
+        agent_llm_resolver: Optional[Callable] = None,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
+        self._resolve = agent_llm_resolver or (lambda key, default: default)
 
     def _analyst_should_continue(self, analyst_type: str) -> Callable:
         """Return a should_continue function adapted for the subgraph node names."""
@@ -93,6 +95,7 @@ class GraphSetup:
         selected_analysts=["market", "social", "news", "fundamentals"],
         compliance_officer_node=None,
         execution_monitor_node=None,
+        workflow_mode: str = "deep_analysis",
     ):
         """Set up and compile the agent workflow graph.
 
@@ -111,16 +114,10 @@ class GraphSetup:
         }
 
         # Create researcher and manager nodes
-        bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
-        bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
-
-        # Create risk analysis nodes
-        aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
-        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        bull_researcher_node = create_bull_researcher(self._resolve("bull_researcher", self.quick_thinking_llm))
+        bear_researcher_node = create_bear_researcher(self._resolve("bear_researcher", self.quick_thinking_llm))
+        research_manager_node = create_research_manager(self._resolve("research_manager", self.deep_thinking_llm))
+        trader_node = create_trader(self._resolve("trader", self.quick_thinking_llm))
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -130,16 +127,11 @@ class GraphSetup:
             bull_researcher_node, bear_researcher_node,
         )
 
-        # Parallel round-1 risk node: all 3 debaters run simultaneously
-        parallel_risk_r1 = create_parallel_risk_round1(
-            [aggressive_analyst, conservative_analyst, neutral_analyst],
-        )
-
         # Add each analyst as a parallel subgraph node
         for analyst_type in selected_analysts:
             subgraph = _build_analyst_subgraph(
                 analyst_type=analyst_type,
-                analyst_node=analyst_factories[analyst_type](self.quick_thinking_llm),
+                analyst_node=analyst_factories[analyst_type](self._resolve(analyst_type, self.quick_thinking_llm)),
                 tool_node=self.tool_nodes[analyst_type],
                 delete_node=create_msg_delete(),
                 should_continue_fn=self._analyst_should_continue(analyst_type),
@@ -183,7 +175,20 @@ class GraphSetup:
         )
         workflow.add_edge("Research Manager", "Trader")
 
+        if workflow_mode == "quick_trade":
+            workflow.add_edge("Trader", END)
+            return workflow
+
         # Risk debate: parallel round 1, then sequential continuation
+        aggressive_analyst = create_aggressive_debator(self._resolve("aggressive_analyst", self.quick_thinking_llm))
+        neutral_analyst = create_neutral_debator(self._resolve("neutral_analyst", self.quick_thinking_llm))
+        conservative_analyst = create_conservative_debator(self._resolve("conservative_analyst", self.quick_thinking_llm))
+        portfolio_manager_node = create_portfolio_manager(self._resolve("portfolio_manager", self.deep_thinking_llm))
+
+        parallel_risk_r1 = create_parallel_risk_round1(
+            [aggressive_analyst, conservative_analyst, neutral_analyst],
+        )
+
         workflow.add_node("Parallel Risk R1", parallel_risk_r1)
         workflow.add_node("Aggressive Analyst", aggressive_analyst)
         workflow.add_node("Neutral Analyst", neutral_analyst)
@@ -268,6 +273,7 @@ class GraphSetup:
         crypto_research_manager: Any = None,
         compliance_officer_node: Any = None,
         execution_monitor_node: Any = None,
+        workflow_mode: str = "deep_analysis",
     ):
         """Set up a crypto futures graph with bull/bear 2-party debate.
 
@@ -347,12 +353,17 @@ class GraphSetup:
             )
             workflow.add_edge("Research Manager", "Trader")
 
+        workflow.add_node("Trader", crypto_trader_node)
+
+        if workflow_mode == "quick_trade":
+            workflow.add_edge("Trader", END)
+            return workflow
+
         # Parallel round-1 risk node: bull + bear run simultaneously
         parallel_risk_r1 = create_parallel_risk_round1(
             [crypto_bull_debater, crypto_bear_debater],
         )
 
-        workflow.add_node("Trader", crypto_trader_node)
         workflow.add_node("Parallel Risk R1", parallel_risk_r1)
         workflow.add_node("Bull Analyst", crypto_bull_debater)
         workflow.add_node("Bear Analyst", crypto_bear_debater)

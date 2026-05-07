@@ -2,12 +2,37 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 import logging
 import threading
+import time
 import warnings
 
 logger = logging.getLogger(__name__)
 
 _llm_semaphore: threading.Semaphore | None = None
 _llm_sem_lock = threading.Lock()
+
+_LLM_MAX_RETRIES = 5
+_LLM_BASE_DELAY = 1.0
+_LLM_MAX_DELAY = 30.0
+
+_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _is_retryable(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if isinstance(status, int) and status in _RETRYABLE_STATUS_CODES:
+        return True
+    msg = str(exc).lower()
+    for hint in ("rate limit", "timeout", "timed out", "connection", "server error",
+                 "bad gateway", "service unavailable", "overloaded",
+                 "invalid_request_body", "failed to read request body"):
+        if hint in msg:
+            return True
+    if status == 400:
+        for hint_400 in ("invalid_request_body", "failed to read request body",
+                         "request body", "could not read"):
+            if hint_400 in msg:
+                return True
+    return False
 
 
 def configure_llm_concurrency(max_concurrent: int) -> None:
@@ -23,13 +48,26 @@ def configure_llm_concurrency(max_concurrent: int) -> None:
 
 def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
     sem = _llm_semaphore
-    if sem is None:
-        return super_invoke(input, config, **kwargs)
-    sem.acquire()
-    try:
-        return super_invoke(input, config, **kwargs)
-    finally:
-        sem.release()
+    last_exc: Exception | None = None
+    for attempt in range(_LLM_MAX_RETRIES):
+        if sem is not None:
+            sem.acquire()
+        try:
+            return super_invoke(input, config, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_retryable(exc) or attempt == _LLM_MAX_RETRIES - 1:
+                raise
+            delay = min(_LLM_BASE_DELAY * (2 ** attempt), _LLM_MAX_DELAY)
+            logger.warning(
+                "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
+                attempt + 1, _LLM_MAX_RETRIES, delay, exc,
+            )
+            time.sleep(delay)
+        finally:
+            if sem is not None:
+                sem.release()
+    raise last_exc  # unreachable but keeps type checkers happy
 
 
 def normalize_content(response):

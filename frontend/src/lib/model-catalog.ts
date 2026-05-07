@@ -54,6 +54,14 @@ const MODEL_OPTIONS: Record<string, Record<ModelMode, ModelOption[]>> = {
       { label: "DeepSeek V3.2 (thinking)", value: "deepseek-reasoner" },
     ],
   },
+  nvidia: {
+    quick: [
+      { label: "DeepSeek V4 Flash (NVIDIA)", value: "deepseek-v4-flash" },
+    ],
+    deep: [
+      { label: "DeepSeek V4 Pro (NVIDIA)", value: "deepseek-v4-pro" },
+    ],
+  },
   xai: {
     quick: [
       { label: "Grok 4.1 Fast (Non-Reasoning)", value: "grok-4-1-fast-non-reasoning" },

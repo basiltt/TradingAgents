@@ -78,6 +78,16 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Custom model ID", "custom"),
         ],
     },
+    "nvidia": {
+        "quick": [
+            ("DeepSeek V4 Flash (NVIDIA)", "deepseek-v4-flash"),
+            ("Custom model ID", "custom"),
+        ],
+        "deep": [
+            ("DeepSeek V4 Pro (NVIDIA)", "deepseek-v4-pro"),
+            ("Custom model ID", "custom"),
+        ],
+    },
     "qwen": {
         "quick": [
             ("Qwen 3.5 Flash", "qwen3.5-flash"),

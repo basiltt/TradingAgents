@@ -22,6 +22,7 @@ export interface BatchConfig {
   output_language: string;
   interval: string;
   data_vendors?: Record<string, string>;
+  agent_model_overrides?: Record<string, string>;
 }
 
 interface WatchlistPanelProps {
@@ -73,6 +74,7 @@ export function WatchlistPanel({ config }: WatchlistPanelProps) {
             asset_type: config.asset_type,
             interval: config.asset_type === "crypto" ? (config.interval as "15" | "60" | "240" | "D") : undefined,
             data_vendors: config.data_vendors,
+            agent_model_overrides: config.agent_model_overrides,
           };
           const res = await apiClient.startAnalysis(body);
           setBatchState((prev) =>

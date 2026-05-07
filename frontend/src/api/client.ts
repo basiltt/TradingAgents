@@ -20,7 +20,17 @@ async function throwApiError(res: Response): Promise<never> {
   let detail = res.statusText;
   try {
     const body = await res.json();
-    detail = body.detail ?? detail;
+    if (typeof body.detail === "string") {
+      detail = body.detail;
+    } else if (Array.isArray(body.detail)) {
+      detail = body.detail
+        .map((e: { loc?: string[]; msg?: string }) =>
+          `${(e.loc ?? []).slice(-1).join(".")}: ${e.msg ?? "invalid"}`
+        )
+        .join("; ");
+    } else if (body.detail != null) {
+      detail = JSON.stringify(body.detail);
+    }
   } catch {
     // non-JSON error body
   }
@@ -79,6 +89,7 @@ export interface AnalysisListItem {
   started_at: string;
   completed_at?: string;
   asset_type?: AssetType;
+  config?: Record<string, unknown>;
 }
 
 export interface AnalysisListResponse {
@@ -125,6 +136,8 @@ export interface StartAnalysisRequest {
   data_vendors?: Record<string, string>;
   asset_type?: AssetType;
   interval?: CryptoInterval;
+  workflow_mode?: "quick_trade" | "deep_analysis";
+  agent_model_overrides?: Record<string, string>;
 }
 
 export interface ConfigResponse {
@@ -180,6 +193,8 @@ export interface ScanRequest {
   checkpoint_enabled?: boolean;
   data_vendors?: Record<string, string>;
   max_parallel?: number;
+  workflow_mode?: "quick_trade" | "deep_analysis";
+  agent_model_overrides?: Record<string, string>;
 }
 
 export interface ScanResultItem {
@@ -313,6 +328,14 @@ export const apiClient = {
 
   cancelScan: (scanId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/scanner/${encodeURIComponent(scanId)}/cancel`),
+
+  getProviders: (signal?: AbortSignal) =>
+    request<{ providers: string[] }>("/api/v1/providers", undefined, signal),
+
+  getModels: (provider: string, signal?: AbortSignal) =>
+    request<{ provider: string; quick: Array<{ label: string; value: string }>; deep: Array<{ label: string; value: string }> }>(
+      `/api/v1/models/${encodeURIComponent(provider)}`, undefined, signal,
+    ),
 };
 
 export { ApiError };

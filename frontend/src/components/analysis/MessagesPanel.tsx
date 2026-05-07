@@ -128,7 +128,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
     ? <Badge variant="secondary" className="text-xs">{messages.length}</Badge>
     : null;
 
-  const body = (
+  const renderBody = (scrollClassName: string) => (
     <>
       <span className="sr-only" aria-live="polite">
         {announced > 0 ? `${announced} new messages` : ""}
@@ -154,7 +154,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
           <p className="text-xs text-muted-foreground/60 mt-1">Messages will stream in as agents work</p>
         </div>
       ) : (
-        <ScrollArea className="h-[28rem]" role="log">
+        <ScrollArea className={scrollClassName} role="log">
           <div className="space-y-2 pr-4">
             {messages.map((msg) => {
               const cfg = SENDER_CONFIG[msg.sender];
@@ -180,7 +180,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
   );
 
   return (
-    <>
+    <div className="md:h-0 md:min-h-[max(28rem,100%)] flex flex-col">
       {/* Mobile: collapsible */}
       <MobileCollapse
         defaultOpen
@@ -194,20 +194,20 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
         }
         badge={countBadge}
       >
-        <div className="p-3">{body}</div>
+        <div className="p-3">{renderBody("h-[28rem]")}</div>
       </MobileCollapse>
 
-      {/* Desktop: original Card */}
-      <Card className="hidden md:block">
-        <CardHeader className="pb-3">
+      {/* Desktop: Card that stretches to match sibling via grid */}
+      <Card className="hidden md:flex md:flex-col h-full">
+        <CardHeader className="pb-3 shrink-0">
           <CardTitle className="text-base flex items-center gap-2">
             <MsgIcon />
             Messages
             {countBadge && <div className="ml-auto">{countBadge}</div>}
           </CardTitle>
         </CardHeader>
-        <CardContent>{body}</CardContent>
+        <CardContent className="flex-1 min-h-0">{renderBody("min-h-[28rem] h-full")}</CardContent>
       </Card>
-    </>
+    </div>
   );
 });

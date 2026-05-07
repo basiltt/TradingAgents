@@ -116,7 +116,13 @@ class AnalysisService:
             await asyncio.gather(*tasks_to_await, return_exceptions=True)
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        return await asyncio.to_thread(self._db.get_run, run_id)
+        run = await asyncio.to_thread(self._db.get_run, run_id)
+        if run and isinstance(run.get("config"), str):
+            try:
+                run["config"] = json.loads(run["config"])
+            except (json.JSONDecodeError, TypeError):
+                run["config"] = {}
+        return run
 
     async def delete_run(self, run_id: str) -> bool:
         return await asyncio.to_thread(self._db.delete_run, run_id)
@@ -125,7 +131,14 @@ class AnalysisService:
         return await asyncio.to_thread(self._db.delete_all_runs)
 
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
-        return await asyncio.to_thread(self._db.list_runs, **kwargs)
+        result = await asyncio.to_thread(self._db.list_runs, **kwargs)
+        for item in result.get("items", []):
+            if isinstance(item.get("config"), str):
+                try:
+                    item["config"] = json.loads(item["config"])
+                except (json.JSONDecodeError, TypeError):
+                    item["config"] = {}
+        return result
 
     async def get_report(self, run_id: str) -> Optional[str]:
         sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
@@ -173,7 +186,7 @@ class AnalysisService:
 
         resolved = self._config.get_config()["resolved"]
         for k, v in resolved.items():
-            if v != "***":
+            if v != "***" and k != "backend_url":
                 config[k] = v
 
         if request.get("provider"):
@@ -201,13 +214,29 @@ class AnalysisService:
         if request.get("checkpoint_enabled") is not None:
             config["checkpoint_enabled"] = request["checkpoint_enabled"]
 
+        config["workflow_mode"] = request.get("workflow_mode") or "deep_analysis"
+
+        if request.get("agent_model_overrides"):
+            config["agent_model_overrides"] = request["agent_model_overrides"]
+
         # Crypto-specific config
         if request.get("asset_type"):
             config["asset_type"] = request["asset_type"]
         if request.get("interval"):
             config["crypto_interval"] = request["interval"]
 
-        backend_url = request.get("backend_url") or os.getenv("TRADINGAGENTS_BACKEND_URL")
+        backend_url = request.get("backend_url")
+        if not backend_url:
+            # Only fall back to the env var if the request's provider matches
+            # the env provider (or no env provider is set). This prevents the
+            # env proxy URL from overriding provider-native endpoints (e.g.
+            # NVIDIA's integrate.api.nvidia.com) when the user switches providers.
+            env_backend = os.getenv("TRADINGAGENTS_BACKEND_URL")
+            if env_backend:
+                env_provider = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "").lower()
+                req_provider = (request.get("provider") or "").lower()
+                if not req_provider or req_provider == env_provider:
+                    backend_url = env_backend
         if backend_url:
             config["backend_url"] = validate_backend_url(backend_url, server_port=8000)
 
@@ -404,7 +433,7 @@ class AnalysisService:
 
         last_chunk = None
         seq = make_seq_counter()
-        parser_state = StreamParserState()
+        parser_state = StreamParserState(workflow_mode=config.get("workflow_mode", "deep_analysis"))
         for chunk in graph.graph.stream(init_state, **args):
             if cancel_event.is_set():
                 break

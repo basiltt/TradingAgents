@@ -13,7 +13,7 @@ instead of 2-3.
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -98,15 +98,16 @@ def create_parallel_risk_round1(
     aggressive/conservative/neutral) debates.
     """
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        results = []
         with ThreadPoolExecutor(max_workers=len(debater_nodes)) as pool:
-            futures = {pool.submit(fn, state): fn for fn in debater_nodes}
-            for future in as_completed(futures):
-                try:
-                    results.append(future.result())
-                except Exception:
-                    logger.exception("Parallel risk debater failed")
-                    raise
+            ordered_futures = [pool.submit(fn, state) for fn in debater_nodes]
+
+        results = []
+        for future in ordered_futures:
+            try:
+                results.append(future.result())
+            except Exception:
+                logger.exception("Parallel risk debater failed")
+                raise
 
         merged = _merge_risk_debate_states(state, results)
         return {"risk_debate_state": merged}

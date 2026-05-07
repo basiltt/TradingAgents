@@ -31,10 +31,14 @@ class WebCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._llm_calls += 1
-        model = serialized.get("name", serialized.get("id", ["unknown"])[-1] if isinstance(serialized.get("id"), list) else "unknown")
+        model_name = (kwargs.get("invocation_params") or {}).get("model", "")
+        if not model_name:
+            model_name = (kwargs.get("metadata") or {}).get("ls_model_name", "")
+        class_name = serialized.get("name", serialized.get("id", ["unknown"])[-1] if isinstance(serialized.get("id"), list) else "unknown")
+        display = f"{class_name} ({model_name})" if model_name else class_name
         self._bus.emit_threadsafe(
             self._run_id,
-            MessageEvent(sender="System", content=f"LLM call started: {model}"),
+            MessageEvent(sender="System", content=f"LLM call started: {display}"),
         )
 
     def on_llm_end(

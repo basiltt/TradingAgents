@@ -611,6 +611,8 @@ class ScannerService:
             "max_recur_limit": config.get("max_recur_limit"),
             "checkpoint_enabled": config.get("checkpoint_enabled"),
             "data_vendors": config.get("data_vendors"),
+            "workflow_mode": config.get("workflow_mode"),
+            "agent_model_overrides": config.get("agent_model_overrides"),
         }
 
         try:
@@ -700,6 +702,7 @@ class ScannerService:
                     reports = snapshot.get("reports", {})
                     decision_text = (
                         reports.get("portfolio_manager", "")
+                        or reports.get("trader", "")
                         or reports.get("final_trade_decision", "")
                     )
             except Exception:
@@ -730,6 +733,9 @@ class ScannerService:
                     )
                     signal = _parse_signal_from_reports(reports)
                     signal_source = "regex_fallback"
+            elif trader_json:
+                signal = _parse_signal_from_reports(reports)
+                signal_source = "regex_fallback"
             else:
                 signal = _parse_signal_from_reports(reports)
                 signal_source = "regex_fallback"

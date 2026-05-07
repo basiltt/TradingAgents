@@ -95,7 +95,7 @@ class TradingAgentsGraph:
         llm_kwargs.pop("temperature", None)
 
         deep_temp = {} if _is_reasoning(deep_model) else {"temperature": 0}
-        quick_temp = {} if _is_reasoning(quick_model) else {"temperature": 0.2}
+        quick_temp = {} if _is_reasoning(quick_model) else {"temperature": 0}
 
         deep_client = create_llm_client(
             provider=self.config["llm_provider"],
@@ -114,7 +114,12 @@ class TradingAgentsGraph:
 
         self.deep_thinking_llm = deep_client.get_llm()
         self.quick_thinking_llm = quick_client.get_llm()
-        
+
+        # Per-agent model overrides: {agent_key: model_id}
+        self._agent_llm_cache: dict = {}
+        self._agent_model_overrides: dict = self.config.get("agent_model_overrides") or {}
+        self._llm_kwargs = llm_kwargs
+
         self.memory_log = TradingMemoryLog(self.config)
 
         # Create tool nodes
@@ -130,6 +135,7 @@ class TradingAgentsGraph:
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
+            agent_llm_resolver=self._get_agent_llm,
         )
 
         self.propagator = Propagator()
@@ -143,29 +149,35 @@ class TradingAgentsGraph:
 
         # Set up the graph based on asset type
         asset_type = self.config.get("asset_type", "stock")
+        workflow_mode = self.config.get("workflow_mode", "deep_analysis")
 
         # Create compliance + execution monitor nodes for both flows
-        from tradingagents.agents.compliance import (
-            create_compliance_officer,
-            create_execution_monitor,
-        )
-        compliance_node = create_compliance_officer(self.quick_thinking_llm)
-        monitor_node = create_execution_monitor(self.quick_thinking_llm)
+        if workflow_mode == "quick_trade":
+            compliance_node = None
+            monitor_node = None
+        else:
+            from tradingagents.agents.compliance import (
+                create_compliance_officer,
+                create_execution_monitor,
+            )
+            compliance_node = create_compliance_officer(self._get_agent_llm("compliance_officer", self.quick_thinking_llm))
+            monitor_node = create_execution_monitor(self._get_agent_llm("execution_monitor", self.quick_thinking_llm))
 
         if asset_type == "crypto":
             self.workflow = self._setup_crypto_workflow(
-                selected_analysts, compliance_node, monitor_node,
+                selected_analysts, compliance_node, monitor_node, workflow_mode,
             )
         else:
             self.workflow = self.graph_setup.setup_graph(
                 selected_analysts,
                 compliance_officer_node=compliance_node,
                 execution_monitor_node=monitor_node,
+                workflow_mode=workflow_mode,
             )
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _setup_crypto_workflow(self, selected_analysts, compliance_node=None, monitor_node=None):
+    def _setup_crypto_workflow(self, selected_analysts, compliance_node=None, monitor_node=None, workflow_mode="deep_analysis"):
         from tradingagents.agents.utils.crypto_agent_utils import make_crypto_tools
         from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
         from tradingagents.agents.crypto_analysts import (
@@ -211,7 +223,7 @@ class TradingAgentsGraph:
 
         if "crypto_technical" in selected_analysts:
             analyst_nodes["crypto_technical"] = create_crypto_technical_analyst(
-                self.quick_thinking_llm, crypto_tools
+                self._get_agent_llm("crypto_technical", self.quick_thinking_llm), crypto_tools
             )
             tool_nodes["crypto_technical"] = ToolNode(
                 [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
@@ -219,7 +231,7 @@ class TradingAgentsGraph:
 
         if "crypto_derivatives" in selected_analysts:
             analyst_nodes["crypto_derivatives"] = create_crypto_derivatives_analyst(
-                self.quick_thinking_llm, crypto_tools
+                self._get_agent_llm("crypto_derivatives", self.quick_thinking_llm), crypto_tools
             )
             tool_nodes["crypto_derivatives"] = ToolNode(
                 [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
@@ -227,7 +239,7 @@ class TradingAgentsGraph:
 
         if "crypto_news" in selected_analysts:
             analyst_nodes["crypto_news"] = create_crypto_news_analyst(
-                self.quick_thinking_llm
+                self._get_agent_llm("crypto_news", self.quick_thinking_llm)
             )
             tool_nodes["crypto_news"] = ToolNode([get_news, get_global_news])
 
@@ -235,7 +247,7 @@ class TradingAgentsGraph:
 
         if "crypto_fundamentals" in selected_analysts:
             analyst_nodes["crypto_fundamentals"] = create_crypto_fundamentals_analyst(
-                self.quick_thinking_llm, coingecko_tools
+                self._get_agent_llm("crypto_fundamentals", self.quick_thinking_llm), coingecko_tools
             )
             tool_nodes["crypto_fundamentals"] = ToolNode(
                 [t for t in coingecko_tools if t.name == "get_crypto_market_data"]
@@ -243,21 +255,21 @@ class TradingAgentsGraph:
 
         if "crypto_social" in selected_analysts:
             analyst_nodes["crypto_social"] = create_crypto_social_analyst(
-                self.quick_thinking_llm, coingecko_tools
+                self._get_agent_llm("crypto_social", self.quick_thinking_llm), coingecko_tools
             )
             tool_nodes["crypto_social"] = ToolNode(
                 [t for t in coingecko_tools if t.name == "get_crypto_community_data"] + [get_news]
             )
 
-        trader_node = create_crypto_trader(self.quick_thinking_llm, max_leverage=max_leverage)
-        bull_debater = create_crypto_risk_bull_debater(self.quick_thinking_llm)
-        bear_debater = create_crypto_risk_bear_debater(self.quick_thinking_llm)
-        pm_node = create_crypto_portfolio_manager(self.deep_thinking_llm, max_leverage=max_leverage)
-        confluence_node = create_confluence_checker(self.quick_thinking_llm)
+        trader_node = create_crypto_trader(self._get_agent_llm("trader", self.quick_thinking_llm), max_leverage=max_leverage)
+        bull_debater = create_crypto_risk_bull_debater(self._get_agent_llm("bull_analyst", self.quick_thinking_llm))
+        bear_debater = create_crypto_risk_bear_debater(self._get_agent_llm("bear_analyst", self.quick_thinking_llm))
+        pm_node = create_crypto_portfolio_manager(self._get_agent_llm("portfolio_manager", self.deep_thinking_llm), max_leverage=max_leverage)
+        confluence_node = create_confluence_checker(self._get_agent_llm("confluence_checker", self.quick_thinking_llm))
 
-        bull_researcher = create_crypto_bull_researcher(self.quick_thinking_llm)
-        bear_researcher = create_crypto_bear_researcher(self.quick_thinking_llm)
-        research_manager = create_crypto_research_manager(self.deep_thinking_llm)
+        bull_researcher = create_crypto_bull_researcher(self._get_agent_llm("bull_researcher", self.quick_thinking_llm))
+        bear_researcher = create_crypto_bear_researcher(self._get_agent_llm("bear_researcher", self.quick_thinking_llm))
+        research_manager = create_crypto_research_manager(self._get_agent_llm("research_manager", self.deep_thinking_llm))
 
         return self.graph_setup.setup_crypto_graph(
             selected_analysts=selected_analysts,
@@ -273,7 +285,54 @@ class TradingAgentsGraph:
             crypto_research_manager=research_manager,
             compliance_officer_node=compliance_node,
             execution_monitor_node=monitor_node,
+            workflow_mode=workflow_mode,
         )
+
+    def _get_agent_llm(self, agent_key: str, default_llm):
+        """Return a per-agent override LLM if configured, else the default.
+
+        Falls back to default_llm on any creation error so a single bad
+        override never crashes the entire analysis run.
+        """
+        model_id = self._agent_model_overrides.get(agent_key)
+        if not model_id:
+            return default_llm
+        logger.info("Applying model override for agent '%s': %s", agent_key, model_id)
+        if model_id in self._agent_llm_cache:
+            return self._agent_llm_cache[model_id]
+
+        try:
+            _reasoning_prefixes = ("o1", "o3", "o4")
+            is_reasoning = any(model_id.lower().startswith(p) for p in _reasoning_prefixes)
+            temp = {} if is_reasoning else {"temperature": 0}
+
+            # Only pass provider-agnostic kwargs to override clients.
+            # Provider-specific keys (thinking_level, reasoning_effort, effort)
+            # would break clients for different model families.
+            safe_kwargs: Dict[str, Any] = {}
+            if "callbacks" in self._llm_kwargs:
+                safe_kwargs["callbacks"] = self._llm_kwargs["callbacks"]
+            if "api_key" in self._llm_kwargs:
+                safe_kwargs["api_key"] = self._llm_kwargs["api_key"]
+
+            client = create_llm_client(
+                provider=self.config["llm_provider"],
+                model=model_id,
+                base_url=self.config.get("backend_url"),
+                **temp,
+                **safe_kwargs,
+            )
+            llm = client.get_llm()
+            self._agent_llm_cache[model_id] = llm
+            return llm
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to create override LLM for agent '%s' (model=%s), "
+                "falling back to default",
+                agent_key, model_id, exc_info=True,
+            )
+            return default_llm
 
     def _get_provider_kwargs(self) -> Dict[str, Any]:
         """Get provider-specific kwargs for LLM client creation."""

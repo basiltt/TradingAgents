@@ -4,7 +4,7 @@ from .base_client import BaseLLMClient
 
 # Providers that use the OpenAI-compatible chat completions API
 _OPENAI_COMPATIBLE = (
-    "openai", "xai", "deepseek", "qwen", "glm", "ollama", "openrouter",
+    "openai", "xai", "deepseek", "qwen", "glm", "ollama", "openrouter", "nvidia",
 )
 
 
@@ -33,6 +33,12 @@ def create_llm_client(
         ValueError: If provider is not supported
     """
     provider_lower = provider.lower()
+    model_lower = model.lower()
+
+    # Any model whose name contains "gpt" is treated as an OpenAI model
+    # regardless of the declared provider.
+    if "gpt" in model_lower and provider_lower not in _OPENAI_COMPATIBLE:
+        provider_lower = "openai"
 
     if provider_lower in _OPENAI_COMPATIBLE:
         from .openai_client import OpenAIClient

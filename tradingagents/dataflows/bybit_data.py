@@ -605,18 +605,22 @@ def build_current_price_context(
     circuit_breaker: BybitCircuitBreaker | None = None,
     api_key: str | None = None,
     api_secret: str | None = None,
+    as_of_ms: int | None = None,
 ) -> str:
     """Fetch live ticker + last ~2 hours of 5-min candles for immediate price context.
 
     This gives all agents awareness of the CURRENT price and very recent
     price action (lower timeframe), not just the historical klines used
     for technical analysis.
+
+    Pass ``as_of_ms`` to pin the time window so parallel analyses that
+    start seconds apart use the same candle boundaries.
     """
     import time as _time
 
     symbol = normalize_bybit_symbol(symbol)
     parts: list[str] = []
-    now_ms = int(_time.time() * 1000)
+    now_ms = as_of_ms if as_of_ms is not None else int(_time.time() * 1000)
 
     # 1) Live ticker
     try:

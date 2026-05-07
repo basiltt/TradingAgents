@@ -106,7 +106,8 @@ def make_seq_counter() -> Iterator[int]:
 
 class StreamParserState:
     """Tracks state across stream chunks to detect deltas (stream_mode=values)."""
-    def __init__(self):
+    def __init__(self, workflow_mode: str = "deep_analysis"):
+        self.workflow_mode = workflow_mode
         self.msg_count = 0
         self.prev_debate: Optional[Dict] = None
         self.prev_risk: Optional[Dict] = None
@@ -214,8 +215,9 @@ def parse_stream_chunk(
         events.append(ReportChunkEvent(section="trader", content=trader_str, append=False))
         state._ensure_in_progress(events, "Trader")
         events.append(AgentStatusEvent(agent="Trader", status="completed"))
-        events.append(AgentStatusEvent(agent="Compliance Officer", status="in_progress"))
-        state.mark_in_progress("Compliance Officer")
+        if state.workflow_mode != "quick_trade":
+            events.append(AgentStatusEvent(agent="Compliance Officer", status="in_progress"))
+            state.mark_in_progress("Compliance Officer")
         state.prev_trader = trader_str
 
     # Compliance Officer result
@@ -273,7 +275,7 @@ def parse_stream_chunk(
             final_str = final.strip()
     else:
         final_str = None
-    if final_str and final_str != state.prev_final and not risk:
+    if final_str and final_str != state.prev_final and not risk and state.workflow_mode != "quick_trade":
         events.append(ReportChunkEvent(section="portfolio_manager", content=final_str, append=False))
         state._ensure_in_progress(events, "Portfolio Manager")
         events.append(AgentStatusEvent(agent="Portfolio Manager", status="completed"))
