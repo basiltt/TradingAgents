@@ -35,6 +35,7 @@ async def test_create_account_success(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "uid1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("Test", "demo", "apikey12345678", "secret12345678")
 
     assert account["label"] == "Test"
@@ -48,6 +49,7 @@ async def test_create_account_connection_failure(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": False, "uid": None, "error": "Invalid API key"})
+        instance.close = AsyncMock()
         with pytest.raises(ValueError, match="Connection test failed"):
             await svc.create_account("Test", "demo", "apikey12345678", "secret12345678")
 
@@ -61,6 +63,7 @@ async def test_list_accounts_after_create(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         await svc.create_account("A1", "demo", "apikey12345678", "secret12345678")
         await svc.create_account("A2", "live", "apikey99999999", "secret99999999")
 
@@ -73,6 +76,7 @@ async def test_update_account(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("Old", "demo", "apikey12345678", "secret12345678")
 
     updated = svc.update_account(account["id"], label="New")
@@ -84,6 +88,7 @@ async def test_delete_account(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("Del", "demo", "apikey12345678", "secret12345678")
 
     assert svc.delete_account(account["id"]) is True
@@ -96,6 +101,7 @@ async def test_get_wallet_caches(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("Cache", "demo", "apikey12345678", "secret12345678")
 
     wallet_data = {"totalEquity": "500", "totalWalletBalance": "400", "totalAvailableBalance": "300", "totalPerpUPL": "50", "coin": []}
@@ -115,6 +121,7 @@ async def test_get_positions(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("Pos", "demo", "apikey12345678", "secret12345678")
 
     positions_data = [{"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"}]
@@ -132,6 +139,7 @@ async def test_get_pnl_summary_range_too_large(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("PnL", "demo", "apikey12345678", "secret12345678")
 
     with pytest.raises(ValueError, match="exceeds maximum"):
@@ -143,6 +151,7 @@ async def test_cache_invalidation_on_delete(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         account = await svc.create_account("Inv", "demo", "apikey12345678", "secret12345678")
 
     svc._set_cached(f"{account['id']}:wallet", {"test": True}, 60)
@@ -157,6 +166,7 @@ async def test_dashboard_with_error_account(svc):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
         await svc.create_account("Err", "demo", "apikey12345678", "secret12345678")
 
     with patch.object(svc, "_build_client") as mock_build:

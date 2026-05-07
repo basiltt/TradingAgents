@@ -39,6 +39,7 @@ class AccountsService:
         self._db = db
         self._cache: Dict[str, tuple[float, Any]] = {}
         self._refresh_locks: Dict[str, float] = {}
+        self._clients: Dict[str, BybitClient] = {}
 
     def _get_cached(self, key: str, ttl: float) -> Any | None:
         entry = self._cache.get(key)
@@ -53,6 +54,7 @@ class AccountsService:
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
+        self._clients.pop(account_id, None)
 
     def _can_refresh(self, account_id: str, cooldown: float = 10.0) -> bool:
         last = self._refresh_locks.get(account_id, 0)
@@ -62,12 +64,16 @@ class AccountsService:
         self._refresh_locks[account_id] = time.time()
 
     def _build_client(self, account_id: str) -> BybitClient:
+        if account_id in self._clients:
+            return self._clients[account_id]
         creds = self._db.get_account_credentials(account_id)
         if not creds:
             raise ValueError(f"Account {account_id} not found")
         api_key = decrypt_value(creds["api_key_encrypted"])
         api_secret = decrypt_value(creds["api_secret_encrypted"])
-        return BybitClient(api_key, api_secret, creds["account_type"])
+        client = BybitClient(api_key, api_secret, creds["account_type"])
+        self._clients[account_id] = client
+        return client
 
     # ── CRUD ────────────────────────────────────────────────────────────
 
@@ -75,7 +81,10 @@ class AccountsService:
         self, label: str, account_type: str, api_key: str, api_secret: str
     ) -> Dict[str, Any]:
         client = BybitClient(api_key, api_secret, account_type)
-        test_result = await client.test_connection()
+        try:
+            test_result = await client.test_connection()
+        finally:
+            await client.close()
         if not test_result["success"]:
             raise ValueError(f"Connection test failed: {test_result['error']}")
 
@@ -121,7 +130,10 @@ class AccountsService:
             return None
 
         client = BybitClient(api_key, api_secret, account["account_type"])
-        test_result = await client.test_connection()
+        try:
+            test_result = await client.test_connection()
+        finally:
+            await client.close()
         if not test_result["success"]:
             raise ValueError(f"Connection test failed: {test_result['error']}")
 
