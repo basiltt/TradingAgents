@@ -21,7 +21,9 @@ def encrypt_value(plaintext: str) -> bytes:
     return _get_fernet().encrypt(plaintext.encode())
 
 
-def decrypt_value(ciphertext: bytes) -> str:
+def decrypt_value(ciphertext: bytes | memoryview) -> str:
+    if isinstance(ciphertext, memoryview):
+        ciphertext = bytes(ciphertext)
     try:
         return _get_fernet().decrypt(ciphertext).decode()
     except InvalidToken:

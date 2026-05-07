@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 import aiohttp
+from yarl import URL
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class BybitClient:
 
                 if method == "GET" and params:
                     query = "&".join(f"{k}={v}" for k, v in sorted(params.items()) if v is not None)
-                    url = f"{self._base_url}{path}?{query}"
+                    url = URL(f"{self._base_url}{path}?{query}", encoded=True)
                     headers = self._headers(timestamp, query)
                 else:
                     url = f"{self._base_url}{path}"
@@ -192,7 +193,7 @@ class BybitClient:
         ]
 
     async def get_open_orders(self) -> list[dict[str, Any]]:
-        result = await self._request("GET", "/v5/order/realtime", {"category": "linear"})
+        result = await self._request("GET", "/v5/order/realtime", {"category": "linear", "settleCoin": "USDT"})
         orders = result.get("list", [])
         return [
             {
@@ -215,6 +216,7 @@ class BybitClient:
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "category": "linear",
+            "settleCoin": "USDT",
             "startTime": str(start_time),
             "endTime": str(end_time),
             "limit": str(limit),
