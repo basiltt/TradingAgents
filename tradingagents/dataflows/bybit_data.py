@@ -452,7 +452,7 @@ def get_bybit_funding_rates(
         return f"No funding rate data available for {symbol}."
 
     lines = [f"Funding Rate History for {symbol}:"]
-    for item in items:
+    for item in items[:21]:  # Last 21 entries (~7 days at 8h intervals)
         ts = item.get("fundingRateTimestamp", "?")
         rate = item.get("fundingRate", "?")
         lines.append(f"  Timestamp: {ts}, Rate: {rate}")
@@ -490,7 +490,7 @@ def get_bybit_open_interest(
         return f"No open interest data available for {symbol}."
 
     lines = [f"Open Interest History for {symbol}:"]
-    for item in items:
+    for item in items[:42]:  # Cap at 42 entries (7 days at 4h intervals)
         ts = item.get("timestamp", "?")
         oi = item.get("openInterest", "?")
         lines.append(f"  Timestamp: {ts}, OI: {oi}")
@@ -692,5 +692,239 @@ def build_current_price_context(
         parts.append(recent_1d)
     except Exception as exc:
         parts.append(f"\n## DAILY CANDLES\nUnavailable: {exc}")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# get_bybit_price_changes — compute multi-timeframe % changes from klines
+# ---------------------------------------------------------------------------
+
+def get_bybit_price_changes(
+    symbol: str,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict[str, float | None]:
+    """Compute price change percentages for 24h, 7d, 14d, 30d, 60d, 200d, 1y.
+
+    Returns dict like {"24h": 2.5, "7d": -1.3, ...}. Uses daily klines.
+    Fetches in two pages (200 each) to cover ~400 days for 1y calculation.
+    """
+    import time as _time
+
+    symbol = normalize_bybit_symbol(symbol)
+    now_ms = int(_time.time() * 1000)
+    cache_hour = now_ms // (3600_000)
+
+    # Check combined cache first
+    combined_cache_key = ("price_changes_combined", symbol, cache_hour)
+    if cache is not None and combined_cache_key in cache:
+        return cache[combined_cache_key]
+
+    all_rows: list[list] = []
+
+    # Page 1: most recent 200 days
+    result1 = _bybit_request(
+        "/v5/market/kline",
+        {"category": "linear", "symbol": symbol, "interval": "D",
+         "start": now_ms - (200 * 24 * 60 * 60 * 1000), "end": now_ms, "limit": 200},
+        cache_key=("price_changes_p1", symbol, cache_hour),
+        cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+        api_key=api_key, api_secret=api_secret,
+    )
+    all_rows.extend(result1.get("list", []))
+
+    # Page 2: 200-400 days ago (needed for 200d and 1y calculations)
+    # Non-critical: if this fails, we still have short-term changes from page 1
+    page2_end = now_ms - (200 * 24 * 60 * 60 * 1000)
+    page2_start = now_ms - (400 * 24 * 60 * 60 * 1000)
+    try:
+        result2 = _bybit_request(
+            "/v5/market/kline",
+            {"category": "linear", "symbol": symbol, "interval": "D",
+             "start": page2_start, "end": page2_end, "limit": 200},
+            cache_key=("price_changes_p2", symbol, cache_hour),
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        all_rows.extend(result2.get("list", []))
+    except Exception:
+        pass  # 200d and 1y will show N/A, short-term changes still available
+
+    if not all_rows:
+        return {}
+
+    # Bybit klines: [timestamp, open, high, low, close, volume, turnover] desc order
+    # Deduplicate by timestamp and sort ascending
+    seen: set[str] = set()
+    unique_rows: list[list] = []
+    for row in all_rows:
+        ts = row[0]
+        if ts not in seen:
+            seen.add(ts)
+            unique_rows.append(row)
+    unique_rows.sort(key=lambda r: int(r[0]))
+
+    current_close = float(unique_rows[-1][4])
+
+    periods = {"7d": 7, "14d": 14, "30d": 30, "60d": 60, "200d": 200, "1y": 365}
+    changes: dict[str, float | None] = {}
+
+    # 24h change: use ticker's rolling 24h percentage (more accurate than daily candle close-to-close)
+    try:
+        ticker_result = _bybit_request(
+            "/v5/market/tickers",
+            {"category": "linear", "symbol": symbol},
+            cache_key=("ticker", symbol),
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        ticker_items = ticker_result.get("list", [])
+        if ticker_items:
+            pct_str = ticker_items[0].get("price24hPcnt", "")
+            if pct_str:
+                changes["24h"] = round(float(pct_str) * 100, 2)
+            else:
+                changes["24h"] = None
+        else:
+            changes["24h"] = None
+    except Exception:
+        changes["24h"] = None
+
+    for label, days in periods.items():
+        idx = len(unique_rows) - 1 - days
+        if idx >= 0:
+            past_close = float(unique_rows[idx][4])
+            if past_close > 0:
+                changes[label] = round((current_close - past_close) / past_close * 100, 2)
+            else:
+                changes[label] = None
+        else:
+            changes[label] = None
+
+    if cache is not None:
+        cache[combined_cache_key] = changes
+    return changes
+
+
+# ---------------------------------------------------------------------------
+# get_bybit_long_short_ratio — trader sentiment from actual positions
+# ---------------------------------------------------------------------------
+
+def get_bybit_long_short_ratio(
+    symbol: str,
+    period: str = "1d",
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> str:
+    """Fetch long/short ratio (account-based) for a symbol.
+
+    period: 5min, 15min, 30min, 1h, 4h, 1d
+    """
+    symbol = normalize_bybit_symbol(symbol)
+    cache_key = ("ls_ratio", symbol, period)
+
+    result = _bybit_request(
+        "/v5/market/account-ratio",
+        {"category": "linear", "symbol": symbol, "period": period, "limit": 50},
+        cache_key,
+        cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+        api_key=api_key, api_secret=api_secret,
+    )
+
+    items = result.get("list", [])
+    if not items:
+        return f"No long/short ratio data available for {symbol}."
+
+    lines = [f"Long/Short Ratio for {symbol} ({period} period):"]
+    for item in items[:20]:
+        ts = item.get("timestamp", "?")
+        buy = item.get("buyRatio", "?")
+        sell = item.get("sellRatio", "?")
+        lines.append(f"  Timestamp: {ts}, Long: {buy}, Short: {sell}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# get_bybit_derivatives_summary — combined OI + funding + long/short snapshot
+# ---------------------------------------------------------------------------
+
+def get_bybit_derivatives_summary(
+    symbol: str,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> str:
+    """Comprehensive derivatives snapshot: ticker, OI history, funding history, L/S ratio."""
+    import time as _time
+
+    symbol = normalize_bybit_symbol(symbol)
+    now_ms = int(_time.time() * 1000)
+    parts: list[str] = []
+
+    # 1) Ticker (price, volume, current funding, current OI)
+    try:
+        ticker = get_bybit_ticker(symbol, cache=cache, limiter=limiter,
+                                   circuit_breaker=circuit_breaker,
+                                   api_key=api_key, api_secret=api_secret)
+        parts.append("## Live Ticker")
+        parts.append(ticker)
+    except Exception as exc:
+        parts.append(f"## Live Ticker\nUnavailable: {exc}")
+
+    # 2) Open Interest history (last 7 days, 4h intervals)
+    try:
+        seven_days_ago = now_ms - (7 * 24 * 60 * 60 * 1000)
+        oi = get_bybit_open_interest(symbol, "4h", seven_days_ago, now_ms,
+                                      cache=cache, limiter=limiter,
+                                      circuit_breaker=circuit_breaker,
+                                      api_key=api_key, api_secret=api_secret)
+        parts.append("\n## Open Interest (7d, 4h intervals)")
+        parts.append(oi)
+    except Exception as exc:
+        parts.append(f"\n## Open Interest\nUnavailable: {exc}")
+
+    # 3) Funding rate history (last 7 days)
+    try:
+        funding = get_bybit_funding_rates(symbol, now_ms - (7 * 24 * 60 * 60 * 1000), now_ms,
+                                           cache=cache, limiter=limiter,
+                                           circuit_breaker=circuit_breaker,
+                                           api_key=api_key, api_secret=api_secret)
+        parts.append("\n## Funding Rates (7d)")
+        parts.append(funding)
+    except Exception as exc:
+        parts.append(f"\n## Funding Rates\nUnavailable: {exc}")
+
+    # 4) Long/Short ratio
+    try:
+        ls = get_bybit_long_short_ratio(symbol, "1d", cache=cache, limiter=limiter,
+                                         circuit_breaker=circuit_breaker,
+                                         api_key=api_key, api_secret=api_secret)
+        parts.append("\n## Long/Short Ratio (daily)")
+        parts.append(ls)
+    except Exception as exc:
+        parts.append(f"\n## Long/Short Ratio\nUnavailable: {exc}")
+
+    # 5) Price changes computed from klines
+    try:
+        changes = get_bybit_price_changes(symbol, cache=cache, limiter=limiter,
+                                           circuit_breaker=circuit_breaker,
+                                           api_key=api_key, api_secret=api_secret)
+        if changes:
+            parts.append("\n## Price Changes (from Bybit klines)")
+            parts.append("| Period | Change % |")
+            parts.append("|--------|----------|")
+            for period, pct in changes.items():
+                parts.append(f"| {period} | {pct}% |" if pct is not None else f"| {period} | N/A |")
+    except Exception as exc:
+        parts.append(f"\n## Price Changes\nUnavailable: {exc}")
 
     return "\n".join(parts)

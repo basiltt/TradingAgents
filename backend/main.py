@@ -61,14 +61,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 
 def create_app() -> FastAPI:
-    db_path = os.environ.get(
-        "TRADINGAGENTS_WEB_DB_PATH", "~/.tradingagents/cache/web_runs.db"
-    )
+    dsn = os.environ.get("DATABASE_URL")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         loop = asyncio.get_running_loop()
-        db = AnalysisDB(db_path=db_path)
+        db = AnalysisDB(dsn=dsn)
         try:
             db.recover_orphans()
         except Exception:
@@ -100,6 +98,7 @@ def create_app() -> FastAPI:
         )
         await app.state.scanner_service.resume_incomplete_scans()
         yield
+        await app.state.scanner_service.shutdown()
         await app.state.analysis_service.shutdown()
         await ws_manager.shutdown()
         db.close()

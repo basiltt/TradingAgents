@@ -229,21 +229,26 @@ class TradingAgentsGraph:
                 [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
             )
 
+        coingecko_tools = make_coingecko_tools(
+            cache=cache, limiter=limiter, circuit_breaker=cb,
+            api_key=api_key, api_secret=api_secret,
+        )
+
         if "crypto_derivatives" in selected_analysts:
+            # Prefer combined derivatives tool; include old tools as fallback for ToolNode
+            derivatives_tools = [t for t in coingecko_tools if t.name == "get_crypto_derivatives_data"]
+            if not derivatives_tools:
+                derivatives_tools = [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
             analyst_nodes["crypto_derivatives"] = create_crypto_derivatives_analyst(
-                self._get_agent_llm("crypto_derivatives", self.quick_thinking_llm), crypto_tools
+                self._get_agent_llm("crypto_derivatives", self.quick_thinking_llm), derivatives_tools
             )
-            tool_nodes["crypto_derivatives"] = ToolNode(
-                [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
-            )
+            tool_nodes["crypto_derivatives"] = ToolNode(derivatives_tools)
 
         if "crypto_news" in selected_analysts:
             analyst_nodes["crypto_news"] = create_crypto_news_analyst(
                 self._get_agent_llm("crypto_news", self.quick_thinking_llm)
             )
             tool_nodes["crypto_news"] = ToolNode([get_news, get_global_news])
-
-        coingecko_tools = make_coingecko_tools()
 
         if "crypto_fundamentals" in selected_analysts:
             analyst_nodes["crypto_fundamentals"] = create_crypto_fundamentals_analyst(

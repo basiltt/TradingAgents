@@ -1,19 +1,51 @@
-"""Tests for SQLite persistence layer — TASK-004."""
+"""Tests for PostgreSQL persistence layer."""
 
 import os
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 
+import psycopg2
 import pytest
+
+from backend import persistence as pers
+
+_TEST_DSN = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test",
+)
+
+
+def _ensure_test_db():
+    try:
+        base_dsn = _TEST_DSN.rsplit("/", 1)[0] + "/postgres"
+        conn = psycopg2.connect(base_dsn)
+        conn.autocommit = True
+        cur = conn.cursor()
+        db_name = _TEST_DSN.rsplit("/", 1)[1].split("?")[0]
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
+        if not cur.fetchone():
+            cur.execute(f'CREATE DATABASE "{db_name}"')
+        conn.close()
+    except psycopg2.OperationalError:
+        pytest.skip("PostgreSQL not available", allow_module_level=True)
+
+
+_ensure_test_db()
 
 
 @pytest.fixture
-def db(tmp_path):
+def db():
     from backend.persistence import AnalysisDB
 
-    return AnalysisDB(db_path=str(tmp_path / "test.db"))
+    instance = AnalysisDB(dsn=_TEST_DSN)
+    yield instance
+    with instance._get_conn() as conn:
+        cur = conn.cursor()
+        for table in ("scan_results", "scans", "report_sections", "analysis_runs"):
+            cur.execute(f"DELETE FROM {table}")
+        conn.commit()
+    instance.close()
 
 
 @pytest.fixture
@@ -26,20 +58,6 @@ def sample_run():
         "config": '{"provider": "anthropic"}',
         "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     }
-
-
-def test_wal_mode(db):
-    with db._lock:
-        cursor = db._conn.execute("PRAGMA journal_mode")
-        mode = cursor.fetchone()[0]
-    assert mode == "wal"
-
-
-def test_busy_timeout(db):
-    with db._lock:
-        cursor = db._conn.execute("PRAGMA busy_timeout")
-        timeout = cursor.fetchone()[0]
-    assert timeout == 5000
 
 
 def test_insert_and_get_run(db, sample_run):
@@ -151,6 +169,7 @@ def test_orphan_recovery(db, sample_run):
 
 
 def test_started_at_check_constraint(db):
+    """CHECK constraint on started_at rejects non-ISO timestamps."""
     with pytest.raises(Exception):
         db.insert_run({
             "run_id": str(uuid.uuid4()),
@@ -162,38 +181,63 @@ def test_started_at_check_constraint(db):
         })
 
 
-def test_schema_migration_no_op_current_version(tmp_path):
-    from backend.persistence import AnalysisDB
+def test_insert_run_invalid_status_raises(db):
+    with pytest.raises(Exception):
+        db.insert_run({
+            "run_id": str(uuid.uuid4()),
+            "ticker": "SPY",
+            "analysis_date": "2025-06-01",
+            "status": "invalid_status",
+            "config": "{}",
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        })
 
-    db1 = AnalysisDB(db_path=str(tmp_path / "test.db"))
+
+def test_schema_migration_no_op_current_version():
+    from backend.persistence import AnalysisDB
+    db1 = AnalysisDB(dsn=_TEST_DSN)
     db1.close()
-    db2 = AnalysisDB(db_path=str(tmp_path / "test.db"))
+    db2 = AnalysisDB(dsn=_TEST_DSN)
     db2.close()
 
 
-def test_schema_migration_higher_version_refused(tmp_path):
+def test_schema_migration_higher_version_refused():
+    """Opening a DB with a schema version newer than code supports raises RuntimeError."""
     from backend.persistence import AnalysisDB
-
-    db_path = str(tmp_path / "test.db")
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA user_version = 9999")
+    conn = psycopg2.connect(_TEST_DSN)
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute("UPDATE schema_version SET version = 9999")
     conn.close()
+    try:
+        with pytest.raises(RuntimeError, match="newer"):
+            AnalysisDB(dsn=_TEST_DSN)
+    finally:
+        conn = psycopg2.connect(_TEST_DSN)
+        conn.autocommit = True
+        cur = conn.cursor()
+        max_v = pers._MIGRATIONS[-1][0]
+        cur.execute("UPDATE schema_version SET version = %s", (max_v,))
+        conn.close()
 
-    with pytest.raises(RuntimeError, match="newer"):
-        AnalysisDB(db_path=db_path)
 
-
-def test_pre_migration_backup(tmp_path):
-    from backend.persistence import AnalysisDB
-
-    db_path = str(tmp_path / "test.db")
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA user_version = 0")
-    conn.close()
-
-    db = AnalysisDB(db_path=db_path)
-    db.close()
-    assert os.path.exists(db_path + ".backup.v0")
+def test_migration_rollback_on_bad_sql():
+    """A bad migration rolls back and does not advance schema version."""
+    original = pers._MIGRATIONS[:]
+    pers._MIGRATIONS.append((9998, "INVALID SQL THAT WILL FAIL"))
+    try:
+        with pytest.raises(Exception):
+            pers.AnalysisDB(dsn=_TEST_DSN)
+        conn = psycopg2.connect(_TEST_DSN)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SELECT version FROM schema_version")
+        version = cur.fetchone()[0]
+        conn.close()
+        assert version != 9998
+    finally:
+        pers._MIGRATIONS.clear()
+        pers._MIGRATIONS.extend(original)
 
 
 def test_concurrent_writes(db):
@@ -227,19 +271,6 @@ def test_get_checkpoint_exists(db, sample_run):
     db.insert_run(sample_run)
     assert db.get_checkpoint_exists("SPY", "2025-06-01") is True
     assert db.get_checkpoint_exists("AAPL", "2025-06-01") is False
-
-
-# ---------------------------------------------------------------------------
-# Crypto migration tests (TASK-015)
-# ---------------------------------------------------------------------------
-
-def test_migration_adds_asset_type_column(db):
-    with db._lock:
-        row = db._conn.execute(
-            "PRAGMA table_info(analysis_runs)"
-        ).fetchall()
-    col_names = [r[1] for r in row]
-    assert "asset_type" in col_names
 
 
 def test_insert_run_with_asset_type(db):
@@ -327,91 +358,26 @@ def test_health_check(db):
     assert db.health_check() == "ok"
 
 
-def test_health_check_degraded(tmp_path):
+def test_health_check_degraded():
+    """health_check returns degraded when connection pool is closed."""
     from backend.persistence import AnalysisDB
-    db2 = AnalysisDB(db_path=str(tmp_path / "degraded.db"))
-    db2._conn.close()
+    db2 = AnalysisDB(dsn=_TEST_DSN)
+    db2.close()
     assert db2.health_check() == "degraded"
 
 
 def test_checkpoint(db, sample_run):
     db.insert_run(sample_run)
-    db.checkpoint()  # should not raise
-
-
-def test_migration_rollback_on_bad_sql(tmp_path):
-    """Covers persistence.py:129-131: migration exception triggers rollback."""
-    import sqlite3
-    from backend import persistence as pers
-
-    db_path = str(tmp_path / "migrate_fail.db")
-    original = pers._MIGRATIONS[:]
-    # Add a bad migration at version 9998 (above current)
-    bad_migration = (9998, "INVALID SQL THAT WILL FAIL;")
-    pers._MIGRATIONS.append(bad_migration)
-    try:
-        with pytest.raises(Exception):
-            pers.AnalysisDB(db_path=db_path)
-        # Verify DB version was not advanced
-        conn = sqlite3.connect(db_path)
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        conn.close()
-        assert version != 9998
-    finally:
-        pers._MIGRATIONS.clear()
-        pers._MIGRATIONS.extend(original)
+    db.checkpoint()
 
 
 def test_insert_run_duplicate_raises_value_error(db, sample_run):
-    """R3-F14: insert_run twice with same run_id raises ValueError."""
     db.insert_run(sample_run)
     with pytest.raises(ValueError, match=sample_run["run_id"]):
         db.insert_run(sample_run)
 
 
-def test_migration_skip_already_applied(tmp_path):
-    """Covers persistence.py:120: version <= current causes 'continue' in migration loop."""
-    from backend.persistence import AnalysisDB
-
-    db_path = str(tmp_path / "incremental.db")
-    # First init: applies all migrations
-    db1 = AnalysisDB(db_path=db_path)
-    db1.close()
-    # Second init: all migrations already at current version, all should be skipped
-    db2 = AnalysisDB(db_path=db_path)
-    # Should work without errors; the 'continue' path was exercised
-    result = db2.list_runs(page=1, limit=1)
-    assert result["total"] == 0
-
-
-def test_migration_continue_skips_lower_version(tmp_path):
-    """R8: persistence.py:120 — continue branch when version <= current in mid-migration."""
-    import sqlite3
-    from backend import persistence as pers
-
-    db_path = str(tmp_path / "mid.db")
-    # Apply migration 1 (creates analysis_runs and report_sections) manually
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA user_version = 1")
-    for stmt in pers._MIGRATIONS[0][1].split(";"):
-        stmt = stmt.strip()
-        if stmt:
-            conn.execute(stmt)
-    conn.commit()
-    conn.close()
-
-    # AnalysisDB should skip migration 1 (continue branch) and apply migrations 2-5
-    db = pers.AnalysisDB(db_path=db_path)
-    with db._lock:
-        tables = [r[0] for r in db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()]
-    assert "scans" in tables  # migration 4 created scans table
-    db.close()
-
-
 def test_save_report_section_upsert_replaces(db, sample_run):
-    """R6-F1: save_report_section INSERT OR REPLACE updates existing section."""
     db.insert_run(sample_run)
     db.save_report_section(sample_run["run_id"], "market", "version 1")
     db.save_report_section(sample_run["run_id"], "market", "version 2")
@@ -422,7 +388,6 @@ def test_save_report_section_upsert_replaces(db, sample_run):
 
 
 def test_update_run_status_stores_error_message(db, sample_run):
-    """R6-F2: update_run_status persists the error field."""
     db.insert_run(sample_run)
     completed_at = "2025-01-10T00:00:00Z"
     db.update_run_status(sample_run["run_id"], "failed", "timeout occurred", completed_at)
@@ -430,25 +395,7 @@ def test_update_run_status_stores_error_message(db, sample_run):
     assert run["error"] == "timeout occurred"
 
 
-def test_insert_run_invalid_status_raises(db):
-    """R6-F3: CHECK constraint on status rejects invalid values."""
-    import uuid
-    from datetime import datetime, timezone
-    with pytest.raises(Exception):
-        db.insert_run({
-            "run_id": str(uuid.uuid4()),
-            "ticker": "SPY",
-            "analysis_date": "2025-01-10",
-            "status": "invalid_status",
-            "config": "{}",
-            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        })
-
-
 def test_insert_run_invalid_asset_type_raises(db):
-    """R6-F4: CHECK constraint on asset_type rejects invalid values."""
-    import uuid
-    from datetime import datetime, timezone
     with pytest.raises(Exception):
         db.insert_run({
             "run_id": str(uuid.uuid4()),
@@ -462,55 +409,67 @@ def test_insert_run_invalid_asset_type_raises(db):
 
 
 def test_report_sections_fk_nonexistent_run_raises(db):
-    """save_report_section with nonexistent run_id silently ignores the insert (FK enforced)."""
     db.save_report_section("nonexistent-run-id", "market", "data")
     sections = db.get_report_sections("nonexistent-run-id")
     assert len(sections) == 0
 
 
-def test_pre_migration_backup_already_exists_no_overwrite(tmp_path):
-    """R8: pre-migration backup is skipped (no overwrite) when backup file already exists."""
-    from backend.persistence import AnalysisDB
-    import os
-
-    db_path = str(tmp_path / "test.db")
-    backup_path = db_path + ".backup.v0"
-
-    # Pre-create the backup with sentinel content
-    with open(backup_path, "w") as f:
-        f.write("sentinel")
-
-    # Open a v0 DB and apply migrations
-    conn = __import__("sqlite3").connect(db_path)
-    conn.execute("PRAGMA user_version = 0")
-    conn.close()
-
-    db2 = AnalysisDB(db_path=db_path)
-    db2.close()
-
-    # Sentinel content should still be intact (not overwritten)
-    with open(backup_path) as f:
-        assert f.read() == "sentinel"
-
-
 def test_update_run_status_nonexistent_run_returns_false(db):
-    """R8: update_run_status with a run_id that does not exist returns False."""
     result = db.update_run_status("nonexistent-run-id", "completed", None, "2025-01-10T00:00:00Z")
     assert result is False
 
 
 def test_delete_ticker_checkpoints_preserves_running_runs(db, sample_run):
-    """R8: delete_ticker_checkpoints only removes terminal runs, keeps running ones."""
-    # Insert a completed run
     completed_run = sample_run.copy()
     completed_run["run_id"] = str(uuid.uuid4())
     db.insert_run(completed_run)
     db.update_run_status(completed_run["run_id"], "completed", None, "2025-01-10T00:00:00Z")
-    # Insert a running run for the same ticker
     running_run = sample_run.copy()
     running_run["run_id"] = str(uuid.uuid4())
     db.insert_run(running_run)
-    # Delete checkpoints — should only delete the completed one
     count = db.delete_ticker_checkpoints("SPY")
     assert count == 1
     assert db.get_run(running_run["run_id"]) is not None
+
+
+def test_connection_pool_resilience(db, sample_run):
+    """Verify that separate operations use independent connections from the pool."""
+    db.insert_run(sample_run)
+    run = db.get_run(sample_run["run_id"])
+    assert run is not None
+    db.update_run_status(sample_run["run_id"], "completed", None, "2025-01-10T00:00:00Z")
+    run = db.get_run(sample_run["run_id"])
+    assert run["status"] == "completed"
+
+
+def test_completed_at_check_constraint(db, sample_run):
+    """CHECK constraint on completed_at rejects non-ISO timestamps."""
+    db.insert_run(sample_run)
+    with pytest.raises(Exception):
+        db.update_run_status(sample_run["run_id"], "completed", None, "not-a-date")
+
+
+def test_update_run_status_invalid_status_raises(db, sample_run):
+    """CHECK constraint rejects invalid status values on update."""
+    db.insert_run(sample_run)
+    with pytest.raises(Exception):
+        db.update_run_status(sample_run["run_id"], "bogus_status", None, "2025-01-10T00:00:00Z")
+
+
+def test_recover_orphans_returns_zero_when_none(db):
+    """recover_orphans returns 0 when no running runs exist."""
+    count = db.recover_orphans()
+    assert count == 0
+
+
+def test_default_dsn_raises_without_env():
+    """_default_dsn raises RuntimeError when DATABASE_URL is unset."""
+    import os
+    from backend.persistence import _default_dsn
+    old = os.environ.pop("DATABASE_URL", None)
+    try:
+        with pytest.raises(RuntimeError, match="DATABASE_URL"):
+            _default_dsn()
+    finally:
+        if old is not None:
+            os.environ["DATABASE_URL"] = old
