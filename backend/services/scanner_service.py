@@ -389,6 +389,18 @@ class ScannerService:
             await asyncio.to_thread(self._db.update_scan, scan_id, status="cancelled")
         return True
 
+    async def shutdown(self) -> None:
+        """Cancel all running scans and wait for tasks to finish."""
+        async with self._lock:
+            scan_ids = list(self._scans.keys())
+        for scan_id in scan_ids:
+            await self.cancel_scan(scan_id)
+        # Wait for background tasks to complete
+        async with self._lock:
+            tasks = [s.get("task") for s in self._scans.values() if s.get("task") and not s["task"].done()]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def list_scans(self) -> List[Dict[str, Any]]:
         async with self._lock:
             in_memory_ids = set(self._scans.keys())

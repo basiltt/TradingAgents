@@ -88,15 +88,21 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
         price_context = state.get("current_price_context", "")
-        tools = [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
+        # Prefer the combined derivatives tool; fall back to individual tools
+        combined = [t for t in crypto_tools if t.name == "get_crypto_derivatives_data"]
+        if combined:
+            tools = combined
+        else:
+            tools = [t for t in crypto_tools if t.name in ("get_funding_rates", "get_open_interest", "get_crypto_ticker")]
         if not tools:
             raise ValueError("No derivatives tools found in crypto_tools")
 
         system_message = (
             "You are a crypto derivatives analyst. Analyze funding rates, open interest "
-            "trends, and ticker data for the given perpetual futures contract. Assess "
-            "funding cost impact on position holding, OI trends as a proxy for market "
-            "sentiment and potential liquidation cascades, and current market snapshot. "
+            "trends, long/short ratio, and ticker data for the given perpetual futures contract. "
+            "Assess funding cost impact on position holding, OI trends as a proxy for market "
+            "sentiment and potential liquidation cascades, long/short ratio for crowd positioning, "
+            "multi-timeframe price changes, and current market snapshot. "
             "If any data source is unavailable, acknowledge it and continue with available data."
             " Write a detailed report with a Markdown summary table at the end."
 

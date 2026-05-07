@@ -9,7 +9,10 @@ from httpx import AsyncClient, ASGITransport
 @pytest.fixture
 def app(tmp_path):
     import os
-    os.environ["TRADINGAGENTS_WEB_DB_PATH"] = str(tmp_path / "test.db")
+    os.environ.setdefault(
+        "DATABASE_URL",
+        os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test"),
+    )
     from backend.main import create_app
     return create_app()
 

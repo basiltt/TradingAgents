@@ -52,7 +52,7 @@ class TestGetCoinId:
         result = _get_coin_id("BTCUSDT")
         assert result is None
 
-    def test_fetch_failure_clears_cache_and_returns_none(self):
+    def test_fetch_failure_preserves_existing_cache(self):
         import tradingagents.dataflows.coingecko_data as mod
         with mod._coin_list_lock:
             mod._coin_list_cache.clear()
@@ -60,8 +60,8 @@ class TestGetCoinId:
             mod._coin_list_ts = 0  # force refresh attempt
         with patch.object(mod, "_fetch_coin_list", side_effect=Exception("network")):
             result = mod._get_coin_id("BTCUSDT")
-        # Cache is cleared before fetch, so on failure it's empty → None
-        assert result is None
+        # On fetch failure, old cache is preserved — safer for trading continuity
+        assert result == "bitcoin"
 
 
 class TestFetchCoinList:

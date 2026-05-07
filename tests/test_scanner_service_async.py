@@ -838,23 +838,22 @@ class TestInsertScanDuplicate:
     async def test_insert_scan_duplicate_raises(self, scanner):
         """R6-F4: insert_scan with duplicate scan_id raises an exception."""
         from backend.persistence import AnalysisDB
-        import tempfile, os
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db = AnalysisDB(db_path=os.path.join(tmpdir, "test.db"))
-            from datetime import datetime, timezone
-            s = {
-                "scan_id": "dup-scan-1",
-                "status": "running",
-                "config": "{}",
-                "total": 0,
-                "completed": 0,
-                "failed": 0,
-                "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            }
+        import os
+        dsn = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test")
+        db = AnalysisDB(dsn=dsn)
+        s = {
+            "scan_id": "dup-scan-1",
+            "status": "running",
+            "config": "{}",
+            "total": 0,
+            "completed": 0,
+            "failed": 0,
+            "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        }
+        db.insert_scan(s)
+        with pytest.raises(Exception):
             db.insert_scan(s)
-            with pytest.raises(Exception):
-                db.insert_scan(s)
-            db.close()
+        db.close()
 
 
 class TestPctZeroConfidence:
@@ -870,9 +869,9 @@ class TestResumeIncompleteScanIntegration:
 
     def _make_db(self):
         from backend.persistence import AnalysisDB
-        import tempfile, os
-        tmpdir = tempfile.mkdtemp()
-        db = AnalysisDB(db_path=os.path.join(tmpdir, "test.db"))
+        import os
+        dsn = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test")
+        db = AnalysisDB(dsn=dsn)
         return db
 
     def _running_scan(self, scan_id=None):

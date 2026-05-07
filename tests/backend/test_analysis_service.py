@@ -16,7 +16,9 @@ def event_loop():
 @pytest.fixture
 def db(tmp_path):
     from backend.persistence import AnalysisDB
-    return AnalysisDB(db_path=str(tmp_path / "test.db"))
+    import os
+    dsn = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test")
+    return AnalysisDB(dsn=dsn)
 
 
 @pytest.fixture

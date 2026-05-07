@@ -8,7 +8,9 @@ def config_service(tmp_path):
     from backend.persistence import AnalysisDB
     from backend.services.config_service import ConfigService
 
-    db = AnalysisDB(db_path=str(tmp_path / "test.db"))
+    import os
+    dsn = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test")
+    db = AnalysisDB(dsn=dsn)
     return ConfigService(db=db)
 
 

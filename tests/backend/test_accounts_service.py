@@ -17,10 +17,64 @@ def _set_encryption_key(monkeypatch):
 
 
 @pytest.fixture
-def db(tmp_path):
-    from backend.persistence import AnalysisDB
+def db():
+    """Mock DB that simulates in-memory storage for accounts."""
+    mock_db = MagicMock()
+    _store: dict = {}
 
-    return AnalysisDB(db_path=str(tmp_path / "test.db"))
+    def _insert_account(account):
+        account.setdefault("is_active", 1)
+        _store[account["id"]] = account
+
+    def _get_account(account_id):
+        acc = _store.get(account_id)
+        if acc and acc.get("deleted_at"):
+            return None
+        return acc
+
+    def _list_accounts():
+        return [a for a in _store.values() if not a.get("deleted_at")]
+
+    def _update_account(account_id, **fields):
+        acc = _store.get(account_id)
+        if not acc or acc.get("deleted_at"):
+            return False
+        acc.update({k: v for k, v in fields.items() if v is not None})
+        return True
+
+    def _soft_delete(account_id, deleted_at):
+        acc = _store.get(account_id)
+        if not acc or acc.get("deleted_at"):
+            return False
+        acc["deleted_at"] = deleted_at
+        acc["is_active"] = 0
+        return True
+
+    def _get_credentials(account_id):
+        acc = _store.get(account_id)
+        if not acc or acc.get("deleted_at"):
+            return None
+        return {
+            "id": acc["id"],
+            "account_type": acc["account_type"],
+            "api_key_encrypted": acc["api_key_encrypted"],
+            "api_secret_encrypted": acc["api_secret_encrypted"],
+        }
+
+    mock_db.insert_account.side_effect = _insert_account
+    mock_db.get_account.side_effect = _get_account
+    mock_db.list_accounts.side_effect = _list_accounts
+    mock_db.update_account.side_effect = _update_account
+    mock_db.soft_delete_account.side_effect = _soft_delete
+    mock_db.get_account_credentials.side_effect = _get_credentials
+    mock_db.rotate_account_credentials.return_value = True
+    mock_db.insert_closed_pnl_records.return_value = 0
+    mock_db.get_closed_pnl.return_value = {"items": [], "total": 0, "page": 1, "limit": 100}
+    mock_db.get_closed_pnl_summary.return_value = {
+        "total_pnl": "0", "win_count": 0, "loss_count": 0,
+        "win_rate": 0.0, "avg_win": "0", "avg_loss": "0",
+    }
+    return mock_db
 
 
 @pytest.fixture
@@ -105,12 +159,13 @@ async def test_get_wallet_caches(svc):
         account = await svc.create_account("Cache", "demo", "apikey12345678", "secret12345678")
 
     wallet_data = {"totalEquity": "500", "totalWalletBalance": "400", "totalAvailableBalance": "300", "totalPerpUPL": "50", "coin": []}
-    with patch("backend.services.accounts_service.BybitClient") as MockClient2:
-        instance2 = MockClient2.return_value
-        instance2.get_wallet_balance = AsyncMock(return_value=wallet_data)
+    with patch.object(svc, "_build_client") as mock_build:
+        mock_client = MagicMock()
+        mock_client.get_wallet_balance = AsyncMock(return_value=wallet_data)
+        mock_build.return_value = mock_client
         result1 = await svc.get_wallet(account["id"])
         result2 = await svc.get_wallet(account["id"])
-        assert instance2.get_wallet_balance.call_count == 1
+        assert mock_client.get_wallet_balance.call_count == 1
 
     assert result1["totalEquity"] == "500"
     assert result2["totalEquity"] == "500"
@@ -125,9 +180,10 @@ async def test_get_positions(svc):
         account = await svc.create_account("Pos", "demo", "apikey12345678", "secret12345678")
 
     positions_data = [{"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"}]
-    with patch("backend.services.accounts_service.BybitClient") as MockClient2:
-        instance2 = MockClient2.return_value
-        instance2.get_positions = AsyncMock(return_value=positions_data)
+    with patch.object(svc, "_build_client") as mock_build:
+        mock_client = MagicMock()
+        mock_client.get_positions = AsyncMock(return_value=positions_data)
+        mock_build.return_value = mock_client
         result = await svc.get_positions(account["id"])
 
     assert len(result) == 1
@@ -162,7 +218,7 @@ async def test_cache_invalidation_on_delete(svc):
 
 
 @pytest.mark.asyncio
-async def test_dashboard_with_error_account(svc):
+async def test_dashboard_with_error_account(svc, db):
     with patch("backend.services.accounts_service.BybitClient") as MockClient:
         instance = MockClient.return_value
         instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})

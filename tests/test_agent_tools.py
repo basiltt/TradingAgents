@@ -61,8 +61,9 @@ class TestCoreStockTools:
 
 
 class TestCoingeckoTools:
-    @patch("tradingagents.agents.utils.coingecko_tools.get_coingecko_market_data", return_value="market data")
-    def test_market_data_success(self, mock_cg):
+    @patch("tradingagents.agents.utils.coingecko_tools.get_bybit_price_changes", return_value={"24h": 1.5, "7d": -2.0})
+    @patch("tradingagents.agents.utils.coingecko_tools.get_coingecko_fundamentals_only", return_value="market data")
+    def test_market_data_success(self, mock_cg, mock_bybit):
         from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
         tools = make_coingecko_tools()
         market_tool = next(t for t in tools if t.name == "get_crypto_market_data")
@@ -70,8 +71,9 @@ class TestCoingeckoTools:
         assert "market data" in result
         assert "<data>" in result
 
-    @patch("tradingagents.agents.utils.coingecko_tools.get_coingecko_market_data", side_effect=Exception("fail"))
-    def test_market_data_error(self, mock_cg):
+    @patch("tradingagents.agents.utils.coingecko_tools.get_bybit_price_changes", side_effect=Exception("fail"))
+    @patch("tradingagents.agents.utils.coingecko_tools.get_coingecko_fundamentals_only", side_effect=Exception("fail"))
+    def test_market_data_error(self, mock_cg, mock_bybit):
         from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
         tools = make_coingecko_tools()
         market_tool = next(t for t in tools if t.name == "get_crypto_market_data")
@@ -92,6 +94,23 @@ class TestCoingeckoTools:
         tools = make_coingecko_tools()
         community_tool = next(t for t in tools if t.name == "get_crypto_community_data")
         result = community_tool.invoke({"symbol": "BTCUSDT"})
+        assert "unavailable" in result.lower()
+
+    @patch("tradingagents.agents.utils.coingecko_tools.get_bybit_derivatives_summary", return_value="derivatives data")
+    def test_derivatives_data_success(self, mock_bybit):
+        from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
+        tools = make_coingecko_tools()
+        deriv_tool = next(t for t in tools if t.name == "get_crypto_derivatives_data")
+        result = deriv_tool.invoke({"symbol": "BTCUSDT"})
+        assert "derivatives data" in result
+        assert "<data>" in result
+
+    @patch("tradingagents.agents.utils.coingecko_tools.get_bybit_derivatives_summary", side_effect=Exception("fail"))
+    def test_derivatives_data_error(self, mock_bybit):
+        from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
+        tools = make_coingecko_tools()
+        deriv_tool = next(t for t in tools if t.name == "get_crypto_derivatives_data")
+        result = deriv_tool.invoke({"symbol": "BTCUSDT"})
         assert "unavailable" in result.lower()
 
     def test_sanitize_truncation(self):

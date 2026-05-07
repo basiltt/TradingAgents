@@ -1,11 +1,13 @@
-"""CoinGecko free-tier data access for crypto fundamentals and community metrics.
+"""CoinGecko data access for crypto fundamentals and community metrics.
 
-No API key required.  Rate-limited to stay within the public tier (30 req/min, using 25 with safety margin).
+Supports optional Demo API key via COINGECKO_API_KEY env var.
+Rate-limited to 8 req/min to stay safely within the free tier (30 req/min limit).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Optional
@@ -17,7 +19,15 @@ logger = logging.getLogger(__name__)
 _SESSION = requests.Session()
 _SESSION.headers.update({"Accept": "application/json"})
 
-_BASE = "https://api.coingecko.com/api/v3"
+# Support CoinGecko Demo API key for a dedicated rate-limit bucket
+_API_KEY = os.environ.get("COINGECKO_API_KEY", "")
+if _API_KEY:
+    _SESSION.headers.update({"x-cg-demo-api-key": _API_KEY})
+    _BASE = "https://api.coingecko.com/api/v3"
+    logger.info("CoinGecko: using Demo API key")
+else:
+    _BASE = "https://api.coingecko.com/api/v3"
+    logger.info("CoinGecko: no API key, using public rate limits")
 
 # ---------------------------------------------------------------------------
 # Symbol mapping  BTCUSDT → bitcoin (CoinGecko slug)
@@ -49,8 +59,9 @@ def _get_coin_id(symbol: str) -> str | None:
     with _coin_list_lock:
         if not _coin_list_cache or (time.time() - _coin_list_ts > _COIN_LIST_TTL):
             try:
+                new_map = _fetch_coin_list()
                 _coin_list_cache.clear()
-                _coin_list_cache.update(_fetch_coin_list())
+                _coin_list_cache.update(new_map)
                 _coin_list_ts = time.time()
                 logger.info("CoinGecko coin list refreshed: %d entries", len(_coin_list_cache))
             except Exception:
@@ -74,25 +85,28 @@ def _get_coin_id(symbol: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 class _RateLimiter:
+    """Token-bucket rate limiter that enforces max requests per sliding 60s window."""
+
     def __init__(self, max_per_min: int = 10):
         self._lock = threading.Lock()
         self._timestamps: list[float] = []
         self._max = max_per_min
 
     def wait(self) -> None:
-        with self._lock:
-            now = time.time()
-            self._timestamps = [t for t in self._timestamps if now - t < 60]
-            if len(self._timestamps) >= self._max:
-                sleep_for = 60 - (now - self._timestamps[0])
-                if sleep_for > 0:
-                    time.sleep(sleep_for)
-            self._timestamps.append(time.time())
+        while True:
+            with self._lock:
+                now = time.time()
+                self._timestamps = [t for t in self._timestamps if now - t < 60]
+                if len(self._timestamps) < self._max:
+                    self._timestamps.append(now)
+                    return
+                sleep_for = 60 - (now - self._timestamps[0]) + 0.1
+            time.sleep(sleep_for)
 
 
-_limiter = _RateLimiter(max_per_min=25)
+_limiter = _RateLimiter(max_per_min=8)
 
-_coingecko_semaphore = threading.Semaphore(25)
+_coingecko_semaphore = threading.Semaphore(3)
 _coingecko_sem_lock = threading.Lock()
 
 
@@ -108,7 +122,7 @@ def configure_coingecko_concurrency(max_concurrent: int) -> None:
 
 _cache: dict[str, tuple[float, str]] = {}
 _cache_lock = threading.Lock()
-_CACHE_TTL = 300  # 5 min
+_CACHE_TTL = 600  # 10 min — reduces redundant calls to CoinGecko
 
 
 def _cached_get(url: str, params: dict | None = None) -> dict:
@@ -126,14 +140,27 @@ def _cached_get(url: str, params: dict | None = None) -> dict:
             if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
                 return _json.loads(_cache[key][1])
 
-        _limiter.wait()
-        resp = _SESSION.get(url, params=params, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
+        max_retries = 3
+        for attempt in range(max_retries):
+            _limiter.wait()
+            resp = _SESSION.get(url, params=params, timeout=20)
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 60))
+                wait_time = max(retry_after, 60) + (attempt * 30)
+                logger.warning(
+                    "CoinGecko 429 rate limited, waiting %ds (attempt %d/%d)",
+                    wait_time, attempt + 1, max_retries,
+                )
+                time.sleep(wait_time)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            with _cache_lock:
+                _cache[key] = (time.time(), _json.dumps(data))
+            return data
 
-        with _cache_lock:
-            _cache[key] = (time.time(), _json.dumps(data))
-        return data
+        resp.raise_for_status()
+        return {}  # unreachable but satisfies type checker
     finally:
         _coingecko_semaphore.release()
 
@@ -270,5 +297,56 @@ def get_coingecko_community_data(symbol: str) -> str:
         lines += ["", f"**Website:** {homepage[0]}"]
     if repos and repos[0]:
         lines += [f"**GitHub:** {repos[0]}"]
+
+    return "\n".join(lines)
+
+
+def get_coingecko_fundamentals_only(symbol: str) -> str:
+    """Fetch ONLY data that Bybit cannot provide: market cap, supply, ATH/ATL, FDV, description.
+
+    This is a lighter version that skips price changes (computed from Bybit klines)
+    and current price/volume (from Bybit ticker). Saves CoinGecko rate limit budget.
+    """
+    coin_id = _get_coin_id(symbol)
+    if not coin_id:
+        return f"Could not resolve CoinGecko ID for symbol '{symbol}'"
+
+    data = _cached_get(
+        f"{_BASE}/coins/{coin_id}",
+        params={
+            "localization": "false",
+            "tickers": "false",
+            "community_data": "false",
+            "developer_data": "false",
+            "sparkline": "false",
+        },
+    )
+
+    md = data.get("market_data", {})
+    lines = [
+        f"# {data.get('name', symbol)} ({data.get('symbol', '').upper()}) — Fundamentals (CoinGecko)",
+        "",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Market Cap Rank | #{data.get('market_cap_rank', 'N/A')} |",
+        f"| Market Cap (USD) | ${md.get('market_cap', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('market_cap', {}).get('usd'), (int, float)) else "| Market Cap (USD) | N/A |",
+        f"| Circulating Supply | {md.get('circulating_supply', 'N/A'):,} |" if isinstance(md.get('circulating_supply'), (int, float)) else "| Circulating Supply | N/A |",
+        f"| Total Supply | {md.get('total_supply', 'N/A'):,} |" if isinstance(md.get('total_supply'), (int, float)) else "| Total Supply | N/A |",
+        f"| Max Supply | {md.get('max_supply', 'N/A'):,} |" if isinstance(md.get('max_supply'), (int, float)) else "| Max Supply | N/A |",
+        f"| ATH (USD) | ${md.get('ath', {}).get('usd', 'N/A')} |",
+        f"| ATH Change % | {md.get('ath_change_percentage', {}).get('usd', 'N/A')}% |",
+        f"| ATL (USD) | ${md.get('atl', {}).get('usd', 'N/A')} |",
+        f"| ATL Change % | {md.get('atl_change_percentage', {}).get('usd', 'N/A')}% |",
+        f"| FDV (USD) | ${md.get('fully_diluted_valuation', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('fully_diluted_valuation', {}).get('usd'), (int, float)) else "| FDV (USD) | N/A |",
+    ]
+
+    desc = data.get("description", {}).get("en", "")
+    if desc:
+        short = desc[:500] + ("..." if len(desc) > 500 else "")
+        lines += ["", "## Project Description", short]
+
+    categories = data.get("categories", [])
+    if categories:
+        lines += ["", f"**Categories:** {', '.join(c for c in categories if c)}"]
 
     return "\n".join(lines)

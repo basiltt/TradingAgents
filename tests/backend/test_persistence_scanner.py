@@ -1,14 +1,47 @@
-"""Tests for scanner-related persistence methods — Phase 3 R1."""
+"""Tests for scanner-related persistence methods."""
 
+import os
 import uuid
 import pytest
 from datetime import datetime, timezone
 
+import psycopg2
+
+_TEST_DSN = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test",
+)
+
+
+def _ensure_test_db():
+    try:
+        base_dsn = _TEST_DSN.rsplit("/", 1)[0] + "/postgres"
+        conn = psycopg2.connect(base_dsn)
+        conn.autocommit = True
+        cur = conn.cursor()
+        db_name = _TEST_DSN.rsplit("/", 1)[1].split("?")[0]
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
+        if not cur.fetchone():
+            cur.execute(f'CREATE DATABASE "{db_name}"')
+        conn.close()
+    except psycopg2.OperationalError:
+        pytest.skip("PostgreSQL not available", allow_module_level=True)
+
+
+_ensure_test_db()
+
 
 @pytest.fixture
-def db(tmp_path):
+def db():
     from backend.persistence import AnalysisDB
-    return AnalysisDB(db_path=str(tmp_path / "test.db"))
+    instance = AnalysisDB(dsn=_TEST_DSN)
+    yield instance
+    with instance._get_conn() as conn:
+        cur = conn.cursor()
+        for table in ("scan_results", "scans", "report_sections", "analysis_runs"):
+            cur.execute(f"DELETE FROM {table}")
+        conn.commit()
+    instance.close()
 
 
 def _scan(scan_id=None, status="running"):
@@ -62,12 +95,11 @@ def test_update_scan_all_invalid_fields_noop(db):
 def test_insert_scan_result_sorted_by_score(db):
     s = _scan()
     db.insert_scan(s)
-    db.insert_scan_result(s["scan_id"], {"ticker": "A", "score": 3, "status": "completed", "direction": "long"})
-    db.insert_scan_result(s["scan_id"], {"ticker": "B", "score": 8, "status": "completed", "direction": "long"})
-    db.insert_scan_result(s["scan_id"], {"ticker": "C", "score": -5, "status": "completed", "direction": "short"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "A", "score": 3, "status": "completed", "direction": "hold"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "B", "score": 8, "status": "completed", "direction": "hold"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "C", "score": -5, "status": "completed", "direction": "hold"})
     result = db.get_scan(s["scan_id"])
     scores = [r["score"] for r in result["results"]]
-    # Should be ordered by ABS(score) DESC: 8, -5, 3
     assert abs(scores[0]) >= abs(scores[1]) >= abs(scores[2])
 
 
@@ -83,8 +115,8 @@ def test_list_scans_returns_all(db):
 def test_get_scan_completed_tickers(db):
     s = _scan()
     db.insert_scan(s)
-    db.insert_scan_result(s["scan_id"], {"ticker": "SPY", "score": 1, "status": "completed", "direction": "long"})
-    db.insert_scan_result(s["scan_id"], {"ticker": "AAPL", "score": 2, "status": "completed", "direction": "long"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "SPY", "score": 1, "status": "completed", "direction": "hold"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "AAPL", "score": 2, "status": "completed", "direction": "hold"})
     tickers = db.get_scan_completed_tickers(s["scan_id"])
     assert tickers == {"SPY", "AAPL"}
 
@@ -193,7 +225,6 @@ def test_delete_all_runs_cascades_sections(db):
 
 
 def test_insert_scan_result_upsert_replaces(db):
-    """R6-F5: INSERT OR REPLACE on scan_results replaces same (scan_id, ticker)."""
     s = _scan()
     db.insert_scan(s)
     result1 = {"ticker": "BTC", "status": "completed", "direction": "buy",
@@ -209,13 +240,11 @@ def test_insert_scan_result_upsert_replaces(db):
 
 
 def test_get_scan_completed_tickers_nonexistent(db):
-    """R6-F6: get_scan_completed_tickers returns empty set for unknown scan_id."""
     result = db.get_scan_completed_tickers("nonexistent-id")
     assert result == set()
 
 
 def test_update_scan_completed_at(db):
-    """R6-F7: update_scan persists completed_at field."""
     s = _scan()
     db.insert_scan(s)
     db.update_scan(s["scan_id"], status="completed", completed_at="2025-01-10T00:00:00Z")
@@ -224,54 +253,56 @@ def test_update_scan_completed_at(db):
 
 
 def test_scans_invalid_status_raises(db):
-    """R8: CHECK constraint on scans.status rejects invalid values."""
-    import sqlite3
-    s = _scan()
+    """CHECK constraint on scans.status rejects invalid values."""
     with pytest.raises(Exception):
-        with db._lock:
-            db._conn.execute(
+        with db._get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 "INSERT INTO scans (scan_id, status, config, total, completed, failed, started_at) "
-                "VALUES (?, ?, '{}', 0, 0, 0, '2025-01-10T00:00:00Z')",
-                (s["scan_id"], "bogus_status"),
+                "VALUES (%s, %s, '{}', 0, 0, 0, '2025-01-10T00:00:00Z')",
+                (str(uuid.uuid4()), "bogus_status"),
             )
+            conn.commit()
 
 
 def test_scan_results_fk_nonexistent_scan_raises(db):
-    """R8: FK constraint on scan_results.scan_id is enforced."""
-    import sqlite3
     with pytest.raises(Exception):
         db.insert_scan_result("nonexistent-scan-id", {
-            "ticker": "SPY", "score": 1, "status": "completed", "direction": "long"
+            "ticker": "SPY", "score": 1, "status": "completed", "direction": "hold"
         })
 
 
 def test_scan_results_cascade_delete(db):
-    """R8: Deleting a scan cascades to remove its scan_results rows."""
+    """Deleting a scan cascades to remove its scan_results rows."""
     s = _scan()
     db.insert_scan(s)
-    db.insert_scan_result(s["scan_id"], {"ticker": "SPY", "score": 1, "status": "completed", "direction": "long"})
-    db.insert_scan_result(s["scan_id"], {"ticker": "AAPL", "score": 2, "status": "completed", "direction": "long"})
-    with db._lock:
-        db._conn.execute("DELETE FROM scans WHERE scan_id=?", (s["scan_id"],))
-        db._conn.commit()
-        rows = db._conn.execute(
-            "SELECT * FROM scan_results WHERE scan_id=?", (s["scan_id"],)
-        ).fetchall()
+    db.insert_scan_result(s["scan_id"], {"ticker": "SPY", "score": 1, "status": "completed", "direction": "hold"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "AAPL", "score": 2, "status": "completed", "direction": "hold"})
+    with db._get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM scans WHERE scan_id=%s", (s["scan_id"],))
+        conn.commit()
+        cur.execute("SELECT * FROM scan_results WHERE scan_id=%s", (s["scan_id"],))
+        rows = cur.fetchall()
     assert rows == []
 
 
+def test_insert_scan_duplicate_raises(db):
+    s = _scan()
+    db.insert_scan(s)
+    with pytest.raises(Exception):
+        db.insert_scan(s)
+
+
 def test_update_scan_nonexistent_scan_id_noop(db):
-    """R8: update_scan with unknown scan_id silently does nothing."""
     db.update_scan("nonexistent-scan-id", status="completed")
-    # No exception raised, nothing blows up
 
 
 def test_list_scans_hydrates_results(db):
-    """R8: list_scans returns result rows for each scan, not just empty arrays."""
     s = _scan()
     db.insert_scan(s)
-    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "long"})
-    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 3, "status": "completed", "direction": "short"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "hold"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 3, "status": "completed", "direction": "hold"})
     scans = db.list_scans()
     assert len(scans) == 1
     results = scans[0].get("results", [])
