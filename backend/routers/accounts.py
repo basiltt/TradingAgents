@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import date
 from typing import Optional
 
@@ -20,6 +21,14 @@ def _get_service(request: Request):
     if svc is None:
         raise HTTPException(503, detail="Accounts feature disabled — set ACCOUNTS_ENCRYPTION_KEY")
     return svc
+
+
+def _validate_account_id(account_id: str) -> str:
+    try:
+        _uuid.UUID(account_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, detail="Invalid account ID format")
+    return account_id
 
 
 @router.post("/accounts")
@@ -48,6 +57,7 @@ async def list_accounts(request: Request):
 
 @router.get("/accounts/{account_id}")
 async def get_account(request: Request, account_id: str):
+    _validate_account_id(account_id)
     svc = _get_service(request)
     account = svc.get_account(account_id)
     if not account:
@@ -57,6 +67,7 @@ async def get_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}")
 async def update_account(request: Request, account_id: str):
+    _validate_account_id(account_id)
     body = await request.json()
     try:
         req = UpdateAccountRequest(**body)
@@ -72,6 +83,7 @@ async def update_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}/credentials")
 async def rotate_credentials(request: Request, account_id: str):
+    _validate_account_id(account_id)
     body = await request.json()
     try:
         req = RotateCredentialsRequest(**body)
@@ -92,6 +104,7 @@ async def rotate_credentials(request: Request, account_id: str):
 
 @router.delete("/accounts/{account_id}")
 async def delete_account(request: Request, account_id: str):
+    _validate_account_id(account_id)
     svc = _get_service(request)
     deleted = svc.delete_account(account_id)
     if not deleted:
@@ -101,6 +114,7 @@ async def delete_account(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/test")
 async def test_connection(request: Request, account_id: str):
+    _validate_account_id(account_id)
     svc = _get_service(request)
     try:
         result = await svc.test_connection(account_id)
@@ -111,6 +125,7 @@ async def test_connection(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/wallet")
 async def get_wallet(request: Request, account_id: str):
+    _validate_account_id(account_id)
     svc = _get_service(request)
     try:
         return await svc.get_wallet(account_id)
@@ -122,6 +137,7 @@ async def get_wallet(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/positions")
 async def get_positions(request: Request, account_id: str):
+    _validate_account_id(account_id)
     svc = _get_service(request)
     try:
         return await svc.get_positions(account_id)
@@ -133,6 +149,7 @@ async def get_positions(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/orders")
 async def get_orders(request: Request, account_id: str):
+    _validate_account_id(account_id)
     svc = _get_service(request)
     try:
         return await svc.get_orders(account_id)
@@ -151,6 +168,7 @@ async def get_closed_pnl(
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=1000),
 ):
+    _validate_account_id(account_id)
     try:
         date.fromisoformat(start_date)
         date.fromisoformat(end_date)
@@ -173,6 +191,7 @@ async def get_pnl_summary(
     start_date: str = Query(..., description="Start date YYYY-MM-DD"),
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
 ):
+    _validate_account_id(account_id)
     try:
         date.fromisoformat(start_date)
         date.fromisoformat(end_date)

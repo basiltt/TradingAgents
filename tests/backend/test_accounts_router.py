@@ -1,6 +1,7 @@
 """Tests for backend.routers.accounts — API endpoints."""
 
 import os
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +9,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.routers.accounts import router as accounts_router
+
+_TEST_ID = "00000000-0000-4000-8000-000000000001"
+_MISSING_ID = "00000000-0000-4000-8000-000000000099"
 from backend.routers.portfolio import router as portfolio_router
 from backend.services.bybit_client import BybitAPIError
 
@@ -81,60 +85,60 @@ class TestListAccounts:
 class TestGetAccount:
     def test_found(self, client, mock_svc):
         mock_svc.get_account = MagicMock(return_value={"id": "1", "label": "A"})
-        resp = client.get("/accounts/1")
+        resp = client.get(f"/accounts/{_TEST_ID}")
         assert resp.status_code == 200
 
     def test_not_found(self, client, mock_svc):
         mock_svc.get_account = MagicMock(return_value=None)
-        resp = client.get("/accounts/missing")
+        resp = client.get(f"/accounts/{_MISSING_ID}")
         assert resp.status_code == 404
 
 
 class TestDeleteAccount:
     def test_success(self, client, mock_svc):
         mock_svc.delete_account = MagicMock(return_value=True)
-        resp = client.delete("/accounts/1")
+        resp = client.delete(f"/accounts/{_TEST_ID}")
         assert resp.status_code == 200
 
     def test_not_found(self, client, mock_svc):
         mock_svc.delete_account = MagicMock(return_value=False)
-        resp = client.delete("/accounts/missing")
+        resp = client.delete(f"/accounts/{_MISSING_ID}")
         assert resp.status_code == 404
 
 
 class TestWallet:
     def test_success(self, client, mock_svc):
         mock_svc.get_wallet = AsyncMock(return_value={"totalEquity": "1000"})
-        resp = client.get("/accounts/1/wallet")
+        resp = client.get(f"/accounts/{_TEST_ID}/wallet")
         assert resp.status_code == 200
         assert resp.json()["totalEquity"] == "1000"
 
     def test_not_found(self, client, mock_svc):
         mock_svc.get_wallet = AsyncMock(side_effect=ValueError("Account 1 not found"))
-        resp = client.get("/accounts/1/wallet")
+        resp = client.get(f"/accounts/{_TEST_ID}/wallet")
         assert resp.status_code == 404
 
     def test_bybit_error(self, client, mock_svc):
         mock_svc.get_wallet = AsyncMock(side_effect=BybitAPIError(10001, "Bad"))
-        resp = client.get("/accounts/1/wallet")
+        resp = client.get(f"/accounts/{_TEST_ID}/wallet")
         assert resp.status_code == 502
 
 
 class TestClosedPnl:
     def test_invalid_date(self, client, mock_svc):
-        resp = client.get("/accounts/1/closed-pnl?start_date=bad&end_date=2025-01-07")
+        resp = client.get(f"/accounts/{_TEST_ID}/closed-pnl?start_date=bad&end_date=2025-01-07")
         assert resp.status_code == 422
 
     def test_success(self, client, mock_svc):
         mock_svc.get_closed_pnl = AsyncMock(return_value={"records": [], "total": 0, "page": 1})
-        resp = client.get("/accounts/1/closed-pnl?start_date=2025-01-01&end_date=2025-01-07")
+        resp = client.get(f"/accounts/{_TEST_ID}/closed-pnl?start_date=2025-01-01&end_date=2025-01-07")
         assert resp.status_code == 200
 
 
 class TestPnlSummary:
     def test_success(self, client, mock_svc):
         mock_svc.get_pnl_summary = AsyncMock(return_value={"total_pnl": "100", "win_rate": 60.0, "win_count": 6, "loss_count": 4, "avg_win": "25", "avg_loss": "-10"})
-        resp = client.get("/accounts/1/closed-pnl/summary?start_date=2025-01-01&end_date=2025-01-07")
+        resp = client.get(f"/accounts/{_TEST_ID}/closed-pnl/summary?start_date=2025-01-01&end_date=2025-01-07")
         assert resp.status_code == 200
         assert resp.json()["win_rate"] == 60.0
 

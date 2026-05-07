@@ -613,6 +613,8 @@ class AnalysisDB:
                         ),
                     )
                     inserted += 1
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.warning("Skipping closed PnL record: %s — %s", type(e).__name__, e)
                 except Exception:
                     pass
             self._conn.commit()

@@ -41,6 +41,12 @@ class AccountsService:
         self._refresh_locks: Dict[str, float] = {}
         self._clients: Dict[str, BybitClient] = {}
 
+    async def shutdown(self) -> None:
+        for client in self._clients.values():
+            await client.close()
+        self._clients.clear()
+        self._cache.clear()
+
     def _get_cached(self, key: str, ttl: float) -> Any | None:
         entry = self._cache.get(key)
         if entry and time.time() < entry[0]:
@@ -257,9 +263,10 @@ class AccountsService:
             return {**acc, "total_equity": None, "total_perp_upl": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
 
         try:
-            wallet, positions = await asyncio.gather(
+            wallet, positions, _ = await asyncio.gather(
                 self.get_wallet(acc["id"]),
                 self.get_positions(acc["id"]),
+                self._fetch_and_store_closed_pnl(acc["id"], today_start_ms, today_end_ms),
             )
             today_summary = self._db.get_closed_pnl_summary(acc["id"], today_start_ms, today_end_ms)
             return {
@@ -297,6 +304,7 @@ class AccountsService:
         total_equity = 0.0
         total_pnl = 0.0
         active_count = 0
+        failed_count = 0
 
         for acc in accounts:
             if not acc["is_active"]:
@@ -307,11 +315,12 @@ class AccountsService:
                 total_pnl += float(wallet.get("totalPerpUPL", 0))
                 active_count += 1
             except Exception:
-                pass
+                failed_count += 1
 
         return {
             "total_equity": str(total_equity),
             "total_unrealised_pnl": str(total_pnl),
             "active_accounts": active_count,
             "total_accounts": len(accounts),
+            "failed_accounts": failed_count,
         }

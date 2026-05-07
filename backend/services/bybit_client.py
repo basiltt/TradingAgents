@@ -41,13 +41,17 @@ class BybitClient:
         self._recv_window = "5000"
         self._request_timestamps: collections.deque = collections.deque()
         self._rate_lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10)
-            )
+        if self._session is not None and not self._session.closed:
+            return self._session
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=10)
+                )
         return self._session
 
     async def close(self) -> None:
@@ -119,22 +123,22 @@ class BybitClient:
         raise BybitAPIError(10006, "Rate limit exceeded after retries")
 
     async def _wait_for_rate_limit(self) -> None:
-        async with self._rate_lock:
-            now = time.monotonic()
-            while self._request_timestamps and self._request_timestamps[0] < now - _RATE_LIMIT_WINDOW:
-                self._request_timestamps.popleft()
-            if len(self._request_timestamps) >= _RATE_LIMIT_MAX:
+        while True:
+            async with self._rate_lock:
+                now = time.monotonic()
+                while self._request_timestamps and self._request_timestamps[0] < now - _RATE_LIMIT_WINDOW:
+                    self._request_timestamps.popleft()
+                if len(self._request_timestamps) < _RATE_LIMIT_MAX:
+                    self._request_timestamps.append(time.monotonic())
+                    return
                 sleep_time = self._request_timestamps[0] - (now - _RATE_LIMIT_WINDOW) + 0.1
                 sleep_time = max(0.1, min(sleep_time, _RATE_LIMIT_WINDOW))
-                await asyncio.sleep(sleep_time)
-            self._request_timestamps.append(time.monotonic())
+            await asyncio.sleep(sleep_time)
 
     async def test_connection(self) -> dict[str, Any]:
         try:
             result = await self._request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
-            account_list = result.get("list", [])
-            uid = account_list[0].get("accountIMRate", "") if account_list else ""
-            return {"success": True, "uid": uid, "error": None}
+            return {"success": True, "uid": None, "error": None}
         except BybitAPIError as e:
             return {"success": False, "uid": None, "error": e.ret_msg}
 

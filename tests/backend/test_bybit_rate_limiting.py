@@ -36,9 +36,12 @@ async def test_rate_limit_sleeps_when_at_max(client):
     for i in range(110):
         client._request_timestamps.append(now - 30 + i * 0.1)
 
-    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    async def fake_sleep(duration):
+        client._request_timestamps.clear()
+
+    with patch("asyncio.sleep", side_effect=fake_sleep) as mock_sleep:
         await client._wait_for_rate_limit()
-        mock_sleep.assert_called_once()
+        assert mock_sleep.call_count >= 1
         assert mock_sleep.call_args[0][0] > 0
 
 

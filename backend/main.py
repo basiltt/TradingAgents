@@ -110,6 +110,8 @@ def create_app() -> FastAPI:
             app.state.accounts_service = None
 
         yield
+        if app.state.accounts_service:
+            await app.state.accounts_service.shutdown()
         await app.state.analysis_service.shutdown()
         await ws_manager.shutdown()
         db.close()
