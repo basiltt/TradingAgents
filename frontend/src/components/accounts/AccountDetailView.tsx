@@ -109,20 +109,20 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Equity</p>
-            <p className="text-lg font-bold">${parseFloat(wallet.totalEquity).toFixed(2)}</p>
+            <p className="text-lg font-bold">${(parseFloat(wallet.totalEquity) || 0).toFixed(2)}</p>
           </div>
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Balance</p>
-            <p className="text-lg font-bold">${parseFloat(wallet.totalWalletBalance).toFixed(2)}</p>
+            <p className="text-lg font-bold">${(parseFloat(wallet.totalWalletBalance) || 0).toFixed(2)}</p>
           </div>
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Available</p>
-            <p className="text-lg font-bold">${parseFloat(wallet.totalAvailableBalance).toFixed(2)}</p>
+            <p className="text-lg font-bold">${(parseFloat(wallet.totalAvailableBalance) || 0).toFixed(2)}</p>
           </div>
           <div className="rounded-lg border p-3">
             <p className="text-xs text-muted-foreground">Unrealised PnL</p>
             <p className={`text-lg font-bold ${parseFloat(wallet.totalPerpUPL) >= 0 ? "text-green-600" : "text-red-600"}`}>
-              ${parseFloat(wallet.totalPerpUPL).toFixed(2)}
+              ${(parseFloat(wallet.totalPerpUPL) || 0).toFixed(2)}
             </p>
           </div>
         </div>

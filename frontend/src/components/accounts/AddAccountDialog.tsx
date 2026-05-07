@@ -114,6 +114,7 @@ export function AddAccountDialog({ open, onOpenChange, onCreated }: AddAccountDi
                 placeholder="Bybit API Key"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
+                autoComplete="off"
               />
             </div>
             <div>
@@ -125,6 +126,7 @@ export function AddAccountDialog({ open, onOpenChange, onCreated }: AddAccountDi
                   placeholder="Bybit API Secret"
                   value={apiSecret}
                   onChange={(e) => setApiSecret(e.target.value)}
+                  autoComplete="off"
                 />
                 <button
                   type="button"

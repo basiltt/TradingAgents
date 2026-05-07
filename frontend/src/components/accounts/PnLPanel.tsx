@@ -28,7 +28,7 @@ function PnlCard({ label, summary, loading }: { label: string; summary: PnlSumma
       </div>
     );
   }
-  const pnl = parseFloat(summary.total_pnl);
+  const pnl = parseFloat(summary.total_pnl) || 0;
   return (
     <div className="rounded-lg border p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -120,11 +120,11 @@ export function PnLPanel({ pnlSummary: _unused, accountId }: PnLPanelProps) {
             </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Avg Win</p>
-              <p className="text-lg font-bold text-green-600">${parseFloat(weekPnl.avg_win).toFixed(2)}</p>
+              <p className="text-lg font-bold text-green-600">${(parseFloat(weekPnl.avg_win) || 0).toFixed(2)}</p>
             </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Avg Loss</p>
-              <p className="text-lg font-bold text-red-600">${parseFloat(weekPnl.avg_loss).toFixed(2)}</p>
+              <p className="text-lg font-bold text-red-600">${(parseFloat(weekPnl.avg_loss) || 0).toFixed(2)}</p>
             </div>
           </div>
         </div>
