@@ -7,7 +7,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
+from backend.schemas import CreateAccountRequest, UpdateAccountRequest, RotateCredentialsRequest
 from backend.services.bybit_client import BybitAPIError
 
 router = APIRouter(tags=["accounts"])
@@ -20,23 +22,14 @@ def _get_service(request: Request):
 @router.post("/accounts")
 async def create_account(request: Request):
     body = await request.json()
-    label = body.get("label", "").strip()
-    account_type = body.get("account_type", "").strip()
-    api_key = body.get("api_key", "").strip()
-    api_secret = body.get("api_secret", "").strip()
-
-    if not label or len(label) > 64:
-        return JSONResponse({"detail": "Label required (max 64 chars)", "code": "VALIDATION_ERROR"}, 422)
-    if account_type not in ("demo", "live"):
-        return JSONResponse({"detail": "account_type must be 'demo' or 'live'", "code": "VALIDATION_ERROR"}, 422)
-    if not api_key or len(api_key) < 10:
-        return JSONResponse({"detail": "api_key required (min 10 chars)", "code": "VALIDATION_ERROR"}, 422)
-    if not api_secret or len(api_secret) < 10:
-        return JSONResponse({"detail": "api_secret required (min 10 chars)", "code": "VALIDATION_ERROR"}, 422)
+    try:
+        req = CreateAccountRequest(**body)
+    except ValidationError as e:
+        return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
     try:
-        account = await svc.create_account(label, account_type, api_key, api_secret)
+        account = await svc.create_account(req.label, req.account_type, req.api_key, req.api_secret)
         return account
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
@@ -62,14 +55,13 @@ async def get_account(request: Request, account_id: str):
 @router.patch("/accounts/{account_id}")
 async def update_account(request: Request, account_id: str):
     body = await request.json()
-    label = body.get("label")
-    is_active = body.get("is_active")
-
-    if label is not None and (not label.strip() or len(label) > 64):
-        return JSONResponse({"detail": "Invalid label", "code": "VALIDATION_ERROR"}, 422)
+    try:
+        req = UpdateAccountRequest(**body)
+    except ValidationError as e:
+        return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
-    account = svc.update_account(account_id, label=label, is_active=is_active)
+    account = svc.update_account(account_id, label=req.label, is_active=req.is_active)
     if not account:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return account
@@ -78,17 +70,14 @@ async def update_account(request: Request, account_id: str):
 @router.patch("/accounts/{account_id}/credentials")
 async def rotate_credentials(request: Request, account_id: str):
     body = await request.json()
-    api_key = body.get("api_key", "").strip()
-    api_secret = body.get("api_secret", "").strip()
-
-    if not api_key or len(api_key) < 10:
-        return JSONResponse({"detail": "api_key required (min 10 chars)", "code": "VALIDATION_ERROR"}, 422)
-    if not api_secret or len(api_secret) < 10:
-        return JSONResponse({"detail": "api_secret required (min 10 chars)", "code": "VALIDATION_ERROR"}, 422)
+    try:
+        req = RotateCredentialsRequest(**body)
+    except ValidationError as e:
+        return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
     try:
-        account = await svc.rotate_credentials(account_id, api_key, api_secret)
+        account = await svc.rotate_credentials(account_id, req.api_key, req.api_secret)
         if not account:
             return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
         return account

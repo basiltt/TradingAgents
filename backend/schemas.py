@@ -498,3 +498,25 @@ class ScanStatusResponse(BaseModel):
     results: List[ScanResultItem] = []
     started_at: str = ""
     completed_at: Optional[str] = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trading Accounts schemas
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CreateAccountRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=64)
+    account_type: Literal["demo", "live"]
+    api_key: str = Field(..., min_length=10)
+    api_secret: str = Field(..., min_length=10)
+
+
+class UpdateAccountRequest(BaseModel):
+    label: Optional[str] = Field(None, min_length=1, max_length=64)
+    is_active: Optional[bool] = None
+
+
+class RotateCredentialsRequest(BaseModel):
+    api_key: str = Field(..., min_length=10)
+    api_secret: str = Field(..., min_length=10)

@@ -48,7 +48,7 @@ class TestCreateAccount:
     def test_missing_label(self, client, mock_svc):
         resp = client.post("/accounts", json={"label": "", "account_type": "demo", "api_key": "key1234567890", "api_secret": "sec1234567890"})
         assert resp.status_code == 422
-        assert "Label" in resp.json()["detail"]
+        assert resp.json()["code"] == "VALIDATION_ERROR"
 
     def test_invalid_account_type(self, client, mock_svc):
         resp = client.post("/accounts", json={"label": "X", "account_type": "paper", "api_key": "key1234567890", "api_secret": "sec1234567890"})
