@@ -434,38 +434,38 @@ export const accountsApi = {
     mutate<TradingAccount>("POST", "/api/v1/accounts", data),
 
   get: (id: string, signal?: AbortSignal) =>
-    request<TradingAccount>(`/api/v1/accounts/${id}`, undefined, signal),
+    request<TradingAccount>(`/api/v1/accounts/${encodeURIComponent(id)}`, undefined, signal),
 
   update: (id: string, data: { label?: string; is_active?: boolean }) =>
-    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${id}`, data),
+    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}`, data),
 
   rotateCredentials: (id: string, data: { api_key: string; api_secret: string }) =>
-    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${id}/credentials`, data),
+    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}/credentials`, data),
 
   delete: (id: string) =>
-    mutate<{ status: string }>("DELETE", `/api/v1/accounts/${id}`),
+    mutate<{ status: string }>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}`),
 
   testConnection: (id: string) =>
-    mutate<{ success: boolean; uid?: string; error?: string }>("POST", `/api/v1/accounts/${id}/test`),
+    mutate<{ success: boolean; uid?: string; error?: string }>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
 
   getWallet: (id: string, signal?: AbortSignal) =>
-    request<WalletBalance>(`/api/v1/accounts/${id}/wallet`, undefined, signal),
+    request<WalletBalance>(`/api/v1/accounts/${encodeURIComponent(id)}/wallet`, undefined, signal),
 
   getPositions: (id: string, signal?: AbortSignal) =>
-    request<Position[]>(`/api/v1/accounts/${id}/positions`, undefined, signal),
+    request<Position[]>(`/api/v1/accounts/${encodeURIComponent(id)}/positions`, undefined, signal),
 
   getOrders: (id: string, signal?: AbortSignal) =>
-    request<OpenOrder[]>(`/api/v1/accounts/${id}/orders`, undefined, signal),
+    request<OpenOrder[]>(`/api/v1/accounts/${encodeURIComponent(id)}/orders`, undefined, signal),
 
   getClosedPnl: (id: string, startDate: string, endDate: string, page = 1, limit = 100, signal?: AbortSignal) =>
     request<ClosedPnlResponse>(
-      `/api/v1/accounts/${id}/closed-pnl?start_date=${startDate}&end_date=${endDate}&page=${page}&limit=${limit}`,
+      `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl?start_date=${startDate}&end_date=${endDate}&page=${page}&limit=${limit}`,
       undefined, signal,
     ),
 
   getPnlSummary: (id: string, startDate: string, endDate: string, signal?: AbortSignal) =>
     request<PnlSummary>(
-      `/api/v1/accounts/${id}/closed-pnl/summary?start_date=${startDate}&end_date=${endDate}`,
+      `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl/summary?start_date=${startDate}&end_date=${endDate}`,
       undefined, signal,
     ),
 

@@ -528,7 +528,9 @@ class AnalysisDB:
     def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM trading_accounts WHERE id=? AND deleted_at IS NULL",
+                "SELECT id, label, account_type, api_key_masked, is_active, "
+                "bybit_uid, last_connected_at, last_error, created_at, updated_at "
+                "FROM trading_accounts WHERE id=? AND deleted_at IS NULL",
                 (account_id,),
             ).fetchone()
         return dict(row) if row else None

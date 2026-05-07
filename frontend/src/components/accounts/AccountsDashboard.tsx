@@ -31,10 +31,10 @@ export function AccountsDashboard() {
   });
 
   const totalEquity = filtered
-    .reduce((sum, c) => sum + parseFloat(c.total_equity || "0"), 0)
+    .reduce((sum, c) => { const v = parseFloat(c.total_equity || "0"); return sum + (isNaN(v) ? 0 : v); }, 0)
     .toFixed(2);
   const totalPnl = filtered
-    .reduce((sum, c) => sum + parseFloat(c.total_perp_upl || "0"), 0)
+    .reduce((sum, c) => { const v = parseFloat(c.total_perp_upl || "0"); return sum + (isNaN(v) ? 0 : v); }, 0)
     .toFixed(2);
 
   return (

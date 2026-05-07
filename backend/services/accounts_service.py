@@ -156,7 +156,7 @@ class AccountsService:
     async def get_wallet(self, account_id: str) -> Dict[str, Any]:
         cache_key = f"{account_id}:wallet"
         cached = self._get_cached(cache_key, 30)
-        if cached:
+        if cached is not None:
             return cached
 
         client = self._build_client(account_id)
@@ -222,11 +222,12 @@ class AccountsService:
     async def _fetch_and_store_closed_pnl(self, account_id: str, start_ms: int, end_ms: int) -> None:
         client = self._build_client(account_id)
         current_start = start_ms
+        max_pages = 50
 
         while current_start < end_ms:
             window_end = min(current_start + _SEVEN_DAYS_MS, end_ms)
             cursor = ""
-            while True:
+            for _ in range(max_pages):
                 result = await client.get_closed_pnl(current_start, window_end, limit=100, cursor=cursor)
                 records = result.get("list", [])
                 if records:
@@ -239,44 +240,45 @@ class AccountsService:
 
     # ── Aggregation ─────────────────────────────────────────────────────
 
+    async def _fetch_card(self, acc: Dict[str, Any], today_start_ms: int, today_end_ms: int) -> Dict[str, Any]:
+        if not acc["is_active"]:
+            return {**acc, "total_equity": None, "total_perp_upl": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
+
+        try:
+            wallet, positions = await asyncio.gather(
+                self.get_wallet(acc["id"]),
+                self.get_positions(acc["id"]),
+            )
+            today_summary = self._db.get_closed_pnl_summary(acc["id"], today_start_ms, today_end_ms)
+            return {
+                **acc,
+                "total_equity": wallet.get("totalEquity", "0"),
+                "total_perp_upl": wallet.get("totalPerpUPL", "0"),
+                "positions_count": len(positions),
+                "today_pnl": today_summary.get("total_pnl", "0"),
+                "status": "active",
+            }
+        except Exception as e:
+            return {
+                **acc,
+                "total_equity": None,
+                "total_perp_upl": None,
+                "positions_count": 0,
+                "today_pnl": None,
+                "status": "error",
+                "last_error": _sanitize_error(str(e)),
+            }
+
     async def get_dashboard(self) -> List[Dict[str, Any]]:
         accounts = self._db.list_accounts()
-        cards = []
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_start_ms = _date_to_ms(today_str)
         today_end_ms = today_start_ms + (24 * 60 * 60 * 1000 - 1)
 
-        for acc in accounts:
-            if not acc["is_active"]:
-                card = {**acc, "total_equity": None, "total_perp_upl": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
-                cards.append(card)
-                continue
-
-            try:
-                wallet = await self.get_wallet(acc["id"])
-                positions = await self.get_positions(acc["id"])
-                today_summary = self._db.get_closed_pnl_summary(acc["id"], today_start_ms, today_end_ms)
-                status = "active"
-                cards.append({
-                    **acc,
-                    "total_equity": wallet.get("totalEquity", "0"),
-                    "total_perp_upl": wallet.get("totalPerpUPL", "0"),
-                    "positions_count": len(positions),
-                    "today_pnl": today_summary.get("total_pnl", "0"),
-                    "status": status,
-                })
-            except Exception as e:
-                cards.append({
-                    **acc,
-                    "total_equity": None,
-                    "total_perp_upl": None,
-                    "positions_count": 0,
-                    "today_pnl": None,
-                    "status": "error",
-                    "last_error": _sanitize_error(str(e)),
-                })
-
-        return cards
+        cards = await asyncio.gather(
+            *[self._fetch_card(acc, today_start_ms, today_end_ms) for acc in accounts]
+        )
+        return list(cards)
 
     async def get_portfolio_summary(self) -> Dict[str, Any]:
         accounts = self._db.list_accounts()

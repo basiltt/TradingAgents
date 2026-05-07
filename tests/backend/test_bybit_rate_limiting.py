@@ -17,23 +17,23 @@ def client():
 @pytest.mark.asyncio
 async def test_rate_limit_window_tracks_requests(client):
     assert len(client._request_timestamps) == 0
-    client._request_timestamps.append(time.time())
+    client._request_timestamps.append(time.monotonic())
     assert len(client._request_timestamps) == 1
 
 
 @pytest.mark.asyncio
 async def test_rate_limit_prunes_old_timestamps(client):
-    old = time.time() - 61
+    old = time.monotonic() - 61
     client._request_timestamps.append(old)
     client._request_timestamps.append(old - 1)
     await client._wait_for_rate_limit()
-    assert all(t > time.time() - 60 for t in client._request_timestamps)
+    assert all(t > time.monotonic() - 60 for t in client._request_timestamps)
 
 
 @pytest.mark.asyncio
 async def test_rate_limit_sleeps_when_at_max(client):
-    now = time.time()
-    for i in range(120):
+    now = time.monotonic()
+    for i in range(110):
         client._request_timestamps.append(now - 30 + i * 0.1)
 
     with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:

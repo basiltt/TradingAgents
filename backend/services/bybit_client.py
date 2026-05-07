@@ -15,7 +15,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 _RATE_LIMIT_WINDOW = 60
-_RATE_LIMIT_MAX = 120
+_RATE_LIMIT_MAX = 110  # conservative: Bybit limit is 120, leave headroom
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 0.5
 
@@ -40,6 +40,20 @@ class BybitClient:
         self._semaphore = asyncio.Semaphore(10)
         self._recv_window = "5000"
         self._request_timestamps: collections.deque = collections.deque()
+        self._rate_lock = asyncio.Lock()
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            )
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _sign(self, timestamp: int, params_str: str) -> str:
         sign_str = f"{timestamp}{self._api_key}{self._recv_window}{params_str}"
@@ -75,14 +89,18 @@ class BybitClient:
                     query = ""
                     headers = self._headers(timestamp, query)
 
-                timeout = aiohttp.ClientTimeout(total=10)
                 try:
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.request(method, url, headers=headers) as resp:
-                            data = await resp.json()
+                    session = await self._get_session()
+                    async with session.request(method, url, headers=headers) as resp:
+                        data = await resp.json()
                 except aiohttp.ClientError as e:
-                    logger.error(f"Bybit network error on {path}: {e}")
-                    raise BybitAPIError(-1, f"Network error: {e}")
+                    if attempt < _MAX_RETRIES - 1:
+                        delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                        logger.warning(f"Bybit network error on {path}, retrying in {delay}s (attempt {attempt + 1})")
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.error(f"Bybit network error on {path} after {_MAX_RETRIES} attempts")
+                    raise BybitAPIError(-1, "Network error")
 
                 ret_code = data.get("retCode", -1)
                 if ret_code == 10006 and attempt < _MAX_RETRIES - 1:
@@ -93,7 +111,7 @@ class BybitClient:
 
                 if ret_code != 0:
                     ret_msg = data.get("retMsg", "Unknown error")
-                    logger.warning(f"Bybit API error on {path}: {ret_code} {ret_msg}")
+                    logger.warning(f"Bybit API error on {path}: {ret_code}")
                     raise BybitAPIError(ret_code, ret_msg)
 
                 return data.get("result", {})
@@ -101,13 +119,15 @@ class BybitClient:
         raise BybitAPIError(10006, "Rate limit exceeded after retries")
 
     async def _wait_for_rate_limit(self) -> None:
-        now = time.time()
-        while self._request_timestamps and self._request_timestamps[0] < now - _RATE_LIMIT_WINDOW:
-            self._request_timestamps.popleft()
-        if len(self._request_timestamps) >= _RATE_LIMIT_MAX:
-            sleep_time = self._request_timestamps[0] - (now - _RATE_LIMIT_WINDOW) + 0.1
-            await asyncio.sleep(sleep_time)
-        self._request_timestamps.append(time.time())
+        async with self._rate_lock:
+            now = time.monotonic()
+            while self._request_timestamps and self._request_timestamps[0] < now - _RATE_LIMIT_WINDOW:
+                self._request_timestamps.popleft()
+            if len(self._request_timestamps) >= _RATE_LIMIT_MAX:
+                sleep_time = self._request_timestamps[0] - (now - _RATE_LIMIT_WINDOW) + 0.1
+                sleep_time = max(0.1, min(sleep_time, _RATE_LIMIT_WINDOW))
+                await asyncio.sleep(sleep_time)
+            self._request_timestamps.append(time.monotonic())
 
     async def test_connection(self) -> dict[str, Any]:
         try:

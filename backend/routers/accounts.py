@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -16,7 +16,10 @@ router = APIRouter(tags=["accounts"])
 
 
 def _get_service(request: Request):
-    return request.app.state.accounts_service
+    svc = request.app.state.accounts_service
+    if svc is None:
+        raise HTTPException(503, detail="Accounts feature disabled — set ACCOUNTS_ENCRYPTION_KEY")
+    return svc
 
 
 @router.post("/accounts")

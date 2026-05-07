@@ -18,7 +18,7 @@ export function useAccountPolling() {
     controllerRef.current?.abort();
     controllerRef.current = new AbortController();
     try {
-      const cards = await accountsApi.getDashboard();
+      const cards = await accountsApi.getDashboard(controllerRef.current.signal);
       dispatch(setDashboard(cards));
     } catch {
       // silent — dashboard still shows last data
