@@ -79,14 +79,21 @@ export function PnLPanel({ pnlSummary: _unused, accountId }: PnLPanelProps) {
     return () => controller.abort();
   }, [accountId]);
 
+  const [customError, setCustomError] = useState<string | null>(null);
+
   const fetchCustom = async () => {
     if (!accountId) return;
+    if (startDate > endDate) {
+      setCustomError("Start date must be before end date");
+      return;
+    }
+    setCustomError(null);
     setLoadingCustom(true);
     try {
       const result = await accountsApi.getPnlSummary(accountId, startDate, endDate);
       setCustomPnl(result);
     } catch {
-      // keep existing
+      setCustomError("Failed to load PnL data");
     } finally {
       setLoadingCustom(false);
     }
@@ -141,6 +148,7 @@ export function PnLPanel({ pnlSummary: _unused, accountId }: PnLPanelProps) {
             {loadingCustom ? "Loading..." : "Apply"}
           </Button>
         </div>
+        {customError && <p className="text-sm text-red-600 mb-2">{customError}</p>}
         {customPnl && <PnlCard label={`${startDate} → ${endDate}`} summary={customPnl} />}
       </div>
     </div>

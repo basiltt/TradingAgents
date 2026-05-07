@@ -217,6 +217,9 @@ class AccountsService:
         start_ms = _date_to_ms(start_date)
         end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
 
+        if start_ms > end_ms:
+            raise ValueError("start_date must be before or equal to end_date")
+
         days_diff = (end_ms - start_ms) / (24 * 60 * 60 * 1000)
         if days_diff > _MAX_RANGE_DAYS:
             raise ValueError(f"Date range exceeds maximum of {_MAX_RANGE_DAYS} days")
@@ -229,6 +232,9 @@ class AccountsService:
     ) -> Dict[str, Any]:
         start_ms = _date_to_ms(start_date)
         end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
+
+        if start_ms > end_ms:
+            raise ValueError("start_date must be before or equal to end_date")
 
         days_diff = (end_ms - start_ms) / (24 * 60 * 60 * 1000)
         if days_diff > _MAX_RANGE_DAYS:
