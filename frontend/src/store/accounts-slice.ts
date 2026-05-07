@@ -34,6 +34,8 @@ const accountsSlice = createSlice({
     },
     setDashboard(state, action: PayloadAction<DashboardCard[]>) {
       state.dashboard = action.payload;
+      state.status = "success";
+      state.error = null;
     },
     setLoading(state) {
       state.status = "loading";
