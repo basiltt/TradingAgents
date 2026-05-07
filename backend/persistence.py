@@ -78,6 +78,42 @@ CREATE INDEX IF NOT EXISTS idx_scan_results_scan_id ON scan_results(scan_id)
     (6, """
 ALTER TABLE scan_results ADD COLUMN signal_source TEXT NOT NULL DEFAULT 'unknown'
 """),
+    (7, """
+CREATE TABLE IF NOT EXISTS trading_accounts (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    account_type TEXT NOT NULL CHECK(account_type IN ('demo', 'live')),
+    api_key_masked TEXT NOT NULL,
+    api_key_encrypted BLOB NOT NULL,
+    api_secret_encrypted BLOB NOT NULL,
+    key_version INTEGER NOT NULL DEFAULT 1,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    deleted_at TEXT,
+    bybit_uid TEXT,
+    last_connected_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_accounts_active ON trading_accounts(is_active) WHERE deleted_at IS NULL
+"""),
+    (8, """
+CREATE TABLE IF NOT EXISTS closed_pnl_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    qty REAL NOT NULL,
+    avg_entry_price REAL NOT NULL,
+    avg_exit_price REAL NOT NULL,
+    closed_pnl REAL NOT NULL,
+    leverage REAL NOT NULL DEFAULT 1,
+    created_time INTEGER NOT NULL,
+    bybit_order_id TEXT NOT NULL,
+    UNIQUE(account_id, bybit_order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_closed_pnl_account_time ON closed_pnl_records(account_id, created_time DESC)
+"""),
 ]
 
 
@@ -451,3 +487,195 @@ class AnalysisDB:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    # ── Trading Accounts persistence ────────────────────────────────────
+
+    def insert_account(self, account: Dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO trading_accounts "
+                "(id, label, account_type, api_key_masked, api_key_encrypted, "
+                "api_secret_encrypted, key_version, is_active, bybit_uid, "
+                "last_connected_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    account["id"],
+                    account["label"],
+                    account["account_type"],
+                    account["api_key_masked"],
+                    account["api_key_encrypted"],
+                    account["api_secret_encrypted"],
+                    account.get("key_version", 1),
+                    1,
+                    account.get("bybit_uid"),
+                    account.get("last_connected_at"),
+                    account["created_at"],
+                    account["updated_at"],
+                ),
+            )
+            self._conn.commit()
+
+    def list_accounts(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, label, account_type, api_key_masked, is_active, "
+                "bybit_uid, last_connected_at, last_error, created_at, updated_at "
+                "FROM trading_accounts WHERE deleted_at IS NULL "
+                "ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM trading_accounts WHERE id=? AND deleted_at IS NULL",
+                (account_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_account_credentials(self, account_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, account_type, api_key_encrypted, api_secret_encrypted "
+                "FROM trading_accounts WHERE id=? AND deleted_at IS NULL",
+                (account_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_account(self, account_id: str, **fields: Any) -> bool:
+        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error"}
+        nullable = {"last_error"}
+        updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
+        if not updates:
+            return False
+        from datetime import datetime, timezone
+        updates["updated_at"] = fields.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE trading_accounts SET {set_clause} WHERE id=? AND deleted_at IS NULL",
+                list(updates.values()) + [account_id],
+            )
+            self._conn.commit()
+        return cursor.rowcount > 0
+
+    def rotate_account_credentials(
+        self, account_id: str, api_key_masked: str,
+        api_key_encrypted: bytes, api_secret_encrypted: bytes, updated_at: str,
+    ) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE trading_accounts SET api_key_masked=?, api_key_encrypted=?, "
+                "api_secret_encrypted=?, last_error=NULL, updated_at=? "
+                "WHERE id=? AND deleted_at IS NULL",
+                (api_key_masked, api_key_encrypted, api_secret_encrypted, updated_at, account_id),
+            )
+            self._conn.commit()
+        return cursor.rowcount > 0
+
+    def soft_delete_account(self, account_id: str, deleted_at: str) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE trading_accounts SET deleted_at=?, is_active=0, updated_at=? "
+                "WHERE id=? AND deleted_at IS NULL",
+                (deleted_at, deleted_at, account_id),
+            )
+            self._conn.commit()
+        return cursor.rowcount > 0
+
+    # ── Closed PnL persistence ──────────────────────────────────────────
+
+    def insert_closed_pnl_records(self, account_id: str, records: List[Dict[str, Any]]) -> int:
+        if not records:
+            return 0
+        inserted = 0
+        with self._lock:
+            for rec in records:
+                try:
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO closed_pnl_records "
+                        "(account_id, symbol, side, qty, avg_entry_price, avg_exit_price, "
+                        "closed_pnl, leverage, created_time, bybit_order_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            account_id,
+                            rec["symbol"],
+                            rec["side"],
+                            float(rec["qty"]),
+                            float(rec["avgEntryPrice"]),
+                            float(rec["avgExitPrice"]),
+                            float(rec["closedPnl"]),
+                            float(rec.get("leverage", 1)),
+                            int(rec["createdTime"]),
+                            rec["orderId"],
+                        ),
+                    )
+                    inserted += 1
+                except Exception:
+                    pass
+            self._conn.commit()
+        return inserted
+
+    def get_closed_pnl(
+        self, account_id: str, start_time: int, end_time: int,
+        page: int = 1, limit: int = 100,
+    ) -> Dict[str, Any]:
+        offset = (page - 1) * limit
+        with self._lock:
+            total_row = self._conn.execute(
+                "SELECT COUNT(*) FROM closed_pnl_records "
+                "WHERE account_id=? AND created_time>=? AND created_time<=?",
+                (account_id, start_time, end_time),
+            ).fetchone()
+            total = total_row[0] if total_row else 0
+
+            rows = self._conn.execute(
+                "SELECT * FROM closed_pnl_records "
+                "WHERE account_id=? AND created_time>=? AND created_time<=? "
+                "ORDER BY created_time DESC LIMIT ? OFFSET ?",
+                (account_id, start_time, end_time, limit, offset),
+            ).fetchall()
+        return {"items": [dict(r) for r in rows], "total": total, "page": page, "limit": limit}
+
+    def get_closed_pnl_summary(
+        self, account_id: str, start_time: int, end_time: int,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT closed_pnl FROM closed_pnl_records "
+                "WHERE account_id=? AND created_time>=? AND created_time<=?",
+                (account_id, start_time, end_time),
+            ).fetchall()
+
+        if not rows:
+            return {
+                "total_pnl": "0", "win_count": 0, "loss_count": 0,
+                "win_rate": 0.0, "avg_win": "0", "avg_loss": "0",
+            }
+
+        wins = [r[0] for r in rows if r[0] > 0]
+        losses = [r[0] for r in rows if r[0] <= 0]
+        total_pnl = sum(r[0] for r in rows)
+        total_count = len(rows)
+        win_count = len(wins)
+        loss_count = len(losses)
+        win_rate = (win_count / total_count * 100) if total_count > 0 else 0.0
+        avg_win = str(sum(wins) / win_count) if wins else "0"
+        avg_loss = str(sum(losses) / loss_count) if losses else "0"
+
+        return {
+            "total_pnl": str(total_pnl),
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "win_rate": round(win_rate, 2),
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+        }
+
+    def get_latest_closed_pnl_time(self, account_id: str) -> Optional[int]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(created_time) FROM closed_pnl_records WHERE account_id=?",
+                (account_id,),
+            ).fetchone()
+        return row[0] if row and row[0] else None

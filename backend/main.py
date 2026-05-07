@@ -99,6 +99,16 @@ def create_app() -> FastAPI:
             db=db,
         )
         await app.state.scanner_service.resume_incomplete_scans()
+
+        # Trading accounts service (optional — only if encryption key is configured)
+        from backend.services.accounts_service import AccountsService
+        if os.environ.get("ACCOUNTS_ENCRYPTION_KEY"):
+            from backend.crypto import validate_encryption_key
+            validate_encryption_key()
+            app.state.accounts_service = AccountsService(db=db)
+        else:
+            app.state.accounts_service = None
+
         yield
         await app.state.analysis_service.shutdown()
         await ws_manager.shutdown()
@@ -126,7 +136,10 @@ def create_app() -> FastAPI:
     from backend.routers.symbols import router as symbols_router
     from backend.routers.scanner import router as scanner_router
     from backend.routers.ws import router as ws_router
+    from backend.routers.accounts import router as accounts_router
+    from backend.routers.portfolio import router as portfolio_router
 
+    app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(config_router, prefix="/api/v1")
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(checkpoints_router, prefix="/api/v1")
@@ -134,11 +147,22 @@ def create_app() -> FastAPI:
     app.include_router(analysis_router, prefix="/api/v1")
     app.include_router(symbols_router, prefix="/api/v1")
     app.include_router(scanner_router, prefix="/api/v1")
+    app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(ws_router)
 
     @app.get("/api/v1/health")
     async def health(request: Request):
         db_status = await asyncio.to_thread(request.app.state.db.health_check)
         return {"status": "ok", "db": db_status}
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        import logging
+        logging.getLogger(__name__).error(f"Unhandled exception: {exc}", exc_info=True)
+        return Response(
+            content='{"detail":"Internal server error","code":"INTERNAL_ERROR"}',
+            status_code=500,
+            media_type="application/json",
+        )
 
     return app

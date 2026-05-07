@@ -2,11 +2,13 @@ import { configureStore } from "@reduxjs/toolkit";
 import { useDispatch, useSelector } from "react-redux";
 import { analysisSlice } from "./analysis-slice";
 import { uiSlice } from "./ui-slice";
+import accountsReducer from "./accounts-slice";
 
 export const store = configureStore({
   reducer: {
     analysis: analysisSlice.reducer,
     ui: uiSlice.reducer,
+    accounts: accountsReducer,
   },
 });
 

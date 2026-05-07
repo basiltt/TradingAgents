@@ -12,6 +12,8 @@ import { HistoryList } from "@/components/dashboard/HistoryList";
 import { ConfigPage as ConfigPageComponent } from "@/components/config/ConfigPage";
 import { MemoryPage as MemoryPageComponent } from "@/components/config/MemoryPage";
 import { ScannerPage as ScannerPageComponent } from "@/components/scanner/ScannerPage";
+import { AccountsDashboard } from "@/components/accounts/AccountsDashboard";
+import { AccountDetailView } from "@/components/accounts/AccountDetailView";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -49,6 +51,15 @@ function MemoryPage() {
 
 function ScannerPage() {
   return <ScannerPageComponent />;
+}
+
+function AccountsPage() {
+  return <AccountsDashboard />;
+}
+
+function AccountDetailPage() {
+  const { accountId } = useParams({ from: "/accounts/$accountId" });
+  return <AccountDetailView accountId={accountId} />;
 }
 
 const indexRoute = createRoute({
@@ -93,6 +104,18 @@ const scannerRoute = createRoute({
   component: ScannerPage,
 });
 
+const accountsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/accounts",
+  component: AccountsPage,
+});
+
+const accountDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/accounts/$accountId",
+  component: AccountDetailPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   analysisNewRoute,
@@ -101,6 +124,8 @@ export const routeTree = rootRoute.addChildren([
   configRoute,
   memoryRoute,
   scannerRoute,
+  accountsRoute,
+  accountDetailRoute,
 ]);
 
 export function createAppRouter() {

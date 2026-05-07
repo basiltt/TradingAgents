@@ -343,3 +343,136 @@ export const apiClient = {
 };
 
 export { ApiError };
+
+// ── Trading Accounts API ─────────────────────────────────────────────
+
+export interface TradingAccount {
+  id: string;
+  label: string;
+  account_type: "demo" | "live";
+  api_key_masked: string;
+  is_active: boolean;
+  bybit_uid?: string;
+  last_connected_at?: string;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WalletBalance {
+  totalEquity: string;
+  totalWalletBalance: string;
+  totalAvailableBalance: string;
+  totalPerpUPL: string;
+  accountIMRate?: string;
+  accountMMRate?: string;
+  coin: Array<Record<string, string>>;
+  fetched_at: string;
+}
+
+export interface Position {
+  symbol: string;
+  side: string;
+  size: string;
+  avgPrice: string;
+  markPrice: string;
+  unrealisedPnl: string;
+  leverage: string;
+  liqPrice: string;
+  takeProfit?: string;
+  stopLoss?: string;
+}
+
+export interface OpenOrder {
+  orderId: string;
+  symbol: string;
+  side: string;
+  orderType: string;
+  qty: string;
+  price: string;
+  orderStatus: string;
+  createdTime: string;
+  triggerPrice?: string;
+  stopOrderType?: string;
+}
+
+export interface ClosedPnlResponse {
+  items: Array<Record<string, unknown>>;
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface PnlSummary {
+  total_pnl: string;
+  win_count: number;
+  loss_count: number;
+  win_rate: number;
+  avg_win: string;
+  avg_loss: string;
+}
+
+export interface DashboardCard {
+  id: string;
+  label: string;
+  account_type: "demo" | "live";
+  is_active: boolean;
+  total_equity?: string;
+  total_perp_upl?: string;
+  positions_count: number;
+  last_connected_at?: string;
+  last_error?: string;
+  status: "active" | "stale" | "error" | "disabled";
+}
+
+export const accountsApi = {
+  list: (signal?: AbortSignal) =>
+    request<TradingAccount[]>("/api/v1/accounts", undefined, signal),
+
+  create: (data: { label: string; account_type: string; api_key: string; api_secret: string }) =>
+    mutate<TradingAccount>("POST", "/api/v1/accounts", data),
+
+  get: (id: string, signal?: AbortSignal) =>
+    request<TradingAccount>(`/api/v1/accounts/${id}`, undefined, signal),
+
+  update: (id: string, data: { label?: string; is_active?: boolean }) =>
+    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${id}`, data),
+
+  rotateCredentials: (id: string, data: { api_key: string; api_secret: string }) =>
+    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${id}/credentials`, data),
+
+  delete: (id: string) =>
+    mutate<{ status: string }>("DELETE", `/api/v1/accounts/${id}`),
+
+  testConnection: (id: string) =>
+    mutate<{ success: boolean; uid?: string; error?: string }>("POST", `/api/v1/accounts/${id}/test`),
+
+  getWallet: (id: string, signal?: AbortSignal) =>
+    request<WalletBalance>(`/api/v1/accounts/${id}/wallet`, undefined, signal),
+
+  getPositions: (id: string, signal?: AbortSignal) =>
+    request<Position[]>(`/api/v1/accounts/${id}/positions`, undefined, signal),
+
+  getOrders: (id: string, signal?: AbortSignal) =>
+    request<OpenOrder[]>(`/api/v1/accounts/${id}/orders`, undefined, signal),
+
+  getClosedPnl: (id: string, startDate: string, endDate: string, page = 1, limit = 100, signal?: AbortSignal) =>
+    request<ClosedPnlResponse>(
+      `/api/v1/accounts/${id}/closed-pnl?start_date=${startDate}&end_date=${endDate}&page=${page}&limit=${limit}`,
+      undefined, signal,
+    ),
+
+  getPnlSummary: (id: string, startDate: string, endDate: string, signal?: AbortSignal) =>
+    request<PnlSummary>(
+      `/api/v1/accounts/${id}/closed-pnl/summary?start_date=${startDate}&end_date=${endDate}`,
+      undefined, signal,
+    ),
+
+  getDashboard: (signal?: AbortSignal) =>
+    request<DashboardCard[]>("/api/v1/portfolio/dashboard", undefined, signal),
+
+  getPortfolioSummary: (signal?: AbortSignal) =>
+    request<{ total_equity: string; total_unrealised_pnl: string; active_accounts: number; total_accounts: number }>(
+      "/api/v1/portfolio/summary", undefined, signal,
+    ),
+};

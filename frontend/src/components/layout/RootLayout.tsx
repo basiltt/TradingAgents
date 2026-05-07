@@ -155,6 +155,16 @@ export function RootLayout() {
           >
             History
           </NavLink>
+          <NavLink
+            to="/accounts"
+            icon={
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            }
+          >
+            Accounts
+          </NavLink>
 
           <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
             Analysis
