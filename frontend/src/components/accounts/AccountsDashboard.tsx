@@ -5,11 +5,13 @@ import { setDashboard, setFilterType, setLoading, setError } from "@/store/accou
 import { AccountCard } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { Button } from "@/components/ui/button";
+import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
 
 export function AccountsDashboard() {
   const dispatch = useAppDispatch();
   const { dashboard, filterType, status, error } = useAppSelector((s) => s.accounts);
   const [addOpen, setAddOpen] = useState(false);
+  useAccountWebSocket();
 
   const fetchDashboard = useCallback(async () => {
     dispatch(setLoading());

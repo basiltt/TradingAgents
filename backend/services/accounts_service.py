@@ -34,9 +34,18 @@ def _sanitize_error(msg: str) -> str:
     return msg
 
 
+def _log_task_exception(task: asyncio.Task, context: str) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.error(f"{context}: {exc}")
+
+
 class AccountsService:
-    def __init__(self, db: AnalysisDB):
+    def __init__(self, db: AnalysisDB, ws_manager: Any = None):
         self._db = db
+        self._ws_manager = ws_manager
         self._cache: Dict[str, tuple[float, Any]] = {}
         self._refresh_locks: Dict[str, float] = {}
         self._clients: Dict[str, BybitClient] = {}
@@ -109,6 +118,10 @@ class AccountsService:
             "updated_at": now,
         })
 
+        if self._ws_manager:
+            task = asyncio.create_task(self._ws_manager.start_account(account_id))
+            task.add_done_callback(lambda t: _log_task_exception(t, f"WS start for {account_id}"))
+
         return self._db.get_account(account_id)  # type: ignore
 
     def list_accounts(self) -> List[Dict[str, Any]]:
@@ -126,6 +139,13 @@ class AccountsService:
         self._db.update_account(account_id, **fields)
         if is_active is False:
             self._invalidate_cache(account_id)
+            if self._ws_manager:
+                t = asyncio.create_task(self._ws_manager.stop_account(account_id))
+                t.add_done_callback(lambda t: _log_task_exception(t, f"WS stop for {account_id}"))
+        elif is_active is True:
+            if self._ws_manager:
+                t = asyncio.create_task(self._ws_manager.start_account(account_id))
+                t.add_done_callback(lambda t: _log_task_exception(t, f"WS start for {account_id}"))
         return self._db.get_account(account_id)
 
     async def rotate_credentials(
@@ -151,12 +171,22 @@ class AccountsService:
             _now_iso(),
         )
         self._invalidate_cache(account_id)
+        if self._ws_manager:
+            task = asyncio.create_task(self._restart_ws_account(account_id))
+            task.add_done_callback(lambda t: _log_task_exception(t, f"WS restart for {account_id}"))
         return self._db.get_account(account_id)
+
+    async def _restart_ws_account(self, account_id: str) -> None:
+        await self._ws_manager.stop_account(account_id)
+        await self._ws_manager.start_account(account_id)
 
     def delete_account(self, account_id: str) -> bool:
         result = self._db.soft_delete_account(account_id, _now_iso())
         if result:
             self._invalidate_cache(account_id)
+            if self._ws_manager:
+                task = asyncio.create_task(self._ws_manager.stop_account(account_id))
+                task.add_done_callback(lambda t: _log_task_exception(t, f"WS stop for {account_id}"))
         return result
 
     async def test_connection(self, account_id: str) -> Dict[str, Any]:

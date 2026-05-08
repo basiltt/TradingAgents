@@ -1,15 +1,23 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { DashboardCard } from "@/api/client";
+import type { Direction } from "@/store/accounts-slice";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { useAppSelector } from "@/store";
 
 interface AccountCardProps {
   card: DashboardCard;
   onRefresh: () => void;
 }
 
+function DirectionIcon({ dir, value }: { dir?: Direction; value?: string }) {
+  if (!dir || dir === "neutral") return null;
+  if (dir === "up") return <span key={value} className="text-green-500 text-xs animate-flash">▲</span>;
+  return <span key={value} className="text-red-500 text-xs animate-flash">▼</span>;
+}
+
 export function AccountCard({ card, onRefresh }: AccountCardProps) {
   const navigate = useNavigate();
+  const directions = useAppSelector((s) => s.accounts.directions[card.id]);
 
   const statusColor = {
     active: "bg-green-100 text-green-800",
@@ -45,17 +53,21 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
 
       {card.total_equity != null && (
         <div className="space-y-1">
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-sm text-muted-foreground">Equity</span>
-            <span className="text-sm font-medium">${equity.toFixed(2)}</span>
+            <span className="text-sm font-medium flex items-center gap-1">
+              <DirectionIcon dir={directions?.equity} value={card.total_equity} />
+              ${equity.toFixed(2)}
+            </span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-sm text-muted-foreground">Unrealised PnL</span>
-            <span className={`text-sm font-medium ${pnl >= 0 ? "text-green-600" : "text-red-600"}`}>
+            <span className={`text-sm font-medium flex items-center gap-1 ${pnl >= 0 ? "text-green-600" : "text-red-600"}`}>
+              <DirectionIcon dir={directions?.pnl} value={card.total_perp_upl} />
               ${pnl.toFixed(2)}
             </span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <span className="text-sm text-muted-foreground">Today's PnL</span>
             <span className={`text-sm font-medium ${todayPnl >= 0 ? "text-green-600" : "text-red-600"}`}>
               ${todayPnl.toFixed(2)}
@@ -70,7 +82,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
 
       {card.last_connected_at && (
         <p className="text-xs text-muted-foreground mt-2">
-          Last updated: {new Date(card.last_connected_at).toLocaleTimeString()}
+          Last updated: {new Date(card.last_connected_at).toLocaleString()}
         </p>
       )}
     </div>
