@@ -738,7 +738,7 @@ class AnalysisDB:
         if not updates:
             return False
         from datetime import datetime, timezone
-        updates["updated_at"] = fields.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        updates["updated_at"] = fields.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         set_clause = ", ".join(f"{k}=%s" for k in updates)
         with self._get_conn() as conn:
             cur = conn.cursor()

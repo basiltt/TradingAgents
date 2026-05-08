@@ -20,7 +20,7 @@ _MAX_RANGE_DAYS = 90
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _date_to_ms(date_str: str) -> int:
