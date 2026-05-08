@@ -95,9 +95,7 @@ class BybitWSClient:
 
     async def _connect_and_listen(self) -> None:
         if not self._session or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            )
+            self._session = aiohttp.ClientSession()
 
         self._ws = await asyncio.wait_for(
             self._session.ws_connect(self._url, heartbeat=None),
