@@ -113,6 +113,11 @@ CREATE TABLE IF NOT EXISTS closed_pnl_records (
 );
 CREATE INDEX IF NOT EXISTS idx_closed_pnl_account_time ON closed_pnl_records(account_id, created_time DESC)
 """),
+    (9, """
+UPDATE trading_accounts SET created_at = created_at || 'Z' WHERE created_at NOT LIKE '%Z';
+UPDATE trading_accounts SET updated_at = updated_at || 'Z' WHERE updated_at NOT LIKE '%Z';
+UPDATE trading_accounts SET last_connected_at = last_connected_at || 'Z' WHERE last_connected_at IS NOT NULL AND last_connected_at NOT LIKE '%Z';
+"""),
 ]
 
 
