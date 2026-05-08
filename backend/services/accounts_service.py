@@ -35,11 +35,12 @@ def _sanitize_error(msg: str) -> str:
 
 
 class AccountsService:
-    def __init__(self, db: AnalysisDB):
+    def __init__(self, db: AnalysisDB, ws_manager=None):
         self._db = db
         self._cache: Dict[str, tuple[float, Any]] = {}
         self._refresh_locks: Dict[str, float] = {}
         self._clients: Dict[str, BybitClient] = {}
+        self._ws_manager = ws_manager
 
     async def shutdown(self) -> None:
         for client in self._clients.values():
@@ -109,7 +110,10 @@ class AccountsService:
             "updated_at": now,
         })
 
-        return self._db.get_account(account_id)  # type: ignore
+        result = self._db.get_account(account_id)
+        if self._ws_manager:
+            asyncio.ensure_future(self._ws_manager.start_account(account_id))
+        return result  # type: ignore
 
     def list_accounts(self) -> List[Dict[str, Any]]:
         return self._db.list_accounts()
@@ -157,6 +161,8 @@ class AccountsService:
         result = self._db.soft_delete_account(account_id, _now_iso())
         if result:
             self._invalidate_cache(account_id)
+            if self._ws_manager:
+                asyncio.ensure_future(self._ws_manager.stop_account(account_id))
         return result
 
     async def test_connection(self, account_id: str) -> Dict[str, Any]:

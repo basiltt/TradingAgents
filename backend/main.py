@@ -103,11 +103,18 @@ def create_app() -> FastAPI:
         if os.environ.get("ACCOUNTS_ENCRYPTION_KEY"):
             from backend.crypto import validate_encryption_key
             validate_encryption_key()
-            app.state.accounts_service = AccountsService(db=db)
+            from backend.services.account_ws_manager import AccountWSManager
+            account_ws_mgr = AccountWSManager(db=db)
+            app.state.account_ws_manager = account_ws_mgr
+            app.state.accounts_service = AccountsService(db=db, ws_manager=account_ws_mgr)
+            await account_ws_mgr.start()
         else:
             app.state.accounts_service = None
+            app.state.account_ws_manager = None
 
         yield
+        if app.state.account_ws_manager:
+            await app.state.account_ws_manager.shutdown()
         if app.state.accounts_service:
             await app.state.accounts_service.shutdown()
         await app.state.scanner_service.shutdown()
@@ -139,6 +146,7 @@ def create_app() -> FastAPI:
     from backend.routers.ws import router as ws_router
     from backend.routers.accounts import router as accounts_router
     from backend.routers.portfolio import router as portfolio_router
+    from backend.routers.ws_accounts import router as ws_accounts_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(config_router, prefix="/api/v1")
@@ -150,6 +158,7 @@ def create_app() -> FastAPI:
     app.include_router(scanner_router, prefix="/api/v1")
     app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(ws_router)
+    app.include_router(ws_accounts_router)
 
     @app.get("/api/v1/health")
     async def health(request: Request):

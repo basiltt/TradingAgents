@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 10  # default; overridden by config max_parallel (1–25)
 _MAX_PARALLEL_CAP = 25
-_POLL_INTERVAL = 5  # seconds between polling for batch completion
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 _VALID_DIRECTIONS = frozenset({"buy", "sell", "hold"})
@@ -651,55 +650,78 @@ class ScannerService:
                 await asyncio.to_thread(self._db.insert_scan_result, scan_id, fail_result)
             return
 
-        while True:
+        # Event-based wait with cancellation awareness
+        try:
+            run = await self._analysis.wait_for_completion(run_id, timeout=1860)
+        except asyncio.CancelledError:
+            # Scan was cancelled while waiting — propagate cancellation to analysis
+            await self._analysis.cancel_analysis(run_id)
+            cancel_result = {
+                "ticker": ticker,
+                "run_id": run_id,
+                "status": "cancelled",
+                "direction": "unknown",
+                "confidence": "none",
+                "score": 0,
+                "decision_summary": "Cancelled",
+            }
             async with self._lock:
                 scan = self._scans.get(scan_id)
-                should_cancel = not scan or scan["cancel"]
+                if scan:
+                    scan["failed"] += 1
+                    scan["results"].append(cancel_result)
+            if self._db:
+                await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
+                await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
+            return
+        except Exception:
+            run = None
 
-            if should_cancel:
-                await self._analysis.cancel_analysis(run_id)
-                cancel_result = {
-                    "ticker": ticker,
-                    "run_id": run_id,
-                    "status": "cancelled",
-                    "direction": "unknown",
-                    "confidence": "none",
-                    "score": 0,
-                    "decision_summary": "Cancelled",
-                }
-                async with self._lock:
-                    scan = self._scans.get(scan_id)
-                    if scan:
-                        scan["failed"] += 1
-                        scan["results"].append(cancel_result)
-                if self._db:
-                    await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
-                    await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
-                return
+        # Check if scan was cancelled while we waited — only discard if analysis didn't complete
+        if run and run.get("status") in _TERMINAL_STATUSES:
+            await self._collect_result(scan_id, ticker, run_id, run)
+            return
 
-            await asyncio.sleep(_POLL_INTERVAL)
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            should_cancel = not scan or scan["cancel"]
 
-            try:
-                run = await self._analysis.get_run(run_id)
-                if not run or run.get("status") in _TERMINAL_STATUSES:
-                    await self._collect_result(scan_id, ticker, run_id, run)
-                    return
-            except Exception:
-                poll_fail_result = {
-                    "ticker": ticker, "run_id": run_id,
-                    "status": "failed", "direction": "unknown",
-                    "confidence": "none", "score": 0,
-                    "decision_summary": "Poll error",
-                }
-                async with self._lock:
-                    scan = self._scans.get(scan_id)
-                    if scan:
-                        scan["failed"] += 1
-                        scan["results"].append(poll_fail_result)
-                if self._db:
-                    await asyncio.to_thread(self._db.insert_scan_result, scan_id, poll_fail_result)
-                    await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
-                return
+        if should_cancel:
+            await self._analysis.cancel_analysis(run_id)
+            cancel_result = {
+                "ticker": ticker,
+                "run_id": run_id,
+                "status": "cancelled",
+                "direction": "unknown",
+                "confidence": "none",
+                "score": 0,
+                "decision_summary": "Cancelled",
+            }
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                if scan:
+                    scan["failed"] += 1
+                    scan["results"].append(cancel_result)
+            if self._db:
+                await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
+                await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
+            return
+
+        if not run:
+            poll_fail_result = {
+                "ticker": ticker, "run_id": run_id,
+                "status": "failed", "direction": "unknown",
+                "confidence": "none", "score": 0,
+                "decision_summary": "Timeout waiting for completion",
+            }
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                if scan:
+                    scan["failed"] += 1
+                    scan["results"].append(poll_fail_result)
+            if self._db:
+                await asyncio.to_thread(self._db.insert_scan_result, scan_id, poll_fail_result)
+                await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
 
     async def _collect_result(
         self, scan_id: str, ticker: str, run_id: str, run: Optional[Dict[str, Any]]

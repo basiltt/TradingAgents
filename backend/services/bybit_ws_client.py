@@ -1,0 +1,229 @@
+"""Bybit private WebSocket client for real-time account updates."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import json
+import logging
+import time
+from typing import Any, Callable, Coroutine
+
+import aiohttp
+
+logger = logging.getLogger(__name__)
+
+_WS_ENDPOINTS = {
+    "live": "wss://stream.bybit.com/v5/private",
+    "demo": "wss://stream-demo.bybit.com/v5/private",
+}
+
+_RECONNECT_BASE = 2.0
+_RECONNECT_MAX = 30.0
+_PING_INTERVAL = 20.0
+_RECV_WINDOW = "5000"
+
+
+class BybitWSClient:
+    """Connects to Bybit private WebSocket and streams wallet/position/order updates."""
+
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        account_type: str,
+        on_event: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
+    ):
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._url = _WS_ENDPOINTS.get(account_type, _WS_ENDPOINTS["demo"])
+        self._on_event = on_event
+        self._session: aiohttp.ClientSession | None = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._task: asyncio.Task | None = None
+        self._ping_task: asyncio.Task | None = None
+        self._running = False
+        self._reconnect_delay = _RECONNECT_BASE
+
+    def _auth_payload(self) -> dict[str, Any]:
+        expires = int((time.time() + 10) * 1000)
+        sign_str = f"GET/realtime{expires}"
+        signature = hmac.new(
+            self._api_secret.encode(),
+            sign_str.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        return {"op": "auth", "args": [self._api_key, expires, signature]}
+
+    def _subscribe_payload(self) -> dict[str, Any]:
+        return {
+            "op": "subscribe",
+            "args": ["wallet", "position", "execution", "order"],
+        }
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._run_loop())
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._ping_task and not self._ping_task.done():
+            self._ping_task.cancel()
+        if self._ws and not self._ws.closed:
+            await self._ws.close()
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._session and not self._session.closed:
+            await self._session.close()
+        self._session = None
+
+    async def _run_loop(self) -> None:
+        while self._running:
+            try:
+                await self._connect_and_listen()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Bybit WS error: %s, reconnecting in %.1fs", e, self._reconnect_delay)
+
+            if not self._running:
+                break
+            await asyncio.sleep(self._reconnect_delay)
+            self._reconnect_delay = min(self._reconnect_delay * 2, _RECONNECT_MAX)
+
+    async def _connect_and_listen(self) -> None:
+        if not self._session or self._session.closed:
+            self._session = aiohttp.ClientSession()
+
+        self._ws = await self._session.ws_connect(self._url, heartbeat=None)
+        logger.info("Bybit WS connected to %s", self._url)
+
+        await self._ws.send_json(self._auth_payload())
+        auth_resp = await self._ws.receive_json(timeout=10)
+        if not auth_resp.get("success"):
+            logger.error("Bybit WS auth failed: %s", auth_resp.get("ret_msg"))
+            await self._ws.close()
+            return
+
+        await self._ws.send_json(self._subscribe_payload())
+        self._reconnect_delay = _RECONNECT_BASE
+        logger.info("Bybit WS authenticated and subscribed")
+
+        self._ping_task = asyncio.create_task(self._ping_loop())
+
+        try:
+            async for msg in self._ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    await self._handle_message(msg.data)
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+        finally:
+            if self._ping_task and not self._ping_task.done():
+                self._ping_task.cancel()
+
+    async def _ping_loop(self) -> None:
+        try:
+            while self._running and self._ws and not self._ws.closed:
+                await asyncio.sleep(_PING_INTERVAL)
+                if self._ws and not self._ws.closed:
+                    await self._ws.send_json({"op": "ping"})
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def _handle_message(self, raw: str) -> None:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+
+        if data.get("op") == "pong" or data.get("ret_msg") == "pong":
+            return
+
+        topic = data.get("topic", "")
+        if not topic:
+            return
+
+        event_data = data.get("data", [])
+        if not event_data:
+            return
+
+        if topic == "wallet":
+            await self._emit_wallet(event_data)
+        elif topic == "position":
+            await self._emit_positions(event_data)
+        elif topic == "execution":
+            await self._emit_executions(event_data)
+        elif topic == "order":
+            await self._emit_orders(event_data)
+
+    async def _emit_wallet(self, data: list[dict]) -> None:
+        for account in data:
+            coins = account.get("coin", [])
+            total_equity = account.get("accountEquity", "0")
+            total_upl = "0"
+            for coin in coins:
+                upl = coin.get("unrealisedPnl", "0")
+                try:
+                    total_upl = str(float(total_upl) + float(upl))
+                except (ValueError, TypeError):
+                    pass
+            await self._on_event({
+                "type": "wallet_update",
+                "data": {
+                    "totalEquity": total_equity,
+                    "totalPerpUPL": total_upl,
+                    "coins": coins,
+                },
+            })
+
+    async def _emit_positions(self, data: list[dict]) -> None:
+        for pos in data:
+            await self._on_event({
+                "type": "position_update",
+                "data": {
+                    "symbol": pos.get("symbol", ""),
+                    "side": pos.get("side", ""),
+                    "size": pos.get("size", "0"),
+                    "unrealisedPnl": pos.get("unrealisedPnl", "0"),
+                    "markPrice": pos.get("markPrice", "0"),
+                    "avgPrice": pos.get("entryPrice", "0"),
+                    "leverage": pos.get("leverage", "0"),
+                    "liqPrice": pos.get("liqPrice", "0"),
+                },
+            })
+
+    async def _emit_executions(self, data: list[dict]) -> None:
+        for ex in data:
+            await self._on_event({
+                "type": "execution",
+                "data": {
+                    "symbol": ex.get("symbol", ""),
+                    "side": ex.get("side", ""),
+                    "qty": ex.get("execQty", "0"),
+                    "price": ex.get("execPrice", "0"),
+                    "execType": ex.get("execType", ""),
+                },
+            })
+
+    async def _emit_orders(self, data: list[dict]) -> None:
+        for order in data:
+            await self._on_event({
+                "type": "order_update",
+                "data": {
+                    "orderId": order.get("orderId", ""),
+                    "symbol": order.get("symbol", ""),
+                    "side": order.get("side", ""),
+                    "orderStatus": order.get("orderStatus", ""),
+                    "qty": order.get("qty", "0"),
+                    "price": order.get("price", "0"),
+                },
+            })

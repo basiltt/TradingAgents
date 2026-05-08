@@ -42,6 +42,7 @@ class AnalysisService:
         self._ws = ws_manager
         self._config = config_service
         self._active_runs: Dict[str, Dict[str, Any]] = {}
+        self._completion_events: Dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
         self._zombie_count = 0
         self._prefilter_limiter: Any = None
@@ -80,6 +81,7 @@ class AnalysisService:
                 "cancel_event": threading.Event(),
                 "task": None,
             }
+            self._completion_events[run_id] = asyncio.Event()
 
         task = asyncio.create_task(self._run_analysis(run_id, request, config_snapshot))
         async with self._lock:
@@ -126,6 +128,23 @@ class AnalysisService:
             except (json.JSONDecodeError, TypeError):
                 run["config"] = {}
         return run
+
+    async def wait_for_completion(self, run_id: str, timeout: float = 1800) -> Optional[Dict[str, Any]]:
+        """Wait for an analysis to complete, returning the run record. Uses event-based
+        notification instead of polling for near-zero latency."""
+        async with self._lock:
+            evt = self._completion_events.get(run_id)
+
+        if evt:
+            try:
+                await asyncio.wait_for(evt.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pass
+        else:
+            # Already finished or unknown run — fall back to DB check
+            pass
+
+        return await self.get_run(run_id)
 
     async def delete_run(self, run_id: str) -> bool:
         return await asyncio.to_thread(self._db.delete_run, run_id)
@@ -251,7 +270,7 @@ class AnalysisService:
         return config
 
     async def _run_analysis(
-        self, run_id: str, request: Dict[str, Any], config: Dict[str, Any]
+        self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
     ) -> None:
         async with self._lock:
             cancel_event = self._active_runs.get(run_id, {}).get("cancel_event", threading.Event())
@@ -287,16 +306,28 @@ class AnalysisService:
             if updated:
                 self._bus.emit(run_id, ProgressEvent(phase="completed", detail="Analysis complete"))
 
+            # Signal completion immediately after DB status is terminal.
+            # Don't wait for finally-block cleanup.
+            evt = self._completion_events.get(run_id)
+            if evt:
+                evt.set()
+
         except asyncio.CancelledError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             await asyncio.to_thread(self._db.update_run_status, run_id, "cancelled", "Cancelled by user", now)
             self._bus.emit(run_id, ProgressEvent(phase="cancelled", detail="Cancelled"))
+            evt = self._completion_events.get(run_id)
+            if evt:
+                evt.set()
 
         except asyncio.TimeoutError:
             cancel_event.set()
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
+            evt = self._completion_events.get(run_id)
+            if evt:
+                evt.set()
             async with self._lock:
                 self._zombie_count += 1
             asyncio.get_running_loop().call_later(
@@ -309,19 +340,21 @@ class AnalysisService:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Internal error occurred", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
+            evt = self._completion_events.get(run_id)
+            if evt:
+                evt.set()
 
         finally:
-            # Save snapshot for error/cancel paths. The success path already called it
-            # before marking completed, so this is a no-op there (sections already exist).
-            # Run in a thread so we don't block the event loop on DB I/O.
+            # Save snapshot for error/cancel paths (success path already saved).
             try:
                 await asyncio.to_thread(self._save_snapshot, run_id)
             except Exception:
-                pass  # already logged inside _save_snapshot
+                pass
             async with self._lock:
                 run_data = self._active_runs.pop(run_id, None)
                 if run_data:
                     run_data["status"] = "terminal"
+                self._completion_events.pop(run_id, None)
 
             self._bus.cleanup_run(run_id)
 
