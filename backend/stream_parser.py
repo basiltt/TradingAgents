@@ -91,13 +91,22 @@ _RISK_FIELD_MAP = {
     "neutral_history": ("risk_neutral", "Neutral Analyst"),
 }
 
-_ANALYST_REPORT_MAP = {
+_ANALYST_REPORT_MAP_STOCK = {
     "market_report": ("analyst_market", "Market Analyst"),
     "sentiment_report": ("analyst_social", "Social Analyst"),
     "news_report": ("analyst_news", "News Analyst"),
     "fundamentals_report": ("analyst_fundamentals", "Fundamentals Analyst"),
-    "crypto_fundamentals_report": ("analyst_crypto_fundamentals", "Crypto Fundamentals Analyst"),
 }
+
+_ANALYST_REPORT_MAP_CRYPTO = {
+    "market_report": ("analyst_crypto_technical", "Technical Analyst"),
+    "fundamentals_report": ("analyst_crypto_derivatives", "Derivatives Analyst"),
+    "news_report": ("analyst_crypto_news", "News Analyst"),
+    "crypto_fundamentals_report": ("analyst_crypto_fundamentals", "Fundamentals Analyst"),
+    "sentiment_report": ("analyst_crypto_social", "Social Analyst"),
+}
+
+_ANALYST_REPORT_MAP = _ANALYST_REPORT_MAP_STOCK
 
 
 def make_seq_counter() -> Iterator[int]:
@@ -106,8 +115,9 @@ def make_seq_counter() -> Iterator[int]:
 
 class StreamParserState:
     """Tracks state across stream chunks to detect deltas (stream_mode=values)."""
-    def __init__(self, workflow_mode: str = "deep_analysis"):
+    def __init__(self, workflow_mode: str = "deep_analysis", asset_type: str = "stock"):
         self.workflow_mode = workflow_mode
+        self.asset_type = asset_type
         self.msg_count = 0
         self.prev_debate: Optional[Dict] = None
         self.prev_risk: Optional[Dict] = None
@@ -165,7 +175,8 @@ def parse_stream_chunk(
             events.insert(0, AgentStatusEvent(agent=agent_name, status="in_progress"))
 
     # Extract analyst reports (market, social, news, fundamentals)
-    for field_name, (section, agent) in _ANALYST_REPORT_MAP.items():
+    report_map = _ANALYST_REPORT_MAP_CRYPTO if state.asset_type == "crypto" else _ANALYST_REPORT_MAP_STOCK
+    for field_name, (section, agent) in report_map.items():
         val = chunk.get(field_name)
         if isinstance(val, str) and val.strip():
             prev_val = state.prev_analyst_reports.get(field_name, "")

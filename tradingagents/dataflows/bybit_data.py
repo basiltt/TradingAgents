@@ -27,7 +27,14 @@ logger = logging.getLogger(__name__)
 _session = requests.Session()
 _session.mount(
     "https://",
-    HTTPAdapter(pool_connections=1, pool_maxsize=5, max_retries=0),
+    HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0),
+)
+_session_lock = threading.Lock()
+
+_RETRYABLE_EXCEPTIONS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    ConnectionResetError,
 )
 
 BYBIT_BASE_URL = "https://api.bybit.com"
@@ -44,7 +51,7 @@ class BybitRateLimiter:
     woken when tokens become available.
     """
 
-    def __init__(self, capacity: float = 80, refill_rate: float = 16.0):
+    def __init__(self, capacity: float = 10, refill_rate: float = 8.0):
         self._capacity = capacity
         self._refill_rate = refill_rate
         self._tokens = capacity
@@ -97,7 +104,7 @@ class BybitUnavailableError(Exception):
 class BybitCircuitBreaker:
     """Simple consecutive-failure circuit breaker with auto-reset. Thread-safe."""
 
-    def __init__(self, failure_threshold: int = 3, reset_after: float = 60.0):
+    def __init__(self, failure_threshold: int = 5, reset_after: float = 30.0):
         self._threshold = failure_threshold
         self._reset_after = reset_after
         self._consecutive_failures = 0
@@ -299,6 +306,25 @@ def _bybit_request(
                 timeout=(5, min(30, remaining)),
             )
             resp.raise_for_status()
+        except _RETRYABLE_EXCEPTIONS as exc:
+            if circuit_breaker:
+                circuit_breaker.record_failure()
+            last_exc = exc
+            if attempt < _MAX_RETRIES - 1:
+                with _session_lock:
+                    _session.close()
+                    _session.mount(
+                        "https://",
+                        HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0),
+                    )
+                backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    "Bybit %s connection error retry %d/%d (backoff=%.1fs): %s",
+                    endpoint, attempt + 1, _MAX_RETRIES, backoff, exc,
+                )
+                time.sleep(min(backoff, max(0, deadline - time.monotonic())))
+                continue
+            raise
         except Exception as exc:
             if circuit_breaker:
                 circuit_breaker.record_failure()

@@ -13,18 +13,20 @@ export function AccountsDashboard() {
   const [addOpen, setAddOpen] = useState(false);
   useAccountWebSocket();
 
-  const fetchDashboard = useCallback(async () => {
-    dispatch(setLoading());
+  const fetchDashboard = useCallback(async (silent = false) => {
+    if (!silent) dispatch(setLoading());
     try {
       const cards = await accountsApi.getDashboard();
       dispatch(setDashboard(cards));
     } catch (e: any) {
-      dispatch(setError(e.message || "Failed to load accounts"));
+      if (!silent) dispatch(setError(e.message || "Failed to load accounts"));
     }
   }, [dispatch]);
 
   useEffect(() => {
     fetchDashboard();
+    const interval = setInterval(() => fetchDashboard(true), 3_000);
+    return () => clearInterval(interval);
   }, [fetchDashboard]);
 
   const filtered = dashboard.filter((card) => {

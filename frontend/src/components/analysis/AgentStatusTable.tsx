@@ -12,26 +12,39 @@ interface AgentStatusTableProps {
 
 const DEEP_THINK_AGENTS = new Set(["Research Manager", "Portfolio Manager"]);
 
-const AGENT_NAME_TO_KEY: Record<string, string> = {
+const AGENT_NAME_TO_KEY_STOCK: Record<string, string> = {
   "Market Analyst": "market",
   "Social Analyst": "social",
   "News Analyst": "news",
   "Fundamentals Analyst": "fundamentals",
-  "Technical Analyst": "crypto_technical",
-  "Derivatives Analyst": "crypto_derivatives",
   "Bull Researcher": "bull_researcher",
   "Bear Researcher": "bear_researcher",
   "Research Manager": "research_manager",
   "Trader": "trader",
   "Compliance Officer": "compliance_officer",
   "Execution Monitor": "execution_monitor",
-  "Confluence Checker": "confluence_checker",
-  "Bull Analyst": "bull_analyst",
-  "Bear Analyst": "bear_analyst",
   "Portfolio Manager": "portfolio_manager",
   "Aggressive Analyst": "aggressive_analyst",
   "Neutral Analyst": "neutral_analyst",
   "Conservative Analyst": "conservative_analyst",
+};
+
+const AGENT_NAME_TO_KEY_CRYPTO: Record<string, string> = {
+  "Technical Analyst": "crypto_technical",
+  "Derivatives Analyst": "crypto_derivatives",
+  "Social Analyst": "crypto_social",
+  "News Analyst": "crypto_news",
+  "Fundamentals Analyst": "crypto_fundamentals",
+  "Confluence Checker": "confluence_checker",
+  "Bull Researcher": "bull_researcher",
+  "Bear Researcher": "bear_researcher",
+  "Research Manager": "research_manager",
+  "Trader": "trader",
+  "Compliance Officer": "compliance_officer",
+  "Execution Monitor": "execution_monitor",
+  "Bull Analyst": "bull_analyst",
+  "Bear Analyst": "bear_analyst",
+  "Portfolio Manager": "portfolio_manager",
 };
 
 /**
@@ -42,10 +55,11 @@ const AGENT_NAME_TO_KEY: Record<string, string> = {
 const PIPELINE_ORDER: readonly string[] = [
   // Analysts (parallel)
   "Market Analyst",
+  "Technical Analyst",
+  "Derivatives Analyst",
   "Social Analyst",
   "News Analyst",
   "Fundamentals Analyst",
-  "Crypto Fundamentals Analyst",
   // Confluence
   "Confluence Checker",
   // Research debate
@@ -60,7 +74,7 @@ const PIPELINE_ORDER: readonly string[] = [
   "Aggressive Analyst",
   "Conservative Analyst",
   "Neutral Analyst",
-  // Risk debate (crypto 2-party — same position as stock risk)
+  // Risk debate (crypto 2-party)
   "Bull Analyst",
   "Bear Analyst",
   // Final decision
@@ -101,6 +115,8 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
   const deepModel = config?.deep_think_llm ? String(config.deep_think_llm) : "";
   const quickModel = config?.quick_think_llm ? String(config.quick_think_llm) : "";
 
+  const assetType = config?.asset_type ? String(config.asset_type) : "stock";
+  const agentNameToKey = assetType === "crypto" ? AGENT_NAME_TO_KEY_CRYPTO : AGENT_NAME_TO_KEY_STOCK;
   const overrides = (config?.agent_model_overrides as Record<string, string>) || {};
 
   const body = isLoading ? (
@@ -125,7 +141,7 @@ export const AgentStatusTable = memo(function AgentStatusTable({ agents, isLoadi
         <div className="space-y-2">
           {entries.map(([name, status]) => {
             const isDeep = DEEP_THINK_AGENTS.has(name);
-            const agentKey = AGENT_NAME_TO_KEY[name];
+            const agentKey = agentNameToKey[name];
             const overrideModel = agentKey ? overrides[agentKey] : undefined;
             const model = overrideModel || (isDeep ? deepModel : quickModel);
             const isOverridden = !!overrideModel;

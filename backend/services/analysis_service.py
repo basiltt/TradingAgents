@@ -510,7 +510,10 @@ class AnalysisService:
 
         last_chunk = None
         seq = make_seq_counter()
-        parser_state = StreamParserState(workflow_mode=config.get("workflow_mode", "deep_analysis"))
+        parser_state = StreamParserState(
+            workflow_mode=config.get("workflow_mode", "deep_analysis"),
+            asset_type=config.get("asset_type", "stock"),
+        )
         for chunk in graph.graph.stream(init_state, **args):
             if cancel_event.is_set():
                 break

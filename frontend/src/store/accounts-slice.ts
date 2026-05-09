@@ -104,7 +104,10 @@ const accountsSlice = createSlice({
           card.total_perp_upl = data.totalPerpUPL;
         }
       } else if (type === "position_update") {
-        dirs.pnl = getDirection(card.total_perp_upl, data.unrealisedPnl || "0");
+        if (data.unrealisedPnl) {
+          dirs.pnl = getDirection(card.total_perp_upl, data.unrealisedPnl);
+          card.total_perp_upl = data.unrealisedPnl;
+        }
       }
 
       state.directions[account_id] = dirs;

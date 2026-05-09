@@ -179,7 +179,7 @@ class AccountsService:
 
     async def get_wallet(self, account_id: str) -> Dict[str, Any]:
         cache_key = f"{account_id}:wallet"
-        cached = self._get_cached(cache_key, 30)
+        cached = self._get_cached(cache_key, 2)
         if cached is not None:
             return cached
 
@@ -187,7 +187,7 @@ class AccountsService:
         try:
             data = await client.get_wallet_balance()
             data["fetched_at"] = _now_iso()
-            self._set_cached(cache_key, data, 30)
+            self._set_cached(cache_key, data, 2)
             self._db.update_account(account_id, last_connected_at=_now_iso(), last_error=None, updated_at=_now_iso())
             return data
         except BybitAPIError as e:
@@ -196,13 +196,13 @@ class AccountsService:
 
     async def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
         cache_key = f"{account_id}:positions"
-        cached = self._get_cached(cache_key, 15)
+        cached = self._get_cached(cache_key, 3)
         if cached is not None:
             return cached
 
         client = self._build_client(account_id)
         data = await client.get_positions()
-        self._set_cached(cache_key, data, 15)
+        self._set_cached(cache_key, data, 3)
         return data
 
     async def get_orders(self, account_id: str) -> List[Dict[str, Any]]:
