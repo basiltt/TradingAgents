@@ -12,6 +12,8 @@ import { HistoryList } from "@/components/dashboard/HistoryList";
 import { ConfigPage as ConfigPageComponent } from "@/components/config/ConfigPage";
 import { MemoryPage as MemoryPageComponent } from "@/components/config/MemoryPage";
 import { ScannerPage as ScannerPageComponent } from "@/components/scanner/ScannerPage";
+import { ScanHistoryPage } from "@/components/scanner/ScanHistoryPage";
+import { ScanDetailPage } from "@/components/scanner/ScanDetailPage";
 import { AccountsDashboard } from "@/components/accounts/AccountsDashboard";
 import { AccountDetailView } from "@/components/accounts/AccountDetailView";
 
@@ -51,6 +53,15 @@ function MemoryPage() {
 
 function ScannerPage() {
   return <ScannerPageComponent />;
+}
+
+function ScannerHistoryPage() {
+  return <ScanHistoryPage />;
+}
+
+function ScannerDetailPage() {
+  const { scanId } = useParams({ from: "/scanner/$scanId" });
+  return <ScanDetailPage scanId={scanId} />;
 }
 
 function AccountsPage() {
@@ -104,6 +115,18 @@ const scannerRoute = createRoute({
   component: ScannerPage,
 });
 
+const scannerHistoryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scanner/history",
+  component: ScannerHistoryPage,
+});
+
+const scannerDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scanner/$scanId",
+  component: ScannerDetailPage,
+});
+
 const accountsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/accounts",
@@ -123,6 +146,8 @@ export const routeTree = rootRoute.addChildren([
   historyRoute,
   configRoute,
   memoryRoute,
+  scannerHistoryRoute,
+  scannerDetailRoute,
   scannerRoute,
   accountsRoute,
   accountDetailRoute,

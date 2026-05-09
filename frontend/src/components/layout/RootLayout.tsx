@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from "react";
-import { Outlet, Link, useMatchRoute } from "@tanstack/react-router";
+import { Outlet, Link } from "@tanstack/react-router";
 import { useAppSelector, useAppDispatch } from "@/store";
 import { toggleSidebar, setSidebarOpen, setTheme } from "@/store/ui-slice";
 import { useThemeEffect } from "@/hooks/useThemeEffect";
@@ -14,8 +14,6 @@ function NavLink({
   children: React.ReactNode;
 }) {
   const dispatch = useAppDispatch();
-  const matchRoute = useMatchRoute();
-  const isActive = matchRoute({ to, fuzzy: to !== "/" }) || (to === "/" && matchRoute({ to: "/" }));
   const closeSidebar = useCallback(
     () => dispatch(setSidebarOpen(false)),
     [dispatch],
@@ -24,19 +22,43 @@ function NavLink({
   return (
     <Link
       to={to}
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-200
-        ${isActive
-          ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
-          : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent"
-        }`}
+      className="group/nav relative flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-200"
       activeProps={{
+        className: "nav-active",
         "aria-current": "page" as const,
       }}
-      activeOptions={{ exact: to === "/" }}
+      activeOptions={{ exact: true }}
       onClick={closeSidebar}
     >
-      <span className="w-5 h-5 flex items-center justify-center shrink-0">{icon}</span>
-      {children}
+      {({ isActive }) => (
+        <>
+          <span
+            className="absolute inset-0 rounded-lg transition-colors"
+            style={
+              isActive
+                ? { backgroundColor: "var(--primary)" }
+                : undefined
+            }
+          />
+          <span
+            className={`relative z-10 w-5 h-5 flex items-center justify-center shrink-0 ${
+              isActive ? "text-white" : "text-sidebar-foreground/80 group-hover/nav:text-sidebar-foreground"
+            }`}
+          >
+            {icon}
+          </span>
+          <span
+            className={`relative z-10 ${
+              isActive ? "text-white" : "text-sidebar-foreground/80 group-hover/nav:text-sidebar-foreground"
+            }`}
+          >
+            {children}
+          </span>
+          {!isActive && (
+            <span className="absolute inset-0 rounded-lg bg-sidebar-accent opacity-0 group-hover/nav:opacity-100 transition-opacity" />
+          )}
+        </>
+      )}
     </Link>
   );
 }
@@ -145,26 +167,6 @@ export function RootLayout() {
           >
             Home
           </NavLink>
-          <NavLink
-            to="/history"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          >
-            History
-          </NavLink>
-          <NavLink
-            to="/accounts"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-              </svg>
-            }
-          >
-            Accounts
-          </NavLink>
 
           <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
             Analysis
@@ -180,14 +182,52 @@ export function RootLayout() {
             New Analysis
           </NavLink>
           <NavLink
-            to="/scanner"
+            to="/history"
             icon={
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             }
           >
+            Analysis History
+          </NavLink>
+
+          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
             Market Scanner
+          </p>
+          <NavLink
+            to="/scanner"
+            icon={
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+            }
+          >
+            New Scan
+          </NavLink>
+          <NavLink
+            to="/scanner/history"
+            icon={
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            }
+          >
+            Scan History
+          </NavLink>
+
+          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+            Accounts
+          </p>
+          <NavLink
+            to="/accounts"
+            icon={
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            }
+          >
+            Accounts
           </NavLink>
 
           <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">

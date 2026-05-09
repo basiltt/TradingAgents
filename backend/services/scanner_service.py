@@ -400,6 +400,24 @@ class ScannerService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def delete_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            if scan and scan["status"] == "running":
+                raise ScannerBusyError("Cannot delete a running scan — cancel it first")
+            self._scans.pop(scan_id, None)
+        if not self._db:
+            return {"deleted_results": 0, "deleted_analyses": 0, "deleted_sections": 0}
+        result = await asyncio.to_thread(self._db.delete_scan, scan_id)
+        if not result:
+            return None
+        return result
+
+    async def get_scan_analysis_count(self, scan_id: str) -> int:
+        if not self._db:
+            return 0
+        return await asyncio.to_thread(self._db.get_scan_analysis_count, scan_id)
+
     async def list_scans(self) -> List[Dict[str, Any]]:
         async with self._lock:
             in_memory_ids = set(self._scans.keys())

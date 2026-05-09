@@ -87,3 +87,24 @@ async def cancel_scan(request: Request, scan_id: str):
     if not result:
         raise HTTPException(status_code=404, detail="Scan not found")
     return {"status": "cancelled"}
+
+
+@router.get("/scanner/{scan_id}/delete-preview")
+async def delete_scan_preview(request: Request, scan_id: str):
+    """Return the count of associated analysis runs that would be deleted."""
+    _validate_scan_id(scan_id)
+    count = await request.app.state.scanner_service.get_scan_analysis_count(scan_id)
+    return {"scan_id": scan_id, "analysis_count": count}
+
+
+@router.delete("/scanner/{scan_id}", status_code=200)
+async def delete_scan(request: Request, scan_id: str):
+    _validate_scan_id(scan_id)
+    from backend.services.scanner_service import ScannerBusyError
+    try:
+        result = await request.app.state.scanner_service.delete_scan(scan_id)
+    except ScannerBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return result

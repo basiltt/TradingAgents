@@ -649,6 +649,66 @@ class AnalysisDB:
                 raise
         return [dict(r) for r in rows]
 
+    def delete_scan(self, scan_id: str) -> Dict[str, Any]:
+        """Delete a scan and cascade-delete its associated analysis runs.
+
+        Returns dict with counts: {deleted_results, deleted_analyses, deleted_sections}.
+        """
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT run_id FROM scan_results WHERE scan_id=%s AND run_id IS NOT NULL",
+                    (scan_id,),
+                )
+                run_ids = [r[0] for r in cur.fetchall()]
+
+                deleted_sections = 0
+                deleted_analyses = 0
+                if run_ids:
+                    cur.execute(
+                        "DELETE FROM report_sections WHERE run_id = ANY(%s)",
+                        (run_ids,),
+                    )
+                    deleted_sections = cur.rowcount
+                    cur.execute(
+                        "DELETE FROM analysis_runs WHERE run_id = ANY(%s)",
+                        (run_ids,),
+                    )
+                    deleted_analyses = cur.rowcount
+
+                cur.execute("DELETE FROM scan_results WHERE scan_id=%s", (scan_id,))
+                deleted_results = cur.rowcount
+
+                cur.execute("DELETE FROM scans WHERE scan_id=%s", (scan_id,))
+                scan_deleted = cur.rowcount
+
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        if scan_deleted == 0:
+            return {}
+        return {
+            "deleted_results": deleted_results,
+            "deleted_analyses": deleted_analyses,
+            "deleted_sections": deleted_sections,
+        }
+
+    def get_scan_analysis_count(self, scan_id: str) -> int:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) FROM scan_results WHERE scan_id=%s AND run_id IS NOT NULL",
+                    (scan_id,),
+                )
+                return cur.fetchone()[0]
+            except Exception:
+                conn.rollback()
+                raise
+
     def close(self) -> None:
         self._pool.closeall()
 
