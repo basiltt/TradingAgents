@@ -10,7 +10,6 @@ function formatDate(iso: string | null | undefined): string {
     return new Date(iso).toLocaleString(undefined, {
       month: "short",
       day: "numeric",
-      year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -38,18 +37,6 @@ function StatusDot({ status }: { status: string }) {
     cancelled: "bg-zinc-400 shadow-zinc-400/50",
   };
   return <span className={`w-2 h-2 rounded-full shadow-[0_0_6px] ${colors[status] ?? colors.cancelled}`} />;
-}
-
-function MiniBar({ value, max, color }: { value: number; max: number; color: string }) {
-  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className="w-24 h-2 rounded-full bg-white/[0.06] overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-xs font-mono tabular-nums opacity-70">{value}</span>
-    </div>
-  );
 }
 
 interface DeleteConfirmState {
@@ -94,16 +81,18 @@ export function ScanHistoryPage() {
   const totalScans = scans.length;
   const completedScans = scans.filter((s) => s.status === "completed").length;
   const runningScans = scans.filter((s) => s.status === "running").length;
+  const totalBuy = scans.reduce((sum, s) => sum + (s.results || []).filter((r) => r.direction === "buy").length, 0);
+  const totalSell = scans.reduce((sum, s) => sum + (s.results || []).filter((r) => r.direction === "sell").length, 0);
 
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <Skeleton className="h-10 w-48" />
-        <div className="grid grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-2xl" />)}
+        <Skeleton className="h-10 w-56" />
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
         </div>
-        <div className="space-y-2">
-          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-52 rounded-2xl" />)}
         </div>
       </div>
     );
@@ -112,7 +101,7 @@ export function ScanHistoryPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">Scan History</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Scan History</h1>
         <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
           <p className="text-destructive text-sm">Failed to load scan history.</p>
         </div>
@@ -143,18 +132,26 @@ export function ScanHistoryPage() {
 
       {/* Stats row */}
       {totalScans > 0 && (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-2xl border border-border/50 bg-card/50 backdrop-blur p-5">
-            <div className="text-3xl font-bold tabular-nums">{totalScans}</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="rounded-2xl border border-border/50 bg-card p-5">
+            <div className="text-2xl font-bold tabular-nums">{totalScans}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Total Scans</div>
           </div>
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
-            <div className="text-3xl font-bold tabular-nums text-emerald-500">{completedScans}</div>
+            <div className="text-2xl font-bold tabular-nums text-emerald-500">{completedScans}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Completed</div>
           </div>
           <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] p-5">
-            <div className="text-3xl font-bold tabular-nums text-blue-500">{runningScans}</div>
+            <div className="text-2xl font-bold tabular-nums text-blue-500">{runningScans}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Running</div>
+          </div>
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
+            <div className="text-2xl font-bold tabular-nums text-emerald-500">{totalBuy}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Buy Signals</div>
+          </div>
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] p-5">
+            <div className="text-2xl font-bold tabular-nums text-red-500">{totalSell}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Sell Signals</div>
           </div>
         </div>
       )}
@@ -179,85 +176,96 @@ export function ScanHistoryPage() {
           </Link>
         </div>
       ) : (
-        /* Scan list */
-        <div className="space-y-2">
+        /* Scan cards grid */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {scans.map((scan) => {
             const results = scan.results || [];
             const buy = results.filter((r) => r.direction === "buy").length;
             const sell = results.filter((r) => r.direction === "sell").length;
             const total = results.length;
             const dur = formatDuration(scan.started_at, scan.completed_at);
+            const progress = scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0;
 
             return (
               <Link
                 key={scan.scan_id}
                 to={`/scanner/${scan.scan_id}`}
-                className="group block rounded-xl border border-border/40 bg-card hover:bg-card/80 hover:border-border/70 transition-all duration-200 hover:shadow-lg hover:shadow-black/5"
+                className="group rounded-2xl border border-border/40 bg-card hover:bg-card/80 hover:border-border/70 transition-all duration-200 hover:shadow-lg hover:shadow-black/5 block overflow-hidden"
               >
-                <div className="flex items-center gap-5 px-5 py-4">
-                  {/* Status + date */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2.5 mb-1.5">
-                      <StatusDot status={scan.status} />
-                      <span className="text-sm font-semibold capitalize">{scan.status}</span>
-                      <span className="text-[11px] text-muted-foreground/70">
-                        {formatDate(scan.started_at)}
-                      </span>
-                      {dur && (
-                        <span className="text-[11px] text-muted-foreground/50 font-mono">
-                          {dur}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground/70">
-                        {scan.completed + scan.failed}
-                        <span className="text-muted-foreground/50">/{scan.total}</span>
-                      </span>
-                      <span className="text-muted-foreground/30">symbols</span>
-                      {total > 0 && (
-                        <>
-                          <span className="text-muted-foreground/20 mx-1">&middot;</span>
-                          <span className="text-muted-foreground/40">{total} results</span>
-                        </>
-                      )}
-                    </div>
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 pt-5 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <StatusDot status={scan.status} />
+                    <span className="text-sm font-semibold capitalize">{scan.status}</span>
+                    {dur && (
+                      <span className="text-[11px] text-muted-foreground/50 font-mono">{dur}</span>
+                    )}
                   </div>
-
-                  {/* Signal breakdown mini-bars */}
-                  {total > 0 && (
-                    <div className="hidden sm:flex items-center gap-5">
-                      <div className="text-right space-y-1">
-                        <div className="flex items-center justify-end gap-2">
-                          <span className="text-[11px] uppercase tracking-wider font-semibold text-emerald-500/80 w-8">Buy</span>
-                          <MiniBar value={buy} max={total} color="bg-emerald-500" />
-                        </div>
-                        <div className="flex items-center justify-end gap-2">
-                          <span className="text-[11px] uppercase tracking-wider font-semibold text-red-500/80 w-8">Sell</span>
-                          <MiniBar value={sell} max={total} color="bg-red-500" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1">
                     {scan.status !== "running" && (
                       <button
                         onClick={(e) => handleDeleteClick(e, scan.scan_id)}
-                        className="p-2 rounded-lg text-muted-foreground/40 hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
                         title="Delete scan"
                       >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                       </button>
                     )}
-                    <div className="p-2 rounded-lg text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                      </svg>
+                  </div>
+                </div>
+
+                {/* Results highlight */}
+                <div className="px-5 pb-2">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-bold tabular-nums tracking-tight">{total}</span>
+                    <span className="text-sm text-muted-foreground/50">results</span>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground/60">
+                    {scan.completed + scan.failed}
+                    <span className="text-muted-foreground/40">/{scan.total}</span>
+                    {" symbols scanned"}
+                  </span>
+                </div>
+
+                {/* Progress bar for running scans */}
+                {scan.status === "running" && (
+                  <div className="mx-5 mb-3">
+                    <div className="w-full h-1.5 rounded-full bg-muted/30 overflow-hidden">
+                      <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${progress}%` }} />
                     </div>
+                    <span className="text-[10px] text-muted-foreground/50 mt-1 block">{progress}% complete</span>
+                  </div>
+                )}
+
+                {/* Signal metrics */}
+                <div className="grid grid-cols-2 border-t border-border/30 divide-x divide-border/30">
+                  <div className="px-4 py-3">
+                    <div className="text-sm font-semibold tabular-nums text-emerald-500 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      {buy}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Buy Signals</div>
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="text-sm font-semibold tabular-nums text-red-500 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                      {sell}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Sell Signals</div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between px-5 py-2.5 border-t border-border/20 bg-muted/[0.03]">
+                  <span className="text-[10px] text-muted-foreground/50">
+                    {formatDate(scan.started_at)}
+                  </span>
+                  <div className="p-1 rounded-lg text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
                 </div>
               </Link>

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiClient, type ScanRequest, type ScanStatus, type ScanResultItem, type CryptoInterval } from "@/api/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ModelSelect } from "@/components/ui/model-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -440,8 +439,8 @@ export function ScannerPage() {
       {!activeScanId && (
         <div className="space-y-4">
           {lostScan && (
-            <Card className="border-amber-500/30 bg-amber-500/5">
-              <CardContent className="flex items-center gap-3 py-4">
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5">
+              <div className="flex items-center gap-3 px-5 py-4">
                 <svg className="w-5 h-5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
@@ -454,20 +453,20 @@ export function ScannerPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           )}
-          <Card>
-            <CardHeader className="pb-4">
-              <CardTitle className="text-base flex items-center gap-2">
+          <div className="rounded-2xl border border-border/40 bg-card">
+            <div className="px-5 pt-5 pb-3">
+              <h2 className="text-base font-semibold flex items-center gap-2">
                 <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
                 Scan Configuration
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
+              </h2>
+            </div>
+            <div className="px-5 pb-5 space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-2">
                   <Label className="font-medium">Analysis Date</Label>
@@ -516,7 +515,7 @@ export function ScannerPage() {
                       className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                         workflowMode === opt.value
                           ? "bg-primary text-primary-foreground"
-                          : "bg-background hover:bg-muted"
+                          : "bg-muted/50 hover:bg-muted"
                       }`}
                       onClick={() => setWorkflowMode(opt.value)}
                     >
@@ -600,12 +599,12 @@ export function ScannerPage() {
                   Select which analyst agents to include ({analysts.length}/{CRYPTO_ANALYSTS.length})
                 </p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* Workflow Settings — collapsible */}
-          <Card>
-            <CardHeader className="pb-0">
+          <div className="rounded-2xl border border-border/40 bg-card">
+            <div className="px-5 py-4">
               <button
                 type="button"
                 onClick={() => setShowWorkflow(!showWorkflow)}
@@ -619,9 +618,9 @@ export function ScannerPage() {
                 </svg>
                 Workflow Settings
               </button>
-            </CardHeader>
+            </div>
             {showWorkflow && (
-              <CardContent className="pt-4 space-y-4">
+              <div className="px-5 pb-5 pt-2 space-y-4">
                 <div className="flex flex-col gap-2">
                   <Label className="font-medium">Research Depth</Label>
                   <div className="flex items-center gap-3">
@@ -691,13 +690,13 @@ export function ScannerPage() {
                     <p className="text-xs text-muted-foreground">Save state after each step so crashed runs can resume</p>
                   </div>
                 </label>
-              </CardContent>
+              </div>
             )}
-          </Card>
+          </div>
 
           {/* LLM & Proxy section — collapsible */}
-          <Card>
-            <CardHeader className="pb-0">
+          <div className="rounded-2xl border border-border/40 bg-card">
+            <div className="px-5 py-4">
               <button
                 type="button"
                 onClick={() => setShowLlm(!showLlm)}
@@ -711,9 +710,9 @@ export function ScannerPage() {
                 </svg>
                 LLM &amp; Proxy Settings
               </button>
-            </CardHeader>
+            </div>
             {showLlm && (
-              <CardContent className="pt-4 space-y-4">
+              <div className="px-5 pb-5 pt-2 space-y-4">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <Label className="font-medium">Backend URL / Proxy Endpoint</Label>
@@ -833,21 +832,21 @@ export function ScannerPage() {
                     Max concurrent LLM API calls. Set to 0 for unlimited (pay-as-you-go plans).
                   </p>
                 </div>
-              </CardContent>
+              </div>
             )}
-          </Card>
+          </div>
 
           {/* Agent Model Overrides */}
-          <Card className="shadow-sm">
-            <CardContent className="pt-5">
+          <div className="rounded-2xl border border-border/40 bg-card">
+            <div className="px-5 pb-5 pt-5">
               <AgentModelOverrides
                 assetType="crypto"
                 modelOptions={deepOptions}
                 overrides={agentModelOverrides}
                 onChange={setAgentModelOverrides}
               />
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* Start button */}
           <Button
@@ -883,8 +882,8 @@ export function ScannerPage() {
 
       {/* Progress */}
       {scan && scan.status !== "cancelled" && (
-        <Card>
-          <CardContent className="py-5 space-y-5">
+        <div className="rounded-2xl border border-border/40 bg-card">
+          <div className="px-5 py-5 space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 {isRunning && (
@@ -969,8 +968,8 @@ export function ScannerPage() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Results */}
@@ -1108,24 +1107,24 @@ function CollapsibleResultCard({
   }
 
   return (
-    <Card className={className}>
-      <CardHeader className="pb-3">
+    <div className={cn("rounded-2xl border border-border/40 bg-card", className)}>
+      <div className="px-5 py-4">
         <button type="button" onClick={toggle} className="flex items-center gap-2 w-full text-left">
           <svg className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-          <CardTitle className="text-base flex items-center gap-2">
+          <span className="text-base font-semibold flex items-center gap-2">
             <span className={cn("w-2 h-2 rounded-full", COLOR_MAP[color] ?? "bg-muted-foreground")} />
             {title}
-          </CardTitle>
+          </span>
         </button>
-      </CardHeader>
+      </div>
       {open && (
-        <CardContent className="p-0">
+        <div className="p-0">
           {children}
-        </CardContent>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 

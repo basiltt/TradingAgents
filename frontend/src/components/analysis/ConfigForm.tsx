@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox } from "@/components/ui/combobox";
 import { useModels } from "@/hooks/useModels";
@@ -420,24 +419,24 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">New Analysis</h1>
-        <p className="text-muted-foreground mt-1">Configure and start a new multi-agent trading analysis.</p>
+    <div className="max-w-2xl mx-auto space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">New Analysis</h1>
+        <p className="text-sm text-muted-foreground mt-1.5">Configure and start a new multi-agent trading analysis.</p>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
         {/* ── Core Settings ── */}
-        <Card className="shadow-sm">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-base flex items-center gap-2">
+        <div className="rounded-2xl border border-border/40 bg-card">
+          <div className="px-5 pt-5 pb-3">
+            <h2 className="text-base font-semibold flex items-center gap-2">
               <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
               Core Settings
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-5">
+            </h2>
+          </div>
+          <div className="flex flex-col gap-5 px-5 pb-5">
             {/* Asset Type Toggle */}
             <div className="flex flex-col gap-2">
               <Label className="font-medium">Asset Type</Label>
@@ -445,7 +444,7 @@ export function ConfigForm() {
                 name="asset_type"
                 control={control}
                 render={({ field }) => (
-                  <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Asset type">
+                  <div className="flex rounded-xl border border-border/50 overflow-hidden" role="radiogroup" aria-label="Asset type">
                     {(["stock", "crypto"] as const).map((t) => (
                       <button
                         key={t}
@@ -455,7 +454,7 @@ export function ConfigForm() {
                         className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                           field.value === t
                             ? "bg-primary text-primary-foreground"
-                            : "bg-background hover:bg-muted"
+                            : "bg-muted/50 hover:bg-muted"
                         }`}
                         onClick={() => {
                           field.onChange(t);
@@ -479,7 +478,7 @@ export function ConfigForm() {
                 name="workflow_mode"
                 control={control}
                 render={({ field }) => (
-                  <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Workflow mode">
+                  <div className="flex rounded-xl border border-border/50 overflow-hidden" role="radiogroup" aria-label="Workflow mode">
                     {([
                       { value: "quick_trade" as const, label: "Quick Trade", desc: "Analysts → Research → Trade Card" },
                       { value: "deep_analysis" as const, label: "Deep Analysis", desc: "Full pipeline with risk & compliance" },
@@ -492,7 +491,7 @@ export function ConfigForm() {
                         className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                           field.value === opt.value
                             ? "bg-primary text-primary-foreground"
-                            : "bg-background hover:bg-muted"
+                            : "bg-muted/50 hover:bg-muted"
                         }`}
                         onClick={() => field.onChange(opt.value)}
                       >
@@ -741,12 +740,12 @@ export function ConfigForm() {
                 <p className="text-xs text-muted-foreground">Candlestick interval for technical analysis</p>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* ── Workflow Settings ── */}
-        <Card className="shadow-sm">
-          <CardContent className="pt-5">
+        <div className="rounded-2xl border border-border/40 bg-card">
+          <div className="px-5 pb-5 pt-5">
             <SectionToggle label="Workflow Settings" open={showWorkflow} onToggle={() => setShowWorkflow(!showWorkflow)} />
             {showWorkflow && (
               <div className="mt-4 space-y-4 pl-1">
@@ -784,12 +783,12 @@ export function ConfigForm() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* ── LLM & Proxy Settings ── */}
-        <Card className="shadow-sm">
-          <CardContent className="pt-5">
+        <div className="rounded-2xl border border-border/40 bg-card">
+          <div className="px-5 pb-5 pt-5">
             <SectionToggle
               label="LLM & Proxy Settings"
               open={showLLM}
@@ -932,25 +931,25 @@ export function ConfigForm() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* ── Agent Model Overrides ── */}
-        <Card className="shadow-sm">
-          <CardContent className="pt-5">
+        <div className="rounded-2xl border border-border/40 bg-card">
+          <div className="px-5 pb-5 pt-5">
             <AgentModelOverrides
               assetType={isCrypto ? "crypto" : "stock"}
               modelOptions={deepOptions}
               overrides={agentModelOverrides}
               onChange={setAgentModelOverrides}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* ── Data Sources (stock only) ── */}
         {!isCrypto && (
-        <Card className="shadow-sm">
-          <CardContent className="pt-5">
+        <div className="rounded-2xl border border-border/40 bg-card">
+          <div className="px-5 pb-5 pt-5">
             <SectionToggle label="Data Sources" open={showData} onToggle={() => setShowData(!showData)} />
             {showData && (
               <div className="mt-4 space-y-4 pl-1">
@@ -982,13 +981,13 @@ export function ConfigForm() {
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
         )}
 
         {/* ── Submit ── */}
         {submitError && (
-          <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive flex items-start gap-2" role="alert">
+          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive flex items-start gap-2" role="alert">
             <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>

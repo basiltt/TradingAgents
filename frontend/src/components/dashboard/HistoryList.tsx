@@ -2,8 +2,6 @@ import { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { apiClient } from "@/api/client";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { parseTradeCard, type TradeCardData } from "@/components/analysis/parseTradeCard";
 
@@ -61,9 +59,11 @@ const SIGNAL_FILTERS = ["buy", "sell", "hold"] as const;
 const ASSET_TYPE_FILTERS = ["crypto", "stock"] as const;
 const CONFIDENCE_RANGES = [
   { value: "any", label: "Any" },
-  { value: "high", label: "High (7-10)" },
+  { value: "very-high", label: "Very High (9-10)" },
+  { value: "high", label: "High (7-8)" },
   { value: "medium", label: "Medium (4-6)" },
-  { value: "low", label: "Low (1-3)" },
+  { value: "low", label: "Low (2-3)" },
+  { value: "very-low", label: "Very Low (1)" },
   { value: "none", label: "No signal" },
 ] as const;
 
@@ -218,9 +218,11 @@ export function HistoryList() {
         if (scoreMap.get(i.run_id) === undefined) return false; // not loaded yet
         const conf = getConfidence(i.run_id);
         switch (confidenceRange) {
-          case "high": return conf >= 7;
+          case "very-high": return conf >= 9;
+          case "high": return conf >= 7 && conf <= 8;
           case "medium": return conf >= 4 && conf <= 6;
-          case "low": return conf >= 1 && conf <= 3;
+          case "low": return conf >= 2 && conf <= 3;
+          case "very-low": return conf === 1;
           case "none": return conf === 0;
           default: return true;
         }
@@ -304,14 +306,37 @@ export function HistoryList() {
     setPage(0);
   };
 
+  const buyCount = useMemo(() => {
+    let count = 0;
+    scoreMap.forEach((card) => {
+      if (!card) return;
+      const a = (card.action ?? card.rating ?? "").toLowerCase();
+      if (a === "buy" || a === "long") count++;
+    });
+    return count;
+  }, [scoreMap]);
+
+  const sellCount = useMemo(() => {
+    let count = 0;
+    scoreMap.forEach((card) => {
+      if (!card) return;
+      const a = (card.action ?? card.rating ?? "").toLowerCase();
+      if (a === "sell" || a === "short") count++;
+    });
+    return count;
+  }, [scoreMap]);
+
+  const completedCount = allItems.filter((i) => i.status === "completed").length;
+  const runningCount = allItems.filter((i) => i.status === "running").length;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
       {/* ── Header ── */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">History</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Browse past analyses and their results.
+          <h1 className="text-3xl font-bold tracking-tight">Analysis History</h1>
+          <p className="text-sm text-muted-foreground mt-1.5">
+            Browse past analyses and their results
             {allItems.length > 0 && (
               <span className="ml-1.5 text-foreground font-medium">
                 {filtered.length !== allItems.length
@@ -325,21 +350,20 @@ export function HistoryList() {
           </p>
         </div>
 
-        {/* Header action buttons — stack on mobile, row on sm+ */}
-        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:shrink-0">
+        <div className="flex items-center gap-2">
           {allItems.length > 0 && (
             confirmDeleteAll ? (
-              <div className="flex items-center gap-1.5 w-full sm:w-auto">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => deleteAllMutation.mutate()}
                   disabled={deleteAllMutation.isPending}
-                  className="flex-1 sm:flex-none px-3 py-2 text-xs font-medium rounded-lg bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+                  className="px-4 py-2.5 text-sm font-medium rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
                 >
                   {deleteAllMutation.isPending ? "Deleting…" : "Confirm Delete All"}
                 </button>
                 <button
                   onClick={() => setConfirmDeleteAll(false)}
-                  className="flex-1 sm:flex-none px-3 py-2 text-xs font-medium rounded-lg bg-muted text-muted-foreground hover:opacity-90 transition-opacity"
+                  className="px-4 py-2.5 text-sm font-medium rounded-xl bg-secondary hover:bg-secondary/80 transition-colors"
                 >
                   Cancel
                 </button>
@@ -347,20 +371,20 @@ export function HistoryList() {
             ) : (
               <button
                 onClick={() => setConfirmDeleteAll(true)}
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive font-medium text-sm hover:bg-destructive/10 transition-colors"
+                className="p-2.5 rounded-xl border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors"
+                title="Delete All"
               >
-                <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
-                <span className="hidden xs:inline">Delete All</span>
               </button>
             )
           )}
           <Link
             to="/analysis/new"
-            className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 active:scale-[0.98] transition-all shadow-lg shadow-primary/25"
           >
-            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
             New Analysis
@@ -368,13 +392,39 @@ export function HistoryList() {
         </div>
       </div>
 
+      {/* Stats row */}
+      {allItems.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="rounded-2xl border border-border/50 bg-card p-5">
+            <div className="text-2xl font-bold tabular-nums">{allItems.length}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Total</div>
+          </div>
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
+            <div className="text-2xl font-bold tabular-nums text-emerald-500">{completedCount}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Completed</div>
+          </div>
+          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] p-5">
+            <div className="text-2xl font-bold tabular-nums text-blue-500">{runningCount}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Running</div>
+          </div>
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
+            <div className="text-2xl font-bold tabular-nums text-emerald-500">{buyCount}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Buy Signals</div>
+          </div>
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] p-5">
+            <div className="text-2xl font-bold tabular-nums text-red-500">{sellCount}</div>
+            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Sell Signals</div>
+          </div>
+        </div>
+      )}
+
       {/* ── Search + Filters + Sort ── */}
       {allItems.length > 0 && (
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-3">
           {/* Row 1: Search + Sort */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               <input
@@ -382,13 +432,13 @@ export function HistoryList() {
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0); }}
                 placeholder="Search ticker or run ID…"
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-border/50 bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 transition-shadow"
               />
             </div>
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as SortOption)}
-              className="shrink-0 px-2.5 py-2 text-xs rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="shrink-0 px-3 py-2.5 text-xs rounded-xl border border-border/50 bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 [&>option]:bg-background [&>option]:text-foreground"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -396,7 +446,7 @@ export function HistoryList() {
             </select>
           </div>
 
-          {/* Row 2: Status filter pills — scroll horizontally on very small screens */}
+          {/* Row 2: Status filter pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
             {STATUS_FILTERS.map((s) => {
               const active = statusFilter.has(s);
@@ -405,10 +455,10 @@ export function HistoryList() {
                 <button
                   key={s}
                   onClick={() => toggleStatus(s)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap capitalize ${
                     active
                       ? "border-primary bg-primary/10 text-primary"
-                      : "border-border text-muted-foreground hover:border-primary/40"
+                      : "border-border/50 text-muted-foreground hover:border-primary/40"
                   }`}
                 >
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
@@ -424,13 +474,13 @@ export function HistoryList() {
                 Clear
               </button>
             )}
-            <span className="mx-1 w-px h-4 bg-border" />
+            <span className="mx-1 w-px h-4 bg-border/50" />
             <button
               onClick={() => setShowAdvancedFilters((v) => !v)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
                 showAdvancedFilters || activeFilterCount > 0
                   ? "border-primary bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:border-primary/40"
+                  : "border-border/50 text-muted-foreground hover:border-primary/40"
               }`}
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -438,7 +488,7 @@ export function HistoryList() {
               </svg>
               Filters
               {activeFilterCount > 0 && (
-                <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                <span className="w-4 h-4 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center">
                   {activeFilterCount}
                 </span>
               )}
@@ -447,9 +497,9 @@ export function HistoryList() {
 
           {/* Advanced Filters Panel */}
           {showAdvancedFilters && (
-            <div className="rounded-lg border border-border bg-card p-3 space-y-3">
+            <div className="rounded-2xl border border-border/50 bg-card p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Advanced Filters</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Advanced Filters</span>
                 {activeFilterCount > 0 && (
                   <button onClick={clearAllFilters} className="text-xs text-primary hover:underline">
                     Clear all filters
@@ -469,10 +519,10 @@ export function HistoryList() {
                         <button
                           key={s}
                           onClick={() => toggleSignal(s)}
-                          className={`px-2 py-1 text-xs font-medium rounded border transition-colors capitalize ${
+                          className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors capitalize ${
                             active
                               ? "border-primary bg-primary/10 text-primary"
-                              : `border-border ${colors[s]} hover:border-primary/40`
+                              : `border-border/50 ${colors[s]} hover:border-primary/40`
                           }`}
                         >
                           {s}
@@ -488,7 +538,7 @@ export function HistoryList() {
                   <select
                     value={confidenceRange}
                     onChange={(e) => { setConfidenceRange(e.target.value as ConfidenceRange); setPage(0); }}
-                    className="w-full px-2 py-1.5 text-xs rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-border/50 bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 [&>option]:bg-background [&>option]:text-foreground"
                   >
                     {CONFIDENCE_RANGES.map((r) => (
                       <option key={r.value} value={r.value}>{r.label}</option>
@@ -552,43 +602,38 @@ export function HistoryList() {
           ))}
         </div>
       ) : isError ? (
-        <Card className="border-destructive/50">
-          <CardContent className="flex items-center gap-3 py-6">
-            <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
-              <svg className="w-5 h-5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-medium text-destructive">Error loading history</p>
-              <p className="text-sm text-muted-foreground">Could not connect to the API. Is the backend running?</p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-destructive/10 flex items-center justify-center mb-4">
+            <svg className="w-7 h-7 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p className="font-semibold text-destructive mb-1">Error loading history</p>
+          <p className="text-sm text-muted-foreground">Could not connect to the API. Is the backend running?</p>
+        </div>
       ) : allItems.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
-              <svg className="w-7 h-7 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <h3 className="font-semibold mb-1">No analyses yet</h3>
-            <p className="text-sm text-muted-foreground max-w-sm">
-              Start your first analysis to see results here.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl border border-dashed border-border/60 p-16 text-center">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
+            <svg className="w-8 h-8 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold mb-1.5">No analyses yet</h3>
+          <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto">
+            Start your first analysis to see results here.
+          </p>
+          <Link to="/analysis/new" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/25">
+            New Analysis
+          </Link>
+        </div>
       ) : filtered.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-            <p className="text-sm text-muted-foreground">No results match your filters.</p>
-          </CardContent>
-        </Card>
+        <div className="rounded-2xl border border-dashed border-border/60 p-12 text-center">
+          <p className="text-sm text-muted-foreground">No results match your filters.</p>
+        </div>
       ) : (
         <>
           {/* ── Desktop: table layout ── */}
-          <div className="hidden md:block rounded-xl border border-border overflow-hidden">
+          <div className="hidden md:block rounded-2xl border border-border/50 bg-card overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
@@ -620,10 +665,10 @@ export function HistoryList() {
                         </Link>
                       </td>
                       <td className="px-4 py-2.5">
-                        <Badge variant={cfg.variant} className="gap-1 text-[10px] py-0.5 h-auto leading-none">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize">
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
                           {item.status}
-                        </Badge>
+                        </span>
                       </td>
                       <td className="px-4 py-2.5">
                         {item.status === "completed"
@@ -696,8 +741,8 @@ export function HistoryList() {
             {paged.map((item) => {
               const cfg = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.pending;
               return (
-                <Card key={item.run_id} className="group hover:shadow-md hover:border-primary/30 transition-all duration-200">
-                  <CardContent className="py-3 px-3">
+                <div key={item.run_id} className="group rounded-2xl border border-border/40 bg-card hover:bg-card/80 hover:border-border/70 transition-all duration-200 hover:shadow-lg hover:shadow-black/5 overflow-hidden">
+                  <div className="py-3 px-4">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
                         <span className="font-mono font-bold text-xs text-foreground">{item.ticker.slice(0, 4)}</span>
@@ -708,10 +753,10 @@ export function HistoryList() {
                           {item.asset_type === "crypto" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium leading-none">CRYPTO</span>
                           )}
-                          <Badge variant={cfg.variant} className="gap-1 text-[10px] py-0.5 h-auto leading-none">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize">
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
                             {item.status}
-                          </Badge>
+                          </span>
                           {item.status === "completed" && <TradeScoreDisplay card={scoreMap.get(item.run_id)} />}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
@@ -743,8 +788,8 @@ export function HistoryList() {
                         )}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -760,7 +805,7 @@ export function HistoryList() {
                 <select
                   value={pageSize}
                   onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
-                  className="px-2 py-1 rounded border border-border bg-background text-foreground text-xs focus:outline-none"
+                  className="px-2 py-1 rounded-lg border border-border/50 bg-background text-foreground text-xs focus:outline-none [&>option]:bg-background [&>option]:text-foreground"
                 >
                   {PAGE_SIZES.map((s) => (
                     <option key={s} value={s}>{s} / page</option>
