@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 router = APIRouter(tags=["portfolio"])
 
@@ -15,9 +15,15 @@ def _get_service(request: Request):
 
 
 @router.get("/portfolio/dashboard")
-async def get_dashboard(request: Request):
+async def get_dashboard(
+    request: Request,
+    account_type: str = Query(None, description="Filter by account type: demo or live"),
+):
     svc = _get_service(request)
-    return await svc.get_dashboard()
+    cards = await svc.get_dashboard()
+    if account_type:
+        cards = [c for c in cards if c.get("account_type") == account_type]
+    return cards
 
 
 @router.get("/portfolio/summary")

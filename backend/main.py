@@ -108,11 +108,23 @@ def create_app() -> FastAPI:
             app.state.account_ws_manager = account_ws_mgr
             app.state.accounts_service = AccountsService(db=db, ws_manager=account_ws_mgr)
             await account_ws_mgr.start()
+
+            from backend.scheduler import SnapshotScheduler
+            scheduler = SnapshotScheduler(
+                snapshot_fn=app.state.accounts_service.take_all_hf_snapshots,
+                cleanup_fn=app.state.accounts_service.auto_cleanup_old_snapshots,
+            )
+            await scheduler.start()
+            app.state.snapshot_scheduler = scheduler
         else:
             app.state.accounts_service = None
             app.state.account_ws_manager = None
+            app.state.snapshot_scheduler = None
 
         yield
+        if app.state.snapshot_scheduler:
+            await app.state.snapshot_scheduler.shutdown()
+            await asyncio.sleep(0.5)
         if app.state.account_ws_manager:
             await app.state.account_ws_manager.shutdown()
         if app.state.accounts_service:
@@ -147,8 +159,10 @@ def create_app() -> FastAPI:
     from backend.routers.accounts import router as accounts_router
     from backend.routers.portfolio import router as portfolio_router
     from backend.routers.ws_accounts import router as ws_accounts_router
+    from backend.routers.analytics import router as analytics_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
+    app.include_router(analytics_router, prefix="/api/v1")
     app.include_router(config_router, prefix="/api/v1")
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(checkpoints_router, prefix="/api/v1")

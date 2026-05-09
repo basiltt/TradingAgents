@@ -66,12 +66,12 @@ async function requestText(
   return res.text();
 }
 
-function mutate<T>(method: string, path: string, body?: unknown): Promise<T> {
+function mutate<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   return request<T>(path, {
     method,
     headers: { ...DEFAULT_HEADERS, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }, signal);
 }
 
 export interface HealthResponse {
@@ -362,6 +362,7 @@ export interface TradingAccount {
   account_type: "demo" | "live";
   api_key_masked: string;
   is_active: boolean;
+  include_in_analytics: boolean;
   bybit_uid?: string;
   last_connected_at?: string;
   last_error?: string;
@@ -427,6 +428,7 @@ export interface DashboardCard {
   label: string;
   account_type: "demo" | "live";
   is_active: boolean;
+  include_in_analytics: boolean;
   total_equity?: string;
   total_perp_upl?: string;
   today_pnl?: string;
@@ -436,9 +438,57 @@ export interface DashboardCard {
   status: "active" | "stale" | "error" | "disabled";
 }
 
+export interface DailySnapshot {
+  id?: number;
+  account_id?: string;
+  snapshot_date: string;
+  equity: number;
+  wallet_balance: number;
+  available_balance: number;
+  unrealised_pnl: number;
+  realised_pnl: number;
+  positions_count: number;
+  margin_used: number;
+  cumulative_pnl: number;
+  daily_return_pct: number;
+  peak_equity: number;
+  drawdown_pct: number;
+}
+
+export interface PerformanceAnalytics {
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  sortino_ratio: number;
+  calmar_ratio: number;
+  profit_factor: number;
+  win_rate: number;
+  win_count: number;
+  loss_count: number;
+  avg_win: string;
+  avg_loss: string;
+  expectancy: number;
+  avg_daily_return_pct: number;
+  best_day_pct: number;
+  best_day_date: string;
+  worst_day_pct: number;
+  worst_day_date: string;
+  max_consecutive_wins: number;
+  max_consecutive_losses: number;
+  drawdown_duration_days: number;
+  recovery_time_days: number;
+  total_trades: number;
+  total_pnl: string;
+  snapshot_count: number;
+}
+
 export const accountsApi = {
-  list: (signal?: AbortSignal) =>
-    request<TradingAccount[]>("/api/v1/accounts", undefined, signal),
+  list: (params?: { account_type?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.account_type) sp.set("account_type", params.account_type);
+    const qs = sp.toString();
+    return request<TradingAccount[]>(`/api/v1/accounts${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
 
   create: (data: { label: string; account_type: string; api_key: string; api_secret: string }) =>
     mutate<TradingAccount>("POST", "/api/v1/accounts", data),
@@ -479,11 +529,103 @@ export const accountsApi = {
       undefined, signal,
     ),
 
-  getDashboard: (signal?: AbortSignal) =>
-    request<DashboardCard[]>("/api/v1/portfolio/dashboard", undefined, signal),
+  getDashboard: (params?: { account_type?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.account_type) sp.set("account_type", params.account_type);
+    const qs = sp.toString();
+    return request<DashboardCard[]>(`/api/v1/portfolio/dashboard${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
 
   getPortfolioSummary: (signal?: AbortSignal) =>
     request<{ total_equity: string; total_unrealised_pnl: string; active_accounts: number; total_accounts: number }>(
       "/api/v1/portfolio/summary", undefined, signal,
     ),
+
+  // Analytics & Snapshots
+  takeSnapshot: (id: string) =>
+    mutate<Record<string, unknown>>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/snapshots`),
+
+  takeAllSnapshots: () =>
+    mutate<{ snapshots: Record<string, unknown>[]; count: number }>("POST", "/api/v1/snapshots/all"),
+
+  getSnapshots: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.start_date) sp.set("start_date", params.start_date);
+    if (params?.end_date) sp.set("end_date", params.end_date);
+    if (params?.period) sp.set("period", params.period);
+    const qs = sp.toString();
+    return request<DailySnapshot[]>(
+      `/api/v1/accounts/${encodeURIComponent(id)}/snapshots${qs ? `?${qs}` : ""}`,
+      undefined, signal,
+    );
+  },
+
+  getAnalytics: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.start_date) sp.set("start_date", params.start_date);
+    if (params?.end_date) sp.set("end_date", params.end_date);
+    if (params?.period) sp.set("period", params.period);
+    const qs = sp.toString();
+    return request<PerformanceAnalytics>(
+      `/api/v1/accounts/${encodeURIComponent(id)}/analytics${qs ? `?${qs}` : ""}`,
+      undefined, signal,
+    );
+  },
+
+  getPortfolioSnapshots: (params?: { start_date?: string; end_date?: string; period?: string; account_type?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.start_date) sp.set("start_date", params.start_date);
+    if (params?.end_date) sp.set("end_date", params.end_date);
+    if (params?.period) sp.set("period", params.period);
+    if (params?.account_type) sp.set("account_type", params.account_type);
+    const qs = sp.toString();
+    return request<DailySnapshot[]>(
+      `/api/v1/portfolio/snapshots${qs ? `?${qs}` : ""}`,
+      undefined, signal,
+    );
+  },
+
+  getPortfolioAnalytics: (params?: { start_date?: string; end_date?: string; period?: string; account_type?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.start_date) sp.set("start_date", params.start_date);
+    if (params?.end_date) sp.set("end_date", params.end_date);
+    if (params?.period) sp.set("period", params.period);
+    if (params?.account_type) sp.set("account_type", params.account_type);
+    const qs = sp.toString();
+    return request<PerformanceAnalytics>(
+      `/api/v1/portfolio/analytics${qs ? `?${qs}` : ""}`,
+      undefined, signal,
+    );
+  },
+
+  setAnalyticsInclusion: (id: string, include: boolean) =>
+    mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}/analytics-inclusion`, { include }),
+
+  countSnapshots: (id: string | null, params?: { preset?: string; before?: string; after?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.preset) sp.set("preset", params.preset);
+    if (params?.before) sp.set("before", params.before);
+    if (params?.after) sp.set("after", params.after);
+    const qs = sp.toString();
+    const path = id
+      ? `/api/v1/accounts/${encodeURIComponent(id)}/snapshots/count`
+      : `/api/v1/portfolio/snapshots/count`;
+    return request<{ counts: Record<string, number>; total: number }>(
+      `${path}${qs ? `?${qs}` : ""}`, undefined, signal,
+    );
+  },
+
+  cleanupSnapshots: (id: string | null, params?: { preset?: string; before?: string; after?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.preset) sp.set("preset", params.preset);
+    if (params?.before) sp.set("before", params.before);
+    if (params?.after) sp.set("after", params.after);
+    const qs = sp.toString();
+    const path = id
+      ? `/api/v1/accounts/${encodeURIComponent(id)}/snapshots/cleanup`
+      : `/api/v1/portfolio/snapshots/cleanup`;
+    return mutate<{ deleted: Record<string, number>; total: number }>(
+      "DELETE", `${path}${qs ? `?${qs}` : ""}`, undefined, signal,
+    );
+  },
 };

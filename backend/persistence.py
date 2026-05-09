@@ -113,6 +113,44 @@ CREATE TABLE IF NOT EXISTS closed_pnl_records (
 );
 CREATE INDEX IF NOT EXISTS idx_closed_pnl_account_time ON closed_pnl_records(account_id, created_time DESC)
 """),
+    (9, """
+CREATE TABLE IF NOT EXISTS daily_snapshots (
+    id SERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    snapshot_date DATE NOT NULL,
+    equity REAL NOT NULL DEFAULT 0,
+    wallet_balance REAL NOT NULL DEFAULT 0,
+    available_balance REAL NOT NULL DEFAULT 0,
+    unrealised_pnl REAL NOT NULL DEFAULT 0,
+    realised_pnl REAL NOT NULL DEFAULT 0,
+    positions_count INTEGER NOT NULL DEFAULT 0,
+    margin_used REAL NOT NULL DEFAULT 0,
+    cumulative_pnl REAL NOT NULL DEFAULT 0,
+    daily_return_pct REAL NOT NULL DEFAULT 0,
+    peak_equity REAL NOT NULL DEFAULT 0,
+    drawdown_pct REAL NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(account_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_account_date ON daily_snapshots(account_id, snapshot_date DESC)
+"""),
+    (10, """
+ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS include_in_analytics BOOLEAN NOT NULL DEFAULT TRUE;
+
+CREATE TABLE IF NOT EXISTS high_freq_snapshots (
+    id SERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    equity REAL NOT NULL,
+    unrealised_pnl REAL NOT NULL,
+    realised_pnl REAL NOT NULL,
+    balance REAL NOT NULL,
+    position_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_hf_snapshots_account_ts ON high_freq_snapshots(account_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_hf_snapshots_ts ON high_freq_snapshots(ts)
+"""),
 ]
 
 
@@ -750,7 +788,8 @@ class AnalysisDB:
             try:
                 cur.execute(
                     "SELECT id, label, account_type, api_key_masked, is_active, "
-                    "bybit_uid, last_connected_at, last_error, created_at, updated_at "
+                    "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
+                    "include_in_analytics "
                     "FROM trading_accounts WHERE deleted_at IS NULL "
                     "ORDER BY created_at DESC"
                 )
@@ -766,7 +805,8 @@ class AnalysisDB:
             try:
                 cur.execute(
                     "SELECT id, label, account_type, api_key_masked, is_active, "
-                    "bybit_uid, last_connected_at, last_error, created_at, updated_at "
+                    "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
+                    "include_in_analytics "
                     "FROM trading_accounts WHERE id=%s AND deleted_at IS NULL",
                     (account_id,),
                 )
@@ -792,7 +832,7 @@ class AnalysisDB:
         return dict(row) if row else None
 
     def update_account(self, account_id: str, **fields: Any) -> bool:
-        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error"}
+        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics"}
         nullable = {"last_error"}
         updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
         if not updates:
@@ -877,11 +917,11 @@ class AnalysisDB:
                                 rec["orderId"],
                             ),
                         )
-                        inserted += 1
+                        inserted += cur.rowcount
                     except (KeyError, TypeError, ValueError) as e:
                         logger.warning("Skipping closed PnL record: %s — %s", type(e).__name__, e)
                     except Exception:
-                        pass
+                        logger.debug("Duplicate or DB error inserting PnL record", exc_info=True)
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -938,17 +978,68 @@ class AnalysisDB:
             }
 
         wins = [r[0] for r in rows if r[0] > 0]
-        losses = [r[0] for r in rows if r[0] <= 0]
+        losses = [r[0] for r in rows if r[0] < 0]
         total_pnl = sum(r[0] for r in rows)
         total_count = len(rows)
         win_count = len(wins)
         loss_count = len(losses)
         win_rate = (win_count / total_count * 100) if total_count > 0 else 0.0
         avg_win = str(sum(wins) / win_count) if wins else "0"
-        avg_loss = str(sum(losses) / loss_count) if losses else "0"
+        avg_loss = str(abs(sum(losses) / loss_count)) if losses else "0"
 
         return {
             "total_pnl": str(total_pnl),
+            "total_count": total_count,
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "win_rate": round(win_rate, 2),
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+        }
+
+    def get_portfolio_pnl_summary(
+        self, start_time: int, end_time: int,
+        account_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                sql = (
+                    "SELECT cpr.closed_pnl FROM closed_pnl_records cpr "
+                    "JOIN trading_accounts ta ON ta.id = cpr.account_id "
+                    "WHERE ta.deleted_at IS NULL AND ta.is_active = 1 "
+                    "AND ta.include_in_analytics = TRUE "
+                    "AND cpr.created_time>=%s AND cpr.created_time<=%s"
+                )
+                params: list = [start_time, end_time]
+                if account_type:
+                    sql += " AND ta.account_type = %s"
+                    params.append(account_type)
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+
+        if not rows:
+            return {
+                "total_pnl": "0", "win_count": 0, "loss_count": 0,
+                "win_rate": 0.0, "avg_win": "0", "avg_loss": "0",
+            }
+
+        wins = [r[0] for r in rows if r[0] > 0]
+        losses = [r[0] for r in rows if r[0] < 0]
+        total_pnl = sum(r[0] for r in rows)
+        total_count = len(rows)
+        win_count = len(wins)
+        loss_count = len(losses)
+        win_rate = (win_count / total_count * 100) if total_count > 0 else 0.0
+        avg_win = str(sum(wins) / win_count) if wins else "0"
+        avg_loss = str(abs(sum(losses) / loss_count)) if losses else "0"
+
+        return {
+            "total_pnl": str(total_pnl),
+            "total_count": total_count,
             "win_count": win_count,
             "loss_count": loss_count,
             "win_rate": round(win_rate, 2),
@@ -969,3 +1060,245 @@ class AnalysisDB:
                 conn.rollback()
                 raise
         return row[0] if row and row[0] else None
+
+    # ── Daily Snapshots ────────────────────────────────────────────────
+
+    def upsert_daily_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "INSERT INTO daily_snapshots "
+                    "(account_id, snapshot_date, equity, wallet_balance, available_balance, "
+                    "unrealised_pnl, realised_pnl, positions_count, margin_used, "
+                    "cumulative_pnl, daily_return_pct, peak_equity, drawdown_pct) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (account_id, snapshot_date) DO UPDATE SET "
+                    "equity = EXCLUDED.equity, wallet_balance = EXCLUDED.wallet_balance, "
+                    "available_balance = EXCLUDED.available_balance, "
+                    "unrealised_pnl = EXCLUDED.unrealised_pnl, "
+                    "realised_pnl = EXCLUDED.realised_pnl, "
+                    "positions_count = EXCLUDED.positions_count, "
+                    "margin_used = EXCLUDED.margin_used, "
+                    "cumulative_pnl = EXCLUDED.cumulative_pnl, "
+                    "daily_return_pct = EXCLUDED.daily_return_pct, "
+                    "peak_equity = EXCLUDED.peak_equity, "
+                    "drawdown_pct = EXCLUDED.drawdown_pct, "
+                    "updated_at = now()",
+                    (
+                        snapshot["account_id"],
+                        snapshot["snapshot_date"],
+                        snapshot.get("equity", 0),
+                        snapshot.get("wallet_balance", 0),
+                        snapshot.get("available_balance", 0),
+                        snapshot.get("unrealised_pnl", 0),
+                        snapshot.get("realised_pnl", 0),
+                        snapshot.get("positions_count", 0),
+                        snapshot.get("margin_used", 0),
+                        snapshot.get("cumulative_pnl", 0),
+                        snapshot.get("daily_return_pct", 0),
+                        snapshot.get("peak_equity", 0),
+                        snapshot.get("drawdown_pct", 0),
+                    ),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def get_daily_snapshots(
+        self, account_id: str, start_date: str, end_date: str,
+    ) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM daily_snapshots "
+                    "WHERE account_id=%s AND snapshot_date>=%s AND snapshot_date<=%s "
+                    "ORDER BY snapshot_date ASC",
+                    (account_id, start_date, end_date),
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return [dict(r) for r in rows]
+
+    def get_all_account_snapshots(
+        self, start_date: str, end_date: str, account_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                sql = (
+                    "SELECT ds.* FROM daily_snapshots ds "
+                    "JOIN trading_accounts ta ON ta.id = ds.account_id "
+                    "WHERE ta.deleted_at IS NULL AND ta.is_active = 1 "
+                    "AND ta.include_in_analytics = TRUE "
+                    "AND ds.snapshot_date>=%s AND ds.snapshot_date<=%s "
+                )
+                params: list = [start_date, end_date]
+                if account_type:
+                    sql += "AND ta.account_type = %s "
+                    params.append(account_type)
+                sql += "ORDER BY ds.snapshot_date ASC"
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return [dict(r) for r in rows]
+
+    def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM daily_snapshots "
+                    "WHERE account_id=%s ORDER BY snapshot_date DESC LIMIT 1",
+                    (account_id,),
+                )
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                raise
+        return dict(row) if row else None
+
+    def get_previous_snapshot(self, account_id: str, before_date: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM daily_snapshots "
+                    "WHERE account_id=%s AND snapshot_date < %s "
+                    "ORDER BY snapshot_date DESC LIMIT 1",
+                    (account_id, before_date),
+                )
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                raise
+        return dict(row) if row else None
+
+    # ── High-Frequency Snapshots ──────────────────────────────────────
+
+    def insert_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> int:
+        if not snapshots:
+            return 0
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                args = [
+                    (s["account_id"], s["equity"], s["unrealised_pnl"],
+                     s["realised_pnl"], s["balance"], s.get("position_count", 0))
+                    for s in snapshots
+                ]
+                psycopg2.extras.execute_batch(
+                    cur,
+                    "INSERT INTO high_freq_snapshots "
+                    "(account_id, equity, unrealised_pnl, realised_pnl, balance, position_count) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    args,
+                )
+                conn.commit()
+                return len(args)
+            except Exception:
+                conn.rollback()
+                raise
+
+    _VALID_SNAPSHOT_TABLES = {"daily_snapshots", "high_freq_snapshots"}
+
+    def cleanup_snapshots(
+        self,
+        account_id: Optional[str],
+        before_ts: Optional[str] = None,
+        after_ts: Optional[str] = None,
+        table: str = "daily_snapshots",
+    ) -> int:
+        if table not in self._VALID_SNAPSHOT_TABLES:
+            raise ValueError(f"Invalid table: {table}")
+        is_hf = table == "high_freq_snapshots"
+        conditions: list[str] = []
+        params: list = []
+        if account_id:
+            conditions.append("account_id = %s")
+            params.append(account_id)
+        if before_ts:
+            if is_hf:
+                conditions.append("ts < (%s::date + INTERVAL '1 day')")
+            else:
+                conditions.append("snapshot_date <= %s")
+            params.append(before_ts)
+        if after_ts:
+            if is_hf:
+                conditions.append("ts >= %s::date")
+            else:
+                conditions.append("snapshot_date >= %s")
+            params.append(after_ts)
+        if not conditions:
+            conditions.append("TRUE")
+        where = " AND ".join(conditions)
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(f"DELETE FROM {table} WHERE {where}", params)
+                count = cur.rowcount
+                conn.commit()
+                return count
+            except Exception:
+                conn.rollback()
+                raise
+
+    def cleanup_old_hf_snapshots(self, max_age_days: int = 1095) -> int:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "DELETE FROM high_freq_snapshots WHERE ts < NOW() - %s * INTERVAL '1 day'",
+                    (max_age_days,),
+                )
+                count = cur.rowcount
+                conn.commit()
+                return count
+            except Exception:
+                conn.rollback()
+                raise
+
+    def count_snapshots(
+        self,
+        account_id: Optional[str],
+        before_ts: Optional[str] = None,
+        after_ts: Optional[str] = None,
+        table: str = "daily_snapshots",
+    ) -> int:
+        if table not in self._VALID_SNAPSHOT_TABLES:
+            raise ValueError(f"Invalid table: {table}")
+        is_hf = table == "high_freq_snapshots"
+        conditions: list[str] = []
+        params: list = []
+        if account_id:
+            conditions.append("account_id = %s")
+            params.append(account_id)
+        if before_ts:
+            if is_hf:
+                conditions.append("ts < (%s::date + INTERVAL '1 day')")
+            else:
+                conditions.append("snapshot_date <= %s")
+            params.append(before_ts)
+        if after_ts:
+            if is_hf:
+                conditions.append("ts >= %s::date")
+            else:
+                conditions.append("snapshot_date >= %s")
+            params.append(after_ts)
+        if not conditions:
+            conditions.append("TRUE")
+        where = " AND ".join(conditions)
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", params)
+                return cur.fetchone()[0]
+            except Exception:
+                conn.rollback()
+                raise

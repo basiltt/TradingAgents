@@ -18,7 +18,7 @@ export function useAccountPolling() {
     controllerRef.current?.abort();
     controllerRef.current = new AbortController();
     try {
-      const cards = await accountsApi.getDashboard(controllerRef.current.signal);
+      const cards = await accountsApi.getDashboard(undefined, controllerRef.current.signal);
       dispatch(setDashboard(cards));
     } catch {
       // silent — dashboard still shows last data
@@ -39,6 +39,7 @@ export function useAccountPolling() {
   useEffect(() => {
     if (pollingIntervalMs <= 0) return;
 
+    poll();
     intervalRef.current = setInterval(poll, pollingIntervalMs);
 
     const onVisibilityChange = () => {

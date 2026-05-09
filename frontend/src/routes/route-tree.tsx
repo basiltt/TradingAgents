@@ -16,6 +16,7 @@ import { ScanHistoryPage } from "@/components/scanner/ScanHistoryPage";
 import { ScanDetailPage } from "@/components/scanner/ScanDetailPage";
 import { AccountsDashboard } from "@/components/accounts/AccountsDashboard";
 import { AccountDetailView } from "@/components/accounts/AccountDetailView";
+import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -72,6 +73,11 @@ function AccountDetailPage() {
   const { accountId } = useParams({ from: "/accounts/$accountId" });
   return <AccountDetailView accountId={accountId} />;
 }
+
+function PerformancePage() {
+  return <AnalyticsDashboard />;
+}
+
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -139,6 +145,13 @@ const accountDetailRoute = createRoute({
   component: AccountDetailPage,
 });
 
+const performanceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/analytics",
+  component: PerformancePage,
+});
+
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   analysisNewRoute,
@@ -151,6 +164,7 @@ export const routeTree = rootRoute.addChildren([
   scannerRoute,
   accountsRoute,
   accountDetailRoute,
+  performanceRoute,
 ]);
 
 export function createAppRouter() {

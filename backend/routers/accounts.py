@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid as _uuid
 from datetime import date
 from typing import Optional
@@ -50,16 +51,24 @@ async def create_account(request: Request):
 
 
 @router.get("/accounts")
-async def list_accounts(request: Request):
+async def list_accounts(
+    request: Request,
+    account_type: Optional[str] = Query(None, description="Filter by account type: demo or live"),
+):
     svc = _get_service(request)
-    return svc.list_accounts()
+    accounts = await asyncio.to_thread(svc.list_accounts)
+    if account_type:
+        if account_type not in ("demo", "live"):
+            return JSONResponse({"detail": "account_type must be 'demo' or 'live'", "code": "VALIDATION_ERROR"}, 422)
+        accounts = [a for a in accounts if a["account_type"] == account_type]
+    return accounts
 
 
 @router.get("/accounts/{account_id}")
 async def get_account(request: Request, account_id: str):
     _validate_account_id(account_id)
     svc = _get_service(request)
-    account = svc.get_account(account_id)
+    account = await asyncio.to_thread(svc.get_account, account_id)
     if not account:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return account
@@ -75,7 +84,7 @@ async def update_account(request: Request, account_id: str):
         return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
-    account = svc.update_account(account_id, label=req.label, is_active=req.is_active)
+    account = await asyncio.to_thread(svc.update_account, account_id, label=req.label, is_active=req.is_active)
     if not account:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return account
@@ -106,10 +115,24 @@ async def rotate_credentials(request: Request, account_id: str):
 async def delete_account(request: Request, account_id: str):
     _validate_account_id(account_id)
     svc = _get_service(request)
-    deleted = svc.delete_account(account_id)
+    deleted = await asyncio.to_thread(svc.delete_account, account_id)
     if not deleted:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return {"status": "deleted"}
+
+
+@router.patch("/accounts/{account_id}/analytics-inclusion")
+async def toggle_analytics_inclusion(request: Request, account_id: str):
+    _validate_account_id(account_id)
+    body = await request.json()
+    include = body.get("include")
+    if not isinstance(include, bool):
+        return JSONResponse({"detail": "include must be a boolean", "code": "VALIDATION_ERROR"}, 422)
+    svc = _get_service(request)
+    result = await asyncio.to_thread(svc.set_analytics_inclusion, account_id, include)
+    if not result:
+        return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
+    return result
 
 
 @router.post("/accounts/{account_id}/test")

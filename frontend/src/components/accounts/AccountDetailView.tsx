@@ -7,6 +7,7 @@ import { WalletPanel } from "./WalletPanel";
 import { PositionsTable } from "./PositionsTable";
 import { OrdersTable } from "./OrdersTable";
 import { PnLPanel } from "./PnLPanel";
+import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 import { useAppDispatch } from "@/store";
 import { removeAccount } from "@/store/accounts-slice";
 
@@ -135,6 +136,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
           <TabsTrigger value="positions">Positions ({positions.length})</TabsTrigger>
           <TabsTrigger value="orders">Orders ({orders.length})</TabsTrigger>
           <TabsTrigger value="pnl">PnL</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="wallet">
@@ -151,6 +153,10 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
 
         <TabsContent value="pnl">
           <PnLPanel pnlSummary={pnlSummary} accountId={accountId} />
+        </TabsContent>
+
+        <TabsContent value="analytics">
+          <AnalyticsDashboard accountId={accountId} embedded />
         </TabsContent>
       </Tabs>
     </div>
