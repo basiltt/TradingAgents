@@ -194,18 +194,19 @@ export function ScanHistoryPage() {
               >
                 {/* Header */}
                 <div className="flex items-center justify-between px-5 pt-5 pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <StatusDot status={scan.status} />
-                    <span className="text-sm font-semibold capitalize">{scan.status}</span>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <h3 className="font-semibold text-sm truncate">Scan</h3>
                     {dur && (
-                      <span className="text-[11px] text-muted-foreground/50 font-mono">{dur}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium border border-muted-foreground/20 text-muted-foreground bg-muted-foreground/[0.06]">{dur}</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <StatusDot status={scan.status} />
+                    <span className="text-[11px] font-medium capitalize text-muted-foreground">{scan.status}</span>
                     {scan.status !== "running" && (
                       <button
                         onClick={(e) => handleDeleteClick(e, scan.scan_id)}
-                        className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-red-500 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1.5 rounded-lg text-muted-foreground/30 hover:text-red-500 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100 ml-1"
                         title="Delete scan"
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -222,10 +223,8 @@ export function ScanHistoryPage() {
                     <span className="text-2xl font-bold tabular-nums tracking-tight">{total}</span>
                     <span className="text-sm text-muted-foreground/50">results</span>
                   </div>
-                  <span className="text-[11px] text-muted-foreground/60">
-                    {scan.completed + scan.failed}
-                    <span className="text-muted-foreground/40">/{scan.total}</span>
-                    {" symbols scanned"}
+                  <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-medium">
+                    {scan.completed + scan.failed}/{scan.total} symbols scanned
                   </span>
                 </div>
 
@@ -240,20 +239,22 @@ export function ScanHistoryPage() {
                 )}
 
                 {/* Signal metrics */}
-                <div className="grid grid-cols-2 border-t border-border/30 divide-x divide-border/30">
+                <div className="grid grid-cols-3 border-t border-border/30 divide-x divide-border/30">
                   <div className="px-4 py-3">
-                    <div className="text-sm font-semibold tabular-nums text-emerald-500 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <div className={`text-sm font-semibold tabular-nums ${buy > 0 ? "text-emerald-500" : "text-muted-foreground"}`}>
                       {buy}
                     </div>
-                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Buy Signals</div>
+                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Buy</div>
                   </div>
                   <div className="px-4 py-3">
-                    <div className="text-sm font-semibold tabular-nums text-red-500 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                    <div className={`text-sm font-semibold tabular-nums ${sell > 0 ? "text-red-500" : "text-muted-foreground"}`}>
                       {sell}
                     </div>
-                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Sell Signals</div>
+                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Sell</div>
+                  </div>
+                  <div className="px-4 py-3">
+                    <div className="text-sm font-semibold tabular-nums">{total - buy - sell}</div>
+                    <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-0.5">Hold</div>
                   </div>
                 </div>
 
