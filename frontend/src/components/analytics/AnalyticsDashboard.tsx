@@ -12,6 +12,7 @@ import { CleanupDialog } from "./CleanupDialog";
 const PERIODS = ["1m", "5m", "15m", "30m", "1H", "2H", "6H", "12H", "1D", "3D", "1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 type Period = (typeof PERIODS)[number];
 type AccountType = "live" | "demo";
+const SUB_DAY_PERIODS = new Set(["1m", "5m", "15m", "30m", "1H", "2H", "6H", "12H"]);
 
 const STORAGE_KEY = "analytics-filters";
 
@@ -104,6 +105,20 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
     fetchData(controller.signal);
     return () => controller.abort();
   }, [fetchData]);
+
+  useEffect(() => {
+    if (!SUB_DAY_PERIODS.has(period)) return;
+    let pollController: AbortController | null = null;
+    const interval = setInterval(() => {
+      pollController?.abort();
+      pollController = new AbortController();
+      fetchDataRef.current(pollController.signal);
+    }, 65_000);
+    return () => {
+      clearInterval(interval);
+      pollController?.abort();
+    };
+  }, [period]);
 
   useEffect(() => {
     if (!accountId) saveFilters({ accountType, period, selectedAccount });
@@ -317,6 +332,27 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         </div>
       ) : !error ? (
         <>
+          {snapshots.length > 0 && (() => {
+            const latest = snapshots[snapshots.length - 1];
+            const fmt = (v: number) => v < 0 ? `-$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const items = [
+              { label: "Balance", value: latest.wallet_balance, color: "" },
+              { label: "Equity", value: latest.equity, color: "" },
+              { label: "Unrealized P&L", value: latest.unrealised_pnl, color: latest.unrealised_pnl >= 0 ? "text-emerald-400" : "text-red-400" },
+              { label: "Realized P&L", value: latest.realised_pnl, color: latest.realised_pnl >= 0 ? "text-emerald-400" : "text-red-400" },
+            ];
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {items.map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-border/50 bg-card p-4">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{item.label}</p>
+                    <p className={`text-xl font-bold tabular-nums ${item.color || "text-foreground"}`}>{fmt(item.value)}</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {analytics && <KpiCards analytics={analytics} />}
 
           <div className="rounded-2xl border border-border/50 bg-card p-5">

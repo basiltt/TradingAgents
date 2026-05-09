@@ -7,6 +7,7 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 
 import psycopg2
@@ -150,6 +151,10 @@ CREATE TABLE IF NOT EXISTS high_freq_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_hf_snapshots_account_ts ON high_freq_snapshots(account_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_hf_snapshots_ts ON high_freq_snapshots(ts)
+"""),
+    (11, """
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 """),
 ]
 
@@ -837,7 +842,6 @@ class AnalysisDB:
         updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
         if not updates:
             return False
-        from datetime import datetime, timezone
         updates["updated_at"] = fields.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         set_clause = ", ".join(f"{k}=%s" for k in updates)
         with self._get_conn() as conn:
@@ -1182,22 +1186,66 @@ class AnalysisDB:
 
     # ── High-Frequency Snapshots ──────────────────────────────────────
 
+    def get_hf_snapshots(
+        self, account_id: str, since_ts: str,
+    ) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM high_freq_snapshots "
+                    "WHERE account_id=%s AND ts >= %s "
+                    "ORDER BY ts ASC",
+                    (account_id, since_ts),
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return [dict(r) for r in rows]
+
+    def get_all_hf_snapshots(
+        self, since_ts: str, account_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                sql = (
+                    "SELECT hf.* FROM high_freq_snapshots hf "
+                    "JOIN trading_accounts ta ON ta.id = hf.account_id "
+                    "WHERE ta.deleted_at IS NULL AND ta.is_active = 1 "
+                    "AND ta.include_in_analytics = TRUE "
+                    "AND hf.ts >= %s "
+                )
+                params: list = [since_ts]
+                if account_type:
+                    sql += "AND ta.account_type = %s "
+                    params.append(account_type)
+                sql += "ORDER BY hf.ts ASC"
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return [dict(r) for r in rows]
+
     def insert_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> int:
         if not snapshots:
             return 0
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
+                batch_ts = datetime.now(timezone.utc)
                 args = [
-                    (s["account_id"], s["equity"], s["unrealised_pnl"],
+                    (s["account_id"], batch_ts, s["equity"], s["unrealised_pnl"],
                      s["realised_pnl"], s["balance"], s.get("position_count", 0))
                     for s in snapshots
                 ]
                 psycopg2.extras.execute_batch(
                     cur,
                     "INSERT INTO high_freq_snapshots "
-                    "(account_id, equity, unrealised_pnl, realised_pnl, balance, position_count) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    "(account_id, ts, equity, unrealised_pnl, realised_pnl, balance, position_count) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                     args,
                 )
                 conn.commit()

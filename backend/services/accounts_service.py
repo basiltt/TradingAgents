@@ -468,6 +468,81 @@ class AccountsService:
             prev_equity = r["equity"]
         return result
 
+    # ── High-Frequency Snapshot Queries ─────────────────────────────────
+
+    @staticmethod
+    def _hf_to_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
+        ts = row["ts"]
+        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else str(ts)
+        return {
+            "snapshot_date": ts_str,
+            "equity": row["equity"],
+            "wallet_balance": row.get("balance", 0),
+            "available_balance": 0,
+            "unrealised_pnl": row.get("unrealised_pnl", 0),
+            "realised_pnl": row.get("realised_pnl", 0),
+            "positions_count": row.get("position_count", 0),
+            "margin_used": 0,
+            "cumulative_pnl": 0,
+            "daily_return_pct": 0,
+            "peak_equity": row["equity"],
+            "drawdown_pct": 0,
+        }
+
+    def _enrich_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not snapshots:
+            return []
+        running_peak = snapshots[0]["equity"]
+        prev_equity = 0.0
+        for i, s in enumerate(snapshots):
+            running_peak = max(running_peak, s["equity"])
+            s["peak_equity"] = running_peak
+            if running_peak > 0:
+                s["drawdown_pct"] = round((running_peak - s["equity"]) / running_peak * 100, 4)
+            if i > 0 and prev_equity > 0:
+                s["daily_return_pct"] = round((s["equity"] - prev_equity) / prev_equity * 100, 4)
+            prev_equity = s["equity"]
+        return snapshots
+
+    def get_hf_snapshots(self, account_id: str, since_ts: str) -> List[Dict[str, Any]]:
+        rows = self._db.get_hf_snapshots(account_id, since_ts)
+        snapshots = [self._hf_to_snapshot(r) for r in rows]
+        return self._enrich_hf_snapshots(snapshots)
+
+    def get_portfolio_hf_snapshots(
+        self, since_ts: str, account_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        rows = self._db.get_all_hf_snapshots(since_ts, account_type=account_type)
+        by_ts: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            ts = r["ts"]
+            ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else str(ts)
+            if ts_str not in by_ts:
+                by_ts[ts_str] = {
+                    "snapshot_date": ts_str, "equity": 0, "wallet_balance": 0,
+                    "available_balance": 0, "unrealised_pnl": 0, "realised_pnl": 0,
+                    "positions_count": 0, "margin_used": 0, "cumulative_pnl": 0,
+                    "daily_return_pct": 0, "peak_equity": 0, "drawdown_pct": 0,
+                }
+            agg = by_ts[ts_str]
+            agg["equity"] += r["equity"]
+            agg["wallet_balance"] += r.get("balance", 0)
+            agg["unrealised_pnl"] += r.get("unrealised_pnl", 0)
+            agg["realised_pnl"] += r.get("realised_pnl", 0)
+            agg["positions_count"] += r.get("position_count", 0)
+        result = sorted(by_ts.values(), key=lambda x: x["snapshot_date"])
+        return self._enrich_hf_snapshots(result)
+
+    def compute_hf_analytics(self, account_id: str, since_ts: str) -> Dict[str, Any]:
+        snapshots = self.get_hf_snapshots(account_id, since_ts)
+        return self._compute_analytics_from_snapshots(snapshots, account_id)
+
+    def compute_portfolio_hf_analytics(
+        self, since_ts: str, account_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        snapshots = self.get_portfolio_hf_snapshots(since_ts, account_type=account_type)
+        return self._compute_analytics_from_snapshots(snapshots, None)
+
     # ── Performance Analytics ──────────────────────────────────────────
 
     def compute_analytics(
@@ -631,6 +706,63 @@ class AccountsService:
             "total_trades": total_trades,
             "total_pnl": pnl_summary.get("total_pnl", "0"),
             "snapshot_count": len(portfolio_snaps),
+        }
+
+    def _compute_analytics_from_snapshots(
+        self, snapshots: List[Dict[str, Any]], account_id: Optional[str],
+    ) -> Dict[str, Any]:
+        if not snapshots:
+            return self._empty_analytics()
+
+        equities = [s["equity"] for s in snapshots]
+        returns = []
+        for i in range(1, len(equities)):
+            if equities[i - 1] > 0:
+                returns.append((equities[i] - equities[i - 1]) / equities[i - 1] * 100)
+            else:
+                returns.append(0)
+
+        drawdowns = [s.get("drawdown_pct", 0) for s in snapshots]
+        total_return = ((equities[-1] - equities[0]) / equities[0] * 100) if equities[0] > 0 else 0
+        max_drawdown = max(drawdowns) if drawdowns else 0
+        avg_return = sum(returns) / len(returns) if returns else 0
+
+        dd_duration, recovery_time = self._calc_drawdown_duration(snapshots)
+        max_consecutive_losses = self._max_consecutive(returns, negative=True)
+        max_consecutive_wins = self._max_consecutive(returns, negative=False)
+
+        best = max(returns) if returns else 0
+        worst = min(returns) if returns else 0
+        best_idx = returns.index(best) if returns else 0
+        worst_idx = returns.index(worst) if returns else 0
+        best_date = snapshots[best_idx + 1]["snapshot_date"] if returns and best_idx + 1 < len(snapshots) else ""
+        worst_date = snapshots[worst_idx + 1]["snapshot_date"] if returns and worst_idx + 1 < len(snapshots) else ""
+
+        return {
+            "total_return_pct": round(max(min(total_return, 99999.99), -99999.99), 2),
+            "max_drawdown_pct": round(max_drawdown, 2),
+            "sharpe_ratio": round(self._clamp(self._calc_sharpe(returns)), 2),
+            "sortino_ratio": round(self._clamp(self._calc_sortino(returns)), 2),
+            "calmar_ratio": round(self._clamp(self._calc_calmar(returns, max_drawdown)), 2),
+            "profit_factor": 0,
+            "win_rate": 0,
+            "win_count": 0,
+            "loss_count": 0,
+            "avg_win": "0",
+            "avg_loss": "0",
+            "expectancy": 0,
+            "avg_daily_return_pct": round(avg_return, 4),
+            "best_day_pct": round(best, 2),
+            "best_day_date": str(best_date),
+            "worst_day_pct": round(worst, 2),
+            "worst_day_date": str(worst_date),
+            "max_consecutive_wins": max_consecutive_wins,
+            "max_consecutive_losses": max_consecutive_losses,
+            "drawdown_duration_days": dd_duration,
+            "recovery_time_days": recovery_time,
+            "total_trades": 0,
+            "total_pnl": "0",
+            "snapshot_count": len(snapshots),
         }
 
     @staticmethod

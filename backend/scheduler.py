@@ -45,6 +45,10 @@ class SnapshotScheduler:
         logger.info("SnapshotScheduler stopped")
 
     async def _snapshot_loop(self) -> None:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            return
         while self._running:
             try:
                 await self._snapshot_fn()

@@ -23,6 +23,10 @@ export function DailyPnlChart({ snapshots }: Props) {
           tickLine={false}
           axisLine={false}
           tickFormatter={(v: string) => {
+            if (v.includes(" ")) {
+              const [, time] = v.split(" ");
+              return time.slice(0, 5);
+            }
             const [, m, d] = v.split("-");
             return `${parseInt(m)}/${parseInt(d)}`;
           }}
@@ -42,6 +46,11 @@ export function DailyPnlChart({ snapshots }: Props) {
           }}
           formatter={(value: number) => [value < 0 ? `-$${Math.abs(value).toFixed(2)}` : `$${value.toFixed(2)}`, "Realized P&L"]}
           labelFormatter={(label: string) => {
+            if (label.includes(" ")) {
+              const [datePart, time] = label.split(" ");
+              const [y, m, d] = datePart.split("-");
+              return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
+            }
             const [y, m, d] = label.split("-");
             return `${parseInt(m)}/${parseInt(d)}/${y}`;
           }}

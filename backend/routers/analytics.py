@@ -116,6 +116,29 @@ async def take_all_snapshots(request: Request):
     return {"snapshots": results, "count": len(results)}
 
 
+_SUB_DAY_PERIODS = {"1m", "5m", "15m", "30m", "1H", "2H", "6H", "12H"}
+_SUB_DAY_DELTAS = {
+    "1m": timedelta(minutes=30),
+    "5m": timedelta(hours=2),
+    "15m": timedelta(hours=6),
+    "30m": timedelta(hours=12),
+    "1H": timedelta(hours=24),
+    "2H": timedelta(hours=48),
+    "6H": timedelta(days=7),
+    "12H": timedelta(days=14),
+}
+
+
+def _is_sub_day(period: str) -> bool:
+    return period in _SUB_DAY_PERIODS
+
+
+def _resolve_hf_since(period: str) -> str:
+    delta = _SUB_DAY_DELTAS.get(period, timedelta(minutes=1))
+    since = datetime.now(timezone.utc) - delta
+    return since.isoformat()
+
+
 @router.get("/accounts/{account_id}/snapshots")
 async def get_snapshots(
     request: Request,
@@ -126,6 +149,9 @@ async def get_snapshots(
 ):
     _validate_account_id(account_id)
     svc = _get_service(request)
+    if _is_sub_day(period):
+        since = _resolve_hf_since(period)
+        return await asyncio.to_thread(svc.get_hf_snapshots, account_id, since)
     sd, ed = _resolve_dates(start_date, end_date, period)
     return await asyncio.to_thread(svc.get_snapshots, account_id, sd, ed)
 
@@ -140,6 +166,9 @@ async def get_analytics(
 ):
     _validate_account_id(account_id)
     svc = _get_service(request)
+    if _is_sub_day(period):
+        since = _resolve_hf_since(period)
+        return await asyncio.to_thread(svc.compute_hf_analytics, account_id, since)
     sd, ed = _resolve_dates(start_date, end_date, period)
     return await asyncio.to_thread(svc.compute_analytics, account_id, sd, ed)
 
@@ -154,6 +183,9 @@ async def get_portfolio_snapshots(
 ):
     svc = _get_service(request)
     _validate_account_type(account_type)
+    if _is_sub_day(period):
+        since = _resolve_hf_since(period)
+        return await asyncio.to_thread(svc.get_portfolio_hf_snapshots, since, account_type=account_type)
     sd, ed = _resolve_dates(start_date, end_date, period)
     return await asyncio.to_thread(svc.get_portfolio_snapshots, sd, ed, account_type=account_type)
 
@@ -168,6 +200,9 @@ async def get_portfolio_analytics(
 ):
     svc = _get_service(request)
     _validate_account_type(account_type)
+    if _is_sub_day(period):
+        since = _resolve_hf_since(period)
+        return await asyncio.to_thread(svc.compute_portfolio_hf_analytics, since, account_type=account_type)
     sd, ed = _resolve_dates(start_date, end_date, period)
     return await asyncio.to_thread(svc.compute_portfolio_analytics, sd, ed, account_type=account_type)
 
