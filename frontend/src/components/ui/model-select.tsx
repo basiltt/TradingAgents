@@ -50,9 +50,15 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
   }, [recentVersion]);
 
   const sorted = useMemo(() => {
+    const seen = new Set<string>();
+    const unique = options.filter((o) => {
+      if (seen.has(o.value)) return false;
+      seen.add(o.value);
+      return true;
+    });
     const base = search
-      ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()) || o.value.toLowerCase().includes(search.toLowerCase()))
-      : options;
+      ? unique.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()) || o.value.toLowerCase().includes(search.toLowerCase()))
+      : unique;
     return [...base].sort((a, b) => {
       const ta = recencyMap.get(a.value) ?? 0;
       const tb = recencyMap.get(b.value) ?? 0;
