@@ -357,8 +357,11 @@ export function HistoryList() {
                 <button
                   onClick={() => deleteAllMutation.mutate()}
                   disabled={deleteAllMutation.isPending}
-                  className="px-4 py-2.5 text-sm font-medium rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  className="px-4 py-2.5 text-sm font-medium rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors inline-flex items-center gap-2"
                 >
+                  {deleteAllMutation.isPending && (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  )}
                   {deleteAllMutation.isPending ? "Deleting…" : "Confirm Delete All"}
                 </button>
                 <button
@@ -834,6 +837,15 @@ export function HistoryList() {
             </div>
           )}
         </>
+      )}
+      {deleteAllMutation.isPending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 bg-card border rounded-2xl p-8 shadow-2xl">
+            <div className="w-10 h-10 border-[3px] border-red-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm font-medium">Deleting all analyses…</p>
+            <p className="text-xs text-muted-foreground">This may take a while for large histories</p>
+          </div>
+        </div>
       )}
     </div>
   );

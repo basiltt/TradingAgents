@@ -253,6 +253,11 @@ export function ScanHistoryPage() {
                   <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-extrabold tabular-nums tracking-tight">{total}</span>
                     <span className="text-sm text-muted-foreground/40 font-medium">results</span>
+                    {scan.interval && (
+                      <span className="ml-auto px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20 text-[10px] font-bold text-primary uppercase tracking-wider">
+                        {scan.interval}
+                      </span>
+                    )}
                   </div>
                 </div>
 

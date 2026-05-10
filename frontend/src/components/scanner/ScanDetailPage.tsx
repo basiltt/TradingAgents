@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type ScanResultItem } from "@/api/client";
@@ -188,6 +188,14 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: () => apiClient.cancelScan(scanId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["scan", scanId] });
+      queryClient.invalidateQueries({ queryKey: ["scans"] });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => apiClient.deleteScan(scanId),
     onSuccess: () => {
@@ -259,7 +267,22 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             Scan Details
           </h1>
         </div>
-        {scan.status !== "running" && (
+        {scan.status === "running" ? (
+          <button
+            onClick={() => cancelMutation.mutate()}
+            disabled={cancelMutation.isPending}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 border border-destructive/30 transition-colors disabled:opacity-50"
+          >
+            {cancelMutation.isPending ? (
+              <div className="w-4 h-4 border-2 border-destructive border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
+            {cancelMutation.isPending ? "Cancelling..." : "Cancel Scan"}
+          </button>
+        ) : (
           <button
             onClick={handleDeleteClick}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"

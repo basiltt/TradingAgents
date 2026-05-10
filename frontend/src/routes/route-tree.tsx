@@ -17,6 +17,7 @@ import { ScanDetailPage } from "@/components/scanner/ScanDetailPage";
 import { AccountsDashboard } from "@/components/accounts/AccountsDashboard";
 import { AccountDetailView } from "@/components/accounts/AccountDetailView";
 import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
+import { StrategiesPage as StrategiesPageComponent } from "@/components/strategies/StrategiesPage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -76,6 +77,10 @@ function AccountDetailPage() {
 
 function PerformancePage() {
   return <AnalyticsDashboard />;
+}
+
+function StrategiesPage() {
+  return <StrategiesPageComponent />;
 }
 
 
@@ -151,6 +156,12 @@ const performanceRoute = createRoute({
   component: PerformancePage,
 });
 
+const strategiesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/strategies",
+  component: StrategiesPage,
+});
+
 
 export const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -165,6 +176,7 @@ export const routeTree = rootRoute.addChildren([
   accountsRoute,
   accountDetailRoute,
   performanceRoute,
+  strategiesRoute,
 ]);
 
 export function createAppRouter() {

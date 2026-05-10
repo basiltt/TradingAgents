@@ -499,6 +499,7 @@ class ScannerService:
 
     def _serialize(self, scan: Dict[str, Any]) -> Dict[str, Any]:
         sorted_results = sorted(scan["results"], key=lambda r: abs(r.get("score", 0)), reverse=True)
+        config = scan.get("config", {})
         return {
             "scan_id": scan["scan_id"],
             "status": scan["status"],
@@ -511,9 +512,25 @@ class ScannerService:
             "results": sorted_results,
             "started_at": scan["started_at"],
             "completed_at": scan["completed_at"],
+            "interval": config.get("interval"),
+            "asset_type": config.get("asset_type"),
+            "provider": config.get("provider"),
+            "workflow_mode": config.get("workflow_mode"),
+            "deep_think_llm": config.get("deep_think_llm"),
+            "quick_think_llm": config.get("quick_think_llm"),
+            "backend_url": config.get("backend_url"),
+            "research_depth": config.get("research_depth"),
+            "max_debate_rounds": config.get("max_debate_rounds"),
         }
 
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
+        import json as _json
+        config = scan.get("config", {})
+        if isinstance(config, str):
+            try:
+                config = _json.loads(config)
+            except Exception:
+                config = {}
         return {
             "scan_id": scan["scan_id"],
             "status": scan["status"],
@@ -526,6 +543,15 @@ class ScannerService:
             "results": scan.get("results", []),
             "started_at": scan.get("started_at", ""),
             "completed_at": scan.get("completed_at"),
+            "interval": config.get("interval"),
+            "asset_type": config.get("asset_type"),
+            "provider": config.get("provider"),
+            "workflow_mode": config.get("workflow_mode"),
+            "deep_think_llm": config.get("deep_think_llm"),
+            "quick_think_llm": config.get("quick_think_llm"),
+            "backend_url": config.get("backend_url"),
+            "research_depth": config.get("research_depth"),
+            "max_debate_rounds": config.get("max_debate_rounds"),
         }
 
     async def _run_scan(self, scan_id: str, symbols_override: Optional[List[str]] = None) -> None:

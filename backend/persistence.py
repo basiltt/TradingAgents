@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -155,6 +156,20 @@ CREATE INDEX IF NOT EXISTS idx_hf_snapshots_ts ON high_freq_snapshots(ts)
     (11, """
 ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE daily_snapshots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+"""),
+    (12, """
+CREATE TABLE IF NOT EXISTS strategies (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'swing' CHECK(category IN ('scalping','intraday','swing','positional','grid','dca','hedging','arbitrage')),
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('active','paused','archived','draft')),
+    config JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_strategies_status ON strategies(status);
+CREATE INDEX IF NOT EXISTS idx_strategies_category ON strategies(category)
 """),
 ]
 
@@ -1350,3 +1365,102 @@ class AnalysisDB:
             except Exception:
                 conn.rollback()
                 raise
+
+    # ── Strategies ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _deserialize_strategy(row: Dict[str, Any]) -> Dict[str, Any]:
+        d = dict(row)
+        if isinstance(d.get("config"), str):
+            d["config"] = json.loads(d["config"])
+        return d
+
+    def insert_strategy(self, strategy: Dict[str, Any]) -> None:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "INSERT INTO strategies (id, name, description, category, status, config, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        strategy["id"], strategy["name"], strategy.get("description", ""),
+                        strategy.get("category", "swing"), strategy.get("status", "draft"),
+                        json.dumps(strategy.get("config", {})),
+                        strategy["created_at"], strategy["updated_at"],
+                    ),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def list_strategies(self, status: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        conditions = []
+        params: list = []
+        if status:
+            conditions.append("status = %s")
+            params.append(status)
+        if category:
+            conditions.append("category = %s")
+            params.append(category)
+        where = " AND ".join(conditions) if conditions else "TRUE"
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(f"SELECT id, name, description, category, status, config, created_at, updated_at FROM strategies WHERE {where} ORDER BY updated_at DESC", params)
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        result = []
+        for r in rows:
+            result.append(self._deserialize_strategy(r))
+        return result
+
+    def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute("SELECT id, name, description, category, status, config, created_at, updated_at FROM strategies WHERE id = %s", (strategy_id,))
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                raise
+        if not row:
+            return None
+        return self._deserialize_strategy(row)
+
+    def update_strategy(self, strategy_id: str, **fields: Any) -> bool:
+        allowed = {"name", "description", "category", "status", "config"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        if "config" in updates and not isinstance(updates["config"], str):
+            updates["config"] = json.dumps(updates["config"])
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"UPDATE strategies SET {set_clause} WHERE id = %s",
+                    list(updates.values()) + [strategy_id],
+                )
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected > 0
+
+    def delete_strategy(self, strategy_id: str) -> bool:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute("DELETE FROM strategies WHERE id = %s", (strategy_id,))
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected > 0

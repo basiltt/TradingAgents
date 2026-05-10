@@ -96,6 +96,9 @@ def create_app() -> FastAPI:
             analysis_service=app.state.analysis_service,
             db=db,
         )
+
+        from backend.services.strategy_service import StrategyService
+        app.state.strategy_service = StrategyService(db=db)
         await app.state.scanner_service.resume_incomplete_scans()
 
         # Trading accounts service (optional — only if encryption key is configured)
@@ -160,9 +163,11 @@ def create_app() -> FastAPI:
     from backend.routers.portfolio import router as portfolio_router
     from backend.routers.ws_accounts import router as ws_accounts_router
     from backend.routers.analytics import router as analytics_router
+    from backend.routers.strategies import router as strategies_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
+    app.include_router(strategies_router, prefix="/api/v1")
     app.include_router(config_router, prefix="/api/v1")
     app.include_router(models_router, prefix="/api/v1")
     app.include_router(checkpoints_router, prefix="/api/v1")

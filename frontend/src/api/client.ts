@@ -223,6 +223,117 @@ export interface ScanStatus {
   results: ScanResultItem[];
   started_at: string;
   completed_at: string | null;
+  interval?: string;
+  asset_type?: string;
+  provider?: string;
+  workflow_mode?: string;
+  deep_think_llm?: string;
+  quick_think_llm?: string;
+  backend_url?: string;
+  research_depth?: number;
+  max_debate_rounds?: number;
+}
+
+export type StrategyCategory = "scalping" | "intraday" | "swing" | "positional" | "grid" | "dca" | "hedging" | "arbitrage";
+export type StrategyStatus = "active" | "paused" | "archived" | "draft";
+
+export interface StrategyConfig {
+  trading_mode?: string;
+  asset_whitelist?: string[];
+  asset_blacklist?: string[];
+  signal_adherence?: string;
+  trade_directionality?: string;
+  signal_confirmations?: string[];
+  order_type?: string;
+  slippage_tolerance?: number;
+  partial_fills?: boolean;
+  max_spread?: number;
+  capital_allocation_mode?: string;
+  base_capital_pct?: number;
+  absolute_position_size?: number;
+  position_sizing_method?: string;
+  compounding_enabled?: boolean;
+  leverage_multiplier?: number;
+  max_leverage_cap?: number;
+  max_global_exposure_pct?: number;
+  max_simultaneous_trades?: number;
+  max_exposure_per_asset?: number;
+  risk_per_trade_pct?: number;
+  risk_per_trade_amount?: number;
+  global_drawdown_limit_pct?: number;
+  daily_drawdown_limit_pct?: number;
+  weekly_drawdown_limit_pct?: number;
+  equity_protection_threshold?: number;
+  sl_type?: string;
+  sl_value?: number;
+  sl_leverage_adjusted?: boolean;
+  breakeven_trigger_pct?: number;
+  trailing_sl_activation_pct?: number;
+  trailing_sl_distance_pct?: number;
+  multi_sl_enabled?: boolean;
+  multi_sl_levels?: Array<{ pct: number; weight: number }>;
+  multi_sl_distribution?: string;
+  tp_type?: string;
+  tp_value?: number;
+  multi_tp_enabled?: boolean;
+  multi_tp_levels?: Array<{ pct: number; weight: number }>;
+  multi_tp_distribution?: string;
+  pyramiding_enabled?: boolean;
+  pyramiding_max_entries?: number;
+  dca_mode?: string;
+  max_trades_per_day?: number;
+  max_trades_per_hour?: number;
+  cooldown_after_loss_hours?: number;
+  cooldown_after_consecutive_losses?: number;
+  max_consecutive_losses?: number;
+  signal_expiration_hours?: number;
+  re_entry_cooldown_hours?: number;
+  trend_only?: boolean;
+  range_only?: boolean;
+  volatility_threshold?: number;
+  volume_threshold?: number;
+  news_avoidance?: boolean;
+  session_based_trading?: boolean;
+  trading_sessions?: string[];
+  timezone?: string;
+  trading_days?: string[];
+  weekend_restriction?: boolean;
+  holiday_restriction?: boolean;
+  alert_entry?: boolean;
+  alert_exit?: boolean;
+  alert_sl_hit?: boolean;
+  alert_tp_hit?: boolean;
+  alert_drawdown?: boolean;
+  alert_strategy_paused?: boolean;
+  cycle_enabled?: boolean;
+  cycle_target_pnl_pct?: number;
+  cycle_max_trades?: number;
+  cycle_timeout_hours?: number;
+  cycle_stop_loss_pct?: number;
+  cycle_cooldown_hours?: number;
+  cycle_auto_restart?: boolean;
+  cycle_partial_close_allowed?: boolean;
+  alert_cycle_complete?: boolean;
+  emergency_kill_switch?: boolean;
+}
+
+export interface Strategy {
+  id: string;
+  name: string;
+  description: string;
+  category: StrategyCategory;
+  status: StrategyStatus;
+  config: StrategyConfig;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StrategyCreate {
+  name: string;
+  description?: string;
+  category?: StrategyCategory;
+  status?: StrategyStatus;
+  config?: StrategyConfig;
 }
 
 export const apiClient = {
@@ -350,6 +461,34 @@ export const apiClient = {
     request<{ provider: string; quick: Array<{ label: string; value: string }>; deep: Array<{ label: string; value: string }> }>(
       `/api/v1/models/${encodeURIComponent(provider)}`, undefined, signal,
     ),
+
+  // ── Strategies ──────────────────────────────────────────────────
+
+  listStrategies: (params?: { status?: string; category?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.status) sp.set("status", params.status);
+    if (params?.category) sp.set("category", params.category);
+    const qs = sp.toString();
+    return request<Strategy[]>(`/api/v1/strategies${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+
+  getStrategy: (id: string, signal?: AbortSignal) =>
+    request<Strategy>(`/api/v1/strategies/${encodeURIComponent(id)}`, undefined, signal),
+
+  createStrategy: (data: StrategyCreate) =>
+    mutate<Strategy>("POST", "/api/v1/strategies", data),
+
+  updateStrategy: (id: string, data: Partial<StrategyCreate>) =>
+    mutate<Strategy>("PATCH", `/api/v1/strategies/${encodeURIComponent(id)}`, data),
+
+  deleteStrategy: (id: string) =>
+    mutate<{ deleted: boolean }>("DELETE", `/api/v1/strategies/${encodeURIComponent(id)}`),
+
+  exportStrategies: (signal?: AbortSignal) =>
+    request<{ strategies: Strategy[] }>("/api/v1/strategies/export", undefined, signal),
+
+  importStrategies: (strategies: StrategyCreate[]) =>
+    mutate<{ imported: number; strategies: Strategy[] }>("POST", "/api/v1/strategies/import", { strategies }),
 };
 
 export { ApiError };

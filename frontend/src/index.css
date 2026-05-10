@@ -176,3 +176,31 @@
 /* Hide scrollbar while keeping scroll functionality */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.custom-scrollbar { scrollbar-width: thin; scrollbar-color: oklch(0.4 0 0) transparent; }
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: oklch(0.4 0 0); border-radius: 9999px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: oklch(0.5 0 0); }
+
+.dark select option { background-color: oklch(0.2 0.01 280); color: oklch(0.9 0 0); }
+
+.form-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background-color: var(--background);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  transition: border-color 0.15s;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.form-input::placeholder {
+  color: var(--muted-foreground);
+}

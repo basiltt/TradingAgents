@@ -195,12 +195,72 @@ function ScanDurationBadge({ startedAt, completedAt, isRunning }: { startedAt?: 
 const SCAN_ID_KEY = "tradingagents_active_scan";
 
 function loadActiveScanId(): string | null {
-  return localStorage.getItem(SCAN_ID_KEY);
+  return null;
 }
 
 function saveActiveScanId(id: string | null) {
   if (id) localStorage.setItem(SCAN_ID_KEY, id);
   else localStorage.removeItem(SCAN_ID_KEY);
+}
+
+function ScanConfigBanner({ scan }: { scan: ScanStatus }) {
+  const [open, setOpen] = useState(false);
+
+  const provider = scan.provider ?? "—";
+  const mode = scan.workflow_mode === "quick_trade" ? "Quick Trade" : "Deep Analysis";
+  const modeColor = scan.workflow_mode === "quick_trade" ? "bg-orange-500/80" : "bg-violet-500/80";
+
+  return (
+    <div className="rounded-xl border border-border/30 bg-muted/20 overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-muted/30 transition-colors"
+      >
+        <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <span className="text-xs text-muted-foreground capitalize">{provider}</span>
+        <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold text-white uppercase", modeColor)}>{mode}</span>
+        {scan.deep_think_llm && (
+          <>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/80 text-white">DEEP</span>
+            <span className="text-xs text-muted-foreground">{scan.deep_think_llm}</span>
+          </>
+        )}
+        {scan.quick_think_llm && (
+          <>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/80 text-white">QUICK</span>
+            <span className="text-xs text-muted-foreground">{scan.quick_think_llm}</span>
+          </>
+        )}
+        <svg
+          className={cn("w-4 h-4 text-muted-foreground ml-auto transition-transform shrink-0", open && "rotate-180")}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="px-4 pb-3 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1.5 text-xs border-t border-border/20 pt-2.5">
+          {scan.backend_url && (
+            <div><span className="text-muted-foreground">Backend URL: </span><span className="font-medium">{scan.backend_url}</span></div>
+          )}
+          <div><span className="text-muted-foreground">Mode: </span><span className="font-medium">{mode}</span></div>
+          <div><span className="text-muted-foreground">Asset Type: </span><span className="font-medium">{scan.asset_type ?? "crypto"}</span></div>
+          {scan.research_depth != null && (
+            <div><span className="text-muted-foreground">Risk Rounds: </span><span className="font-medium">{scan.research_depth}</span></div>
+          )}
+          {scan.max_debate_rounds != null && (
+            <div><span className="text-muted-foreground">Debate Rounds: </span><span className="font-medium">{scan.max_debate_rounds}</span></div>
+          )}
+          {scan.interval && (
+            <div><span className="text-muted-foreground">Interval: </span><span className="font-medium">{scan.interval}</span></div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ScannerPage() {
@@ -923,6 +983,11 @@ export function ScannerPage() {
                 )}
               </div>
             </div>
+
+            {/* Config summary */}
+            {(scan.provider || scan.workflow_mode || scan.deep_think_llm) && (
+              <ScanConfigBanner scan={scan} />
+            )}
 
             {/* Progress bar */}
             <div className="space-y-2">

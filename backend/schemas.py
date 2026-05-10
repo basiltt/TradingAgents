@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,15}$")
 CRYPTO_TICKER_RE = re.compile(r"^[A-Z0-9]{2,20}$")
@@ -520,3 +521,93 @@ class UpdateAccountRequest(BaseModel):
 class RotateCredentialsRequest(BaseModel):
     api_key: str = Field(..., min_length=10)
     api_secret: str = Field(..., min_length=10)
+
+
+# ── Strategy Schemas ────────────────────────────────────────────
+
+VALID_STRATEGY_CATEGORIES = frozenset(
+    ["scalping", "intraday", "swing", "positional", "grid", "dca", "hedging", "arbitrage"]
+)
+VALID_STRATEGY_STATUSES = frozenset(["active", "paused", "archived", "draft"])
+
+MAX_CONFIG_SIZE_BYTES = 65_536
+
+
+class CreateStrategyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field("", max_length=2000)
+    category: str = Field("swing")
+    status: str = Field("draft")
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Strategy name cannot be empty")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        if v not in VALID_STRATEGY_CATEGORIES:
+            raise ValueError(f"Invalid category: {v}. Must be one of: {', '.join(sorted(VALID_STRATEGY_CATEGORIES))}")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in VALID_STRATEGY_STATUSES:
+            raise ValueError(f"Invalid status: {v}. Must be one of: {', '.join(sorted(VALID_STRATEGY_STATUSES))}")
+        return v
+
+    @field_validator("config")
+    @classmethod
+    def validate_config_size(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
+            raise ValueError("Config too large (max 64KB)")
+        return v
+
+
+class UpdateStrategyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
+    category: Optional[str] = None
+    status: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Strategy name cannot be empty")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_STRATEGY_CATEGORIES:
+            raise ValueError(f"Invalid category: {v}")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_STRATEGY_STATUSES:
+            raise ValueError(f"Invalid status: {v}")
+        return v
+
+    @field_validator("config")
+    @classmethod
+    def validate_config_size(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if v is not None:
+            if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
+                raise ValueError("Config too large (max 64KB)")
+        return v
