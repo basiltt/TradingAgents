@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { useAppDispatch } from "@/store";
 import { updateCardRealtime } from "@/store/accounts-slice";
 
-const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.hostname}:8877/ws/v1/accounts`;
+const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 30000;
 
