@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 
 const DIRECTION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   buy: { label: "BUY", color: "text-emerald-400", bg: "bg-emerald-500/10" },
@@ -244,9 +245,10 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
   }
 
   const results = scan.results || [];
-  const buyResults = results.filter((r) => r.direction === "buy");
-  const sellResults = results.filter((r) => r.direction === "sell");
-  const holdResults = results.filter((r) => r.direction === "hold" || r.direction === "unknown" || !r.direction);
+  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(results);
+  const buyResults = filteredResults.filter((r) => r.direction === "buy");
+  const sellResults = filteredResults.filter((r) => r.direction === "sell");
+  const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown" || !r.direction);
   const progress = scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0;
 
   return (
@@ -351,6 +353,18 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Filters */}
+      {results.length > 0 && (
+        <ScanResultFiltersBar
+          filters={scanFilters}
+          update={updateFilter}
+          hasActive={hasActiveFilters}
+          totalCount={results.length}
+          filteredCount={filteredResults.length}
+          clearAll={clearFilters}
+        />
+      )}
 
       {/* Results by direction */}
       {buyResults.length > 0 && (

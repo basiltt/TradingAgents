@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 import { useModels } from "@/hooks/useModels";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
@@ -444,9 +445,12 @@ export function ScannerPage() {
     setAnalysts((prev) => prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]);
   };
 
-  const buyResults = (scan?.results ?? []).filter((r) => r.direction === "buy").sort((a, b) => b.score - a.score);
-  const sellResults = (scan?.results ?? []).filter((r) => r.direction === "sell").sort((a, b) => a.score - b.score);
-  const holdResults = (scan?.results ?? []).filter((r) => r.direction === "hold" || r.direction === "unknown");
+  const allResults = scan?.results ?? [];
+  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(allResults);
+
+  const buyResults = filteredResults.filter((r) => r.direction === "buy").sort((a, b) => b.score - a.score);
+  const sellResults = filteredResults.filter((r) => r.direction === "sell").sort((a, b) => a.score - b.score);
+  const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown");
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-4">
@@ -1040,6 +1044,16 @@ export function ScannerPage() {
       {/* Results */}
       {scan && scan.results.length > 0 && (
         <>
+          {/* Filter bar */}
+          <ScanResultFiltersBar
+            filters={scanFilters}
+            update={updateFilter}
+            hasActive={hasActiveFilters}
+            totalCount={allResults.length}
+            filteredCount={filteredResults.length}
+            clearAll={clearFilters}
+          />
+
           {/* Buy signals */}
           {buyResults.length > 0 && (
             <>
