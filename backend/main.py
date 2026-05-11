@@ -17,7 +17,7 @@ from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
 from backend.services.scanner_service import ScannerService
-from tradingagents.llm_clients import configure_llm_concurrency
+from tradingagents.llm_clients import configure_llm_concurrency, configure_llm_min_spacing
 from tradingagents.dataflows.coingecko_data import configure_coingecko_concurrency
 from backend.ws_manager import WSManager
 
@@ -78,6 +78,8 @@ def create_app() -> FastAPI:
 
         llm_max = int(os.environ.get("LLM_MAX_CONCURRENT", "0"))
         configure_llm_concurrency(llm_max)
+        llm_spacing = int(os.environ.get("LLM_MIN_SPACING_MS", "0"))
+        configure_llm_min_spacing(llm_spacing)
         configure_coingecko_concurrency(int(os.environ.get("COINGECKO_MAX_CONCURRENT", "2")))
 
         app.state.db = db

@@ -289,6 +289,7 @@ export function ScannerPage() {
   const [showLlm, setShowLlm] = useState(true);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState<number>(0);
+  const [llmMinSpacingMs, setLlmMinSpacingMs] = useState<number>(0);
   const [endpoints, setEndpoints] = useState(loadEndpoints);
   const [showEndpoints, setShowEndpoints] = useState(false);
   const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
@@ -358,6 +359,9 @@ export function ScannerPage() {
     if (configQuery.data?.resolved?.llm_max_concurrent != null) {
       setLlmMaxConcurrent(Number(configQuery.data.resolved.llm_max_concurrent));
     }
+    if (configQuery.data?.resolved?.llm_min_spacing_ms != null) {
+      setLlmMinSpacingMs(Number(configQuery.data.resolved.llm_min_spacing_ms));
+    }
   }, [configQuery.data]);
   const remoteIds = (remoteModels ?? []).map((m) => m.id);
   const catalogDeep = getModelOptions(provider, "deep");
@@ -381,6 +385,12 @@ export function ScannerPage() {
   const saveLlmConcurrency = (value: number) => {
     setLlmMaxConcurrent(value);
     apiClient.updateConfig({ llm_max_concurrent: value });
+  };
+
+  const saveLlmMinSpacing = (value: number) => {
+    const v = Math.max(0, Math.floor(value || 0));
+    setLlmMinSpacingMs(v);
+    apiClient.updateConfig({ llm_min_spacing_ms: v });
   };
 
   const scanQuery = useQuery({
@@ -894,6 +904,22 @@ export function ScannerPage() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Max concurrent LLM API calls. Set to 0 for unlimited (pay-as-you-go plans).
+                  </p>
+                </div>
+
+                {/* LLM Minimum Spacing */}
+                <div className="flex flex-col gap-2 pt-2">
+                  <Label className="font-medium">Minimum Spacing</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={60000}
+                    value={llmMinSpacingMs}
+                    onChange={(e) => saveLlmMinSpacing(Number(e.target.value))}
+                    className="w-32"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Minimum milliseconds between consecutive LLM API calls. Set to 0 for no spacing.
                   </p>
                 </div>
               </div>

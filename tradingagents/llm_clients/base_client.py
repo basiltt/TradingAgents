@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 _llm_semaphore: threading.Semaphore | None = None
 _llm_sem_lock = threading.Lock()
 
+_llm_min_spacing_ms: int = 0
+_llm_last_request_ts: float = 0
+_llm_spacing_lock = threading.Lock()
+
 _LLM_MAX_RETRIES = 5
 _LLM_BASE_DELAY = 1.0
 _LLM_MAX_DELAY = 30.0
@@ -35,6 +39,12 @@ def _is_retryable(exc: Exception) -> bool:
     return False
 
 
+def configure_llm_min_spacing(ms: int) -> None:
+    global _llm_min_spacing_ms
+    _llm_min_spacing_ms = max(0, ms)
+    logger.info("LLM min spacing set to %dms", _llm_min_spacing_ms)
+
+
 def configure_llm_concurrency(max_concurrent: int) -> None:
     global _llm_semaphore
     with _llm_sem_lock:
@@ -47,9 +57,19 @@ def configure_llm_concurrency(max_concurrent: int) -> None:
 
 
 def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
+    global _llm_last_request_ts
     sem = _llm_semaphore
     last_exc: Exception | None = None
     for attempt in range(_LLM_MAX_RETRIES):
+        if _llm_min_spacing_ms > 0:
+            with _llm_spacing_lock:
+                now = time.monotonic()
+                elapsed_ms = (now - _llm_last_request_ts) * 1000
+                if _llm_last_request_ts > 0 and elapsed_ms < _llm_min_spacing_ms:
+                    gap = (_llm_min_spacing_ms - elapsed_ms) / 1000
+                    logger.debug("Spacing LLM call: waiting %.1fms", gap * 1000)
+                    time.sleep(gap)
+                _llm_last_request_ts = time.monotonic()
         if sem is not None:
             sem.acquire()
         try:
