@@ -44,6 +44,8 @@ class BybitClient:
         self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
+        self._time_offset_ms: int = 0
+        self._time_synced: bool = False
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is not None and not self._session.closed:
@@ -59,6 +61,23 @@ class BybitClient:
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+
+    async def _sync_time(self) -> None:
+        """Sync local clock with Bybit server to compute timestamp offset."""
+        try:
+            session = await self._get_session()
+            local_before = int(time.time() * 1000)
+            async with session.get(f"{self._base_url}/v5/market/time", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                data = await resp.json()
+            local_after = int(time.time() * 1000)
+            server_time = int(data.get("result", {}).get("timeNano", "0")) // 1_000_000
+            if server_time > 0:
+                local_mid = (local_before + local_after) // 2
+                self._time_offset_ms = server_time - local_mid
+                self._time_synced = True
+                logger.info("Bybit time synced: offset=%dms", self._time_offset_ms)
+        except Exception as e:
+            logger.warning("Failed to sync Bybit server time: %s", e)
 
     def _sign(self, timestamp: int, params_str: str) -> str:
         sign_str = f"{timestamp}{self._api_key}{self._recv_window}{params_str}"
@@ -80,10 +99,13 @@ class BybitClient:
     async def _request(
         self, method: str, path: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        if not self._time_synced:
+            await self._sync_time()
+
         for attempt in range(_MAX_RETRIES):
             async with self._semaphore:
                 await self._wait_for_rate_limit()
-                timestamp = int(time.time() * 1000)
+                timestamp = int(time.time() * 1000) + self._time_offset_ms
 
                 if method == "GET" and params:
                     query = "&".join(f"{k}={v}" for k, v in sorted(params.items()) if v is not None)
@@ -108,6 +130,11 @@ class BybitClient:
                     raise BybitAPIError(-1, "Network error")
 
                 ret_code = data.get("retCode", -1)
+                if ret_code == 10002 and attempt < _MAX_RETRIES - 1:
+                    logger.warning(f"Bybit timestamp rejected on {path}, re-syncing clock (attempt {attempt + 1})")
+                    await self._sync_time()
+                    continue
+
                 if ret_code == 10006 and attempt < _MAX_RETRIES - 1:
                     delay = _RETRY_BASE_DELAY * (2 ** attempt)
                     logger.warning(f"Rate limited on {path}, retrying in {delay}s (attempt {attempt + 1})")

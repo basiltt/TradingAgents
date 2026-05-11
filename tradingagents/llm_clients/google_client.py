@@ -1,3 +1,4 @@
+import threading
 from typing import Any, Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,8 +14,14 @@ class NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
     This normalizes to string for consistent downstream handling.
     """
 
+    _serialize_lock: threading.Lock = threading.Lock()
+
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+
+    def __iter__(self):
+        with self._serialize_lock:
+            yield from list(super().__iter__())
 
 
 class GoogleClient(BaseLLMClient):

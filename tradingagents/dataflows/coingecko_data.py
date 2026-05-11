@@ -106,7 +106,7 @@ class _RateLimiter:
 
 _limiter = _RateLimiter(max_per_min=8)
 
-_coingecko_semaphore = threading.Semaphore(3)
+_coingecko_semaphore = threading.Semaphore(2)
 _coingecko_sem_lock = threading.Lock()
 
 

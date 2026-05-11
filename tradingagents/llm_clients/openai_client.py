@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
@@ -23,8 +24,14 @@ class NormalizedChatOpenAI(ChatOpenAI):
     purpose-built subclasses below so this base class stays small.
     """
 
+    _serialize_lock: threading.Lock = threading.Lock()
+
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+
+    def __iter__(self):
+        with self._serialize_lock:
+            yield from list(super().__iter__())
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
         if method is None:
