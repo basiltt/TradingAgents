@@ -215,6 +215,16 @@ export function RootLayout() {
           >
             Scan History
           </NavLink>
+          <NavLink
+            to="/scanner/schedules"
+            icon={
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            }
+          >
+            Scheduled Scans
+          </NavLink>
 
           <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
             Accounts

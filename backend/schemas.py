@@ -53,6 +53,18 @@ VALID_VENDOR_CATEGORIES = frozenset(
 )
 VALID_VENDOR_VALUES = frozenset(["yfinance", "alpha_vantage"])
 
+PROVIDER_API_KEY_MAP = {
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "xai": "XAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "glm": "ZHIPU_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "azure": "AZURE_OPENAI_API_KEY",
+}
+
 
 class AnalystType(str, Enum):
     MARKET = "market"
@@ -611,3 +623,207 @@ class UpdateStrategyRequest(BaseModel):
             if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
                 raise ValueError("Config too large (max 64KB)")
         return v
+
+
+# ── Scheduled Scans ──────────────────────────────────────────────────
+
+
+class ScheduleType(str, Enum):
+    ONCE = "once"
+    INTERVAL = "interval"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    CRON = "cron"
+
+
+VALID_TIMEZONES: Optional[frozenset] = None
+
+
+def _get_valid_timezones() -> frozenset:
+    global VALID_TIMEZONES
+    if VALID_TIMEZONES is None:
+        import pytz
+        VALID_TIMEZONES = frozenset(pytz.all_timezones)
+    return VALID_TIMEZONES
+
+
+VALID_DAYS_OF_WEEK = frozenset(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
+SCHEDULE_NAME_RE = re.compile(r"^[\w\s\-.,!?()&/:]+$")
+
+
+class ScheduleConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_at: Optional[str] = None
+    interval_minutes: Optional[int] = Field(None, ge=15, le=10080)
+    time: Optional[str] = None
+    days: Optional[List[str]] = None
+    day: Optional[str] = None
+    cron_expression: Optional[str] = None
+
+    @field_validator("time")
+    @classmethod
+    def validate_time(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            if not re.match(r"^\d{2}:\d{2}$", v):
+                raise ValueError("time must be in HH:MM format")
+            h, m = map(int, v.split(":"))
+            if h > 23 or m > 59:
+                raise ValueError("Invalid time value")
+        return v
+
+    @field_validator("days")
+    @classmethod
+    def validate_days(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            if not v:
+                raise ValueError("days list cannot be empty")
+            invalid = set(d.lower() for d in v) - VALID_DAYS_OF_WEEK
+            if invalid:
+                raise ValueError(f"Invalid days: {invalid}")
+            v = [d.lower() for d in v]
+        return v
+
+    @field_validator("day")
+    @classmethod
+    def validate_day(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            if v.lower() not in VALID_DAYS_OF_WEEK:
+                raise ValueError(f"Invalid day: {v}")
+            v = v.lower()
+        return v
+
+    @field_validator("cron_expression")
+    @classmethod
+    def validate_cron(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            parts = v.split()
+            if len(parts) != 5:
+                raise ValueError("Cron expression must have exactly 5 fields")
+            dangerous = re.compile(r"[@;|&`$]")
+            if dangerous.search(v):
+                raise ValueError("Cron expression contains invalid characters")
+        return v
+
+
+class CreateScheduledScanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=255)
+    schedule_type: ScheduleType
+    schedule_config: ScheduleConfig
+    scan_config: Dict[str, Any]
+    timezone: str = Field(default="UTC")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name cannot be empty")
+        v = re.sub(r"[\x00-\x1f\x7f]", "", v)
+        if len(v) > 255:
+            raise ValueError("Name too long after sanitization")
+        if not SCHEDULE_NAME_RE.match(v):
+            raise ValueError("Name contains invalid characters")
+        return v
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        if v not in _get_valid_timezones():
+            raise ValueError(f"Invalid timezone: {v}")
+        return v
+
+    @field_validator("scan_config")
+    @classmethod
+    def validate_scan_config(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
+            raise ValueError("scan_config too large (max 64KB)")
+        return v
+
+    @model_validator(mode="after")
+    def validate_type_config(self) -> "CreateScheduledScanRequest":
+        cfg = self.schedule_config
+        t = self.schedule_type
+        if t == ScheduleType.ONCE:
+            if not cfg.run_at:
+                raise ValueError("once schedule requires run_at")
+        elif t == ScheduleType.INTERVAL:
+            if cfg.interval_minutes is None:
+                raise ValueError("interval schedule requires interval_minutes")
+        elif t == ScheduleType.DAILY:
+            if not cfg.time:
+                raise ValueError("daily schedule requires time")
+            if cfg.days is None:
+                cfg.days = list(VALID_DAYS_OF_WEEK)
+        elif t == ScheduleType.WEEKLY:
+            if not cfg.day or not cfg.time:
+                raise ValueError("weekly schedule requires day and time")
+        elif t == ScheduleType.CRON:
+            if not cfg.cron_expression:
+                raise ValueError("cron schedule requires cron_expression")
+        return self
+
+
+class UpdateScheduledScanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    schedule_type: Optional[ScheduleType] = None
+    schedule_config: Optional[ScheduleConfig] = None
+    scan_config: Optional[Dict[str, Any]] = None
+    timezone: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            v = re.sub(r"[\x00-\x1f\x7f]", "", v)
+            if not v:
+                raise ValueError("Name cannot be empty")
+            if not SCHEDULE_NAME_RE.match(v):
+                raise ValueError("Name contains invalid characters")
+        return v
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _get_valid_timezones():
+            raise ValueError(f"Invalid timezone: {v}")
+        return v
+
+    @field_validator("scan_config")
+    @classmethod
+    def validate_scan_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if v is not None and len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
+            raise ValueError("scan_config too large (max 64KB)")
+        return v
+
+
+class ScheduledScanResponse(BaseModel):
+    id: str
+    name: str
+    schedule_type: str
+    schedule_config: Any
+    scan_config: Any
+    status: str
+    timezone: str
+    next_run_at: Optional[str] = None
+    last_run_at: Optional[str] = None
+    last_scan_id: Optional[str] = None
+    consecutive_failures: int = 0
+    created_at: str
+    updated_at: str
+
+
+class ScheduleExecutionResponse(BaseModel):
+    id: int
+    schedule_id: str
+    scan_id: Optional[str] = None
+    status: str
+    started_at: str
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None

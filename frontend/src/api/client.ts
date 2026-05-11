@@ -1,6 +1,6 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   detail: string;
 
@@ -768,4 +768,85 @@ export const accountsApi = {
       "DELETE", `${path}${qs ? `?${qs}` : ""}`, undefined, signal,
     );
   },
+};
+
+// ── Scheduled Scans ──────────────────────────────────────────────
+
+export type ScheduleType = "once" | "interval" | "daily" | "weekly" | "cron";
+export type ScheduleStatus = "active" | "paused" | "completed" | "error";
+
+export interface ScheduleConfig {
+  run_at?: string;
+  interval_minutes?: number;
+  time?: string;
+  days?: string[];
+  day?: string;
+  cron_expression?: string;
+}
+
+export interface ScheduledScan {
+  id: string;
+  name: string;
+  schedule_type: ScheduleType;
+  schedule_config: ScheduleConfig;
+  scan_config: Record<string, unknown>;
+  status: ScheduleStatus;
+  timezone: string;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_scan_id: string | null;
+  consecutive_failures: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleExecution {
+  id: number;
+  schedule_id: string;
+  scan_id: string | null;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+}
+
+export interface CreateScheduledScanRequest {
+  name: string;
+  schedule_type: ScheduleType;
+  schedule_config: ScheduleConfig;
+  scan_config: Record<string, unknown>;
+  timezone?: string;
+}
+
+export const scheduledScansApi = {
+  list: (signal?: AbortSignal) =>
+    request<{ schedules: ScheduledScan[] }>("/api/v1/scheduled-scans", undefined, signal),
+
+  get: (id: string, signal?: AbortSignal) =>
+    request<ScheduledScan & { recent_executions: ScheduleExecution[] }>(
+      `/api/v1/scheduled-scans/${encodeURIComponent(id)}`, undefined, signal,
+    ),
+
+  create: (data: CreateScheduledScanRequest, signal?: AbortSignal) =>
+    mutate<ScheduledScan>("POST", "/api/v1/scheduled-scans", data, signal),
+
+  update: (id: string, data: Partial<CreateScheduledScanRequest>, signal?: AbortSignal) =>
+    mutate<ScheduledScan>("PATCH", `/api/v1/scheduled-scans/${encodeURIComponent(id)}`, data, signal),
+
+  delete: (id: string, signal?: AbortSignal) =>
+    mutate<{ deleted: boolean }>("DELETE", `/api/v1/scheduled-scans/${encodeURIComponent(id)}`, undefined, signal),
+
+  pause: (id: string, signal?: AbortSignal) =>
+    mutate<ScheduledScan>("POST", `/api/v1/scheduled-scans/${encodeURIComponent(id)}/pause`, undefined, signal),
+
+  resume: (id: string, signal?: AbortSignal) =>
+    mutate<ScheduledScan>("POST", `/api/v1/scheduled-scans/${encodeURIComponent(id)}/resume`, undefined, signal),
+
+  trigger: (id: string, signal?: AbortSignal) =>
+    mutate<ScheduledScan>("POST", `/api/v1/scheduled-scans/${encodeURIComponent(id)}/trigger`, undefined, signal),
+
+  listExecutions: (id: string, limit = 20, signal?: AbortSignal) =>
+    request<{ executions: ScheduleExecution[] }>(
+      `/api/v1/scheduled-scans/${encodeURIComponent(id)}/executions?limit=${limit}`, undefined, signal,
+    ),
 };

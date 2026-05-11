@@ -127,6 +127,16 @@ def create_app() -> FastAPI:
         app.state.strategy_service = StrategyService(db=db)
         await app.state.scanner_service.resume_incomplete_scans()
 
+        from backend.services.scan_scheduler_service import ScanSchedulerService
+        scheduler_service = ScanSchedulerService(
+            scanner_service=app.state.scanner_service,
+            db=db,
+            config_service=config_service,
+        )
+        app.state.scheduler_service = scheduler_service
+        await scheduler_service.recover_on_startup()
+        scheduler_service.start()
+
         # Trading accounts service (optional — only if encryption key is configured)
         from backend.services.accounts_service import AccountsService
         if os.environ.get("ACCOUNTS_ENCRYPTION_KEY"):
@@ -151,6 +161,7 @@ def create_app() -> FastAPI:
             app.state.snapshot_scheduler = None
 
         yield
+        await app.state.scheduler_service.shutdown()
         if app.state.snapshot_scheduler:
             await app.state.snapshot_scheduler.shutdown()
             await asyncio.sleep(0.5)
@@ -189,6 +200,7 @@ def create_app() -> FastAPI:
     from backend.routers.ws_accounts import router as ws_accounts_router
     from backend.routers.analytics import router as analytics_router
     from backend.routers.strategies import router as strategies_router
+    from backend.routers.scheduled_scans import router as scheduled_scans_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
@@ -200,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(analysis_router, prefix="/api/v1")
     app.include_router(symbols_router, prefix="/api/v1")
     app.include_router(scanner_router, prefix="/api/v1")
+    app.include_router(scheduled_scans_router, prefix="/api/v1")
     app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)

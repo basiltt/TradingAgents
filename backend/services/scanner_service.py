@@ -316,7 +316,7 @@ class ScannerService:
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
-    async def start_scan(self, config: Dict[str, Any]) -> str:
+    async def start_scan(self, config: Dict[str, Any], schedule_id: str | None = None, triggered_by: str = "manual") -> str:
         async with self._lock:
             active = sum(1 for s in self._scans.values() if s["status"] == "running")
             if active >= 1:
@@ -354,7 +354,8 @@ class ScannerService:
             import json as _json
             await asyncio.to_thread(
                 self._db.insert_scan,
-                {"scan_id": scan_id, "status": "running", "config": _json.dumps(config), "started_at": now},
+                {"scan_id": scan_id, "status": "running", "config": _json.dumps(config), "started_at": now,
+                 "schedule_id": schedule_id, "triggered_by": triggered_by},
             )
 
         task = asyncio.create_task(self._run_scan(scan_id))

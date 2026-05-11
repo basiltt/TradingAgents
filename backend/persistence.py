@@ -8,7 +8,7 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Generator, List, Optional
 
 import psycopg2
@@ -170,6 +170,40 @@ CREATE TABLE IF NOT EXISTS strategies (
 );
 CREATE INDEX IF NOT EXISTS idx_strategies_status ON strategies(status);
 CREATE INDEX IF NOT EXISTS idx_strategies_category ON strategies(category)
+"""),
+    (13, """
+CREATE TABLE IF NOT EXISTS scheduled_scans (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    schedule_type TEXT NOT NULL CHECK(schedule_type IN ('once','interval','daily','weekly','cron')),
+    schedule_config JSONB NOT NULL DEFAULT '{}',
+    scan_config JSONB NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed','error')),
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    next_run_at TEXT,
+    last_run_at TEXT,
+    last_scan_id TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_scans_status_next ON scheduled_scans(status, next_run_at)
+"""),
+    (14, """
+CREATE TABLE IF NOT EXISTS schedule_executions (
+    id SERIAL PRIMARY KEY,
+    schedule_id TEXT NOT NULL REFERENCES scheduled_scans(id) ON DELETE CASCADE,
+    scan_id TEXT REFERENCES scans(scan_id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK(status IN ('started','completed','failed','skipped_busy','skipped_no_key','cancelled')),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_executions_lookup ON schedule_executions(schedule_id, started_at DESC)
+"""),
+    (15, """
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS schedule_id TEXT;
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'manual' CHECK(triggered_by IN ('manual','scheduled','run_now'))
 """),
 ]
 
@@ -533,8 +567,8 @@ class AnalysisDB:
             try:
                 cur.execute(
                     "INSERT INTO scans "
-                    "(scan_id, status, config, total, completed, failed, started_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    "(scan_id, status, config, total, completed, failed, started_at, schedule_id, triggered_by) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         scan["scan_id"],
                         scan.get("status", "running"),
@@ -543,6 +577,8 @@ class AnalysisDB:
                         scan.get("completed", 0),
                         scan.get("failed", 0),
                         scan["started_at"],
+                        scan.get("schedule_id"),
+                        scan.get("triggered_by", "manual"),
                     ),
                 )
                 conn.commit()
@@ -1463,3 +1499,262 @@ class AnalysisDB:
                 conn.rollback()
                 raise
         return affected > 0
+
+    # ── Scheduled Scans ──────────────────────────────────────────────
+
+    def insert_scheduled_scan(self, data: Dict[str, Any]) -> None:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "INSERT INTO scheduled_scans "
+                    "(id, name, schedule_type, schedule_config, scan_config, status, "
+                    "timezone, next_run_at, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        data["id"],
+                        data["name"],
+                        data["schedule_type"],
+                        json.dumps(data["schedule_config"]),
+                        json.dumps(data["scan_config"]),
+                        data.get("status", "active"),
+                        data.get("timezone", "UTC"),
+                        data.get("next_run_at"),
+                        data["created_at"],
+                        data["updated_at"],
+                    ),
+                )
+                conn.commit()
+            except psycopg2.IntegrityError:
+                conn.rollback()
+                raise ValueError(f"Scheduled scan {data['id']} already exists")
+            except Exception:
+                conn.rollback()
+                raise
+
+    def update_scheduled_scan(self, scan_id: str, fields: Dict[str, Any]) -> None:
+        allowed = {
+            "name", "schedule_type", "schedule_config", "scan_config",
+            "status", "timezone", "next_run_at", "last_run_at",
+            "last_scan_id", "consecutive_failures", "updated_at",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        for k in ("schedule_config", "scan_config"):
+            if k in updates and isinstance(updates[k], dict):
+                updates[k] = json.dumps(updates[k])
+        set_clause = ", ".join(f"{k}=%s" for k in updates)
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"UPDATE scheduled_scans SET {set_clause} WHERE id=%s",
+                    (*updates.values(), scan_id),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def delete_scheduled_scan(self, scan_id: str) -> bool:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute("DELETE FROM scheduled_scans WHERE id=%s", (scan_id,))
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected > 0
+
+    def list_scheduled_scans(self) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM scheduled_scans ORDER BY created_at DESC"
+                )
+                return [self._deserialize_schedule(r) for r in cur.fetchall()]
+            except Exception:
+                conn.rollback()
+                raise
+
+    @staticmethod
+    def _deserialize_schedule(row: Dict[str, Any]) -> Dict[str, Any]:
+        d = dict(row)
+        for k in ("schedule_config", "scan_config"):
+            if isinstance(d.get(k), str):
+                d[k] = json.loads(d[k])
+        return d
+
+    def get_scheduled_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute("SELECT * FROM scheduled_scans WHERE id=%s", (scan_id,))
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                raise
+        return self._deserialize_schedule(row) if row else None
+
+    def get_due_scheduled_scans(self) -> List[Dict[str, Any]]:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM scheduled_scans "
+                    "WHERE status='active' AND next_run_at <= %s "
+                    "ORDER BY next_run_at ASC LIMIT 5",
+                    (now,),
+                )
+                return [self._deserialize_schedule(r) for r in cur.fetchall()]
+            except Exception:
+                conn.rollback()
+                raise
+
+    def claim_scheduled_scan(
+        self, scan_id: str, old_next: str, new_next: Optional[str]
+    ) -> bool:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "UPDATE scheduled_scans "
+                    "SET next_run_at=%s, last_run_at=%s, updated_at=%s "
+                    "WHERE id=%s AND next_run_at=%s AND status='active'",
+                    (new_next, now, now, scan_id, old_next),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+            except Exception:
+                conn.rollback()
+                raise
+
+    def insert_schedule_execution(self, data: Dict[str, Any]) -> int:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "INSERT INTO schedule_executions "
+                    "(schedule_id, scan_id, status, started_at, completed_at, error_message) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        data["schedule_id"],
+                        data.get("scan_id"),
+                        data["status"],
+                        data["started_at"],
+                        data.get("completed_at"),
+                        data.get("error_message"),
+                    ),
+                )
+                exec_id = cur.fetchone()[0]
+                conn.commit()
+                return exec_id
+            except Exception:
+                conn.rollback()
+                raise
+
+    def update_schedule_execution(self, exec_id: int, fields: Dict[str, Any]) -> None:
+        allowed = {"scan_id", "status", "completed_at", "error_message"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k}=%s" for k in updates)
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"UPDATE schedule_executions SET {set_clause} WHERE id=%s",
+                    (*updates.values(), exec_id),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def list_schedule_executions(
+        self, schedule_id: str, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM schedule_executions "
+                    "WHERE schedule_id=%s ORDER BY started_at DESC LIMIT %s",
+                    (schedule_id, limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+            except Exception:
+                conn.rollback()
+                raise
+
+    def cleanup_old_executions(self, days: int = 90, min_keep: int = 100) -> int:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "DELETE FROM schedule_executions "
+                    "WHERE started_at < %s "
+                    "AND id NOT IN ("
+                    "  SELECT id FROM ("
+                    "    SELECT id, ROW_NUMBER() OVER (PARTITION BY schedule_id ORDER BY started_at DESC) AS rn "
+                    "    FROM schedule_executions"
+                    "  ) ranked WHERE rn <= %s"
+                    ")",
+                    (cutoff, min_keep),
+                )
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected
+
+    def update_scan_schedule_link(
+        self, scan_id: str, schedule_id: str, triggered_by: str
+    ) -> None:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "UPDATE scans SET schedule_id=%s, triggered_by=%s WHERE scan_id=%s",
+                    (schedule_id, triggered_by, scan_id),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def count_scheduled_scans(self) -> int:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT COUNT(*) FROM scheduled_scans")
+                return cur.fetchone()[0]
+            except Exception:
+                conn.rollback()
+                raise
+
+    def mark_orphaned_executions(self) -> int:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "UPDATE schedule_executions SET status='failed', "
+                    "completed_at=%s, error_message='Server restarted during execution' "
+                    "WHERE status='started'",
+                    (now,),
+                )
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected
