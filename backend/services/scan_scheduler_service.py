@@ -240,6 +240,7 @@ class ScanSchedulerService:
         backend_url = scan_config.get("backend_url")
         has_api_key = scan_config.get("llm_api_key") or (env_key and os.getenv(env_key))
         if env_key and not backend_url and not has_api_key:
+            self._in_flight.pop(schedule_id, None)
             await asyncio.to_thread(
                 self._db.insert_schedule_execution,
                 {"schedule_id": schedule_id, "status": "skipped_no_key",
@@ -312,6 +313,11 @@ class ScanSchedulerService:
     async def _check_in_flight_completions(self) -> None:
         completed = []
         for schedule_id, exec_id in list(self._in_flight.items()):
+            if exec_id == -1:
+                logger.warning("Stale sentinel in _in_flight for %s, removing", schedule_id)
+                completed.append(schedule_id)
+                continue
+
             schedule = await asyncio.to_thread(self._db.get_scheduled_scan, schedule_id)
             if not schedule or not schedule.get("last_scan_id"):
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -339,6 +345,12 @@ class ScanSchedulerService:
 
                 if status == "failed":
                     await self._record_failure(schedule_id)
+                elif status == "cancelled":
+                    if schedule.get("schedule_type") == "once":
+                        await asyncio.to_thread(
+                            self._db.update_scheduled_scan, schedule_id,
+                            {"status": "error", "next_run_at": None, "updated_at": now},
+                        )
                 elif status == "completed":
                     updates: Dict[str, Any] = {"consecutive_failures": 0, "updated_at": now}
                     if schedule.get("schedule_type") == "once":
@@ -387,7 +399,13 @@ class ScanSchedulerService:
                 age = now - next_run
                 if age <= timedelta(hours=MISSED_ONCE_WINDOW_HOURS) and replayed < 1:
                     logger.info("Replaying missed once schedule %s", schedule["id"])
-                    await self._execute_schedule(schedule, triggered_by="scheduled")
+                    self._in_flight[schedule["id"]] = -1
+                    try:
+                        await self._execute_schedule(schedule, triggered_by="scheduled")
+                    except Exception:
+                        if self._in_flight.get(schedule["id"]) == -1:
+                            del self._in_flight[schedule["id"]]
+                        raise
                     replayed += 1
                 else:
                     await asyncio.to_thread(
@@ -507,6 +525,7 @@ class ScanSchedulerService:
             )
 
     def _resolve_scan_config(self, scan_config: Dict[str, Any]) -> Dict[str, Any]:
+        scan_config = dict(scan_config)
         resolved = self._config.get_config()["resolved"]
         defaults = {
             "provider": resolved.get("llm_provider", "openai"),
