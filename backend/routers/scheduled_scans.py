@@ -33,6 +33,14 @@ def _get_service(request: Request):
     return svc
 
 
+def _redact_response(data: dict) -> ScheduledScanResponse:
+    sc = data.get("scan_config")
+    if isinstance(sc, dict) and "llm_api_key" in sc:
+        sc = {**sc, "llm_api_key": "***"}
+        data = {**data, "scan_config": sc}
+    return ScheduledScanResponse(**data)
+
+
 @router.post("/scheduled-scans", status_code=201)
 async def create_schedule(request: Request, body: CreateScheduledScanRequest):
     svc = _get_service(request)
@@ -40,14 +48,14 @@ async def create_schedule(request: Request, body: CreateScheduledScanRequest):
         result = await svc.create(body.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return ScheduledScanResponse(**result)
+    return _redact_response(result)
 
 
 @router.get("/scheduled-scans")
 async def list_schedules(request: Request):
     svc = _get_service(request)
     schedules = await svc.list_all()
-    return {"schedules": [ScheduledScanResponse(**s) for s in schedules]}
+    return {"schedules": [_redact_response(s) for s in schedules]}
 
 
 @router.get("/scheduled-scans/{schedule_id}")
@@ -59,7 +67,7 @@ async def get_schedule(request: Request, schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
     executions = await svc.list_executions(schedule_id, limit=5)
     return {
-        **ScheduledScanResponse(**schedule).model_dump(),
+        **_redact_response(schedule).model_dump(),
         "recent_executions": [ScheduleExecutionResponse(**e) for e in executions],
     }
 
@@ -74,7 +82,7 @@ async def update_schedule(request: Request, schedule_id: str, body: UpdateSchedu
         raise HTTPException(status_code=404, detail="Schedule not found")
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return ScheduledScanResponse(**result)
+    return _redact_response(result)
 
 
 @router.delete("/scheduled-scans/{schedule_id}")
@@ -97,7 +105,7 @@ async def pause_schedule(request: Request, schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return ScheduledScanResponse(**result)
+    return _redact_response(result)
 
 
 @router.post("/scheduled-scans/{schedule_id}/resume")
@@ -110,7 +118,7 @@ async def resume_schedule(request: Request, schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return ScheduledScanResponse(**result)
+    return _redact_response(result)
 
 
 @router.post("/scheduled-scans/{schedule_id}/trigger")
@@ -123,7 +131,7 @@ async def trigger_schedule(request: Request, schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
     except ValueError as e:
         raise HTTPException(status_code=429, detail=str(e))
-    return ScheduledScanResponse(**result)
+    return _redact_response(result)
 
 
 @router.get("/scheduled-scans/{schedule_id}/executions")

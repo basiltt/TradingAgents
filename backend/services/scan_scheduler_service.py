@@ -226,7 +226,8 @@ class ScanSchedulerService:
 
         env_key = PROVIDER_API_KEY_MAP.get(provider)
         backend_url = scan_config.get("backend_url")
-        if env_key and not backend_url and not os.getenv(env_key):
+        has_api_key = scan_config.get("llm_api_key") or (env_key and os.getenv(env_key))
+        if env_key and not backend_url and not has_api_key:
             await asyncio.to_thread(
                 self._db.insert_schedule_execution,
                 {"schedule_id": schedule_id, "status": "skipped_no_key",

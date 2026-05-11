@@ -2,14 +2,20 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   scheduledScansApi,
+  apiClient,
   ApiError,
   type ScheduledScan,
   type ScheduleType,
   type CreateScheduledScanRequest,
   type ScheduleConfig,
+  type CryptoInterval,
 } from "@/api/client";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ModelSelect } from "@/components/ui/model-select";
+import { useModels } from "@/hooks/useModels";
+import { getModelOptions } from "@/lib/model-catalog";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -365,6 +371,21 @@ export function ScheduledScansPage() {
 
 // ── Schedule Form Dialog ────────────────────────────────────────
 
+const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
+const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
+const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
+  { value: "15", label: "15 min" },
+  { value: "60", label: "1 hour" },
+  { value: "240", label: "4 hours" },
+  { value: "D", label: "1 day" },
+];
+const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "French", "German", "Portuguese", "Russian", "Arabic", "Hindi"] as const;
+const STORAGE_KEY = "tradingagents_settings";
+
+function loadSavedSettings(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"); } catch { return {}; }
+}
+
 const SCHEDULE_TYPES: { value: ScheduleType; label: string }[] = [
   { value: "once", label: "Once" },
   { value: "interval", label: "Interval" },
@@ -395,8 +416,48 @@ function ScheduleFormDialog({
     Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
   const [submitting, setSubmitting] = useState(false);
+  const [showScanConfig, setShowScanConfig] = useState(false);
 
-  const { data: editData } = useQuery({
+  // Scan config state — defaults from localStorage (same as ScannerPage)
+  const [saved] = useState(loadSavedSettings);
+  const [provider, setProvider] = useState(saved.provider ?? "anthropic");
+  const [llmApiKey, setLlmApiKey] = useState(saved.llm_api_key ?? "");
+  const [backendUrl, setBackendUrl] = useState(saved.backend_url ?? "http://localhost:4141");
+  const [deepModel, setDeepModel] = useState(saved.deep_think_llm ?? "");
+  const [quickModel, setQuickModel] = useState(saved.quick_think_llm ?? "");
+  const [klineInterval, setKlineInterval] = useState<CryptoInterval>("D");
+  const [analysts, setAnalysts] = useState<string[]>([...CRYPTO_ANALYSTS]);
+  const [researchDepth, setResearchDepth] = useState(3);
+  const [outputLanguage, setOutputLanguage] = useState("English");
+  const [maxDebateRounds, setMaxDebateRounds] = useState(1);
+  const [maxRiskRounds, setMaxRiskRounds] = useState(1);
+  const [maxRecurLimit, setMaxRecurLimit] = useState(100);
+  const [maxParallel, setMaxParallel] = useState(10);
+  const [workflowMode, setWorkflowMode] = useState<"quick_trade" | "deep_analysis">("deep_analysis");
+  const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(false);
+  const [taPrefilterThreshold, setTaPrefilterThreshold] = useState(40);
+
+  // Providers list from API
+  const { data: providersData } = useQuery({
+    queryKey: ["providers"],
+    queryFn: ({ signal }) => apiClient.getProviders(signal),
+    staleTime: 300_000,
+  });
+  const PROVIDERS = providersData?.providers ?? PROVIDERS_FALLBACK;
+
+  // Model options
+  const { data: remoteModels } = useModels(backendUrl, llmApiKey);
+  const remoteIds = (remoteModels ?? []).map((m) => m.id);
+  const catalogDeep = getModelOptions(provider, "deep");
+  const catalogQuick = getModelOptions(provider, "quick");
+  const deepOptions = remoteIds.length > 0
+    ? remoteIds.map((id) => ({ label: id, value: id }))
+    : catalogDeep;
+  const quickOptions = remoteIds.length > 0
+    ? remoteIds.map((id) => ({ label: id, value: id }))
+    : catalogQuick;
+
+  const { data: editData, isLoading: editLoading } = useQuery({
     queryKey: ["scheduled-scan", editingId],
     queryFn: ({ signal }) =>
       editingId ? scheduledScansApi.get(editingId, signal) : null,
@@ -424,6 +485,24 @@ function ScheduleFormDialog({
       if (cfg.days) setDays(cfg.days);
       if (cfg.day) setDay(cfg.day);
       if (cfg.cron_expression) setCronExpression(cfg.cron_expression);
+      // Populate scan config
+      const sc = editData.scan_config as Record<string, unknown>;
+      if (sc.provider) setProvider(sc.provider as string);
+      if (sc.llm_api_key && sc.llm_api_key !== "***") setLlmApiKey(sc.llm_api_key as string);
+      if (sc.backend_url) setBackendUrl(sc.backend_url as string);
+      if (sc.deep_think_llm) setDeepModel(sc.deep_think_llm as string);
+      if (sc.quick_think_llm) setQuickModel(sc.quick_think_llm as string);
+      if (sc.interval) setKlineInterval(sc.interval as CryptoInterval);
+      if (Array.isArray(sc.analysts)) setAnalysts(sc.analysts as string[]);
+      if (sc.research_depth != null) setResearchDepth(sc.research_depth as number);
+      if (sc.output_language) setOutputLanguage(sc.output_language as string);
+      if (sc.max_debate_rounds != null) setMaxDebateRounds(sc.max_debate_rounds as number);
+      if (sc.max_risk_discuss_rounds != null) setMaxRiskRounds(sc.max_risk_discuss_rounds as number);
+      if (sc.max_recur_limit != null) setMaxRecurLimit(sc.max_recur_limit as number);
+      if (sc.max_parallel != null) setMaxParallel(sc.max_parallel as number);
+      if (sc.workflow_mode) setWorkflowMode(sc.workflow_mode as "quick_trade" | "deep_analysis");
+      if (sc.ta_prefilter_enabled != null) setTaPrefilterEnabled(sc.ta_prefilter_enabled as boolean);
+      if (sc.ta_prefilter_threshold != null) setTaPrefilterThreshold(sc.ta_prefilter_threshold as number);
     }
   }, [editData, editingId]);
 
@@ -439,6 +518,24 @@ function ScheduleFormDialog({
       setDay("mon");
       setCronExpression("0 9 * * *");
       setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+      // Reset scan config to defaults
+      setProvider(saved.provider ?? "anthropic");
+      setLlmApiKey(saved.llm_api_key ?? "");
+      setBackendUrl(saved.backend_url ?? "http://localhost:4141");
+      setDeepModel(saved.deep_think_llm ?? "");
+      setQuickModel(saved.quick_think_llm ?? "");
+      setKlineInterval("D");
+      setAnalysts([...CRYPTO_ANALYSTS]);
+      setResearchDepth(3);
+      setOutputLanguage("English");
+      setMaxDebateRounds(1);
+      setMaxRiskRounds(1);
+      setMaxRecurLimit(100);
+      setMaxParallel(10);
+      setWorkflowMode("deep_analysis");
+      setTaPrefilterEnabled(false);
+      setTaPrefilterThreshold(40);
+      setShowScanConfig(false);
     }
     onOpenChange(v);
   }
@@ -482,7 +579,25 @@ function ScheduleFormDialog({
         name: name.trim(),
         schedule_type: scheduleType,
         schedule_config: buildConfig(),
-        scan_config: editData?.scan_config ?? {},
+        scan_config: {
+          asset_type: "crypto",
+          interval: klineInterval,
+          provider: provider || undefined,
+          llm_api_key: llmApiKey || undefined,
+          deep_think_llm: deepModel || undefined,
+          quick_think_llm: quickModel || undefined,
+          backend_url: backendUrl || undefined,
+          analysts,
+          research_depth: researchDepth,
+          output_language: outputLanguage !== "English" ? outputLanguage : undefined,
+          max_debate_rounds: maxDebateRounds,
+          max_risk_discuss_rounds: maxRiskRounds,
+          max_recur_limit: maxRecurLimit !== 100 ? maxRecurLimit : undefined,
+          max_parallel: maxParallel !== 10 ? maxParallel : undefined,
+          workflow_mode: workflowMode !== "deep_analysis" ? workflowMode : undefined,
+          ta_prefilter_enabled: taPrefilterEnabled,
+          ta_prefilter_threshold: taPrefilterEnabled ? taPrefilterThreshold : undefined,
+        },
         timezone,
       };
 
@@ -507,7 +622,7 @@ function ScheduleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {editingId ? "Edit Schedule" : "New Scheduled Scan"}
@@ -663,6 +778,199 @@ function ScheduleFormDialog({
             />
           </div>
 
+          {/* ── Scan Configuration (collapsible) ── */}
+          <div className="rounded-lg border border-border/40">
+            <button
+              type="button"
+              onClick={() => setShowScanConfig(!showScanConfig)}
+              className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full px-4 py-3"
+            >
+              <svg className={cn("w-4 h-4 transition-transform duration-200", showScanConfig && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              Scan Configuration
+            </button>
+            {showScanConfig && (
+              <div className="px-4 pb-4 space-y-4">
+                {/* Provider + Interval + Workflow Mode */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs font-medium">LLM Provider</Label>
+                    <Select value={provider} onValueChange={setProvider}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {PROVIDERS.map((p) => (
+                          <SelectItem key={p} value={p}>{p}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs font-medium">Kline Interval</Label>
+                    <Select value={klineInterval} onValueChange={(v) => setKlineInterval(v as CryptoInterval)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {CRYPTO_INTERVALS.map((i) => (
+                          <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs font-medium">Output Language</Label>
+                    <Select value={outputLanguage} onValueChange={setOutputLanguage}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {LANGUAGES.map((l) => (
+                          <SelectItem key={l} value={l}>{l}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Workflow Mode */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-medium">Workflow Mode</Label>
+                  <div className="flex rounded-lg border overflow-hidden">
+                    {([
+                      { value: "quick_trade" as const, label: "Quick Trade" },
+                      { value: "deep_analysis" as const, label: "Deep Analysis" },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${
+                          workflowMode === opt.value
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted/50 hover:bg-muted"
+                        }`}
+                        onClick={() => setWorkflowMode(opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Smart Pre-Screen */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="sched_ta_prefilter"
+                    checked={taPrefilterEnabled}
+                    onChange={(e) => setTaPrefilterEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <Label htmlFor="sched_ta_prefilter" className="text-xs font-medium cursor-pointer">Smart Pre-Screen</Label>
+                  {taPrefilterEnabled && (
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={taPrefilterThreshold}
+                      onChange={(e) => setTaPrefilterThreshold(Number(e.target.value))}
+                      className="w-16 h-7 text-xs ml-2"
+                    />
+                  )}
+                </div>
+
+                {/* Analyst Team */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-medium">Analyst Team</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CRYPTO_ANALYSTS.map((a) => {
+                      const active = analysts.includes(a);
+                      return (
+                        <button
+                          key={a}
+                          type="button"
+                          onClick={() => setAnalysts((prev) => active ? prev.filter((x) => x !== a) : [...prev, a])}
+                          className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                            active
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+                          }`}
+                        >
+                          {a.replace("crypto_", "")}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Backend URL + API Key */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-medium">Backend URL</Label>
+                  <Input
+                    value={backendUrl}
+                    onChange={(e) => setBackendUrl(e.target.value)}
+                    placeholder="http://localhost:4141"
+                    className="text-xs"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-medium">API Key</Label>
+                  <Input
+                    type="password"
+                    value={llmApiKey}
+                    onChange={(e) => setLlmApiKey(e.target.value)}
+                    placeholder="Provider API key (optional)"
+                    className="text-xs"
+                  />
+                </div>
+
+                {/* Model selectors */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs font-medium">Deep Think Model</Label>
+                    <ModelSelect
+                      options={deepOptions}
+                      value={deepModel}
+                      onChange={(v) => setDeepModel(v ?? "")}
+                      placeholder="Select model..."
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label className="text-xs font-medium">Quick Think Model</Label>
+                    <ModelSelect
+                      options={quickOptions}
+                      value={quickModel}
+                      onChange={(v) => setQuickModel(v ?? "")}
+                      placeholder="Select model..."
+                    />
+                  </div>
+                </div>
+
+                {/* Workflow parameters */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs font-medium">Research Depth</Label>
+                    <Input type="number" min={1} max={5} value={researchDepth} onChange={(e) => setResearchDepth(Number(e.target.value))} className="text-xs" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs font-medium">Debate Rounds</Label>
+                    <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} className="text-xs" />
+                  </div>
+                  {workflowMode !== "quick_trade" && (
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-xs font-medium">Risk Rounds</Label>
+                      <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} className="text-xs" />
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs font-medium">Parallel</Label>
+                    <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(25, Math.max(1, Number(e.target.value))))} className="text-xs" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs font-medium">Max Recursion Limit</Label>
+                  <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} className="w-32 text-xs" />
+                </div>
+              </div>
+            )}
+          </div>
+
           <DialogFooter>
             <Button
               type="button"
@@ -671,7 +979,7 @@ function ScheduleFormDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || (!!editingId && editLoading)}>
               {submitting
                 ? "Saving..."
                 : editingId

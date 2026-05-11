@@ -492,8 +492,6 @@ export const apiClient = {
     mutate<{ imported: number; strategies: Strategy[] }>("POST", "/api/v1/strategies/import", { strategies }),
 };
 
-export { ApiError };
-
 // ── Trading Accounts API ─────────────────────────────────────────────
 
 export interface TradingAccount {

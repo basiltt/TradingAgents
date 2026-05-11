@@ -741,6 +741,37 @@ class CreateScheduledScanRequest(BaseModel):
     def validate_scan_config(cls, v: Dict[str, Any]) -> Dict[str, Any]:
         if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
             raise ValueError("scan_config too large (max 64KB)")
+        if "provider" in v and v["provider"] is not None:
+            if v["provider"] not in VALID_PROVIDERS:
+                raise ValueError(f"Invalid provider: {v['provider']}")
+        if "workflow_mode" in v and v["workflow_mode"] is not None:
+            if v["workflow_mode"] not in ("quick_trade", "deep_analysis"):
+                raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
+        for model_key in ("deep_think_llm", "quick_think_llm"):
+            if model_key in v and v[model_key] is not None:
+                if not MODEL_ID_RE.match(v[model_key]):
+                    raise ValueError(f"Invalid model ID for {model_key}")
+        if "research_depth" in v and v["research_depth"] is not None:
+            if not (1 <= int(v["research_depth"]) <= 5):
+                raise ValueError("research_depth must be between 1 and 5")
+        if "max_debate_rounds" in v and v["max_debate_rounds"] is not None:
+            if not (1 <= int(v["max_debate_rounds"]) <= 10):
+                raise ValueError("max_debate_rounds must be between 1 and 10")
+        if "max_risk_discuss_rounds" in v and v["max_risk_discuss_rounds"] is not None:
+            if not (1 <= int(v["max_risk_discuss_rounds"]) <= 10):
+                raise ValueError("max_risk_discuss_rounds must be between 1 and 10")
+        if "max_parallel" in v and v["max_parallel"] is not None:
+            if not (1 <= int(v["max_parallel"]) <= 25):
+                raise ValueError("max_parallel must be between 1 and 25")
+        if "analysts" in v and v["analysts"] is not None:
+            asset = v.get("asset_type", "crypto")
+            valid = {e.value for e in CryptoAnalystType} if asset == "crypto" else {e.value for e in AnalystType}
+            for a in v["analysts"]:
+                if a not in valid:
+                    raise ValueError(f"Invalid analyst: {a}")
+        if "interval" in v and v["interval"] is not None:
+            if v["interval"] not in VALID_CRYPTO_INTERVALS:
+                raise ValueError(f"Invalid interval: {v['interval']}")
         return v
 
     @model_validator(mode="after")
@@ -798,8 +829,11 @@ class UpdateScheduledScanRequest(BaseModel):
     @field_validator("scan_config")
     @classmethod
     def validate_scan_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if v is not None and len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
-            raise ValueError("scan_config too large (max 64KB)")
+        if v is not None:
+            if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
+                raise ValueError("scan_config too large (max 64KB)")
+            # Reuse the same field validation as CreateScheduledScanRequest
+            CreateScheduledScanRequest.validate_scan_config(v)
         return v
 
 
