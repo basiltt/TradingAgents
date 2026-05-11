@@ -205,6 +205,9 @@ CREATE INDEX IF NOT EXISTS idx_schedule_executions_lookup ON schedule_executions
 ALTER TABLE scans ADD COLUMN IF NOT EXISTS schedule_id TEXT;
 ALTER TABLE scans ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'manual' CHECK(triggered_by IN ('manual','scheduled','run_now'))
 """),
+    (16, """
+CREATE INDEX IF NOT EXISTS idx_scans_schedule_id ON scans(schedule_id) WHERE schedule_id IS NOT NULL
+"""),
 ]
 
 
@@ -1532,7 +1535,7 @@ class AnalysisDB:
                 conn.rollback()
                 raise
 
-    def update_scheduled_scan(self, scan_id: str, fields: Dict[str, Any]) -> None:
+    def update_scheduled_scan(self, schedule_id: str, fields: Dict[str, Any]) -> None:
         allowed = {
             "name", "schedule_type", "schedule_config", "scan_config",
             "status", "timezone", "next_run_at", "last_run_at",
@@ -1550,18 +1553,18 @@ class AnalysisDB:
             try:
                 cur.execute(
                     f"UPDATE scheduled_scans SET {set_clause} WHERE id=%s",
-                    (*updates.values(), scan_id),
+                    (*updates.values(), schedule_id),
                 )
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
 
-    def delete_scheduled_scan(self, scan_id: str) -> bool:
+    def delete_scheduled_scan(self, schedule_id: str) -> bool:
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
-                cur.execute("DELETE FROM scheduled_scans WHERE id=%s", (scan_id,))
+                cur.execute("DELETE FROM scheduled_scans WHERE id=%s", (schedule_id,))
                 affected = cur.rowcount
                 conn.commit()
             except Exception:
@@ -1589,11 +1592,11 @@ class AnalysisDB:
                 d[k] = json.loads(d[k])
         return d
 
-    def get_scheduled_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+    def get_scheduled_scan(self, schedule_id: str) -> Optional[Dict[str, Any]]:
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
-                cur.execute("SELECT * FROM scheduled_scans WHERE id=%s", (scan_id,))
+                cur.execute("SELECT * FROM scheduled_scans WHERE id=%s", (schedule_id,))
                 row = cur.fetchone()
             except Exception:
                 conn.rollback()
@@ -1617,7 +1620,7 @@ class AnalysisDB:
                 raise
 
     def claim_scheduled_scan(
-        self, scan_id: str, old_next: str, new_next: Optional[str]
+        self, schedule_id: str, old_next: str, new_next: Optional[str]
     ) -> bool:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._get_conn() as conn:
@@ -1627,7 +1630,7 @@ class AnalysisDB:
                     "UPDATE scheduled_scans "
                     "SET next_run_at=%s, last_run_at=%s, updated_at=%s "
                     "WHERE id=%s AND next_run_at=%s AND status='active'",
-                    (new_next, now, now, scan_id, old_next),
+                    (new_next, now, now, schedule_id, old_next),
                 )
                 conn.commit()
                 return cur.rowcount > 0
@@ -1743,14 +1746,15 @@ class AnalysisDB:
 
     def mark_orphaned_executions(self) -> int:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        threshold = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
                 cur.execute(
                     "UPDATE schedule_executions SET status='failed', "
                     "completed_at=%s, error_message='Server restarted during execution' "
-                    "WHERE status='started'",
-                    (now,),
+                    "WHERE status='started' AND started_at < %s",
+                    (now, threshold),
                 )
                 affected = cur.rowcount
                 conn.commit()

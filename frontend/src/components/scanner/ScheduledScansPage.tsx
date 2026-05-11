@@ -480,7 +480,7 @@ function ScheduleFormDialog({
           setRunAt(cfg.run_at);
         }
       }
-      if (cfg.interval_minutes) setIntervalMinutes(cfg.interval_minutes);
+      if (cfg.interval_minutes != null) setIntervalMinutes(cfg.interval_minutes);
       if (cfg.time) setTime(cfg.time);
       if (cfg.days) setDays(cfg.days);
       if (cfg.day) setDay(cfg.day);
@@ -495,7 +495,7 @@ function ScheduleFormDialog({
       if (sc.interval) setKlineInterval(sc.interval as CryptoInterval);
       if (Array.isArray(sc.analysts)) setAnalysts(sc.analysts as string[]);
       if (sc.research_depth != null) setResearchDepth(sc.research_depth as number);
-      if (sc.output_language) setOutputLanguage(sc.output_language as string);
+      if (sc.output_language != null) setOutputLanguage(sc.output_language as string);
       if (sc.max_debate_rounds != null) setMaxDebateRounds(sc.max_debate_rounds as number);
       if (sc.max_risk_discuss_rounds != null) setMaxRiskRounds(sc.max_risk_discuss_rounds as number);
       if (sc.max_recur_limit != null) setMaxRecurLimit(sc.max_recur_limit as number);
@@ -589,12 +589,12 @@ function ScheduleFormDialog({
           backend_url: backendUrl || undefined,
           analysts,
           research_depth: researchDepth,
-          output_language: outputLanguage !== "English" ? outputLanguage : undefined,
+          output_language: outputLanguage,
           max_debate_rounds: maxDebateRounds,
           max_risk_discuss_rounds: maxRiskRounds,
-          max_recur_limit: maxRecurLimit !== 100 ? maxRecurLimit : undefined,
-          max_parallel: maxParallel !== 10 ? maxParallel : undefined,
-          workflow_mode: workflowMode !== "deep_analysis" ? workflowMode : undefined,
+          max_recur_limit: maxRecurLimit,
+          max_parallel: maxParallel,
+          workflow_mode: workflowMode,
           ta_prefilter_enabled: taPrefilterEnabled,
           ta_prefilter_threshold: taPrefilterEnabled ? taPrefilterThreshold : undefined,
         },

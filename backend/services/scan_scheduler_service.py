@@ -145,7 +145,13 @@ class ScanSchedulerService:
             if (datetime.now(timezone.utc) - last).total_seconds() < COOLDOWN_SECONDS:
                 raise ValueError("Cooldown: must wait 60 seconds between triggers")
 
-        await self._execute_schedule(existing, triggered_by="run_now")
+        self._in_flight[scan_id] = -1  # sentinel to prevent concurrent execution
+        try:
+            await self._execute_schedule(existing, triggered_by="run_now")
+        except Exception:
+            if self._in_flight.get(scan_id) == -1:
+                del self._in_flight[scan_id]
+            raise
         return await asyncio.to_thread(self._db.get_scheduled_scan, scan_id)
 
     async def list_executions(self, schedule_id: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -208,13 +214,19 @@ class ScanSchedulerService:
         if not claimed:
             return
 
-        await self._execute_schedule(schedule, triggered_by="scheduled")
+        self._in_flight[schedule["id"]] = -1  # sentinel until _execute_schedule sets real exec_id
+        try:
+            await self._execute_schedule(schedule, triggered_by="scheduled")
+        except Exception:
+            if self._in_flight.get(schedule["id"]) == -1:
+                del self._in_flight[schedule["id"]]
+            raise
 
     async def _execute_schedule(self, schedule: Dict[str, Any], triggered_by: str = "scheduled") -> None:
         schedule_id = schedule["id"]
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        scan_config = schedule.get("scan_config", {})
+        scan_config = dict(schedule.get("scan_config", {}))
 
         if not scan_config.get("analysis_date"):
             scan_config["analysis_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -238,7 +250,7 @@ class ScanSchedulerService:
             if schedule["schedule_type"] == "once":
                 await asyncio.to_thread(
                     self._db.update_scheduled_scan, schedule_id,
-                    {"status": "completed", "next_run_at": None, "updated_at": now},
+                    {"status": "error", "next_run_at": None, "updated_at": now},
                 )
             return
 
@@ -267,6 +279,7 @@ class ScanSchedulerService:
             logger.info("Schedule %s fired scan %s", schedule_id, scan_id)
 
         except ScannerBusyError:
+            self._in_flight.pop(schedule_id, None)
             await asyncio.to_thread(
                 self._db.update_schedule_execution, exec_id,
                 {"status": "skipped_busy", "completed_at": now,
@@ -281,17 +294,19 @@ class ScanSchedulerService:
             logger.info("Schedule %s skipped: scanner busy", schedule_id)
 
         except Exception as e:
+            self._in_flight.pop(schedule_id, None)
             error_msg = self._sanitize_error(str(e))
             await asyncio.to_thread(
                 self._db.update_schedule_execution, exec_id,
                 {"status": "failed", "completed_at": now, "error_message": error_msg},
             )
-            await self._record_failure(schedule_id)
             if schedule["schedule_type"] == "once":
                 await asyncio.to_thread(
                     self._db.update_scheduled_scan, schedule_id,
-                    {"status": "completed", "next_run_at": None, "updated_at": now},
+                    {"status": "error", "next_run_at": None, "updated_at": now},
                 )
+            else:
+                await self._record_failure(schedule_id)
             logger.exception("Schedule %s execution failed", schedule_id)
 
     async def _check_in_flight_completions(self) -> None:

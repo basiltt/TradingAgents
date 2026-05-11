@@ -8,6 +8,7 @@ from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
+from croniter import croniter
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,15}$")
@@ -704,6 +705,8 @@ class ScheduleConfig(BaseModel):
             dangerous = re.compile(r"[@;|&`$]")
             if dangerous.search(v):
                 raise ValueError("Cron expression contains invalid characters")
+            if not croniter.is_valid(v):
+                raise ValueError("Invalid cron expression")
         return v
 
 
