@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.event_bus import EventBus
 from backend.persistence import AnalysisDB
@@ -26,38 +25,63 @@ load_dotenv()
 load_dotenv(".env.enterprise", override=False)
 
 
-class CSPMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        csp_connect = os.environ.get(
-            "WEB_CSP_CONNECT_SRC",
-            "'self' ws://localhost:8877 wss://localhost:8877",
-        )
-        import re as _re
-        csp_connect = _re.sub(r"[^\x20-\x7E]|[;\n\r]", "", csp_connect)
-        # Split on whitespace and filter to URL-like tokens only
-        csp_connect = " ".join(
-            t for t in csp_connect.split()
-            if _re.match(r"^('[\w-]+'|[\w:+.\-]+://[\w:.\-/?#@%=&+,*!]+)$", t)
-        ) or "'self'"
-        response.headers["Content-Security-Policy"] = (
-            f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            f"img-src 'self' data:; font-src 'self'; connect-src {csp_connect}; "
-            f"frame-ancestors 'none'"
-        )
-        return response
+import re as _re
+
+_CSP_CONNECT = os.environ.get(
+    "WEB_CSP_CONNECT_SRC",
+    "'self' ws://localhost:8877 wss://localhost:8877",
+)
+_CSP_CONNECT = _re.sub(r"[^\x20-\x7E]|[;\n\r]", "", _CSP_CONNECT)
+_CSP_CONNECT = " ".join(
+    t for t in _CSP_CONNECT.split()
+    if _re.match(r"^('[\w-]+'|[\w:+.\-]+://[\w:.\-/?#@%=&+,*!]+)$", t)
+) or "'self'"
+_CSP_HEADER = (
+    f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    f"img-src 'self' data:; font-src 'self'; connect-src {_CSP_CONNECT}; "
+    f"frame-ancestors 'none'"
+)
+_CSP_HEADER_BYTES = _CSP_HEADER.encode()
+
+_MUTATING_METHODS = frozenset({b"POST", b"PATCH", b"PUT", b"DELETE"})
+_CSRF_BODY = b'{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED"}'
 
 
-class CSRFMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        if request.method in ("POST", "PATCH", "PUT", "DELETE"):
-            if request.headers.get("X-Requested-With") != "XMLHttpRequest":
-                return Response(
-                    content='{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED"}',
-                    status_code=403,
-                    media_type="application/json",
-                )
-        return await call_next(request)
+class CSPCSRFMiddleware:
+    """Pure ASGI middleware combining CSP header injection and CSRF check."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # CSRF check for mutating methods
+        if scope["method"].encode() in _MUTATING_METHODS:
+            headers = dict(scope.get("headers", []))
+            if headers.get(b"x-requested-with") != b"XMLHttpRequest":
+                await send({
+                    "type": "http.response.start",
+                    "status": 403,
+                    "headers": [
+                        [b"content-type", b"application/json"],
+                        [b"content-security-policy", _CSP_HEADER_BYTES],
+                    ],
+                })
+                await send({"type": "http.response.body", "body": _CSRF_BODY})
+                return
+
+        # Inject CSP header into every response
+        async def send_with_csp(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append([b"content-security-policy", _CSP_HEADER_BYTES])
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_csp)
 
 
 def create_app() -> FastAPI:
@@ -143,6 +167,7 @@ def create_app() -> FastAPI:
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
+    app.add_middleware(CSPCSRFMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -150,8 +175,6 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-Requested-With"],
     )
-    app.add_middleware(CSRFMiddleware)
-    app.add_middleware(CSPMiddleware)
 
     from backend.routers.config import router as config_router
     from backend.routers.models import router as models_router

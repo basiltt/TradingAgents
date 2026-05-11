@@ -115,7 +115,7 @@ async def rotate_credentials(request: Request, account_id: str):
 async def delete_account(request: Request, account_id: str):
     _validate_account_id(account_id)
     svc = _get_service(request)
-    deleted = await asyncio.to_thread(svc.delete_account, account_id)
+    deleted = await svc.delete_account(account_id)
     if not deleted:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return {"status": "deleted"}

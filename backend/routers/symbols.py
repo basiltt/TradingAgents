@@ -14,7 +14,8 @@ async def list_symbols(
     if asset_type != "crypto":
         return {"symbols": []}
 
+    import asyncio
     from tradingagents.dataflows.bybit_data import get_valid_symbols
 
-    symbols = get_valid_symbols()
+    symbols = await asyncio.to_thread(get_valid_symbols)
     return {"symbols": sorted(symbols)}

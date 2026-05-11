@@ -49,8 +49,9 @@ def _validate_scan_response(raw: dict) -> dict:
 
 @router.post("/scanner", status_code=201)
 async def start_scan(request: Request, body: ScanRequest):
-    provider = body.provider or request.app.state.config_service.get_config()["resolved"].get("llm_provider", "openai")
-    backend_url = body.backend_url or request.app.state.config_service.get_config()["resolved"].get("backend_url")
+    resolved = request.app.state.config_service.get_config()["resolved"]
+    provider = body.provider or resolved.get("llm_provider", "openai")
+    backend_url = body.backend_url or resolved.get("backend_url")
     env_key = _PROVIDER_KEY_MAP.get(provider)
     if env_key and not backend_url and not os.getenv(env_key):
         raise HTTPException(

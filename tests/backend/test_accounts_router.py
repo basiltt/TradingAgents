@@ -96,12 +96,12 @@ class TestGetAccount:
 
 class TestDeleteAccount:
     def test_success(self, client, mock_svc):
-        mock_svc.delete_account = MagicMock(return_value=True)
+        mock_svc.delete_account = AsyncMock(return_value=True)
         resp = client.delete(f"/accounts/{_TEST_ID}")
         assert resp.status_code == 200
 
     def test_not_found(self, client, mock_svc):
-        mock_svc.delete_account = MagicMock(return_value=False)
+        mock_svc.delete_account = AsyncMock(return_value=False)
         resp = client.delete(f"/accounts/{_MISSING_ID}")
         assert resp.status_code == 404
 

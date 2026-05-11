@@ -62,14 +62,16 @@ def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
     last_exc: Exception | None = None
     for attempt in range(_LLM_MAX_RETRIES):
         if _llm_min_spacing_ms > 0:
+            gap = 0.0
             with _llm_spacing_lock:
                 now = time.monotonic()
                 elapsed_ms = (now - _llm_last_request_ts) * 1000
                 if _llm_last_request_ts > 0 and elapsed_ms < _llm_min_spacing_ms:
                     gap = (_llm_min_spacing_ms - elapsed_ms) / 1000
-                    logger.debug("Spacing LLM call: waiting %.1fms", gap * 1000)
-                    time.sleep(gap)
-                _llm_last_request_ts = time.monotonic()
+                _llm_last_request_ts = time.monotonic() + gap
+            if gap > 0:
+                logger.debug("Spacing LLM call: waiting %.1fms", gap * 1000)
+                time.sleep(gap)
         if sem is not None:
             sem.acquire()
         try:
@@ -83,10 +85,10 @@ def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
                 "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
                 attempt + 1, _LLM_MAX_RETRIES, delay, exc,
             )
-            time.sleep(delay)
         finally:
             if sem is not None:
                 sem.release()
+        time.sleep(delay)
     raise last_exc  # unreachable but keeps type checkers happy
 
 

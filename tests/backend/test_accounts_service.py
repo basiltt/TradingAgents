@@ -145,7 +145,7 @@ async def test_delete_account(svc):
         instance.close = AsyncMock()
         account = await svc.create_account("Del", "demo", "apikey12345678", "secret12345678")
 
-    assert svc.delete_account(account["id"]) is True
+    assert await svc.delete_account(account["id"]) is True
     assert svc.get_account(account["id"]) is None
     assert svc.list_accounts() == []
 
@@ -213,7 +213,7 @@ async def test_cache_invalidation_on_delete(svc):
     svc._set_cached(f"{account['id']}:wallet", {"test": True}, 60)
     assert svc._get_cached(f"{account['id']}:wallet", 60) is not None
 
-    svc.delete_account(account["id"])
+    await svc.delete_account(account["id"])
     assert svc._get_cached(f"{account['id']}:wallet", 60) is None
 
 

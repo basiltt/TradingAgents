@@ -24,7 +24,7 @@ class AccountWSManager:
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        accounts = self._db.list_accounts()
+        accounts = await asyncio.to_thread(self._db.list_accounts)
         for acc in accounts:
             if acc["is_active"]:
                 await self._start_account(acc["id"])
@@ -51,12 +51,13 @@ class AccountWSManager:
     async def _start_account(self, account_id: str) -> None:
         if account_id in self._clients:
             return
-        creds = self._db.get_account_credentials(account_id)
+        creds = await asyncio.to_thread(self._db.get_account_credentials, account_id)
         if not creds:
             return
         try:
-            api_key = decrypt_value(creds["api_key_encrypted"])
-            api_secret = decrypt_value(creds["api_secret_encrypted"])
+            def _decrypt():
+                return decrypt_value(creds["api_key_encrypted"]), decrypt_value(creds["api_secret_encrypted"])
+            api_key, api_secret = await asyncio.to_thread(_decrypt)
         except Exception as e:
             logger.error("Cannot decrypt credentials for account %s: %s", account_id, e)
             return
