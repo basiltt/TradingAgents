@@ -11,6 +11,8 @@ _PASSTHROUGH_KWARGS = (
     "callbacks", "http_client", "http_async_client", "effort",
 )
 
+_serialize_lock = threading.Lock()
+
 
 class NormalizedChatAnthropic(ChatAnthropic):
     """ChatAnthropic with normalized content output.
@@ -20,13 +22,11 @@ class NormalizedChatAnthropic(ChatAnthropic):
     downstream handling.
     """
 
-    _serialize_lock: threading.Lock = threading.Lock()
-
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
 
     def __iter__(self):
-        with self._serialize_lock:
+        with _serialize_lock:
             yield from list(super().__iter__())
 
 

@@ -6,6 +6,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from .base_client import BaseLLMClient, normalize_content, llm_rate_limited_invoke
 from .validators import validate_model
 
+_serialize_lock = threading.Lock()
+
 
 class NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
     """ChatGoogleGenerativeAI with normalized content output.
@@ -14,13 +16,11 @@ class NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
     This normalizes to string for consistent downstream handling.
     """
 
-    _serialize_lock: threading.Lock = threading.Lock()
-
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
 
     def __iter__(self):
-        with self._serialize_lock:
+        with _serialize_lock:
             yield from list(super().__iter__())
 
 
