@@ -221,6 +221,7 @@ export interface ScanStatus {
   total_batches: number;
   current_tickers: string[];
   results: ScanResultItem[];
+  direction_counts?: Record<string, number>;
   started_at: string;
   completed_at: string | null;
   interval?: string;

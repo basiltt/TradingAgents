@@ -159,11 +159,19 @@ class AnalysisService:
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
         result = await asyncio.to_thread(self._db.list_runs, **kwargs)
         for item in result.get("items", []):
-            if isinstance(item.get("config"), str):
+            cfg = item.get("config")
+            if isinstance(cfg, str):
                 try:
-                    item["config"] = json.loads(item["config"])
+                    cfg = json.loads(cfg)
                 except (json.JSONDecodeError, TypeError):
-                    item["config"] = {}
+                    cfg = {}
+            if isinstance(cfg, dict):
+                item["config"] = {
+                    "deep_think_llm": cfg.get("deep_think_llm"),
+                    "quick_think_llm": cfg.get("quick_think_llm"),
+                }
+            else:
+                item["config"] = {}
         return result
 
     async def get_report(self, run_id: str) -> Optional[str]:

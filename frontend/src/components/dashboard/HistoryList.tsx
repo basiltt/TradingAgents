@@ -88,8 +88,12 @@ export function HistoryList() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["analyses"],
     queryFn: ({ signal }) => apiClient.listAnalyses({ limit: 10000 }, signal),
-    staleTime: 30_000,
-    refetchInterval: 30_000, // poll every 30s so deletes/changes on other devices sync
+    staleTime: 15_000,
+    refetchInterval: (query) => {
+      const items = query.state.data?.items;
+      const hasRunning = items?.some((i) => i.status === "running");
+      return hasRunning ? 5000 : 30_000;
+    },
   });
 
   const deleteMutation = useMutation({

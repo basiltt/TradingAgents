@@ -401,7 +401,8 @@ class AnalysisDB:
                 )
                 total = cur.fetchone()["cnt"]
                 cur.execute(
-                    f"SELECT * FROM analysis_runs {where} "
+                    f"SELECT run_id, ticker, analysis_date, status, started_at, "
+                    f"completed_at, asset_type, config FROM analysis_runs {where} "
                     f"ORDER BY started_at DESC LIMIT %s OFFSET %s",
                     params + [limit, offset],
                 )
@@ -649,20 +650,18 @@ class AnalysisDB:
                     return []
                 scan_ids = [s["scan_id"] for s in scans]
                 cur.execute(
-                    "SELECT scan_id, ticker, run_id, status, direction, confidence, "
-                    "score, decision_summary, signal_source "
+                    "SELECT scan_id, direction, COUNT(*) as cnt "
                     "FROM scan_results WHERE scan_id = ANY(%s) "
-                    "ORDER BY ABS(score) DESC",
+                    "GROUP BY scan_id, direction",
                     (scan_ids,),
                 )
-                all_results = cur.fetchall()
-                results_by_scan: Dict[str, list] = {s["scan_id"]: [] for s in scans}
-                for r in all_results:
-                    rd = dict(r)
-                    sid = rd.pop("scan_id")
-                    results_by_scan[sid].append(rd)
+                counts = cur.fetchall()
+                counts_by_scan: Dict[str, Dict[str, int]] = {s["scan_id"]: {} for s in scans}
+                for row in counts:
+                    counts_by_scan[row["scan_id"]][row["direction"]] = row["cnt"]
                 for scan in scans:
-                    scan["results"] = results_by_scan[scan["scan_id"]]
+                    scan["results"] = []
+                    scan["direction_counts"] = counts_by_scan.get(scan["scan_id"], {})
             except Exception:
                 conn.rollback()
                 raise

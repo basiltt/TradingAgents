@@ -52,7 +52,11 @@ export function ScanHistoryPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["scans"],
     queryFn: ({ signal }) => apiClient.listScans(signal),
-    refetchInterval: 15000,
+    refetchInterval: (query) => {
+      const scans = query.state.data?.scans;
+      const hasRunning = scans?.some((s) => s.status === "running");
+      return hasRunning ? 3000 : 15000;
+    },
   });
 
   const deleteMutation = useMutation({
@@ -81,8 +85,8 @@ export function ScanHistoryPage() {
   const totalScans = scans.length;
   const completedScans = scans.filter((s) => s.status === "completed").length;
   const runningScans = scans.filter((s) => s.status === "running").length;
-  const totalBuy = scans.reduce((sum, s) => sum + (s.results || []).filter((r) => r.direction === "buy").length, 0);
-  const totalSell = scans.reduce((sum, s) => sum + (s.results || []).filter((r) => r.direction === "sell").length, 0);
+  const totalBuy = scans.reduce((sum, s) => sum + (s.direction_counts?.buy ?? 0), 0);
+  const totalSell = scans.reduce((sum, s) => sum + (s.direction_counts?.sell ?? 0), 0);
 
   if (isLoading) {
     return (
@@ -179,10 +183,10 @@ export function ScanHistoryPage() {
         /* Scan cards grid */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {scans.map((scan) => {
-            const results = scan.results || [];
-            const buy = results.filter((r) => r.direction === "buy").length;
-            const sell = results.filter((r) => r.direction === "sell").length;
-            const total = results.length;
+            const dc = scan.direction_counts ?? {};
+            const buy = dc.buy ?? 0;
+            const sell = dc.sell ?? 0;
+            const total = Object.values(dc).reduce((a, b) => a + b, 0);
             const dur = formatDuration(scan.started_at, scan.completed_at);
             const progress = scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0;
 

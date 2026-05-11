@@ -498,7 +498,12 @@ class ScannerService:
         return resumed
 
     def _serialize(self, scan: Dict[str, Any]) -> Dict[str, Any]:
-        sorted_results = sorted(scan["results"], key=lambda r: abs(r.get("score", 0)), reverse=True)
+        results = scan["results"]
+        sorted_results = sorted(results, key=lambda r: abs(r.get("score", 0)), reverse=True)
+        counts: Dict[str, int] = {}
+        for r in results:
+            d = r.get("direction", "unknown")
+            counts[d] = counts.get(d, 0) + 1
         config = scan.get("config", {})
         return {
             "scan_id": scan["scan_id"],
@@ -510,6 +515,7 @@ class ScannerService:
             "total_batches": scan["total_batches"],
             "current_tickers": scan["current_tickers"],
             "results": sorted_results,
+            "direction_counts": counts,
             "started_at": scan["started_at"],
             "completed_at": scan["completed_at"],
             "interval": config.get("interval"),
@@ -541,6 +547,7 @@ class ScannerService:
             "total_batches": 0,
             "current_tickers": [],
             "results": scan.get("results", []),
+            "direction_counts": scan.get("direction_counts", {}),
             "started_at": scan.get("started_at", ""),
             "completed_at": scan.get("completed_at"),
             "interval": config.get("interval"),
