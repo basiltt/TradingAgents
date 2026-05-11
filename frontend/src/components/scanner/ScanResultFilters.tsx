@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type { ScanResultItem } from "@/api/client";
 
@@ -42,11 +42,49 @@ export const DEFAULT_FILTERS: ScanFiltersState = {
   showFilters: false,
 };
 
-export function useScanFilters(results: ScanResultItem[]) {
-  const [filters, setFilters] = useState<ScanFiltersState>(DEFAULT_FILTERS);
+const STORAGE_PREFIX = "tradingagents_scan_filters_";
 
-  const update = <K extends keyof ScanFiltersState>(key: K, value: ScanFiltersState[K]) =>
-    setFilters((prev) => ({ ...prev, [key]: value }));
+function saveFilters(key: string, filters: ScanFiltersState) {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify({
+      symbol: filters.symbol,
+      signal: [...filters.signal],
+      confidence: [...filters.confidence],
+      status: [...filters.status],
+      minStrength: filters.minStrength,
+      showFilters: filters.showFilters,
+    }));
+  } catch {}
+}
+
+function loadFilters(key: string): ScanFiltersState {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + key);
+    if (!raw) return DEFAULT_FILTERS;
+    const parsed = JSON.parse(raw);
+    return {
+      symbol: parsed.symbol ?? "",
+      signal: new Set(parsed.signal ?? []),
+      confidence: new Set(parsed.confidence ?? []),
+      status: new Set(parsed.status ?? []),
+      minStrength: parsed.minStrength ?? 0,
+      showFilters: parsed.showFilters ?? false,
+    };
+  } catch {
+    return DEFAULT_FILTERS;
+  }
+}
+
+export function useScanFilters(results: ScanResultItem[], storageKey = "default") {
+  const [filters, setFilters] = useState<ScanFiltersState>(() => loadFilters(storageKey));
+
+  const update = useCallback(<K extends keyof ScanFiltersState>(key: K, value: ScanFiltersState[K]) => {
+    setFilters((prev) => {
+      const next = { ...prev, [key]: value };
+      saveFilters(storageKey, next);
+      return next;
+    });
+  }, [storageKey]);
 
   const hasActive = filters.symbol !== "" || filters.signal.size > 0 || filters.confidence.size > 0 || filters.status.size > 0 || filters.minStrength > 0;
 
@@ -74,7 +112,11 @@ export function useScanFilters(results: ScanResultItem[]) {
     return items;
   }, [results, filters]);
 
-  const clearAll = () => setFilters({ ...DEFAULT_FILTERS });
+  const clearAll = () => {
+    const cleared = { ...DEFAULT_FILTERS };
+    setFilters(cleared);
+    saveFilters(storageKey, cleared);
+  };
 
   return { filters, update, hasActive, filtered, clearAll };
 }

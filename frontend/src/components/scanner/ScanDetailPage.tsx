@@ -245,7 +245,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
   }
 
   const results = scan.results || [];
-  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(results);
+  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(results, "detail");
   const buyResults = filteredResults.filter((r) => r.direction === "buy");
   const sellResults = filteredResults.filter((r) => r.direction === "sell");
   const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown" || !r.direction);

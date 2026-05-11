@@ -446,7 +446,7 @@ export function ScannerPage() {
   };
 
   const allResults = scan?.results ?? [];
-  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(allResults);
+  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(allResults, "scanner");
 
   const buyResults = filteredResults.filter((r) => r.direction === "buy").sort((a, b) => b.score - a.score);
   const sellResults = filteredResults.filter((r) => r.direction === "sell").sort((a, b) => a.score - b.score);
