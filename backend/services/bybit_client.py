@@ -337,7 +337,11 @@ class BybitClient:
                 retry_on_network_error=False,
             )
         except BybitAPIError as e:
-            if e.ret_code == 110043 and position_idx == 0:
+            _is_pos_mode_err = (
+                e.ret_code in (10001, 110043)
+                or "position idx" in e.ret_msg.lower()
+            )
+            if _is_pos_mode_err and position_idx == 0:
                 hedge_idx = 1 if close_side == "Sell" else 2
                 logger.warning(
                     "Position mode mismatch for %s, retrying with positionIdx=%d",
@@ -416,8 +420,16 @@ class BybitClient:
                 retry_on_network_error=False,
             )
         except BybitAPIError as e:
-            if e.ret_code == 110043:
+            _is_position_mode_err = (
+                e.ret_code in (10001, 110043)
+                or "position idx" in e.ret_msg.lower()
+            )
+            if _is_position_mode_err:
                 hedge_side_idx = 1 if side == "Buy" else 2
+                logger.warning(
+                    "Position mode mismatch for %s (code %d), retrying with positionIdx=%d",
+                    symbol, e.ret_code, hedge_side_idx,
+                )
                 params["positionIdx"] = hedge_side_idx
                 result = await self._request(
                     "POST", "/v5/order/create", params,
