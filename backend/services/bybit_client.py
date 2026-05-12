@@ -6,6 +6,7 @@ import asyncio
 import collections
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Any
@@ -111,14 +112,20 @@ class BybitClient:
                     query = "&".join(f"{k}={v}" for k, v in sorted(params.items()) if v is not None)
                     url = URL(f"{self._base_url}{path}?{query}", encoded=True)
                     headers = self._headers(timestamp, query)
+                    request_kwargs: dict[str, Any] = {}
+                elif method == "POST" and params:
+                    body_str = json.dumps(params, separators=(",", ":"))
+                    url = f"{self._base_url}{path}"
+                    headers = self._headers(timestamp, body_str)
+                    request_kwargs = {"data": body_str}
                 else:
                     url = f"{self._base_url}{path}"
-                    query = ""
-                    headers = self._headers(timestamp, query)
+                    headers = self._headers(timestamp, "")
+                    request_kwargs = {}
 
                 try:
                     session = await self._get_session()
-                    async with session.request(method, url, headers=headers) as resp:
+                    async with session.request(method, url, headers=headers, **request_kwargs) as resp:
                         data = await resp.json()
                 except aiohttp.ClientError as e:
                     if attempt < _MAX_RETRIES - 1:
@@ -255,4 +262,22 @@ class BybitClient:
         return {
             "list": result.get("list", []),
             "nextPageCursor": result.get("nextPageCursor", ""),
+        }
+
+    async def place_market_close_order(
+        self, symbol: str, side: str, qty: str
+    ) -> dict[str, Any]:
+        close_side = "Sell" if side == "Buy" else "Buy"
+        params = {
+            "category": "linear",
+            "symbol": symbol,
+            "side": close_side,
+            "orderType": "Market",
+            "qty": qty,
+            "reduceOnly": True,
+        }
+        result = await self._request("POST", "/v5/order/create", params)
+        return {
+            "orderId": result.get("orderId", ""),
+            "orderLinkId": result.get("orderLinkId", ""),
         }

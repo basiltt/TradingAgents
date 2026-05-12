@@ -611,3 +611,81 @@ class UpdateStrategyRequest(BaseModel):
             if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
                 raise ValueError("Config too large (max 64KB)")
         return v
+
+
+# ── Close Positions Schemas ──────────────────────────────────────
+
+VALID_TRIGGER_TYPES = frozenset([
+    "BALANCE_BELOW", "BALANCE_ABOVE",
+    "EQUITY_DROP_PCT", "EQUITY_RISE_PCT",
+    "PNL_BELOW", "PNL_ABOVE",
+])
+
+PCT_TRIGGER_TYPES = frozenset(["EQUITY_DROP_PCT", "EQUITY_RISE_PCT"])
+
+
+class CreateCloseRuleRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    trigger_type: str
+    threshold_value: str
+    reference_value: Optional[str] = None
+
+    @field_validator("trigger_type")
+    @classmethod
+    def validate_trigger_type(cls, v: str) -> str:
+        if v not in VALID_TRIGGER_TYPES:
+            raise ValueError(f"Invalid trigger_type: {v}. Must be one of: {', '.join(sorted(VALID_TRIGGER_TYPES))}")
+        return v
+
+    @field_validator("threshold_value")
+    @classmethod
+    def validate_threshold(cls, v: str) -> str:
+        from decimal import Decimal as D, InvalidOperation
+        try:
+            val = D(v)
+        except (InvalidOperation, ValueError):
+            raise ValueError("threshold_value must be a valid number")
+        if val <= 0:
+            raise ValueError("threshold_value must be positive")
+        if val > D("10000000"):
+            raise ValueError("threshold_value exceeds maximum (10,000,000)")
+        return v
+
+    @model_validator(mode="after")
+    def validate_pct_bounds(self) -> "CreateCloseRuleRequest":
+        from decimal import Decimal as D
+        if self.trigger_type in PCT_TRIGGER_TYPES:
+            val = D(self.threshold_value)
+            if val > D("100"):
+                raise ValueError("Percentage threshold must be between 0.01 and 100")
+        return self
+
+
+class UpdateCloseRuleRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    threshold_value: Optional[str] = None
+    reference_value: Optional[str] = None
+    status: Optional[str] = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("active", "paused"):
+            raise ValueError("status must be 'active' or 'paused'")
+        return v
+
+    @field_validator("threshold_value")
+    @classmethod
+    def validate_threshold(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        from decimal import Decimal as D, InvalidOperation
+        try:
+            val = D(v)
+        except (InvalidOperation, ValueError):
+            raise ValueError("threshold_value must be a valid number")
+        if val <= 0:
+            raise ValueError("threshold_value must be positive")
+        return v

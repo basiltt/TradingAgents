@@ -145,12 +145,30 @@ def create_app() -> FastAPI:
             )
             await scheduler.start()
             app.state.snapshot_scheduler = scheduler
+
+            from backend.services.close_positions_service import ClosePositionsService
+            app.state.close_positions_service = ClosePositionsService(
+                db=db, accounts_service=app.state.accounts_service, ws_manager=account_ws_mgr,
+            )
+
+            from backend.services.close_rule_evaluator import CloseRuleEvaluator
+            rule_evaluator = CloseRuleEvaluator(
+                close_service=app.state.close_positions_service,
+                accounts_service=app.state.accounts_service,
+                db=db,
+            )
+            await rule_evaluator.start()
+            app.state.rule_evaluator = rule_evaluator
         else:
             app.state.accounts_service = None
             app.state.account_ws_manager = None
             app.state.snapshot_scheduler = None
+            app.state.close_positions_service = None
+            app.state.rule_evaluator = None
 
         yield
+        if getattr(app.state, "rule_evaluator", None):
+            await app.state.rule_evaluator.shutdown()
         if app.state.snapshot_scheduler:
             await app.state.snapshot_scheduler.shutdown()
             await asyncio.sleep(0.5)
@@ -189,6 +207,7 @@ def create_app() -> FastAPI:
     from backend.routers.ws_accounts import router as ws_accounts_router
     from backend.routers.analytics import router as analytics_router
     from backend.routers.strategies import router as strategies_router
+    from backend.routers.close_positions import router as close_positions_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
@@ -201,6 +220,7 @@ def create_app() -> FastAPI:
     app.include_router(symbols_router, prefix="/api/v1")
     app.include_router(scanner_router, prefix="/api/v1")
     app.include_router(accounts_router, prefix="/api/v1")
+    app.include_router(close_positions_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
 

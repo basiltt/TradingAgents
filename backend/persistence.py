@@ -8,7 +8,8 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, Generator, List, Optional
 
 import psycopg2
@@ -170,6 +171,35 @@ CREATE TABLE IF NOT EXISTS strategies (
 );
 CREATE INDEX IF NOT EXISTS idx_strategies_status ON strategies(status);
 CREATE INDEX IF NOT EXISTS idx_strategies_category ON strategies(category)
+"""),
+    (13, """
+CREATE TABLE IF NOT EXISTS close_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES trading_accounts(id),
+    trigger_type VARCHAR(30) NOT NULL CHECK(trigger_type IN ('BALANCE_BELOW','BALANCE_ABOVE','EQUITY_DROP_PCT','EQUITY_RISE_PCT','PNL_BELOW','PNL_ABOVE')),
+    threshold_value NUMERIC(20,8) NOT NULL,
+    reference_value NUMERIC(20,8),
+    status VARCHAR(15) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','expired')),
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    triggered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_close_rules_status_account ON close_rules(status, account_id)
+"""),
+    (14, """
+CREATE TABLE IF NOT EXISTS close_executions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES trading_accounts(id),
+    rule_id UUID REFERENCES close_rules(id),
+    trigger_source VARCHAR(10) NOT NULL CHECK(trigger_source IN ('manual','rule')),
+    total_positions INT NOT NULL DEFAULT 0,
+    closed_count INT NOT NULL DEFAULT 0,
+    failed_count INT NOT NULL DEFAULT 0,
+    results JSONB NOT NULL DEFAULT '[]',
+    executed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_close_executions_account ON close_executions(account_id, executed_at DESC)
 """),
 ]
 
@@ -1463,3 +1493,219 @@ class AnalysisDB:
                 conn.rollback()
                 raise
         return affected > 0
+
+    # ── Close Rules ──────────────────────────────────────────────
+
+    def insert_close_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        cols = ["account_id", "trigger_type", "threshold_value", "reference_value",
+                "status", "expires_at"]
+        vals = {c: rule.get(c) for c in cols}
+        if vals.get("status") is None:
+            vals["status"] = "active"
+        col_names = ", ".join(vals.keys())
+        placeholders = ", ".join(["%s"] * len(vals))
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    f"INSERT INTO close_rules ({col_names}) VALUES ({placeholders}) RETURNING *",
+                    list(vals.values()),
+                )
+                row = cur.fetchone()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return self._serialize_row(row)
+
+    def list_close_rules(self, account_id: str) -> list:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT * FROM close_rules WHERE account_id = %s ORDER BY created_at DESC",
+                    (account_id,),
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return [self._serialize_row(r) for r in rows]
+
+    def get_close_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute("SELECT * FROM close_rules WHERE id = %s", (rule_id,))
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                raise
+        if not row:
+            return None
+        return self._serialize_row(row)
+
+    def update_close_rule(self, rule_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        allowed = {"threshold_value", "reference_value", "status", "expires_at", "triggered_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return None
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    f"UPDATE close_rules SET {set_clause} WHERE id = %s RETURNING *",
+                    list(updates.values()) + [rule_id],
+                )
+                row = cur.fetchone()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        if not row:
+            return None
+        return self._serialize_row(row)
+
+    def atomic_trigger_rule(self, rule_id: str) -> bool:
+        """Atomically set rule status to 'triggered' only if currently 'active'. Returns True if transitioned."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "UPDATE close_rules SET status = 'triggered', triggered_at = now(), updated_at = now() "
+                    "WHERE id = %s AND status = 'active' RETURNING id",
+                    (rule_id,),
+                )
+                row = cur.fetchone()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return row is not None
+
+    def delete_close_rule(self, rule_id: str) -> bool:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute("DELETE FROM close_rules WHERE id = %s", (rule_id,))
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected > 0
+
+    def list_active_rules(self) -> list:
+        """Fetch all active rules for non-deleted accounts."""
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT cr.* FROM close_rules cr "
+                    "JOIN trading_accounts ta ON cr.account_id = ta.id "
+                    "WHERE cr.status = 'active' AND ta.deleted_at IS NULL "
+                    "AND (cr.expires_at IS NULL OR cr.expires_at > now()) "
+                    "ORDER BY cr.account_id, cr.created_at",
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return [self._serialize_row(r) for r in rows]
+
+    def count_active_rules_by_account(self) -> Dict[str, int]:
+        """Return {account_id: count} for all accounts with active rules."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT account_id::text, COUNT(*) FROM close_rules "
+                    "WHERE status = 'active' GROUP BY account_id",
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return {r[0]: r[1] for r in rows}
+
+    def count_rules_for_account(self, account_id: str) -> int:
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) FROM close_rules WHERE account_id = %s AND status IN ('active', 'paused')",
+                    (account_id,),
+                )
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                raise
+        return row[0] if row else 0
+
+    # ── Close Executions ─────────────────────────────────────────
+
+    def insert_close_execution(self, execution: Dict[str, Any]) -> Dict[str, Any]:
+        cols = ["account_id", "rule_id", "trigger_source", "total_positions",
+                "closed_count", "failed_count", "results"]
+        vals = {c: execution.get(c) for c in cols}
+        if vals.get("results") and not isinstance(vals["results"], str):
+            vals["results"] = json.dumps(vals["results"])
+        col_names = ", ".join(vals.keys())
+        placeholders = ", ".join(["%s"] * len(vals))
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    f"INSERT INTO close_executions ({col_names}) VALUES ({placeholders}) RETURNING *",
+                    list(vals.values()),
+                )
+                row = cur.fetchone()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return self._serialize_row(row)
+
+    def list_close_executions(self, account_id: str, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+        offset = (page - 1) * limit
+        with self._get_conn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                cur.execute(
+                    "SELECT COUNT(*) as cnt FROM close_executions WHERE account_id = %s",
+                    (account_id,),
+                )
+                total = cur.fetchone()["cnt"]
+                cur.execute(
+                    "SELECT * FROM close_executions WHERE account_id = %s "
+                    "ORDER BY executed_at DESC LIMIT %s OFFSET %s",
+                    (account_id, limit, offset),
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        return {
+            "items": [self._serialize_row(r) for r in rows],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        }
+
+    def _serialize_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert DB row to JSON-safe dict."""
+        result = {}
+        for k, v in dict(row).items():
+            if isinstance(v, datetime):
+                result[k] = v.isoformat()
+            elif isinstance(v, date):
+                result[k] = v.isoformat()
+            elif isinstance(v, uuid.UUID):
+                result[k] = str(v)
+            elif isinstance(v, Decimal):
+                result[k] = str(v)
+            else:
+                result[k] = v
+        return result
