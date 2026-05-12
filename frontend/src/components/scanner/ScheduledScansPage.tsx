@@ -531,6 +531,42 @@ const CRYPTO_INTERVALS: { value: CryptoInterval; label: string }[] = [
 ];
 const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "French", "German", "Portuguese", "Russian", "Arabic", "Hindi"] as const;
 const STORAGE_KEY = "tradingagents_settings";
+const SCHED_FORM_KEY = "tradingagents_scheduled_scan_form";
+
+interface ScheduledFormDefaults {
+  name?: string;
+  scheduleType?: ScheduleType;
+  runAt?: string;
+  intervalMinutes?: number;
+  time?: string;
+  days?: string[];
+  day?: string;
+  cronExpression?: string;
+  timezone?: string;
+  provider?: string;
+  klineInterval?: CryptoInterval;
+  analysts?: string[];
+  researchDepth?: number;
+  outputLanguage?: string;
+  maxDebateRounds?: number;
+  maxRiskRounds?: number;
+  maxRecurLimit?: number;
+  maxParallel?: number;
+  workflowMode?: "quick_trade" | "deep_analysis";
+  taPrefilterEnabled?: boolean;
+  taPrefilterThreshold?: number;
+  checkpointEnabled?: boolean;
+  llmMaxConcurrent?: number;
+  llmMinSpacingMs?: number;
+}
+
+function loadFormDefaults(): ScheduledFormDefaults {
+  try { return JSON.parse(localStorage.getItem(SCHED_FORM_KEY) ?? "{}"); } catch { return {}; }
+}
+
+function saveFormDefaults(data: ScheduledFormDefaults) {
+  try { localStorage.setItem(SCHED_FORM_KEY, JSON.stringify(data)); } catch { /* quota */ }
+}
 
 function loadSavedSettings(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"); } catch { return {}; }
@@ -554,38 +590,39 @@ function ScheduleFormDialog({
   editingId: string | null;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [scheduleType, setScheduleType] = useState<ScheduleType>("interval");
-  const [runAt, setRunAt] = useState("");
-  const [intervalMinutes, setIntervalMinutes] = useState(60);
-  const [time, setTime] = useState("09:00");
-  const [days, setDays] = useState<string[]>(DAYS_OF_WEEK.map((d) => d.value));
-  const [day, setDay] = useState("mon");
-  const [cronExpression, setCronExpression] = useState("0 9 * * *");
-  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [formDefaults] = useState(loadFormDefaults);
+  const [name, setName] = useState(() => formDefaults.name ?? "");
+  const [scheduleType, setScheduleType] = useState<ScheduleType>(() => formDefaults.scheduleType ?? "interval");
+  const [runAt, setRunAt] = useState(() => formDefaults.runAt ?? "");
+  const [intervalMinutes, setIntervalMinutes] = useState(() => formDefaults.intervalMinutes ?? 60);
+  const [time, setTime] = useState(() => formDefaults.time ?? "09:00");
+  const [days, setDays] = useState<string[]>(() => formDefaults.days ?? DAYS_OF_WEEK.map((d) => d.value));
+  const [day, setDay] = useState(() => formDefaults.day ?? "mon");
+  const [cronExpression, setCronExpression] = useState(() => formDefaults.cronExpression ?? "0 9 * * *");
+  const [timezone, setTimezone] = useState(() => formDefaults.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [submitting, setSubmitting] = useState(false);
   const [showScanConfig, setShowScanConfig] = useState(false);
 
   const [saved] = useState(loadSavedSettings);
-  const [provider, setProvider] = useState(() => saved.provider ?? "anthropic");
+  const [provider, setProvider] = useState(() => formDefaults.provider ?? saved.provider ?? "anthropic");
   const [llmApiKey, setLlmApiKey] = useState(() => saved.llm_api_key ?? "");
   const [backendUrl, setBackendUrl] = useState(() => saved.backend_url ?? "http://localhost:4141");
   const [deepModel, setDeepModel] = useState(() => saved.deep_think_llm ?? "");
   const [quickModel, setQuickModel] = useState(() => saved.quick_think_llm ?? "");
-  const [klineInterval, setKlineInterval] = useState<CryptoInterval>("D");
-  const [analysts, setAnalysts] = useState<string[]>([...CRYPTO_ANALYSTS]);
-  const [researchDepth, setResearchDepth] = useState(3);
-  const [outputLanguage, setOutputLanguage] = useState("English");
-  const [maxDebateRounds, setMaxDebateRounds] = useState(1);
-  const [maxRiskRounds, setMaxRiskRounds] = useState(1);
-  const [maxRecurLimit, setMaxRecurLimit] = useState(100);
-  const [maxParallel, setMaxParallel] = useState(10);
-  const [workflowMode, setWorkflowMode] = useState<"quick_trade" | "deep_analysis">("deep_analysis");
-  const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(false);
-  const [taPrefilterThreshold, setTaPrefilterThreshold] = useState(40);
-  const [checkpointEnabled, setCheckpointEnabled] = useState(false);
-  const [llmMaxConcurrent, setLlmMaxConcurrent] = useState(0);
-  const [llmMinSpacingMs, setLlmMinSpacingMs] = useState(0);
+  const [klineInterval, setKlineInterval] = useState<CryptoInterval>(() => formDefaults.klineInterval ?? "D");
+  const [analysts, setAnalysts] = useState<string[]>(() => formDefaults.analysts ?? [...CRYPTO_ANALYSTS]);
+  const [researchDepth, setResearchDepth] = useState(() => formDefaults.researchDepth ?? 3);
+  const [outputLanguage, setOutputLanguage] = useState(() => formDefaults.outputLanguage ?? "English");
+  const [maxDebateRounds, setMaxDebateRounds] = useState(() => formDefaults.maxDebateRounds ?? 1);
+  const [maxRiskRounds, setMaxRiskRounds] = useState(() => formDefaults.maxRiskRounds ?? 1);
+  const [maxRecurLimit, setMaxRecurLimit] = useState(() => formDefaults.maxRecurLimit ?? 100);
+  const [maxParallel, setMaxParallel] = useState(() => formDefaults.maxParallel ?? 10);
+  const [workflowMode, setWorkflowMode] = useState<"quick_trade" | "deep_analysis">(() => formDefaults.workflowMode ?? "deep_analysis");
+  const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(() => formDefaults.taPrefilterEnabled ?? false);
+  const [taPrefilterThreshold, setTaPrefilterThreshold] = useState(() => formDefaults.taPrefilterThreshold ?? 40);
+  const [checkpointEnabled, setCheckpointEnabled] = useState(() => formDefaults.checkpointEnabled ?? false);
+  const [llmMaxConcurrent, setLlmMaxConcurrent] = useState(() => formDefaults.llmMaxConcurrent ?? 0);
+  const [llmMinSpacingMs, setLlmMinSpacingMs] = useState(() => formDefaults.llmMinSpacingMs ?? 0);
   const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
   const [showWorkflowSettings, setShowWorkflowSettings] = useState(false);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
@@ -659,20 +696,44 @@ function ScheduleFormDialog({
     }
   }, [editData, editingId]);
 
+  useEffect(() => {
+    if (editingId) return;
+    saveFormDefaults({
+      name, scheduleType, runAt, intervalMinutes, time, days, day,
+      cronExpression, timezone, provider, klineInterval, analysts,
+      researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
+      maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
+      taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
+    });
+  }, [
+    editingId, name, scheduleType, runAt, intervalMinutes, time, days, day,
+    cronExpression, timezone, provider, klineInterval, analysts,
+    researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
+    maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
+    taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
+  ]);
+
   function handleOpenChange(v: boolean) {
     if (!v) {
       const fresh = loadSavedSettings();
-      setName(""); setScheduleType("interval"); setRunAt(""); setIntervalMinutes(60);
-      setTime("09:00"); setDays(DAYS_OF_WEEK.map((d) => d.value)); setDay("mon");
-      setCronExpression("0 9 * * *"); setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
-      setProvider(fresh.provider ?? "anthropic"); setLlmApiKey(fresh.llm_api_key ?? "");
+      const fd = loadFormDefaults();
+      setName(fd.name ?? ""); setScheduleType(fd.scheduleType ?? "interval");
+      setRunAt(fd.runAt ?? ""); setIntervalMinutes(fd.intervalMinutes ?? 60);
+      setTime(fd.time ?? "09:00"); setDays(fd.days ?? DAYS_OF_WEEK.map((d) => d.value));
+      setDay(fd.day ?? "mon"); setCronExpression(fd.cronExpression ?? "0 9 * * *");
+      setTimezone(fd.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+      setProvider(fd.provider ?? fresh.provider ?? "anthropic"); setLlmApiKey(fresh.llm_api_key ?? "");
       setBackendUrl(fresh.backend_url ?? "http://localhost:4141");
       setDeepModel(fresh.deep_think_llm ?? ""); setQuickModel(fresh.quick_think_llm ?? "");
-      setKlineInterval("D"); setAnalysts([...CRYPTO_ANALYSTS]); setResearchDepth(3);
-      setOutputLanguage("English"); setMaxDebateRounds(1); setMaxRiskRounds(1);
-      setMaxRecurLimit(100); setMaxParallel(10); setWorkflowMode("deep_analysis");
-      setTaPrefilterEnabled(false); setTaPrefilterThreshold(40); setCheckpointEnabled(false);
-      setLlmMaxConcurrent(0); setLlmMinSpacingMs(0); setAgentModelOverrides(loadOverrides());
+      setKlineInterval(fd.klineInterval ?? "D"); setAnalysts(fd.analysts ?? [...CRYPTO_ANALYSTS]);
+      setResearchDepth(fd.researchDepth ?? 3); setOutputLanguage(fd.outputLanguage ?? "English");
+      setMaxDebateRounds(fd.maxDebateRounds ?? 1); setMaxRiskRounds(fd.maxRiskRounds ?? 1);
+      setMaxRecurLimit(fd.maxRecurLimit ?? 100); setMaxParallel(fd.maxParallel ?? 10);
+      setWorkflowMode(fd.workflowMode ?? "deep_analysis");
+      setTaPrefilterEnabled(fd.taPrefilterEnabled ?? false); setTaPrefilterThreshold(fd.taPrefilterThreshold ?? 40);
+      setCheckpointEnabled(fd.checkpointEnabled ?? false);
+      setLlmMaxConcurrent(fd.llmMaxConcurrent ?? 0); setLlmMinSpacingMs(fd.llmMinSpacingMs ?? 0);
+      setAgentModelOverrides(loadOverrides());
       setShowScanConfig(false); setShowWorkflowSettings(false); setShowLlmSettings(false);
     }
     onOpenChange(v);
@@ -692,7 +753,7 @@ function ScheduleFormDialog({
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
     if (submitting) return;
     if (!name.trim()) { toast.error("Name is required"); return; }
@@ -742,6 +803,8 @@ function ScheduleFormDialog({
       } else {
         await scheduledScansApi.create(payload);
         toast.success("Schedule created");
+        const current = loadFormDefaults();
+        saveFormDefaults({ ...current, name: "", runAt: "" });
       }
       queryClient.invalidateQueries({ queryKey: ["scheduled-scans"] });
       if (editingId) queryClient.invalidateQueries({ queryKey: ["scheduled-scan", editingId] });
@@ -1012,7 +1075,7 @@ function ScheduleFormDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={submitting || (!!editingId && editLoading)}>
+            <Button disabled={submitting || (!!editingId && editLoading)} onClick={handleSubmit}>
               {submitting ? "Saving..." : editingId ? "Update" : "Create"}
             </Button>
           </DialogFooter>
