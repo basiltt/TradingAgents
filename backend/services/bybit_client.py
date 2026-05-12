@@ -42,7 +42,7 @@ class BybitClient:
         self._api_secret = api_secret
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
-        self._recv_window = "20000"
+        self._recv_window = "5000"
         self._request_timestamps: collections.deque = collections.deque()
         self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
@@ -50,6 +50,7 @@ class BybitClient:
         self._time_offset_ms: int = 0
         self._time_synced: bool = False
         self._sync_lock = asyncio.Lock()
+        self._last_sync_at: float = 0.0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is not None and not self._session.closed:
@@ -79,6 +80,7 @@ class BybitClient:
                 local_mid = (local_before + local_after) // 2
                 self._time_offset_ms = server_time - local_mid
                 self._time_synced = True
+                self._last_sync_at = time.monotonic()
                 logger.info("Bybit time synced: offset=%dms", self._time_offset_ms)
         except Exception as e:
             logger.warning("Failed to sync Bybit server time: %s", e)
@@ -105,14 +107,29 @@ class BybitClient:
             "Content-Type": "application/json",
         }
 
+    _SYNC_INTERVAL = 30  # re-sync offset every 30 seconds
+
+    async def _ensure_time_synced(self) -> None:
+        """Ensure time offset is fresh. Re-syncs if stale or never synced."""
+        needs_sync = (
+            not self._time_synced
+            or (time.monotonic() - self._last_sync_at) > self._SYNC_INTERVAL
+        )
+        if not needs_sync:
+            return
+        async with self._sync_lock:
+            needs_sync = (
+                not self._time_synced
+                or (time.monotonic() - self._last_sync_at) > self._SYNC_INTERVAL
+            )
+            if needs_sync:
+                await self._do_sync_time()
+
     async def _request(
         self, method: str, path: str, params: dict[str, Any] | None = None,
         *, retry_on_network_error: bool = True,
     ) -> dict[str, Any]:
-        if not self._time_synced:
-            async with self._sync_lock:
-                if not self._time_synced:
-                    await self._do_sync_time()
+        await self._ensure_time_synced()
 
         for attempt in range(_MAX_RETRIES):
             async with self._semaphore:
