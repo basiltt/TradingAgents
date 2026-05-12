@@ -42,13 +42,14 @@ class BybitClient:
         self._api_secret = api_secret
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
-        self._recv_window = "5000"
+        self._recv_window = "10000"
         self._request_timestamps: collections.deque = collections.deque()
         self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
         self._time_offset_ms: int = 0
         self._time_synced: bool = False
+        self._sync_lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is not None and not self._session.closed:
@@ -65,8 +66,8 @@ class BybitClient:
             await self._session.close()
             self._session = None
 
-    async def _sync_time(self) -> None:
-        """Sync local clock with Bybit server to compute timestamp offset."""
+    async def _do_sync_time(self) -> None:
+        """Internal: actually perform the time sync (no lock)."""
         try:
             session = await self._get_session()
             local_before = int(time.time() * 1000)
@@ -81,6 +82,11 @@ class BybitClient:
                 logger.info("Bybit time synced: offset=%dms", self._time_offset_ms)
         except Exception as e:
             logger.warning("Failed to sync Bybit server time: %s", e)
+
+    async def _sync_time(self) -> None:
+        """Sync local clock with Bybit server to compute timestamp offset."""
+        async with self._sync_lock:
+            await self._do_sync_time()
 
     def _sign(self, timestamp: int, params_str: str) -> str:
         sign_str = f"{timestamp}{self._api_key}{self._recv_window}{params_str}"
@@ -104,7 +110,9 @@ class BybitClient:
         *, retry_on_network_error: bool = True,
     ) -> dict[str, Any]:
         if not self._time_synced:
-            await self._sync_time()
+            async with self._sync_lock:
+                if not self._time_synced:
+                    await self._do_sync_time()
 
         for attempt in range(_MAX_RETRIES):
             async with self._semaphore:
