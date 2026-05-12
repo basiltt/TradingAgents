@@ -221,6 +221,8 @@ class ClosePositionsService:
         if not rule or rule["account_id"] != account_id:
             return None
         fields = {}
+        if data.get("trigger_type") is not None:
+            fields["trigger_type"] = data["trigger_type"]
         if data.get("threshold_value") is not None:
             fields["threshold_value"] = data["threshold_value"]
         if data.get("reference_value") is not None:

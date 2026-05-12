@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { CloseRule, TriggerType, CreateCloseRuleData } from "@/api/client";
+import type { CloseRule, TriggerType, UpdateCloseRuleData } from "@/api/client";
 
 interface Props {
   open: boolean;
@@ -66,10 +66,9 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
     }
   };
 
-  const handleUpdateRule = async (ruleId: string, field: string, value: string) => {
-    const updateData: Record<string, string> = { [field]: value };
+  const handleUpdateRule = async (ruleId: string, field: keyof UpdateCloseRuleData, value: string) => {
     try {
-      const updated = await api.updateCloseRule(accountId, ruleId, updateData);
+      const updated = await api.updateCloseRule(accountId, ruleId, { [field]: value } as UpdateCloseRuleData);
       setRules((prev) => prev.map((r) => (r.id === ruleId ? updated : r)));
     } catch (err: any) {
       toast.error(err?.detail || "Failed to update rule");
@@ -172,7 +171,7 @@ function RuleRow({
 }: {
   rule: CloseRule;
   saving: boolean;
-  onUpdate: (id: string, field: string, value: string) => void;
+  onUpdate: (id: string, field: keyof UpdateCloseRuleData, value: string) => void;
   onToggle: () => void;
   onDelete: () => void;
 }) {

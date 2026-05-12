@@ -815,6 +815,7 @@ export interface CreateCloseRuleData {
 }
 
 export interface UpdateCloseRuleData {
+  trigger_type?: TriggerType;
   threshold_value?: string;
   reference_value?: string;
   status?: "active" | "paused";

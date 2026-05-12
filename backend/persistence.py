@@ -1546,7 +1546,7 @@ class AnalysisDB:
         return self._serialize_row(row)
 
     def update_close_rule(self, rule_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
-        allowed = {"threshold_value", "reference_value", "status", "expires_at", "triggered_at"}
+        allowed = {"trigger_type", "threshold_value", "reference_value", "status", "expires_at", "triggered_at"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return None

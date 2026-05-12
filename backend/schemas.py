@@ -665,9 +665,17 @@ class CreateCloseRuleRequest(BaseModel):
 class UpdateCloseRuleRequest(BaseModel):
     model_config = ConfigDict(strict=True)
 
+    trigger_type: Optional[str] = None
     threshold_value: Optional[str] = None
     reference_value: Optional[str] = None
     status: Optional[str] = None
+
+    @field_validator("trigger_type")
+    @classmethod
+    def validate_trigger_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_TRIGGER_TYPES:
+            raise ValueError(f"trigger_type must be one of: {', '.join(VALID_TRIGGER_TYPES)}")
+        return v
 
     @field_validator("status")
     @classmethod
