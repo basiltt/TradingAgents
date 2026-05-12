@@ -1,7 +1,7 @@
 """CoinGecko data access for crypto fundamentals and community metrics.
 
 Supports optional Demo API key via COINGECKO_API_KEY env var.
-Rate-limited to 8 req/min to stay safely within the free tier (30 req/min limit).
+Rate-limited to 30 req/min by default (free tier allows 30 req/min).
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ class _RateLimiter:
             time.sleep(sleep_for)
 
 
-_limiter = _RateLimiter(max_per_min=8)
+_limiter = _RateLimiter(max_per_min=30)
 
 _coingecko_semaphore = threading.Semaphore(2)
 _coingecko_sem_lock = threading.Lock()
@@ -115,6 +115,12 @@ def configure_coingecko_concurrency(max_concurrent: int) -> None:
     with _coingecko_sem_lock:
         _coingecko_semaphore = threading.Semaphore(max_concurrent)
     logger.info("CoinGecko concurrency limit set to %d", max_concurrent)
+
+
+def configure_coingecko_rate_limit(max_per_min: int) -> None:
+    global _limiter
+    _limiter = _RateLimiter(max_per_min=max_per_min)
+    logger.info("CoinGecko rate limit set to %d req/min", max_per_min)
 
 # ---------------------------------------------------------------------------
 # Response cache
