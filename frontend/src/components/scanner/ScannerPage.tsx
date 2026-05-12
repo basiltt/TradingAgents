@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
+import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { useModels } from "@/hooks/useModels";
 import { useConnectivityCheck, type ConnStatus } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
@@ -467,6 +468,9 @@ export function ScannerPage() {
   const buyResults = filteredResults.filter((r) => r.direction === "buy").sort((a, b) => b.score - a.score);
   const sellResults = filteredResults.filter((r) => r.direction === "sell").sort((a, b) => a.score - b.score);
   const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown");
+  const [tradeTarget, setTradeTarget] = useState<{ symbol: string; direction: "buy" | "sell" } | null>(null);
+  const isCrypto = (scan?.asset_type ?? "crypto") === "crypto" || allResults.some((r) => /USDT$/.test(r.ticker));
+  const handleTrade = isCrypto ? (symbol: string, direction: "buy" | "sell") => setTradeTarget({ symbol, direction }) : undefined;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-4">
@@ -1102,7 +1106,7 @@ export function ScannerPage() {
                   </span>
                 }
               >
-                <ResultsTable results={buyResults} />
+                <ResultsTable results={buyResults} isCrypto={isCrypto} onTrade={handleTrade} />
               </MobileCollapse>
               {/* Desktop: collapsible card */}
               <CollapsibleResultCard
@@ -1112,7 +1116,7 @@ export function ScannerPage() {
                 color="emerald"
                 title={`Buy Signals (${buyResults.length})`}
               >
-                <ResultsTable results={buyResults} />
+                <ResultsTable results={buyResults} isCrypto={isCrypto} onTrade={handleTrade} />
               </CollapsibleResultCard>
             </>
           )}
@@ -1132,7 +1136,7 @@ export function ScannerPage() {
                   </span>
                 }
               >
-                <ResultsTable results={sellResults} />
+                <ResultsTable results={sellResults} isCrypto={isCrypto} onTrade={handleTrade} />
               </MobileCollapse>
               <CollapsibleResultCard
                 className="hidden md:block border-red-500/20"
@@ -1141,7 +1145,7 @@ export function ScannerPage() {
                 color="red"
                 title={`Sell Signals (${sellResults.length})`}
               >
-                <ResultsTable results={sellResults} />
+                <ResultsTable results={sellResults} isCrypto={isCrypto} onTrade={handleTrade} />
               </CollapsibleResultCard>
             </>
           )}
@@ -1161,7 +1165,7 @@ export function ScannerPage() {
                   </span>
                 }
               >
-                <ResultsTable results={holdResults} />
+                <ResultsTable results={holdResults} isCrypto={isCrypto} onTrade={handleTrade} />
               </MobileCollapse>
               <CollapsibleResultCard
                 className="hidden md:block"
@@ -1170,11 +1174,20 @@ export function ScannerPage() {
                 color="amber"
                 title={`Hold / Neutral (${holdResults.length})`}
               >
-                <ResultsTable results={holdResults} />
+                <ResultsTable results={holdResults} isCrypto={isCrypto} onTrade={handleTrade} />
               </CollapsibleResultCard>
             </>
           )}
         </>
+      )}
+
+      {tradeTarget && (
+        <PlaceTradeDialog
+          open={!!tradeTarget}
+          onOpenChange={(open) => { if (!open) setTradeTarget(null); }}
+          symbol={tradeTarget.symbol}
+          signalDirection={tradeTarget.direction}
+        />
       )}
     </div>
   );
@@ -1259,7 +1272,7 @@ function copyToClipboard(text: string): Promise<void> {
   });
 }
 
-function ResultsTable({ results }: { results: ScanResultItem[] }) {
+function ResultsTable({ results, isCrypto, onTrade }: { results: ScanResultItem[]; isCrypto?: boolean; onTrade?: (symbol: string, direction: "buy" | "sell") => void }) {
   const [copiedTicker, setCopiedTicker] = useState<string | null>(null);
 
   function handleCopy(ticker: string) {
@@ -1325,15 +1338,25 @@ function ResultsTable({ results }: { results: ScanResultItem[] }) {
                   </Badge>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {r.run_id && (
-                    <Link
-                      to="/analysis/$runId"
-                      params={{ runId: r.run_id }}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      View
-                    </Link>
-                  )}
+                  <div className="flex items-center justify-end gap-2">
+                    {isCrypto && onTrade && (r.direction === "buy" || r.direction === "sell") && (
+                      <button
+                        onClick={() => onTrade(r.ticker, r.direction as "buy" | "sell")}
+                        className="text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
+                      >
+                        Trade
+                      </button>
+                    )}
+                    {r.run_id && (
+                      <Link
+                        to="/analysis/$runId"
+                        params={{ runId: r.run_id }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        View
+                      </Link>
+                    )}
+                  </div>
                 </td>
               </tr>
             );
