@@ -12,11 +12,33 @@ instead of 2-3.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import os
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from typing import Any, Callable, Dict, List
 
 logger = logging.getLogger(__name__)
+
+_DEBATE_EXECUTOR_WORKERS = int(os.environ.get("DEBATE_EXECUTOR_WORKERS", "4"))
+_debate_executor: ThreadPoolExecutor | None = None
+
+
+def _get_debate_executor() -> ThreadPoolExecutor:
+    global _debate_executor
+    if _debate_executor is None or _debate_executor._shutdown:
+        _debate_executor = ThreadPoolExecutor(
+            max_workers=_DEBATE_EXECUTOR_WORKERS,
+            thread_name_prefix="debate",
+        )
+    return _debate_executor
+
+
+def shutdown_debate_executor():
+    global _debate_executor
+    if _debate_executor is not None:
+        _debate_executor.shutdown(wait=False, cancel_futures=True)
+        _debate_executor = None
 
 
 def _merge_risk_debate_states(
@@ -98,16 +120,21 @@ def create_parallel_risk_round1(
     aggressive/conservative/neutral) debates.
     """
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        with ThreadPoolExecutor(max_workers=len(debater_nodes)) as pool:
-            ordered_futures = [pool.submit(fn, state) for fn in debater_nodes]
+        ordered_futures = [_get_debate_executor().submit(fn, state) for fn in debater_nodes]
+        done, not_done = futures_wait(ordered_futures, timeout=300)
+        for f in not_done:
+            f.cancel()
+        if not_done:
+            raise RuntimeError(f"{len(not_done)}/{len(ordered_futures)} risk debate futures timed out")
 
         results = []
         for future in ordered_futures:
-            try:
-                results.append(future.result())
-            except Exception:
-                logger.exception("Parallel risk debater failed")
-                raise
+            if future in done:
+                try:
+                    results.append(future.result())
+                except Exception:
+                    logger.exception("Parallel risk debater failed")
+                    raise
 
         merged = _merge_risk_debate_states(state, results)
         return {"risk_debate_state": merged}
@@ -121,9 +148,13 @@ def create_parallel_researcher_round1(
 ) -> Callable:
     """Return a node that runs bull and bear researchers in parallel for round 1."""
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            bull_future = pool.submit(bull_researcher, state)
-            bear_future = pool.submit(bear_researcher, state)
+        bull_future = _get_debate_executor().submit(bull_researcher, state)
+        bear_future = _get_debate_executor().submit(bear_researcher, state)
+        done, not_done = futures_wait([bull_future, bear_future], timeout=300)
+        for f in not_done:
+            f.cancel()
+        if not_done:
+            raise RuntimeError(f"{len(not_done)}/2 researcher futures timed out")
 
         bull_result = bull_future.result()
         bear_result = bear_future.result()

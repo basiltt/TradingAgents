@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import logging
 import os
 import re as _re
 from contextlib import asynccontextmanager
@@ -24,6 +26,18 @@ from backend.ws_manager import WSManager
 
 load_dotenv()
 load_dotenv(".env.enterprise", override=False)
+
+logger = logging.getLogger(__name__)
+
+
+def _validated_int(name: str, default: int, min_val: int, max_val: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    val = int(raw)
+    if not (min_val <= val <= max_val):
+        raise ValueError(f"{name}={val} out of range [{min_val}, {max_val}]")
+    return val
 
 
 _CSP_CONNECT = os.environ.get(
@@ -89,6 +103,14 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         loop = asyncio.get_running_loop()
+
+        _default_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=_validated_int("THREADPOOL_MAX_WORKERS", 32, 4, 128),
+            thread_name_prefix="default",
+        )
+        loop.set_default_executor(_default_executor)
+        logger.info("Default thread pool: %d workers", _default_executor._max_workers)
+
         db = AnalysisDB(dsn=dsn)
         try:
             db.recover_orphans()
@@ -137,6 +159,17 @@ def create_app() -> FastAPI:
         await scheduler_service.recover_on_startup()
         scheduler_service.start()
 
+        async def _event_loop_watchdog():
+            _loop = asyncio.get_running_loop()
+            while True:
+                start = _loop.time()
+                await asyncio.sleep(0.1)
+                drift = _loop.time() - start - 0.1
+                if drift > 0.5:
+                    logger.warning("Event loop stall: %.0fms drift", drift * 1000)
+
+        _watchdog_task = asyncio.create_task(_event_loop_watchdog())
+
         # Trading accounts service (optional — only if encryption key is configured)
         from backend.services.accounts_service import AccountsService
         if os.environ.get("ACCOUNTS_ENCRYPTION_KEY"):
@@ -177,6 +210,7 @@ def create_app() -> FastAPI:
             app.state.rule_evaluator = None
 
         yield
+        _watchdog_task.cancel()
         await app.state.scheduler_service.shutdown()
         if getattr(app.state, "rule_evaluator", None):
             await app.state.rule_evaluator.shutdown()
@@ -190,6 +224,9 @@ def create_app() -> FastAPI:
         await app.state.scanner_service.shutdown()
         await app.state.analysis_service.shutdown()
         await ws_manager.shutdown()
+        from tradingagents.graph.parallel_debate import shutdown_debate_executor
+        shutdown_debate_executor()
+        _default_executor.shutdown(wait=False, cancel_futures=True)
         db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)

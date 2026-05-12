@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import threading
 import time
 from typing import Optional
@@ -55,7 +56,9 @@ class _RateLimiter:
                 if len(self._timestamps) < self._max:
                     self._timestamps.append(now)
                     return
-                sleep_for = 60 - (now - self._timestamps[0]) + 0.1
+                sleep_for = min(60 - (now - self._timestamps[0]) + 0.1, 10.0)
+                sleep_for += random.uniform(0, 0.5)
+            logger.warning("CoinGecko rate limit: sleeping %.1fs", sleep_for)
             time.sleep(sleep_for)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import copy
 import json
 import logging
@@ -25,7 +26,20 @@ from backend.ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
 
-_MAX_CONCURRENT = 25
+_GRAPH_EXECUTOR_WORKERS = int(os.environ.get("GRAPH_EXECUTOR_WORKERS", "8"))
+_graph_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _get_graph_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _graph_executor
+    if _graph_executor is None or _graph_executor._shutdown:
+        _graph_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=_GRAPH_EXECUTOR_WORKERS,
+            thread_name_prefix="langgraph",
+        )
+    return _graph_executor
+
+_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
@@ -47,11 +61,18 @@ class AnalysisService:
         self._completion_events: Dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
         self._zombie_count = 0
+        self._shutting_down = False
         self._prefilter_limiter: Any = None
         self._prefilter_cb: Any = None
         self._prefilter_init_lock = threading.Lock()
 
+    @property
+    def max_concurrent(self) -> int:
+        return _MAX_CONCURRENT
+
     async def start_analysis(self, request: Dict[str, Any]) -> str:
+        if self._shutting_down:
+            raise ConcurrencyLimitError("Server is shutting down, not accepting new analyses.")
         async with self._lock:
             active = sum(1 for r in self._active_runs.values() if r["status"] == "running")
             if active >= _MAX_CONCURRENT:
@@ -110,17 +131,36 @@ class AnalysisService:
         return db_run["status"] != "running"
 
     async def shutdown(self) -> None:
-        tasks_to_await = []
+        self._shutting_down = True
         async with self._lock:
             for rid, run in list(self._active_runs.items()):
                 if run.get("cancel_event"):
                     run["cancel_event"].set()
+
+        active = [r for r in self._active_runs.values() if r.get("status") == "running"]
+        initial_active = len(active)
+        if active:
+            logger.info("Draining %d active analyses (30s deadline)...", initial_active)
+            deadline = asyncio.get_running_loop().time() + 30
+            while active and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(1)
+                active = [r for r in self._active_runs.values() if r.get("status") == "running"]
+
+        tasks_to_await = []
+        async with self._lock:
+            for rid, run in list(self._active_runs.items()):
                 task = run.get("task")
                 if task and not task.done():
                     task.cancel()
                     tasks_to_await.append(task)
         if tasks_to_await:
             await asyncio.gather(*tasks_to_await, return_exceptions=True)
+
+        completed = initial_active - len(tasks_to_await)
+        cancelled = len(tasks_to_await)
+        logger.info("Shutdown complete: %d analyses completed, %d cancelled", completed, cancelled)
+        if _graph_executor is not None:
+            _graph_executor.shutdown(wait=False, cancel_futures=True)
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         run = await asyncio.to_thread(self._db.get_run, run_id)
@@ -295,7 +335,9 @@ class AnalysisService:
             callback = WebCallbackHandler(run_id=run_id, event_bus=self._bus)
 
             result = await asyncio.wait_for(
-                asyncio.to_thread(self._execute_graph, run_id, request, config, callback, cancel_event),
+                asyncio.get_running_loop().run_in_executor(
+                    _get_graph_executor(), self._execute_graph, run_id, request, config, callback, cancel_event,
+                ),
                 timeout=_WALL_TIMEOUT,
             )
 
