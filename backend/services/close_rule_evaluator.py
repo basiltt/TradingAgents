@@ -107,6 +107,11 @@ class CloseRuleEvaluator:
             logger.warning("Invalid wallet data for account %s, skipping rules", account_id)
             return
 
+        logger.debug(
+            "Account %s wallet: equity=%s, balance=%s, pnl=%s, rules=%d",
+            account_id, equity, balance, pnl, len(rules),
+        )
+
         for rule in rules:
             try:
                 triggered = self._check_condition(rule, equity=equity, pnl=pnl, balance=balance)
@@ -148,9 +153,9 @@ class CloseRuleEvaluator:
         reference = Decimal(rule["reference_value"]) if rule.get("reference_value") else None
 
         if trigger_type == "BALANCE_BELOW":
-            return balance <= threshold
+            return equity <= threshold
         elif trigger_type == "BALANCE_ABOVE":
-            return balance >= threshold
+            return equity >= threshold
         elif trigger_type == "PNL_BELOW":
             return pnl <= -threshold
         elif trigger_type == "PNL_ABOVE":

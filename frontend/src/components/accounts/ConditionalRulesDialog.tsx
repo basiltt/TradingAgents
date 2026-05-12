@@ -13,8 +13,8 @@ interface Props {
 }
 
 const TRIGGER_CONFIG: Record<TriggerType, { label: string; description: string; icon: typeof TrendingDown; color: string }> = {
-  BALANCE_BELOW:   { label: "Balance Below",           description: "Close when wallet balance drops below threshold",    icon: TrendingDown, color: "text-red-400" },
-  BALANCE_ABOVE:   { label: "Balance Above",           description: "Close when wallet balance exceeds threshold",        icon: TrendingUp,   color: "text-emerald-400" },
+  BALANCE_BELOW:   { label: "Balance Below",           description: "Close when account equity drops below threshold",    icon: TrendingDown, color: "text-red-400" },
+  BALANCE_ABOVE:   { label: "Balance Above",           description: "Close when account equity exceeds threshold",        icon: TrendingUp,   color: "text-emerald-400" },
   EQUITY_DROP_PCT: { label: "Equity Drop %",           description: "Close when equity drops by percentage",              icon: Percent,      color: "text-red-400" },
   EQUITY_RISE_PCT: { label: "Equity Rise %",           description: "Close when equity rises by percentage",              icon: Percent,      color: "text-emerald-400" },
   PNL_BELOW:       { label: "PnL Loss (Unrealized)",   description: "Close when unrealized PnL falls below threshold",    icon: DollarSign,   color: "text-red-400" },
