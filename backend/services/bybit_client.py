@@ -221,6 +221,7 @@ class BybitClient:
                 "stopLoss": p.get("stopLoss", ""),
                 "positionIM": p.get("positionIM", "0"),
                 "positionMM": p.get("positionMM", "0"),
+                "positionIdx": int(p.get("positionIdx", 0)),
             }
             for p in positions
             if p.get("size", "0") != "0"
@@ -265,18 +266,42 @@ class BybitClient:
         }
 
     async def place_market_close_order(
-        self, symbol: str, side: str, qty: str
+        self, symbol: str, side: str, qty: str, position_idx: int = 0
     ) -> dict[str, Any]:
+        """Place a market order to close a position.
+
+        Args:
+            symbol: Trading pair (e.g. "BTCUSDT").
+            side: Position side ("Buy" or "Sell") — will be flipped for the close order.
+            qty: Position size to close.
+            position_idx: Position index from get_positions (0=One-Way, 1=Buy hedge, 2=Sell hedge).
+        """
         close_side = "Sell" if side == "Buy" else "Buy"
-        params = {
+        params: dict[str, Any] = {
             "category": "linear",
             "symbol": symbol,
             "side": close_side,
             "orderType": "Market",
             "qty": qty,
             "reduceOnly": True,
+            "positionIdx": position_idx,
         }
-        result = await self._request("POST", "/v5/order/create", params)
+
+        try:
+            result = await self._request("POST", "/v5/order/create", params)
+        except BybitAPIError as e:
+            if e.ret_code == 110043 and position_idx == 0:
+                # positionIdx mismatch — account is in Hedge mode, retry with correct idx
+                hedge_idx = 1 if close_side == "Sell" else 2
+                logger.warning(
+                    "Position mode mismatch for %s, retrying with positionIdx=%d",
+                    symbol, hedge_idx,
+                )
+                params["positionIdx"] = hedge_idx
+                result = await self._request("POST", "/v5/order/create", params)
+            else:
+                raise
+
         return {
             "orderId": result.get("orderId", ""),
             "orderLinkId": result.get("orderLinkId", ""),

@@ -52,6 +52,7 @@ class ClosePositionsService:
                             symbol=pos["symbol"],
                             side=pos["side"],
                             qty=pos["size"],
+                            position_idx=pos.get("positionIdx", 0),
                         )
                         return {
                             "symbol": pos["symbol"],
@@ -139,6 +140,7 @@ class ClosePositionsService:
                             symbol=pos["symbol"],
                             side=pos["side"],
                             qty=pos["size"],
+                            position_idx=pos.get("positionIdx", 0),
                         )
                         return {"symbol": pos["symbol"], "status": "closed", "orderId": result.get("orderId", "")}
                     except BybitAPIError as e:
