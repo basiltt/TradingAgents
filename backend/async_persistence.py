@@ -238,6 +238,7 @@ CREATE TABLE IF NOT EXISTS close_executions (
 );
 CREATE INDEX IF NOT EXISTS idx_close_executions_account ON close_executions(account_id, executed_at DESC)
 """),
+    (19, "ALTER TABLE closed_pnl_records ALTER COLUMN created_time TYPE BIGINT"),
 ]
 
 

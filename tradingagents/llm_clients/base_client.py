@@ -130,6 +130,9 @@ class BaseLLMClient(ABC):
         """Warn when the model is outside the known list for the provider."""
         if self.validate_model():
             return
+        if getattr(self, "_warned_unknown_model", False):
+            return
+        self._warned_unknown_model = True
 
         warnings.warn(
             (
