@@ -17,10 +17,14 @@ MAX_CONCURRENT_ACCOUNTS = 5
 class CloseRuleEvaluator:
     def __init__(self, close_service: Any, accounts_service: Any, db: Any):
         self._close_service = close_service
+        self._cycle_callback: Optional[Any] = None
         self._accounts_service = accounts_service
         self._db = db
         self._task: Optional[asyncio.Task] = None
         self._running = False
+
+    def set_cycle_callback(self, callback: Any) -> None:
+        self._cycle_callback = callback
 
     async def start(self) -> None:
         if self._running:
@@ -131,6 +135,11 @@ class CloseRuleEvaluator:
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")
+                            if self._cycle_callback and rule.get("cycle_id"):
+                                try:
+                                    await self._cycle_callback(rule)
+                                except Exception:
+                                    logger.exception("Cycle callback failed for rule %s", rule["id"])
                     except asyncio.CancelledError:
                         logger.warning("Close cancelled (timeout) for rule %s, reverting to active", rule["id"])
                         await self._db.update_close_rule(rule["id"], status="active")

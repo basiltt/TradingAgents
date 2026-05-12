@@ -966,3 +966,121 @@ export interface CloseExecutionsPage {
   page: number;
   limit: number;
 }
+
+// ── Trading Cycles ──────────────────────────────────────────────
+
+export interface CreateCycleRequest {
+  account_id: string;
+  scan_id: string;
+  trade_direction: "straight" | "reverse";
+  leverage: number;
+  capital_pct: number;
+  take_profit_pct?: number;
+  stop_loss_pct?: number;
+  min_score: number;
+  min_confidence: "none" | "low" | "moderate" | "high";
+  signal_filter: "buy" | "sell" | "both";
+  max_trades: number;
+  target_type: "percentage" | "amount";
+  target_value: number;
+  max_drawdown_pct: number;
+}
+
+export interface CycleResponse {
+  id: number;
+  status: "pending" | "placing_trades" | "running" | "stopping" | "completed" | "stopped" | "failed";
+  account_id: string;
+  scan_id: string | null;
+  trades_placed: number;
+  trades_failed: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  stop_reason: string | null;
+}
+
+export interface CycleTradeResponse {
+  id: number;
+  symbol: string;
+  side: string;
+  qty: number | null;
+  entry_price: number | null;
+  status: "pending" | "submitted" | "filled" | "failed" | "cancelled";
+  error_msg: string | null;
+  created_at: string;
+  filled_at: string | null;
+}
+
+export interface CycleDetail extends CycleResponse {
+  trades: CycleTradeResponse[];
+  trade_direction: string;
+  leverage: number;
+  capital_pct: number;
+  take_profit_pct: number | null;
+  stop_loss_pct: number | null;
+  min_score: number;
+  min_confidence: string;
+  signal_filter: string;
+  max_trades: number;
+  target_type: string;
+  target_value: number;
+  max_drawdown_pct: number;
+  initial_equity: number | null;
+  final_pnl: number | null;
+}
+
+export interface DryRunResponse {
+  qualifying_symbols: string[];
+  estimated_trades: number;
+  balance_above_threshold: number;
+  balance_below_threshold: number;
+  estimated_capital_per_trade: number;
+  total_capital_pct: number;
+  current_equity: number;
+  warnings: string[];
+}
+
+export interface FilterPreviewResponse {
+  qualifying_count: number;
+  symbols: string[];
+  direction_breakdown: Record<string, number>;
+}
+
+export interface PaginatedCycleList {
+  items: CycleResponse[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export const cyclesApi = {
+  create: (data: CreateCycleRequest) =>
+    mutate<CycleResponse>("POST", "/api/v1/trading-cycles", data),
+
+  list: (params?: { offset?: number; limit?: number; status?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.offset != null) sp.set("offset", String(params.offset));
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    if (params?.status) sp.set("status", params.status);
+    const qs = sp.toString();
+    return request<PaginatedCycleList>(`/api/v1/trading-cycles${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+
+  get: (cycleId: number, signal?: AbortSignal) =>
+    request<CycleDetail>(`/api/v1/trading-cycles/${cycleId}`, undefined, signal),
+
+  stop: (cycleId: number) =>
+    mutate<CycleResponse>("POST", `/api/v1/trading-cycles/${cycleId}/stop`),
+
+  dryRun: (data: CreateCycleRequest) =>
+    mutate<DryRunResponse>("POST", "/api/v1/trading-cycles/dry-run", data),
+
+  filterPreview: (scanId: string, params?: { min_score?: number; min_confidence?: string; signal_filter?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.min_score != null) sp.set("min_score", String(params.min_score));
+    if (params?.min_confidence) sp.set("min_confidence", params.min_confidence);
+    if (params?.signal_filter) sp.set("signal_filter", params.signal_filter);
+    const qs = sp.toString();
+    return request<FilterPreviewResponse>(`/api/v1/scans/${encodeURIComponent(scanId)}/filter-preview${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+};

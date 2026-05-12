@@ -993,3 +993,96 @@ class UpdateCloseRuleRequest(BaseModel):
             if val > D("100"):
                 raise ValueError("Percentage threshold must be between 0.01 and 100")
         return self
+
+
+# ── Trading Cycles ──────────────────────────────────────────────
+
+class CreateCycleRequest(BaseModel):
+    account_id: str
+    scan_id: str
+    trade_direction: Literal["straight", "reverse"]
+    leverage: int = Field(ge=1, le=125)
+    capital_pct: float = Field(gt=0, le=100)
+    take_profit_pct: Optional[float] = Field(default=None, gt=0, le=1000)
+    stop_loss_pct: Optional[float] = Field(default=None, gt=0, le=1000)
+    min_score: int = Field(default=3, ge=-10, le=10)
+    min_confidence: Literal["none", "low", "moderate", "high"] = "moderate"
+    signal_filter: Literal["buy", "sell", "both"] = "both"
+    max_trades: int = Field(default=5, ge=1, le=20)
+    target_type: Literal["percentage", "amount"]
+    target_value: float = Field(gt=0, le=10_000_000)
+    max_drawdown_pct: float = Field(gt=0, le=100)
+
+    @model_validator(mode="after")
+    def check_aggregate_capital(self) -> "CreateCycleRequest":
+        if self.capital_pct * self.max_trades > 100:
+            raise ValueError("capital_pct × max_trades exceeds 100%")
+        return self
+
+
+class CycleTradeResponse(BaseModel):
+    id: int
+    symbol: str
+    side: str
+    qty: Optional[float] = None
+    entry_price: Optional[float] = None
+    status: Literal["pending", "submitted", "filled", "failed", "cancelled"]
+    error_msg: Optional[str] = None
+    created_at: datetime
+    filled_at: Optional[datetime] = None
+
+
+class CycleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    status: Literal["pending", "placing_trades", "running", "stopping", "completed", "stopped", "failed"]
+    account_id: str
+    scan_id: Optional[str] = None
+    trades_placed: int
+    trades_failed: int
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    stop_reason: Optional[str] = None
+
+
+class CycleDetail(CycleResponse):
+    trades: list[CycleTradeResponse] = []
+    trade_direction: str
+    leverage: int
+    capital_pct: float
+    take_profit_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
+    min_score: int
+    min_confidence: str
+    signal_filter: str
+    max_trades: int
+    target_type: str
+    target_value: float
+    max_drawdown_pct: float
+    initial_equity: Optional[float] = None
+    final_pnl: Optional[float] = None
+
+
+class DryRunResponse(BaseModel):
+    qualifying_symbols: list[str]
+    estimated_trades: int
+    balance_above_threshold: float
+    balance_below_threshold: float
+    estimated_capital_per_trade: float
+    total_capital_pct: float
+    current_equity: float
+    warnings: list[str]
+
+
+class FilterPreviewResponse(BaseModel):
+    qualifying_count: int
+    symbols: list[str]
+    direction_breakdown: Dict[str, int]
+
+
+class PaginatedCycleList(BaseModel):
+    items: list[CycleResponse]
+    total: int
+    offset: int
+    limit: int
