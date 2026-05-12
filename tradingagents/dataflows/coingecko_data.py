@@ -2,6 +2,10 @@
 
 Supports optional Demo API key via COINGECKO_API_KEY env var.
 Rate-limited to 30 req/min by default (free tier allows 30 req/min).
+
+ALL outbound HTTP requests to CoinGecko go through the central semaphore
+and rate limiter — no direct _SESSION.get() calls are allowed outside
+the gated helpers.
 """
 
 from __future__ import annotations
@@ -29,59 +33,10 @@ else:
     _BASE = "https://api.coingecko.com/api/v3"
     logger.info("CoinGecko: no API key, using public rate limits")
 
-# ---------------------------------------------------------------------------
-# Symbol mapping  BTCUSDT → bitcoin (CoinGecko slug)
-# ---------------------------------------------------------------------------
-
-_coin_list_cache: dict[str, str] = {}
-_coin_list_lock = threading.Lock()
-_coin_list_ts: float = 0.0
-_COIN_LIST_TTL = 3600 * 6  # refresh every 6 hours
-
-
-def _fetch_coin_list() -> dict[str, str]:
-    """Return {SYMBOL_UPPER: coingecko_id} mapping."""
-    resp = _SESSION.get(f"{_BASE}/coins/list", timeout=15)
-    resp.raise_for_status()
-    mapping: dict[str, str] = {}
-    for coin in resp.json():
-        sym = coin.get("symbol", "").upper()
-        cid = coin.get("id", "")
-        if sym and cid:
-            if sym not in mapping:
-                mapping[sym] = cid
-    return mapping
-
-
-def _get_coin_id(symbol: str) -> str | None:
-    """Convert a trading symbol like BTCUSDT to a CoinGecko id like 'bitcoin'."""
-    global _coin_list_ts
-    with _coin_list_lock:
-        if not _coin_list_cache or (time.time() - _coin_list_ts > _COIN_LIST_TTL):
-            try:
-                new_map = _fetch_coin_list()
-                _coin_list_cache.clear()
-                _coin_list_cache.update(new_map)
-                _coin_list_ts = time.time()
-                logger.info("CoinGecko coin list refreshed: %d entries", len(_coin_list_cache))
-            except Exception:
-                logger.warning("Failed to refresh CoinGecko coin list")
-                if not _coin_list_cache:
-                    return None
-
-    sym = symbol.upper()
-    for suffix in ("PERP", "USDT", "USD"):
-        if sym.endswith(suffix):
-            sym = sym[:-len(suffix)]
-            break
-    if not sym:
-        sym = symbol.upper()
-
-    return _coin_list_cache.get(sym)
-
 
 # ---------------------------------------------------------------------------
-# Rate limiter (simple token-bucket, shared across calls)
+# Central rate limiter & concurrency gate — ALL CoinGecko HTTP requests
+# (including coin list refresh) MUST go through these.
 # ---------------------------------------------------------------------------
 
 class _RateLimiter:
@@ -122,13 +77,31 @@ def configure_coingecko_rate_limit(max_per_min: int) -> None:
     _limiter = _RateLimiter(max_per_min=max_per_min)
     logger.info("CoinGecko rate limit set to %d req/min", max_per_min)
 
+
+def _gated_get(url: str, params: dict | None = None, timeout: int = 20) -> requests.Response:
+    """Single choke-point for ALL CoinGecko HTTP requests.
+
+    Acquires the concurrency semaphore and waits on the rate limiter
+    before issuing the request. Every caller MUST use this instead of
+    _SESSION.get() directly.
+    """
+    _coingecko_semaphore.acquire()
+    try:
+        _limiter.wait()
+        return _SESSION.get(url, params=params, timeout=timeout)
+    except Exception:
+        raise
+    finally:
+        _coingecko_semaphore.release()
+
+
 # ---------------------------------------------------------------------------
 # Response cache
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, tuple[float, str]] = {}
 _cache_lock = threading.Lock()
-_CACHE_TTL = 600  # 10 min — reduces redundant calls to CoinGecko
+_CACHE_TTL = 600  # 10 min
 
 
 def _cached_get(url: str, params: dict | None = None) -> dict:
@@ -139,36 +112,77 @@ def _cached_get(url: str, params: dict | None = None) -> dict:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
             return _json.loads(_cache[key][1])
 
-    _coingecko_semaphore.acquire()
-    try:
-        # Re-check cache after acquiring semaphore (another thread may have fetched)
-        with _cache_lock:
-            if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
-                return _json.loads(_cache[key][1])
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            _limiter.wait()
-            resp = _SESSION.get(url, params=params, timeout=20)
-            if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 60))
-                wait_time = max(retry_after, 60) + (attempt * 30)
-                logger.warning(
-                    "CoinGecko 429 rate limited, waiting %ds (attempt %d/%d)",
-                    wait_time, attempt + 1, max_retries,
-                )
-                time.sleep(wait_time)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            with _cache_lock:
-                _cache[key] = (time.time(), _json.dumps(data))
-            return data
-
+    max_retries = 3
+    for attempt in range(max_retries):
+        resp = _gated_get(url, params=params)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 60))
+            wait_time = max(retry_after, 60) + (attempt * 30)
+            logger.warning(
+                "CoinGecko 429 rate limited, waiting %ds (attempt %d/%d)",
+                wait_time, attempt + 1, max_retries,
+            )
+            time.sleep(wait_time)
+            continue
         resp.raise_for_status()
-        return {}  # unreachable but satisfies type checker
-    finally:
-        _coingecko_semaphore.release()
+        data = resp.json()
+        with _cache_lock:
+            _cache[key] = (time.time(), _json.dumps(data))
+        return data
+
+    resp.raise_for_status()
+    return {}  # unreachable but satisfies type checker
+
+
+# ---------------------------------------------------------------------------
+# Symbol mapping  BTCUSDT -> bitcoin (CoinGecko slug)
+# ---------------------------------------------------------------------------
+
+_coin_list_cache: dict[str, str] = {}
+_coin_list_lock = threading.Lock()
+_coin_list_ts: float = 0.0
+_COIN_LIST_TTL = 3600 * 6  # refresh every 6 hours
+
+
+def _fetch_coin_list() -> dict[str, str]:
+    """Return {SYMBOL_UPPER: coingecko_id} mapping."""
+    resp = _gated_get(f"{_BASE}/coins/list", timeout=15)
+    resp.raise_for_status()
+    mapping: dict[str, str] = {}
+    for coin in resp.json():
+        sym = coin.get("symbol", "").upper()
+        cid = coin.get("id", "")
+        if sym and cid:
+            if sym not in mapping:
+                mapping[sym] = cid
+    return mapping
+
+
+def _get_coin_id(symbol: str) -> str | None:
+    """Convert a trading symbol like BTCUSDT to a CoinGecko id like 'bitcoin'."""
+    global _coin_list_ts
+    with _coin_list_lock:
+        if not _coin_list_cache or (time.time() - _coin_list_ts > _COIN_LIST_TTL):
+            try:
+                new_map = _fetch_coin_list()
+                _coin_list_cache.clear()
+                _coin_list_cache.update(new_map)
+                _coin_list_ts = time.time()
+                logger.info("CoinGecko coin list refreshed: %d entries", len(_coin_list_cache))
+            except Exception:
+                logger.warning("Failed to refresh CoinGecko coin list")
+                if not _coin_list_cache:
+                    return None
+
+    sym = symbol.upper()
+    for suffix in ("PERP", "USDT", "USD"):
+        if sym.endswith(suffix):
+            sym = sym[:-len(suffix)]
+            break
+    if not sym:
+        sym = symbol.upper()
+
+    return _coin_list_cache.get(sym)
 
 
 # ---------------------------------------------------------------------------
