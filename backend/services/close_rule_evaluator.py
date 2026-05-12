@@ -126,6 +126,10 @@ class CloseRuleEvaluator:
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="executed")
+                    except asyncio.CancelledError:
+                        logger.warning("Close cancelled (timeout) for rule %s, reverting to active", rule["id"])
+                        await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
+                        raise
                     except Exception:
                         logger.exception("Failed to close positions for rule %s, reverting to active", rule["id"])
                         await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
