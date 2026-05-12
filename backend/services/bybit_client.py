@@ -42,7 +42,7 @@ class BybitClient:
         self._api_secret = api_secret
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
-        self._recv_window = "10000"
+        self._recv_window = "20000"
         self._request_timestamps: collections.deque = collections.deque()
         self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
