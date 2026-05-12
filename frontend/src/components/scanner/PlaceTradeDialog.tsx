@@ -8,6 +8,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   symbol: string;
   signalDirection: "buy" | "sell";
+  onTradeSuccess?: (symbol: string) => void;
 }
 
 type TradeDirection = "straight" | "reverse";
@@ -77,7 +78,7 @@ function saveBaseCapital(accountId: string, value: string) {
   } catch {}
 }
 
-export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection }: Props) {
+export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, onTradeSuccess }: Props) {
   const [settings, setSettings] = useState<TradeSettings>(loadSettings);
   const [baseCapital, setBaseCapital] = useState("");
   const [baseCapitalLoading, setBaseCapitalLoading] = useState(false);
@@ -229,6 +230,7 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection }
       });
       const leverageNote = res.leverage < leverageNum ? ` (capped to ${res.leverage}x max)` : "";
       toast.success(`Trade placed: ${res.side} ${symbol}${leverageNote}`);
+      onTradeSuccess?.(symbol);
     } catch (err: unknown) {
       let detail: string;
       if (err instanceof ApiError) {

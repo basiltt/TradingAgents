@@ -89,7 +89,7 @@ function CollapsibleSection({
   );
 }
 
-function ResultsTable({ results, isCrypto, onTrade }: { results: ScanResultItem[]; isCrypto?: boolean; onTrade?: (symbol: string, direction: "buy" | "sell") => void }) {
+function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: ScanResultItem[]; isCrypto?: boolean; onTrade?: (symbol: string, direction: "buy" | "sell") => void; tradedSymbols?: Set<string> }) {
   const [copiedTicker, setCopiedTicker] = useState<string | null>(null);
 
   function handleCopy(ticker: string) {
@@ -155,12 +155,21 @@ function ResultsTable({ results, isCrypto, onTrade }: { results: ScanResultItem[
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2">
                     {isCrypto && onTrade && (r.direction === "buy" || r.direction === "sell") && (
-                      <button
-                        onClick={() => onTrade(r.ticker, r.direction as "buy" | "sell")}
-                        className="text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
-                      >
-                        Trade
-                      </button>
+                      tradedSymbols?.has(r.ticker) ? (
+                        <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium inline-flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                          Traded
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => onTrade(r.ticker, r.direction as "buy" | "sell")}
+                          className="text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
+                        >
+                          Trade
+                        </button>
+                      )
                     )}
                     {r.run_id && (
                       <Link
@@ -191,6 +200,8 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
   const queryClient = useQueryClient();
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const [tradeTarget, setTradeTarget] = useState<{ symbol: string; direction: "buy" | "sell" } | null>(null);
+  const [tradedSymbols, setTradedSymbols] = useState<Set<string>>(new Set());
+  const handleTradeSuccess = (symbol: string) => setTradedSymbols((prev) => new Set(prev).add(symbol));
 
   const { data: scan, isLoading, error } = useQuery({
     queryKey: ["scan", scanId],
@@ -384,17 +395,17 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
       {/* Results by direction */}
       {buyResults.length > 0 && (
         <CollapsibleSection title="Buy Signals" count={buyResults.length} dotColor="bg-emerald-500" defaultOpen>
-          <ResultsTable results={buyResults} isCrypto={isCrypto} onTrade={handleTrade} />
+          <ResultsTable results={buyResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
         </CollapsibleSection>
       )}
       {sellResults.length > 0 && (
         <CollapsibleSection title="Sell Signals" count={sellResults.length} dotColor="bg-red-500">
-          <ResultsTable results={sellResults} isCrypto={isCrypto} onTrade={handleTrade} />
+          <ResultsTable results={sellResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
         </CollapsibleSection>
       )}
       {holdResults.length > 0 && (
         <CollapsibleSection title="Hold / Neutral" count={holdResults.length} dotColor="bg-amber-500">
-          <ResultsTable results={holdResults} isCrypto={isCrypto} onTrade={handleTrade} />
+          <ResultsTable results={holdResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
         </CollapsibleSection>
       )}
 
@@ -405,6 +416,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
           onOpenChange={(open) => { if (!open) setTradeTarget(null); }}
           symbol={tradeTarget.symbol}
           signalDirection={tradeTarget.direction}
+          onTradeSuccess={handleTradeSuccess}
         />
       )}
 

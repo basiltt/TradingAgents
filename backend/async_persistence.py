@@ -1246,7 +1246,7 @@ class AsyncAnalysisDB:
             return False
         if "config" in updates and not isinstance(updates["config"], str):
             updates["config"] = json.dumps(updates["config"])
-        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        updates["updated_at"] = datetime.now(timezone.utc)
         parts = []
         params = []
         for i, (k, v) in enumerate(updates.items(), 1):
@@ -1463,7 +1463,10 @@ class AsyncAnalysisDB:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return None
-        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+        for dt_field in ("expires_at", "triggered_at"):
+            if dt_field in updates and isinstance(updates[dt_field], str):
+                updates[dt_field] = datetime.fromisoformat(updates[dt_field])
+        updates["updated_at"] = datetime.now(timezone.utc)
         parts = []
         params = []
         for i, (k, v) in enumerate(updates.items(), 1):
