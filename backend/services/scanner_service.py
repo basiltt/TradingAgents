@@ -678,6 +678,8 @@ class ScannerService:
             "agent_model_overrides": config.get("agent_model_overrides"),
             "ta_prefilter_enabled": config.get("ta_prefilter_enabled"),
             "ta_prefilter_threshold": config.get("ta_prefilter_threshold"),
+            "llm_max_concurrent": config.get("llm_max_concurrent"),
+            "llm_min_spacing_ms": config.get("llm_min_spacing_ms"),
         }
 
         try:

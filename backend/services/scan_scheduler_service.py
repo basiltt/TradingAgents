@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from croniter import croniter
 
@@ -22,6 +23,8 @@ POLL_INTERVAL_SECONDS = 30
 COOLDOWN_SECONDS = 60
 MAX_CONSECUTIVE_FAILURES = 3
 MISSED_ONCE_WINDOW_HOURS = 24
+MIN_INTERVAL_MINUTES = 15
+MIN_CRON_INTERVAL_SECONDS = 900
 
 
 class ScanSchedulerService:
@@ -31,12 +34,30 @@ class ScanSchedulerService:
         self._config = config_service
         self._loop_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
-        self._in_flight: Dict[str, int] = {}  # schedule_id -> execution_id
+        self._in_flight: Dict[str, Union[int, str]] = {}  # schedule_id -> exec_id (or -1 sentinel)
         self._last_cleanup: Optional[datetime] = None
 
     # ── CRUD ─────────────────────────────────────────────────────────
 
+    def _validate_schedule(self, schedule_type: str, schedule_config: Dict[str, Any]) -> None:
+        if schedule_type == "interval":
+            mins = schedule_config.get("interval_minutes", 0)
+            if mins < MIN_INTERVAL_MINUTES:
+                raise ValueError(f"Interval must be at least {MIN_INTERVAL_MINUTES} minutes")
+        elif schedule_type == "cron":
+            expr = schedule_config.get("cron_expression", "")
+            if expr:
+                self._validate_cron_frequency(expr)
+        if schedule_type in ("daily", "weekly"):
+            time_str = schedule_config.get("time", "09:00")
+            if not re.match(r"^\d{2}:\d{2}$", time_str):
+                raise ValueError("time must be in HH:MM format")
+            h, m = map(int, time_str.split(":"))
+            if h > 23 or m > 59:
+                raise ValueError("Invalid time value")
+
     async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        self._validate_schedule(data["schedule_type"], data.get("schedule_config", {}))
         count = await asyncio.to_thread(self._db.count_scheduled_scans)
         if count >= MAX_SCHEDULES:
             raise ValueError(f"Maximum of {MAX_SCHEDULES} schedules reached")
@@ -76,12 +97,20 @@ class ScanSchedulerService:
 
         if "scan_config" in updates:
             updates["scan_config"] = self._resolve_scan_config(updates["scan_config"])
+            new_key = updates["scan_config"].get("llm_api_key")
+            if not new_key or new_key == "***":
+                old_key = existing.get("scan_config", {}).get("llm_api_key")
+                if old_key:
+                    updates["scan_config"]["llm_api_key"] = old_key
+                elif "llm_api_key" in updates["scan_config"]:
+                    del updates["scan_config"]["llm_api_key"]
 
         updates["consecutive_failures"] = 0
         updates["updated_at"] = now
 
         merged = {**existing, **updates}
 
+        self._validate_schedule(merged["schedule_type"], merged.get("schedule_config", {}))
         updates["next_run_at"] = self._compute_next_run(merged)
         await asyncio.to_thread(self._db.update_scheduled_scan, scan_id, updates)
         logger.info("Updated schedule %s", scan_id)
@@ -90,7 +119,6 @@ class ScanSchedulerService:
     async def delete(self, scan_id: str) -> bool:
         result = await asyncio.to_thread(self._db.delete_scheduled_scan, scan_id)
         if result:
-            self._in_flight.pop(scan_id, None)
             logger.info("Deleted schedule %s", scan_id)
         return result
 
@@ -174,12 +202,30 @@ class ScanSchedulerService:
                 await self._loop_task
             except asyncio.CancelledError:
                 pass
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for schedule_id, exec_id in list(self._in_flight.items()):
+            if exec_id != -1:
+                try:
+                    await asyncio.to_thread(
+                        self._db.update_schedule_execution, exec_id,
+                        {"status": "cancelled", "completed_at": now,
+                         "error_message": "Service shutting down"},
+                    )
+                except Exception:
+                    logger.warning("Failed to mark execution %s as cancelled on shutdown", exec_id)
+        self._in_flight.clear()
+
         logger.info("Scheduler loop stopped")
 
     async def _scheduler_loop(self) -> None:
         while not self._shutdown_event.is_set():
             try:
                 await self._check_in_flight_completions()
+            except Exception:
+                logger.exception("Error checking in-flight completions")
+
+            try:
                 due = await asyncio.to_thread(self._db.get_due_scheduled_scans)
                 for schedule in due:
                     if self._shutdown_event.is_set():
@@ -331,6 +377,12 @@ class ScanSchedulerService:
 
             scan = await self._scanner.get_scan(schedule["last_scan_id"])
             if not scan:
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                await asyncio.to_thread(
+                    self._db.update_schedule_execution, exec_id,
+                    {"status": "failed", "completed_at": now,
+                     "error_message": "Scan record not found"},
+                )
                 completed.append(schedule_id)
                 continue
 
@@ -343,7 +395,13 @@ class ScanSchedulerService:
                     {"status": status, "completed_at": now},
                 )
 
-                if status == "failed":
+                if schedule.get("status") == "paused":
+                    if status == "completed":
+                        await asyncio.to_thread(
+                            self._db.update_scheduled_scan, schedule_id,
+                            {"consecutive_failures": 0, "updated_at": now},
+                        )
+                elif status == "failed":
                     await self._record_failure(schedule_id)
                 elif status == "cancelled":
                     if schedule.get("schedule_type") == "once":
@@ -405,7 +463,7 @@ class ScanSchedulerService:
                     except Exception:
                         if self._in_flight.get(schedule["id"]) == -1:
                             del self._in_flight[schedule["id"]]
-                        raise
+                        logger.exception("Recovery replay failed for schedule %s", schedule["id"])
                     replayed += 1
                 else:
                     await asyncio.to_thread(
@@ -519,13 +577,13 @@ class ScanSchedulerService:
         first = cron.get_next(datetime)
         second = cron.get_next(datetime)
         gap = (second - first).total_seconds()
-        if gap < 900:
+        if gap < MIN_CRON_INTERVAL_SECONDS:
             raise ValueError(
                 f"Cron expression fires too frequently ({int(gap)}s gap). Minimum is 15 minutes."
             )
 
     def _resolve_scan_config(self, scan_config: Dict[str, Any]) -> Dict[str, Any]:
-        scan_config = dict(scan_config)
+        scan_config = copy.deepcopy(scan_config)
         resolved = self._config.get_config()["resolved"]
         defaults = {
             "provider": resolved.get("llm_provider", "openai"),

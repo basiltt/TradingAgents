@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from croniter import croniter
+try:
+    from croniter import croniter as _croniter_cls
+except ImportError:
+    _croniter_cls = None
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,15}$")
@@ -662,6 +665,16 @@ class ScheduleConfig(BaseModel):
     day: Optional[str] = None
     cron_expression: Optional[str] = None
 
+    @field_validator("run_at")
+    @classmethod
+    def validate_run_at(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            try:
+                datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                raise ValueError("run_at must be a valid ISO 8601 datetime string")
+        return v
+
     @field_validator("time")
     @classmethod
     def validate_time(cls, v: Optional[str]) -> Optional[str]:
@@ -705,7 +718,7 @@ class ScheduleConfig(BaseModel):
             dangerous = re.compile(r"[@;|&`$]")
             if dangerous.search(v):
                 raise ValueError("Cron expression contains invalid characters")
-            if not croniter.is_valid(v):
+            if _croniter_cls is not None and not _croniter_cls.is_valid(v):
                 raise ValueError("Invalid cron expression")
         return v
 
