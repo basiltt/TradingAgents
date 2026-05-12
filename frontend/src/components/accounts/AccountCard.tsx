@@ -1,9 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MoreVertical, XCircle, SlidersHorizontal, History } from "lucide-react";
-import { toast } from "sonner";
 import type { DashboardCard } from "@/api/client";
-import { api } from "@/api/client";
 import type { Direction } from "@/store/accounts-slice";
 import { useAppSelector } from "@/store";
 import { CloseAllConfirmDialog } from "./CloseAllConfirmDialog";

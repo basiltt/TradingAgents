@@ -7,7 +7,7 @@ import { PnLPanel } from "../PnLPanel";
 
 describe("WalletPanel", () => {
   it("shows empty state when no coins", () => {
-    render(<WalletPanel wallet={{ totalEquity: "0", totalWalletBalance: "0", totalAvailableBalance: "0", totalPerpUPL: "0", coin: [] } as any} />);
+    render(<WalletPanel wallet={{ totalEquity: "0", totalWalletBalance: "0", totalAvailableBalance: "0", totalPerpUPL: "0", coin: [] } as unknown} />);
     expect(screen.getByText("No wallet data")).toBeInTheDocument();
   });
 
@@ -16,14 +16,14 @@ describe("WalletPanel", () => {
       totalEquity: "1000", totalWalletBalance: "900", totalAvailableBalance: "800", totalPerpUPL: "100",
       coin: [{ coin: "USDT", walletBalance: "900.1234", equity: "1000.5678", unrealisedPnl: "100.9876" }],
     };
-    render(<WalletPanel wallet={wallet as any} />);
+    render(<WalletPanel wallet={wallet as unknown} />);
     expect(screen.getByText("USDT")).toBeInTheDocument();
     expect(screen.getByText("900.1234")).toBeInTheDocument();
   });
 
   it("renders column headers", () => {
     const wallet = { totalEquity: "0", totalWalletBalance: "0", totalAvailableBalance: "0", totalPerpUPL: "0", coin: [{ coin: "BTC", walletBalance: "1", equity: "1", unrealisedPnl: "0" }] };
-    render(<WalletPanel wallet={wallet as any} />);
+    render(<WalletPanel wallet={wallet as unknown} />);
     expect(screen.getByText("Coin")).toBeInTheDocument();
     expect(screen.getByText("Balance")).toBeInTheDocument();
     expect(screen.getByText("Equity")).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("PositionsTable", () => {
 
   it("renders position row", () => {
     const positions = [{ symbol: "BTCUSDT", side: "Buy", size: "0.1", avgPrice: "50000", markPrice: "51000", unrealisedPnl: "100", leverage: "10", liqPrice: "45000", takeProfit: "", stopLoss: "", positionIM: "500", positionMM: "250" }];
-    render(<PositionsTable positions={positions as any} />);
+    render(<PositionsTable positions={positions as unknown} />);
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.getByText("Long")).toBeInTheDocument();
     expect(screen.getByText("10x")).toBeInTheDocument();
@@ -46,20 +46,20 @@ describe("PositionsTable", () => {
 
   it("shows liquidation warning when close to liq price", () => {
     const positions = [{ symbol: "ETHUSDT", side: "Sell", size: "1", avgPrice: "3000", markPrice: "3000", unrealisedPnl: "-10", leverage: "50", liqPrice: "3100", takeProfit: "", stopLoss: "", positionIM: "60", positionMM: "30" }];
-    render(<PositionsTable positions={positions as any} />);
+    render(<PositionsTable positions={positions as unknown} />);
     expect(screen.getByText("$3100.00")).toBeInTheDocument();
   });
 
   it("shows Short badge for Sell side", () => {
     const positions = [{ symbol: "ETHUSDT", side: "Sell", size: "1", avgPrice: "3000", markPrice: "2900", unrealisedPnl: "100", leverage: "5", liqPrice: "3500", takeProfit: "", stopLoss: "", positionIM: "600", positionMM: "300" }];
-    render(<PositionsTable positions={positions as any} />);
+    render(<PositionsTable positions={positions as unknown} />);
     expect(screen.getByText("Short")).toBeInTheDocument();
   });
 
   it("colors PnL green for profit", () => {
     const positions = [{ symbol: "BTCUSDT", side: "Buy", size: "0.1", avgPrice: "50000", markPrice: "51000", unrealisedPnl: "100", leverage: "10", liqPrice: "45000", takeProfit: "", stopLoss: "", positionIM: "500", positionMM: "250" }];
-    const { container } = render(<PositionsTable positions={positions as any} />);
-    const pnlCell = container.querySelector(".text-green-600");
+    const { container } = render(<PositionsTable positions={positions as unknown} />);
+    const pnlCell = container.querySelector(".text-emerald-500");
     expect(pnlCell).toBeTruthy();
   });
 });
@@ -72,7 +72,7 @@ describe("OrdersTable", () => {
 
   it("renders order row", () => {
     const orders = [{ orderId: "o1", symbol: "BTCUSDT", side: "Buy", orderType: "Limit", qty: "0.01", price: "50000", orderStatus: "New", createdTime: "123", triggerPrice: "", stopOrderType: "" }];
-    render(<OrdersTable orders={orders as any} />);
+    render(<OrdersTable orders={orders as unknown} />);
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.getByText("Buy")).toBeInTheDocument();
     expect(screen.getByText("$50000.00")).toBeInTheDocument();
@@ -80,13 +80,13 @@ describe("OrdersTable", () => {
 
   it("shows Market for price 0", () => {
     const orders = [{ orderId: "o2", symbol: "ETHUSDT", side: "Sell", orderType: "Market", qty: "1", price: "0", orderStatus: "New", createdTime: "123", triggerPrice: "", stopOrderType: "" }];
-    render(<OrdersTable orders={orders as any} />);
+    render(<OrdersTable orders={orders as unknown} />);
     expect(screen.getAllByText("Market").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows stop order type annotation", () => {
     const orders = [{ orderId: "o3", symbol: "BTCUSDT", side: "Buy", orderType: "Limit", qty: "0.01", price: "48000", orderStatus: "Untriggered", createdTime: "123", triggerPrice: "49000", stopOrderType: "TakeProfit" }];
-    render(<OrdersTable orders={orders as any} />);
+    render(<OrdersTable orders={orders as unknown} />);
     expect(screen.getByText("Limit (TakeProfit)")).toBeInTheDocument();
   });
 });
@@ -101,9 +101,9 @@ describe("PnLPanel", () => {
     vi.mock("@/api/client", async () => {
       const actual = await vi.importActual("@/api/client");
       return {
-        ...actual as any,
+        ...actual as unknown,
         accountsApi: {
-          ...(actual as any).accountsApi,
+          ...(actual as unknown).accountsApi,
           getPnlSummary: vi.fn().mockResolvedValue({ total_pnl: "100.00", win_rate: 75.0, win_count: 3, loss_count: 1, avg_win: "50.00", avg_loss: "-25.00" }),
         },
       };

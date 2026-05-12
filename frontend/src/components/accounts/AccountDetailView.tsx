@@ -47,8 +47,9 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
         const summary = await accountsApi.getPnlSummary(accountId, sevenDaysAgo, today, controller.signal);
         setPnlSummary(summary);
-      } catch (e: any) {
-        if (e.name !== "AbortError") setError(e.detail || e.message || "Failed to load");
+      } catch (e: unknown) {
+        const err = e as { name?: string; detail?: string; message?: string };
+        if (err.name !== "AbortError") setError(err.detail || err.message || "Failed to load");
       } finally {
         setLoading(false);
       }

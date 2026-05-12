@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type { ScanResultItem } from "@/api/client";
@@ -54,7 +55,7 @@ function saveFilters(key: string, filters: ScanFiltersState) {
       minStrength: filters.minStrength,
       showFilters: filters.showFilters,
     }));
-  } catch {}
+  } catch { /* ignore localStorage errors */ }
 }
 
 function loadFilters(key: string): ScanFiltersState {

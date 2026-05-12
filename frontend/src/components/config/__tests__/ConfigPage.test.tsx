@@ -54,7 +54,8 @@ describe("ConfigPage", () => {
 
   it("shows loading state", () => {
     render(<ConfigPage />, { wrapper: createWrapper() });
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /configuration/i })).toBeInTheDocument();
+    expect(document.querySelector(".animate-pulse")).toBeTruthy();
   });
 
   it("shows error on fetch failure", async () => {

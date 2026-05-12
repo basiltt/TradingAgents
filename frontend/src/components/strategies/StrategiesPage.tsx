@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef, useMemo } from "react";
 import { apiClient } from "@/api/client";
-import type { Strategy, StrategyCategory, StrategyStatus } from "@/api/client";
+import type { Strategy, StrategyCategory } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import {
   setLoading,

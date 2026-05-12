@@ -12,6 +12,7 @@ export function useAccountWebSocket() {
   const reconnectDelay = useRef(RECONNECT_BASE);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const mounted = useRef(true);
+  const connectRef = useRef<() => void>();
 
   const connect = useCallback(() => {
     if (!mounted.current) return;
@@ -46,7 +47,7 @@ export function useAccountWebSocket() {
       if (!mounted.current) return;
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX);
-        connect();
+        connectRef.current?.();
       }, reconnectDelay.current);
     };
 
@@ -54,6 +55,10 @@ export function useAccountWebSocket() {
       ws.close();
     };
   }, [dispatch]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  });
 
   useEffect(() => {
     mounted.current = true;

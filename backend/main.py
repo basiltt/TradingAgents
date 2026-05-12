@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re as _re
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -24,8 +25,6 @@ from backend.ws_manager import WSManager
 load_dotenv()
 load_dotenv(".env.enterprise", override=False)
 
-
-import re as _re
 
 _CSP_CONNECT = os.environ.get(
     "WEB_CSP_CONNECT_SRC",

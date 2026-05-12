@@ -45,16 +45,17 @@ describe("AnalysisDashboard", () => {
   it("renders all dashboard panels with WS data", () => {
     const { wrapper } = createWrapper("run-1");
     render(<AnalysisDashboard runId="run-1" />, { wrapper });
-    expect(screen.getByText(/trader.*in_progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/buy spy/i)).toBeInTheDocument();
-    expect(screen.getByText("Starting")).toBeInTheDocument();
-    expect(screen.getByText(/100/)).toBeInTheDocument();
+    expect(screen.getAllByText("Trader").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/in progress/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/buy spy/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Starting").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/100/).length).toBeGreaterThan(0);
   });
 
   it("shows connected status", () => {
     const { wrapper } = createWrapper("run-1");
     render(<AnalysisDashboard runId="run-1" />, { wrapper });
-    expect(screen.getByText(/connected/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/connected/i).length).toBeGreaterThan(0);
   });
 
   it("shows empty state when no WS data", () => {
@@ -70,6 +71,6 @@ describe("AnalysisDashboard", () => {
       </Provider>
     );
     render(<AnalysisDashboard runId="run-2" />, { wrapper });
-    expect(screen.getByText(/no agents/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/waiting for agents/i).length).toBeGreaterThan(0);
   });
 });

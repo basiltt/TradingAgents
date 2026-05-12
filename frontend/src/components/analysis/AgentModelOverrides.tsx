@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from "react";
 import { ModelSelect } from "@/components/ui/model-select";
 import { Button } from "@/components/ui/button";

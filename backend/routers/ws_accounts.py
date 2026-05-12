@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -32,7 +31,7 @@ async def accounts_ws(websocket: WebSocket):
             except asyncio.TimeoutError:
                 await websocket.send_json({"type": "ping"})
                 try:
-                    pong = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+                    await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
                 except asyncio.TimeoutError:
                     break
     except WebSocketDisconnect:

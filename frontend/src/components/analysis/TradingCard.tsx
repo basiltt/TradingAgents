@@ -31,7 +31,7 @@ function copyToClipboard(text: string): Promise<void> {
     el.setSelectionRange(0, text.length);
     const ok = document.execCommand("copy");
     document.body.removeChild(el);
-    ok ? resolve() : reject(new Error("execCommand failed"));
+    if (ok) { resolve(); } else { reject(new Error("execCommand failed")); }
   });
 }
 

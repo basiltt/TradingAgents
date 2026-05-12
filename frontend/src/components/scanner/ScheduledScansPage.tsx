@@ -616,6 +616,7 @@ function ScheduleFormDialog({
 
   useEffect(() => {
     if (editData && editingId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- populating form from fetched data
       setName(editData.name);
       setScheduleType(editData.schedule_type);
       setTimezone(editData.timezone);

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid as _uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request

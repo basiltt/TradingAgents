@@ -169,10 +169,12 @@ function formatDuration(ms: number): string {
 }
 
 function ScanDurationBadge({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string | null; isRunning: boolean }) {
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!isRunning || !startedAt) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initializing timer value at effect start
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [isRunning, startedAt]);
@@ -314,6 +316,7 @@ export function ScannerPage() {
     saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold });
     if (backendUrl.trim()) {
       saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing localStorage into state after write
       setEndpoints(loadEndpoints());
     }
   }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold]);
@@ -357,6 +360,7 @@ export function ScannerPage() {
   });
   useEffect(() => {
     if (configQuery.data?.resolved?.llm_max_concurrent != null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing server config into local state
       setLlmMaxConcurrent(Number(configQuery.data.resolved.llm_max_concurrent));
     }
     if (configQuery.data?.resolved?.llm_min_spacing_ms != null) {
@@ -407,6 +411,7 @@ export function ScannerPage() {
   const [lostScan, setLostScan] = useState(false);
   useEffect(() => {
     if (scanQuery.isError && activeScanId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale scan on query error
       setActiveScanId(null);
       setLostScan(true);
     }
@@ -418,6 +423,7 @@ export function ScannerPage() {
 
   useEffect(() => {
     if (scan?.status === "cancelled" && scan.results.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing empty cancelled scan
       setActiveScanId(null);
     }
   }, [scan?.status, scan?.results.length]);
@@ -1249,7 +1255,7 @@ function copyToClipboard(text: string): Promise<void> {
     el.setSelectionRange(0, text.length);
     const ok = document.execCommand("copy");
     document.body.removeChild(el);
-    ok ? resolve() : reject(new Error("execCommand failed"));
+    if (ok) { resolve(); } else { reject(new Error("execCommand failed")); }
   });
 }
 

@@ -65,8 +65,8 @@ export function CleanupDialog({ accountId, onComplete, onClose }: Props) {
       } else {
         setStep("confirm");
       }
-    } catch (e: any) {
-      if (e.name === "AbortError") return;
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return;
       setError(e.detail || e.message || "Failed to count snapshots");
     } finally {
       setLoading(false);
@@ -86,8 +86,8 @@ export function CleanupDialog({ accountId, onComplete, onClose }: Props) {
       const resp = await accountsApi.cleanupSnapshots(accountId, params, controller.signal);
       setResult(resp.total);
       setStep("done");
-    } catch (e: any) {
-      if (e.name === "AbortError") return;
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return;
       setError(e.detail || e.message || "Failed to cleanup snapshots");
     } finally {
       setLoading(false);

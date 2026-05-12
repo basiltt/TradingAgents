@@ -27,7 +27,7 @@ function loadFilters(): { accountType: AccountType; period: Period; selectedAcco
         selectedAccount: parsed.selectedAccount || "portfolio",
       };
     }
-  } catch {}
+  } catch { /* empty */ }
   return { accountType: "live", period: "1M", selectedAccount: "portfolio" };
 }
 
@@ -74,9 +74,10 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         setSnapshots(snaps);
         setAnalytics(anal);
       }
-    } catch (e: any) {
-      if (e.name === "AbortError") return;
-      setError(e.detail || e.message || "Failed to load analytics");
+    } catch (e: unknown) {
+      if (e && typeof e === "object" && "name" in e && (e as { name: string }).name === "AbortError") return;
+      const err = e as { detail?: string; message?: string };
+      setError(err.detail || err.message || "Failed to load analytics");
       setSnapshots([]);
       setAnalytics(null);
     }
@@ -84,7 +85,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   }, [selectedAccount, period, accountType]);
 
   const fetchDataRef = useRef(fetchData);
-  fetchDataRef.current = fetchData;
+  useEffect(() => {
+    fetchDataRef.current = fetchData;
+  });
 
   useEffect(() => {
     return () => manualAbortRef.current?.abort();
@@ -99,6 +102,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   }, [accountId, accountType]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting loading state before async fetch
     setLoading(true);
     manualAbortRef.current?.abort();
     const controller = new AbortController();
@@ -137,8 +141,8 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
       manualAbortRef.current = controller;
       setLoading(true);
       await fetchDataRef.current(controller.signal);
-    } catch (e: any) {
-      setError(e.detail || e.message || "Failed to take snapshot");
+    } catch (e: unknown) {
+      setError((e as { detail?: string; message?: string }).detail || (e as { message?: string }).message || "Failed to take snapshot");
     } finally {
       setSnapshotting(false);
     }

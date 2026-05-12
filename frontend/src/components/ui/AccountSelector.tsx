@@ -27,6 +27,7 @@ export function AccountSelector({ accounts, selectedAccount, onSelect, onToggleI
   }, [open]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting UI state when accounts list changes
     setOpen(false);
     setSearch("");
   }, [accounts]);
@@ -101,7 +102,7 @@ export function AccountSelector({ accounts, selectedAccount, onSelect, onToggleI
                   </button>
                   {onToggleInclusion && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); onToggleInclusion(acc.id, !!acc.include_in_analytics ? false : true); }}
+                      onClick={(e) => { e.stopPropagation(); onToggleInclusion(acc.id, acc.include_in_analytics ? false : true); }}
                       title={excluded ? "Include in analytics" : "Exclude from analytics"}
                       className="p-1 rounded hover:bg-muted transition-colors shrink-0"
                     >

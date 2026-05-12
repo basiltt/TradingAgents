@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, X, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/api/client";
+import { accountsApi } from "@/api/client";
 import type { CloseExecution } from "@/api/client";
 
 interface Props {
@@ -18,23 +18,33 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
   const [total, setTotal] = useState(0);
   const limit = 10;
 
-  useEffect(() => {
-    if (!open) {
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
       setPage(1);
       setExecutions([]);
       setTotal(0);
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const changePage = (newPage: number) => {
+    setPage(newPage);
+    setLoading(true);
+  };
+
+  useEffect(() => {
+    if (!open) {
       return;
     }
     const controller = new AbortController();
-    setLoading(true);
-    api.getCloseExecutions(accountId, page, limit, controller.signal)
+    accountsApi.getCloseExecutions(accountId, page, limit, controller.signal)
       .then((res) => {
         if (!controller.signal.aborted) {
           setExecutions(res.items);
           setTotal(res.total);
         }
       })
-      .catch((e) => { if (!controller.signal.aborted) toast.error("Failed to load history"); })
+      .catch(() => { if (!controller.signal.aborted) toast.error("Failed to load history"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [open, accountId, page]);
@@ -44,7 +54,7 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => onOpenChange(false)}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => handleOpenChange(false)}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className="relative bg-popover border border-border/50 rounded-2xl shadow-2xl shadow-black/30 max-w-lg w-full mx-4 max-h-[80vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
@@ -58,7 +68,7 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
           </div>
           <button
             className="p-1.5 rounded-lg hover:bg-muted/30 text-muted-foreground transition-colors"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleOpenChange(false)}
           >
             <X className="w-4 h-4" />
           </button>
@@ -90,14 +100,14 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
               <button
                 className="p-1.5 rounded-lg hover:bg-muted/30 text-muted-foreground transition-colors disabled:opacity-30"
                 disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
+                onClick={() => changePage(page - 1)}
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
                 className="p-1.5 rounded-lg hover:bg-muted/30 text-muted-foreground transition-colors disabled:opacity-30"
                 disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => changePage(page + 1)}
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

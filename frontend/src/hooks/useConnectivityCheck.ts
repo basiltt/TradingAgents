@@ -17,13 +17,12 @@ export function useConnectivityCheck(
 
   useEffect(() => {
     abortRef.current?.abort();
-    setLatency(null);
-    setErrorMsg(null);
 
     const trimmed = url?.trim();
 
     // Need either a custom URL or a provider+key to check
     if (!trimmed && !provider) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting state for new check cycle
       setStatus("idle");
       return;
     }
@@ -63,7 +62,7 @@ export function useConnectivityCheck(
           setLatency(data.latency_ms ?? null);
           setErrorMsg(data.error || "Unknown error");
         }
-      } catch (err) {
+      } catch {
         if (ac.signal.aborted) return;
         setStatus("error");
         setLatency(null);

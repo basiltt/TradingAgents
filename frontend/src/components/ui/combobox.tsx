@@ -33,10 +33,12 @@ export function Combobox({
     : options.slice(0, 100);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing controlled value to local search state
     setSearch(value);
   }, [value]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting highlight when search changes
     setHighlightIdx(-1);
   }, [search]);
 

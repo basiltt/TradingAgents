@@ -127,7 +127,7 @@ class BybitClient:
                     session = await self._get_session()
                     async with session.request(method, url, headers=headers, **request_kwargs) as resp:
                         data = await resp.json()
-                except aiohttp.ClientError as e:
+                except aiohttp.ClientError:
                     if attempt < _MAX_RETRIES - 1:
                         delay = _RETRY_BASE_DELAY * (2 ** attempt)
                         logger.warning(f"Bybit network error on {path}, retrying in {delay}s (attempt {attempt + 1})")
@@ -172,7 +172,7 @@ class BybitClient:
 
     async def test_connection(self) -> dict[str, Any]:
         try:
-            result = await self._request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
+            await self._request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
             return {"success": True, "uid": None, "error": None}
         except BybitAPIError as e:
             return {"success": False, "uid": None, "error": e.ret_msg}

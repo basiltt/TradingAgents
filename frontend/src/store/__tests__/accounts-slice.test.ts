@@ -44,7 +44,7 @@ describe("accounts-slice", () => {
 
   it("setAccounts replaces accounts list", () => {
     const store = createStore();
-    const accounts = [{ id: "1", label: "Test" }] as any;
+    const accounts = [{ id: "1", label: "Test" }] as unknown as Parameters<typeof setAccounts>[0];
     store.dispatch(setAccounts(accounts));
     expect(store.getState().accounts.accounts).toEqual(accounts);
     expect(store.getState().accounts.status).toBe("success");
@@ -52,7 +52,7 @@ describe("accounts-slice", () => {
 
   it("setDashboard replaces dashboard cards", () => {
     const store = createStore();
-    const cards = [{ id: "1", status: "active" }] as any;
+    const cards = [{ id: "1", status: "active" }] as unknown as Parameters<typeof setDashboard>[0];
     store.dispatch(setDashboard(cards));
     expect(store.getState().accounts.dashboard).toEqual(cards);
     expect(store.getState().accounts.status).toBe("success");
@@ -72,15 +72,15 @@ describe("accounts-slice", () => {
 
   it("addAccount prepends to accounts list", () => {
     const store = createStore();
-    store.dispatch(setAccounts([{ id: "1", label: "A" }] as any));
-    store.dispatch(addAccount({ id: "2", label: "B" } as any));
+    store.dispatch(setAccounts([{ id: "1", label: "A" }] as unknown as Parameters<typeof setAccounts>[0]));
+    store.dispatch(addAccount({ id: "2", label: "B" } as unknown as Parameters<typeof addAccount>[0]));
     expect(store.getState().accounts.accounts).toHaveLength(2);
     expect(store.getState().accounts.accounts[0].id).toBe("2");
   });
 
   it("removeAccount filters out account by id", () => {
     const store = createStore();
-    store.dispatch(setAccounts([{ id: "1" }, { id: "2" }] as any));
+    store.dispatch(setAccounts([{ id: "1" }, { id: "2" }] as unknown as Parameters<typeof setAccounts>[0]));
     store.dispatch(removeAccount("1"));
     expect(store.getState().accounts.accounts).toHaveLength(1);
     expect(store.getState().accounts.accounts[0].id).toBe("2");
@@ -88,8 +88,8 @@ describe("accounts-slice", () => {
 
   it("updateAccountInList updates matching account", () => {
     const store = createStore();
-    store.dispatch(setAccounts([{ id: "1", label: "Old" }] as any));
-    store.dispatch(updateAccountInList({ id: "1", label: "New" } as any));
+    store.dispatch(setAccounts([{ id: "1", label: "Old" }] as unknown as Parameters<typeof setAccounts>[0]));
+    store.dispatch(updateAccountInList({ id: "1", label: "New" } as unknown as Parameters<typeof updateAccountInList>[0]));
     expect(store.getState().accounts.accounts[0].label).toBe("New");
   });
 

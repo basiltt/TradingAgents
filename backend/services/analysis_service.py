@@ -12,12 +12,14 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+import psycopg2.pool
+
 from backend.utils import mask_secrets
 from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
 from backend.persistence import AnalysisDB
 from backend.services.config_service import ConfigService
-from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, AgentStatusEvent, ProgressEvent
+from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, ProgressEvent
 from backend.validators import validate_backend_url
 from backend.ws_manager import WSManager
 
@@ -409,6 +411,8 @@ class AnalysisService:
             self._db.save_report_section(run_id, "_snapshot", json.dumps(snapshot, default=str))
             for section, content in reports.items():
                 self._db.save_report_section(run_id, section, content)
+        except psycopg2.pool.PoolError:
+            logger.debug("Skipped snapshot save for run %s — DB pool closed (shutdown)", run_id)
         except Exception:
             logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
 

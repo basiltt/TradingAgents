@@ -69,6 +69,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
   useEffect(() => {
     if (!open) return;
     if (strategy) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- populating form from prop data
       setName(strategy.name);
       setDescription(strategy.description);
       setCategory(strategy.category);
@@ -89,7 +90,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
   const toggleSection = (id: string) => {
     setOpenSections((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
   };

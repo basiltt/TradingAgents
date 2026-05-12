@@ -11,7 +11,6 @@ import { AnalysisStatusBadge } from "./AnalysisStatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
-const DEEP_THINK_AGENTS = new Set(["Research Manager", "Portfolio Manager"]);
 
 function ConfigSummary({ config }: { config: Record<string, unknown> }) {
   const [open, setOpen] = useState(false);
@@ -110,10 +109,12 @@ function formatDuration(ms: number): string {
 }
 
 function DurationBadge({ startedAt, completedAt, isTerminal }: { startedAt?: string; completedAt?: string; isTerminal: boolean }) {
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (isTerminal || !startedAt) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initializing timer value at effect start
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [isTerminal, startedAt]);

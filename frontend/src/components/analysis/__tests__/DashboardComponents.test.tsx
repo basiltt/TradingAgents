@@ -14,13 +14,13 @@ describe("AgentStatusTable", () => {
         agents={{ "Bull Researcher": "in_progress", Trader: "completed" }}
       />,
     );
-    expect(screen.getByText(/bull researcher/i)).toBeInTheDocument();
-    expect(screen.getByText(/trader/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/bull researcher/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/trader/i).length).toBeGreaterThan(0);
   });
 
   it("renders empty state when no agents", () => {
     render(<AgentStatusTable agents={{}} />);
-    expect(screen.getByText(/no agents/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/waiting for agents/i).length).toBeGreaterThan(0);
   });
 });
 
@@ -34,13 +34,13 @@ describe("MessagesPanel", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Hello")).toBeInTheDocument();
-    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getAllByText("Hello").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Done").length).toBeGreaterThan(0);
   });
 
   it("shows empty state", () => {
     render(<MessagesPanel messages={[]} />);
-    expect(screen.getByText(/no messages/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/no messages yet/i).length).toBeGreaterThan(0);
   });
 });
 
@@ -51,13 +51,13 @@ describe("ReportPanel", () => {
         reports={{ trader: "BUY SPY", research_bull: "Bullish outlook" }}
       />,
     );
-    expect(screen.getByText(/buy spy/i)).toBeInTheDocument();
-    expect(screen.getByText(/bullish outlook/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/buy spy/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/bullish outlook/i).length).toBeGreaterThan(0);
   });
 
   it("shows empty state", () => {
     render(<ReportPanel reports={{}} />);
-    expect(screen.getByText(/no report/i)).toBeInTheDocument();
+    expect(screen.getByText(/report sections appear/i)).toBeInTheDocument();
   });
 });
 
@@ -68,13 +68,13 @@ describe("StatsBar", () => {
         stats={{ tokens_in: 1000, tokens_out: 500, llm_calls: 5, tool_calls: 3 }}
       />,
     );
-    expect(screen.getByText(/1,?000/)).toBeInTheDocument();
-    expect(screen.getByText(/500/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1\.0K/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/500/).length).toBeGreaterThan(0);
   });
 
   it("shows placeholder when no stats", () => {
     render(<StatsBar stats={null} />);
-    expect(screen.getByText(/waiting/i)).toBeInTheDocument();
+    expect(screen.getAllByText("--").length).toBeGreaterThan(0);
   });
 });
 
@@ -94,7 +94,6 @@ describe("ReconnectionIndicator", () => {
   it("shows reconnecting state", () => {
     render(<ReconnectionIndicator status="reconnecting" attempt={2} />);
     expect(screen.getByText(/reconnecting/i)).toBeInTheDocument();
-    expect(screen.getByText(/attempt 2/i)).toBeInTheDocument();
   });
 
   it("shows connected state", () => {

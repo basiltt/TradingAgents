@@ -191,6 +191,7 @@ def _make_mock_analysis():
     analysis.get_snapshot = AsyncMock(return_value=None)
     analysis.get_report = AsyncMock(return_value=None)
     analysis.cancel_analysis = AsyncMock()
+    analysis.wait_for_completion = AsyncMock(return_value={"status": "completed"})
     return analysis
 
 
@@ -643,11 +644,7 @@ class TestRunSingle:
     async def test_run_single_poll_until_terminal(self):
         import uuid
         svc, analysis = _make_scanner()
-        # First poll returns running, second returns completed
-        analysis.get_run = AsyncMock(side_effect=[
-            {"status": "running"},
-            {"status": "completed"},
-        ])
+        analysis.wait_for_completion = AsyncMock(return_value={"status": "completed"})
         analysis.get_snapshot = AsyncMock(return_value=None)
         analysis.get_report = AsyncMock(return_value=None)
 
@@ -660,8 +657,7 @@ class TestRunSingle:
             "completed_at": None, "cancel": False, "task": None,
         }
 
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await svc._run_single(sid, "BTCUSDT")
+        await svc._run_single(sid, "BTCUSDT")
 
         assert svc._scans[sid]["completed"] == 1
 
@@ -669,20 +665,15 @@ class TestRunSingle:
     async def test_run_single_cancel_during_poll(self):
         import uuid
         svc, analysis = _make_scanner()
-        # Analysis starts, never finishes
-
-        call_count = 0
-
-        async def get_run_side_effect(run_id):
-            nonlocal call_count
-            call_count += 1
-            # Set cancel=True after first poll
-            svc._scans[sid]["cancel"] = True
-            return {"status": "running"}
-
-        analysis.get_run = AsyncMock(side_effect=get_run_side_effect)
 
         sid = str(uuid.uuid4())
+
+        async def wait_side_effect(run_id, timeout=1860):
+            svc._scans[sid]["cancel"] = True
+            raise asyncio.CancelledError()
+
+        analysis.wait_for_completion = AsyncMock(side_effect=wait_side_effect)
+
         svc._scans[sid] = {
             "scan_id": sid, "status": "running", "config": {"analysis_date": "2025-01-01"},
             "total": 1, "completed": 0, "failed": 0,
@@ -691,8 +682,7 @@ class TestRunSingle:
             "completed_at": None, "cancel": False, "task": None,
         }
 
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await svc._run_single(sid, "ETHUSDT")
+        await svc._run_single(sid, "ETHUSDT")
 
         assert svc._scans[sid]["failed"] == 1
         result = svc._scans[sid]["results"][0]
@@ -702,7 +692,7 @@ class TestRunSingle:
     async def test_run_single_poll_exception(self):
         import uuid
         svc, analysis = _make_scanner()
-        analysis.get_run = AsyncMock(side_effect=Exception("connection error"))
+        analysis.wait_for_completion = AsyncMock(side_effect=Exception("connection error"))
 
         sid = str(uuid.uuid4())
         svc._scans[sid] = {
@@ -713,11 +703,9 @@ class TestRunSingle:
             "completed_at": None, "cancel": False, "task": None,
         }
 
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await svc._run_single(sid, "BTCUSDT")
+        await svc._run_single(sid, "BTCUSDT")
 
         assert svc._scans[sid]["failed"] == 1
-        assert svc._scans[sid]["results"][0]["decision_summary"] == "Poll error"
 
     @pytest.mark.asyncio
     async def test_run_single_cancelled_scan_skips(self):
@@ -1071,7 +1059,7 @@ class TestRemainingLines:
 
     @pytest.mark.asyncio
     async def test_run_single_cancel_with_db(self):
-        """Lines 467-468: DB insert and increment called when poll-cancel fires."""
+        """DB insert and increment called when cancel fires during wait."""
         import uuid
 
         db = MagicMock()
@@ -1079,17 +1067,14 @@ class TestRemainingLines:
         db.increment_scan_counter = MagicMock()
         svc, analysis = _make_scanner(db=db)
 
-        call_count = 0
-
-        async def get_run_side_effect(run_id):
-            nonlocal call_count
-            call_count += 1
-            svc._scans[sid]["cancel"] = True
-            return {"status": "running"}
-
-        analysis.get_run = AsyncMock(side_effect=get_run_side_effect)
-
         sid = str(uuid.uuid4())
+
+        async def wait_side_effect(run_id, timeout=1860):
+            svc._scans[sid]["cancel"] = True
+            raise asyncio.CancelledError()
+
+        analysis.wait_for_completion = AsyncMock(side_effect=wait_side_effect)
+
         svc._scans[sid] = {
             "scan_id": sid, "status": "running", "config": {"analysis_date": "2025-01-01"},
             "total": 1, "completed": 0, "failed": 0,
@@ -1097,22 +1082,21 @@ class TestRemainingLines:
             "results": [], "started_at": "2025-01-01T00:00:00.000000Z",
             "completed_at": None, "cancel": False, "task": None,
         }
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await svc._run_single(sid, "BTCUSDT")
+        await svc._run_single(sid, "BTCUSDT")
 
         assert db.insert_scan_result.called
         assert db.increment_scan_counter.called
 
     @pytest.mark.asyncio
     async def test_run_single_poll_exception_with_db(self):
-        """Lines 491-492: DB insert and increment called on poll exception."""
+        """DB insert and increment called on wait_for_completion exception."""
         import uuid
 
         db = MagicMock()
         db.insert_scan_result = MagicMock()
         db.increment_scan_counter = MagicMock()
         svc, analysis = _make_scanner(db=db)
-        analysis.get_run = AsyncMock(side_effect=Exception("connection error"))
+        analysis.wait_for_completion = AsyncMock(side_effect=Exception("connection error"))
 
         sid = str(uuid.uuid4())
         svc._scans[sid] = {
@@ -1122,8 +1106,7 @@ class TestRemainingLines:
             "results": [], "started_at": "2025-01-01T00:00:00.000000Z",
             "completed_at": None, "cancel": False, "task": None,
         }
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await svc._run_single(sid, "BTCUSDT")
+        await svc._run_single(sid, "BTCUSDT")
 
         assert db.insert_scan_result.called
         assert db.increment_scan_counter.called

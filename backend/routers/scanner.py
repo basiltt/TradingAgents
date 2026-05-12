@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
-from backend.schemas import ScanRequest, ScanStatusResponse, ScanResultItem, PROVIDER_API_KEY_MAP
+from backend.schemas import ScanRequest, ScanResultItem, PROVIDER_API_KEY_MAP
 from backend.services.scanner_service import ScannerBusyError
 
 logger = logging.getLogger(__name__)

@@ -8,7 +8,7 @@ from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from backend.schemas import AnalysisRequest, AnalysisCreateResponse, ErrorResponse
+from backend.schemas import AnalysisRequest, AnalysisCreateResponse
 from backend.services.analysis_service import ConcurrencyLimitError
 
 router = APIRouter(tags=["analysis"])

@@ -23,8 +23,6 @@ export function AddAccountDialog({ open, onOpenChange, onCreated }: AddAccountDi
   const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; error?: string } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
 
   const reset = () => {
     setStep(1);
@@ -35,8 +33,6 @@ export function AddAccountDialog({ open, onOpenChange, onCreated }: AddAccountDi
     setShowSecret(false);
     setTesting(false);
     setTestResult(null);
-    setSaving(false);
-    setSaveError("");
   };
 
   const handleClose = (open: boolean) => {
@@ -47,15 +43,15 @@ export function AddAccountDialog({ open, onOpenChange, onCreated }: AddAccountDi
   const handleTestAndSave = async () => {
     setTesting(true);
     setTestResult(null);
-    setSaveError("");
     try {
       const account = await accountsApi.create({ label, account_type: accountType, api_key: apiKey, api_secret: apiSecret });
       dispatch(addAccount(account));
       setTestResult({ success: true });
       setStep(3);
       onCreated();
-    } catch (e: any) {
-      setTestResult({ success: false, error: e.detail || e.message || "Connection failed" });
+    } catch (e: unknown) {
+      const err = e as { detail?: string; message?: string };
+      setTestResult({ success: false, error: err.detail || err.message || "Connection failed" });
     } finally {
       setTesting(false);
     }

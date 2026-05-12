@@ -72,7 +72,7 @@ describe("AddAccountDialog", () => {
 
   it("shows success on step 3 after successful creation", async () => {
     const user = userEvent.setup();
-    (accountsApi.create as any).mockResolvedValue({ id: "1", label: "My Account", account_type: "demo" });
+    (accountsApi.create as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "1", label: "My Account", account_type: "demo" });
     const { wrapper } = createWrapper();
     render(<AddAccountDialog open={true} onOpenChange={onOpenChange} onCreated={onCreated} />, { wrapper });
 
@@ -90,7 +90,7 @@ describe("AddAccountDialog", () => {
 
   it("shows error when creation fails", async () => {
     const user = userEvent.setup();
-    (accountsApi.create as any).mockRejectedValue({ detail: "Invalid API key" });
+    (accountsApi.create as unknown as ReturnType<typeof vi.fn>).mockRejectedValue({ detail: "Invalid API key" });
     const { wrapper } = createWrapper();
     render(<AddAccountDialog open={true} onOpenChange={onOpenChange} onCreated={onCreated} />, { wrapper });
 

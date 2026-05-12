@@ -29,16 +29,6 @@ function formatDuration(startedAt: string, completedAt: string | null): string {
   return `${s}s`;
 }
 
-function StatusDot({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    running: "bg-blue-500 animate-pulse shadow-blue-500/50",
-    completed: "bg-emerald-500 shadow-emerald-500/50",
-    failed: "bg-red-500 shadow-red-500/50",
-    cancelled: "bg-zinc-400 shadow-zinc-400/50",
-  };
-  return <span className={`w-2 h-2 rounded-full shadow-[0_0_6px] ${colors[status] ?? colors.cancelled}`} />;
-}
-
 interface DeleteConfirmState {
   scanId: string;
   analysisCount: number | null;

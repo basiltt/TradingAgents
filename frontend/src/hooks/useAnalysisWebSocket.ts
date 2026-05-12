@@ -50,9 +50,12 @@ export function useAnalysisWebSocket(runId: string) {
   );
 
   const updateCacheRef = useRef(updateCache);
-  updateCacheRef.current = updateCache;
+  useEffect(() => {
+    updateCacheRef.current = updateCache;
+  });
 
   const [attempt, setAttempt] = useState(0);
+  const connectRef = useRef<() => void>();
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
@@ -258,11 +261,15 @@ export function useAnalysisWebSocket(runId: string) {
       const delay = Math.min(BASE_DELAY * 2 ** attemptRef.current, MAX_DELAY);
       attemptRef.current += 1;
       setAttempt(attemptRef.current);
-      reconnectTimerRef.current = setTimeout(connect, delay);
+      reconnectTimerRef.current = setTimeout(() => connectRef.current?.(), delay);
     };
 
     ws.onerror = () => {};
-  }, [runId, dispatch]);
+  }, [runId, dispatch, queryClient]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  });
 
   useEffect(() => {
     mountedRef.current = true;

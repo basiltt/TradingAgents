@@ -212,11 +212,11 @@ CREATE INDEX IF NOT EXISTS idx_scans_schedule_id ON scans(schedule_id) WHERE sch
     (17, """
 CREATE TABLE IF NOT EXISTS close_rules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id UUID NOT NULL REFERENCES trading_accounts(id),
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
     trigger_type VARCHAR(30) NOT NULL CHECK(trigger_type IN ('BALANCE_BELOW','BALANCE_ABOVE','EQUITY_DROP_PCT','EQUITY_RISE_PCT','PNL_BELOW','PNL_ABOVE')),
     threshold_value NUMERIC(20,8) NOT NULL,
     reference_value NUMERIC(20,8),
-    status VARCHAR(15) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','expired')),
+    status VARCHAR(15) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -227,7 +227,7 @@ CREATE INDEX IF NOT EXISTS idx_close_rules_status_account ON close_rules(status,
     (18, """
 CREATE TABLE IF NOT EXISTS close_executions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id UUID NOT NULL REFERENCES trading_accounts(id),
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
     rule_id UUID REFERENCES close_rules(id),
     trigger_source VARCHAR(10) NOT NULL CHECK(trigger_source IN ('manual','rule')),
     total_positions INT NOT NULL DEFAULT 0,
@@ -258,6 +258,7 @@ class AnalysisDB:
     def __init__(self, dsn: str | None = None):
         self._dsn = dsn or _default_dsn()
         self._instance_id = str(uuid.uuid4())
+        self._closed = False
         self._lock = threading.Lock()
         self._pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=2,
@@ -274,6 +275,8 @@ class AnalysisDB:
 
     @contextmanager
     def _get_conn(self) -> Generator[Any, None, None]:
+        if self._closed:
+            raise psycopg2.pool.PoolError("database pool is shutting down")
         if not self._semaphore.acquire(timeout=self._POOL_TIMEOUT):
             raise psycopg2.pool.PoolError(
                 f"Timed out waiting for a database connection ({self._POOL_TIMEOUT}s)"
@@ -836,6 +839,7 @@ class AnalysisDB:
                 raise
 
     def close(self) -> None:
+        self._closed = True
         self._pool.closeall()
 
     # ── Trading Accounts persistence ────────────────────────────────────
@@ -1888,6 +1892,7 @@ class AnalysisDB:
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
+                cur.execute("DELETE FROM close_executions WHERE rule_id = %s", (rule_id,))
                 cur.execute("DELETE FROM close_rules WHERE id = %s", (rule_id,))
                 affected = cur.rowcount
                 conn.commit()
@@ -1905,7 +1910,7 @@ class AnalysisDB:
                     "SELECT cr.* FROM close_rules cr "
                     "JOIN trading_accounts ta ON cr.account_id = ta.id "
                     "WHERE cr.status = 'active' AND ta.deleted_at IS NULL "
-                    "AND ta.is_active = TRUE "
+                    "AND ta.is_active = 1 "
                     "AND (cr.expires_at IS NULL OR cr.expires_at > now()) "
                     "ORDER BY cr.account_id, cr.created_at",
                 )

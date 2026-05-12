@@ -62,7 +62,7 @@ function StatCard({ label, value, color }: { label: string; value: string; color
   );
 }
 
-export function PnLPanel({ pnlSummary: _unused, accountId }: PnLPanelProps) {
+export function PnLPanel({ accountId }: PnLPanelProps) {
   const [todayPnl, setTodayPnl] = useState<PnlSummary | null>(null);
   const [weekPnl, setWeekPnl] = useState<PnlSummary | null>(null);
   const [monthPnl, setMonthPnl] = useState<PnlSummary | null>(null);

@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/api/client";
+import { accountsApi } from "@/api/client";
 
 interface Props {
   open: boolean;
@@ -23,7 +23,7 @@ export function CloseAllConfirmDialog({ open, onOpenChange, accountId, accountLa
     submittingRef.current = true;
     setLoading(true);
     try {
-      const result = await api.closeAllPositions(accountId);
+      const result = await accountsApi.closeAllPositions(accountId);
       onOpenChange(false);
 
       if (result.total === 0) {
@@ -36,11 +36,12 @@ export function CloseAllConfirmDialog({ open, onOpenChange, accountId, accountLa
         toast.error(`Failed to close positions for ${accountLabel}`);
       }
       onSuccess();
-    } catch (err: any) {
-      if (err?.status === 409) {
+    } catch (err: unknown) {
+      const e = err as { status?: number; detail?: string };
+      if (e?.status === 409) {
         toast.error("Close already in progress for this account");
       } else {
-        toast.error(err?.detail || "Failed to close positions");
+        toast.error(e?.detail || "Failed to close positions");
       }
     } finally {
       submittingRef.current = false;

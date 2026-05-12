@@ -103,7 +103,8 @@ class TestRateLimiter:
         from tradingagents.dataflows.coingecko_data import _RateLimiter
         limiter = _RateLimiter(max_per_min=2)
         now = time.time()
-        limiter._timestamps = [now - 10, now - 5]
+        limiter._timestamps = [now, now]
+        mock_sleep.side_effect = lambda _: limiter._timestamps.clear()
         limiter.wait()
         mock_sleep.assert_called_once()
 

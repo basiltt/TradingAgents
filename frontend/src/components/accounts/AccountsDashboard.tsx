@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { accountsApi, type DashboardCard } from "@/api/client";
+import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
 import { AccountCard } from "./AccountCard";
@@ -18,8 +18,8 @@ export function AccountsDashboard() {
     try {
       const cards = await accountsApi.getDashboard();
       dispatch(setDashboard(cards));
-    } catch (e: any) {
-      if (!silent) dispatch(setError(e.message || "Failed to load accounts"));
+    } catch (e: unknown) {
+      if (!silent) dispatch(setError((e as { message?: string }).message || "Failed to load accounts"));
     }
   }, [dispatch]);
 

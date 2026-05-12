@@ -174,7 +174,7 @@ describe("ConfigForm", () => {
       const user = userEvent.setup();
       render(<ConfigForm />, { wrapper: createWrapper() });
       await user.click(screen.getByText("Crypto Futures"));
-      expect(screen.getByLabelText(/trading pair/i)).toBeInTheDocument();
+      expect(screen.getByText(/trading pair/i)).toBeInTheDocument();
     });
 
     it("shows crypto analysts when crypto mode selected", async () => {
@@ -182,7 +182,7 @@ describe("ConfigForm", () => {
       render(<ConfigForm />, { wrapper: createWrapper() });
       await user.click(screen.getByText("Crypto Futures"));
       const checkboxes = screen.getAllByRole("checkbox");
-      expect(checkboxes.length).toBe(3);
+      expect(checkboxes.length).toBeGreaterThanOrEqual(5);
     });
 
     it("shows kline interval selector in crypto mode", async () => {
@@ -204,7 +204,10 @@ describe("ConfigForm", () => {
       mockStartAnalysis.mockResolvedValue({ run_id: "crypto-run", status: "running" });
       render(<ConfigForm />, { wrapper: createWrapper() });
       await user.click(screen.getByText("Crypto Futures"));
-      await fillAndSubmit(user, "BTCUSDT");
+      const tickerInput = screen.getByPlaceholderText(/search bybit/i);
+      await user.type(tickerInput, "BTCUSDT");
+      fireEvent.change(screen.getByLabelText(/date/i), { target: { value: "2025-06-01" } });
+      await user.click(screen.getByRole("button", { name: /start analysis/i }));
       await waitFor(() => {
         expect(mockStartAnalysis).toHaveBeenCalledWith(
           expect.objectContaining({ ticker: "BTCUSDT", asset_type: "crypto" }),
@@ -217,14 +220,15 @@ describe("ConfigForm", () => {
       render(<ConfigForm />, { wrapper: createWrapper() });
       await user.type(screen.getByLabelText(/ticker/i), "AAPL");
       await user.click(screen.getByText("Crypto Futures"));
-      expect(screen.getByLabelText(/trading pair/i)).toHaveValue("");
+      expect(screen.getByPlaceholderText(/search bybit/i)).toHaveValue("");
     });
 
     it("rejects invalid crypto ticker format", async () => {
       const user = userEvent.setup();
       render(<ConfigForm />, { wrapper: createWrapper() });
       await user.click(screen.getByText("Crypto Futures"));
-      await user.type(screen.getByLabelText(/trading pair/i), "X");
+      const tickerInput = screen.getByPlaceholderText(/search bybit/i);
+      await user.type(tickerInput, "X");
       fireEvent.change(screen.getByLabelText(/date/i), { target: { value: "2025-06-01" } });
       await user.click(screen.getByRole("button", { name: /start analysis/i }));
       expect(await screen.findByText(/valid pair/i)).toBeInTheDocument();

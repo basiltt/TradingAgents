@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type ScanResultItem } from "@/api/client";
@@ -216,6 +216,9 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
     }
   };
 
+  const results = scan?.results || [];
+  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(results, "detail");
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -244,8 +247,6 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
     );
   }
 
-  const results = scan.results || [];
-  const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(results, "detail");
   const buyResults = filteredResults.filter((r) => r.direction === "buy");
   const sellResults = filteredResults.filter((r) => r.direction === "sell");
   const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown" || !r.direction);

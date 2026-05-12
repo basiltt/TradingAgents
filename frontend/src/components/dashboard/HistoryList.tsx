@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { apiClient } from "@/api/client";
@@ -119,7 +119,7 @@ export function HistoryList() {
     },
   });
 
-  const allItems = data?.items ?? [];
+  const allItems = useMemo(() => data?.items ?? [], [data?.items]);
 
   const completedRunIds = useMemo(
     () => allItems.filter((i) => i.status === "completed").map((i) => i.run_id),
@@ -170,8 +170,8 @@ export function HistoryList() {
     return map;
   }, [completedRunIds, scoreBatchIds, scoreQueries]);
 
-  const getConfidence = (runId: string): number => scoreMap.get(runId)?.confidence ?? 0;
-  const getSignalStrength = (runId: string): number => {
+  const getConfidence = useCallback((runId: string): number => scoreMap.get(runId)?.confidence ?? 0, [scoreMap]);
+  const getSignalStrength = useCallback((runId: string): number => {
     const card = scoreMap.get(runId);
     if (!card) return 0;
     const action = (card.action ?? card.rating ?? "").toLowerCase();
@@ -179,7 +179,7 @@ export function HistoryList() {
     if (action === "short" || action === "sell") return -conf;
     if (action === "long" || action === "buy") return conf;
     return 0;
-  };
+  }, [scoreMap]);
 
   const filtered = useMemo(() => {
     let items = [...allItems];
@@ -262,7 +262,7 @@ export function HistoryList() {
     });
 
     return items;
-  }, [allItems, search, statusFilter, signalFilter, assetTypeFilter, confidenceRange, dateFrom, dateTo, sort, scoreMap]);
+  }, [allItems, search, statusFilter, signalFilter, assetTypeFilter, confidenceRange, dateFrom, dateTo, sort, scoreMap, getConfidence, getSignalStrength]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);

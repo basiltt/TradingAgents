@@ -61,11 +61,11 @@ describe("useAccountPolling", () => {
     await act(async () => {
       await result.current.refresh();
     });
-    const callCount = (accountsApi.getDashboard as any).mock.calls.length;
+    const callCount = vi.mocked(accountsApi.getDashboard).mock.calls.length;
     await act(async () => {
       await result.current.refresh();
     });
-    expect((accountsApi.getDashboard as any).mock.calls.length).toBe(callCount);
+    expect(vi.mocked(accountsApi.getDashboard).mock.calls.length).toBe(callCount);
   });
 
   it("isRefreshDisabled is true after manual refresh", async () => {
@@ -80,7 +80,7 @@ describe("useAccountPolling", () => {
   it("skips poll when document is hidden", async () => {
     vi.useRealTimers();
     Object.defineProperty(document, "hidden", { value: true, writable: true });
-    (accountsApi.getDashboard as any).mockClear();
+    vi.mocked(accountsApi.getDashboard).mockClear();
     renderHook(() => useAccountPolling(), { wrapper: createWrapper() });
     await new Promise((r) => setTimeout(r, 100));
     expect(accountsApi.getDashboard).not.toHaveBeenCalled();

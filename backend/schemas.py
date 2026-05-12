@@ -155,7 +155,7 @@ class AnalysisRequest(BaseModel):
         v = v.strip().upper()
         if not TICKER_RE.match(v) and not CRYPTO_TICKER_RE.match(v):
             raise ValueError(
-                f"Invalid ticker: must match stock or crypto pattern"
+                "Invalid ticker: must match stock or crypto pattern"
             )
         return v
 

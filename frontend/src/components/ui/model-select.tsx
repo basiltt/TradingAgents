@@ -70,6 +70,7 @@ export function ModelSelect({ options, value, onChange, placeholder = "Search mo
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value;
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting highlight index when search changes
     setHighlightIdx(0);
   }, [search]);
 

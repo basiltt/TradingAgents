@@ -250,6 +250,7 @@ export function ConfigForm() {
     },
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- react-hook-form watch() is not memoizable
   const selectedProvider = watch("provider");
   const watchedApiKey = watch("llm_api_key");
   const watchedAssetType = watch("asset_type");

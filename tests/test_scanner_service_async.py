@@ -1,7 +1,9 @@
 """Tests for backend.services.scanner_service.ScannerService — Phase 1 unit tests."""
 
 import asyncio
+import uuid
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -143,7 +145,7 @@ class TestRunSingle:
     @pytest.mark.asyncio
     async def test_completed_run_collects_result(self, scanner):
         scanner._analysis.start_analysis.return_value = "run-1"
-        scanner._analysis.get_run.return_value = {"status": "completed"}
+        scanner._analysis.wait_for_completion = AsyncMock(return_value={"status": "completed"})
         scanner._analysis.get_snapshot = AsyncMock(return_value=None)
         scanner._analysis.get_report = AsyncMock(return_value="Buy BTCUSDT")
         scanner._scans["s1"] = {
@@ -152,8 +154,7 @@ class TestRunSingle:
             "failed": 0, "completed": 0, "results": [],
             "current_tickers": [],
         }
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await scanner._run_single("s1", "BTCUSDT")
+        await scanner._run_single("s1", "BTCUSDT")
         assert scanner._scans["s1"]["completed"] == 1
 
 
@@ -295,8 +296,13 @@ class TestAnalyzeTickerCancel:
     @pytest.mark.asyncio
     async def test_cancel_during_poll(self, scanner):
         scanner._analysis.start_analysis.return_value = "run-1"
-        scanner._analysis.get_run.return_value = {"status": "running"}
         scanner._analysis.cancel_analysis = AsyncMock()
+
+        async def wait_side_effect(run_id, timeout=1860):
+            scanner._scans["s1"]["cancel"] = True
+            raise asyncio.CancelledError()
+
+        scanner._analysis.wait_for_completion = AsyncMock(side_effect=wait_side_effect)
         scanner._scans["s1"] = {
             "scan_id": "s1", "status": "running", "cancel": False,
             "config": {"analysis_date": "2025-01-10"},
@@ -304,30 +310,21 @@ class TestAnalyzeTickerCancel:
             "current_tickers": [],
         }
 
-        original_sleep = asyncio.sleep
-
-        async def cancel_on_sleep(t):
-            scanner._scans["s1"]["cancel"] = True
-            await original_sleep(0)
-
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            with patch("backend.services.scanner_service.asyncio.sleep", side_effect=cancel_on_sleep):
-                await scanner._run_single("s1", "BTCUSDT")
+        await scanner._run_single("s1", "BTCUSDT")
         scanner._analysis.cancel_analysis.assert_called_once_with("run-1")
         assert scanner._scans["s1"]["failed"] == 1
 
     @pytest.mark.asyncio
     async def test_poll_exception(self, scanner):
         scanner._analysis.start_analysis.return_value = "run-1"
-        scanner._analysis.get_run.side_effect = Exception("poll fail")
+        scanner._analysis.wait_for_completion = AsyncMock(side_effect=Exception("poll fail"))
         scanner._scans["s1"] = {
             "scan_id": "s1", "status": "running", "cancel": False,
             "config": {"analysis_date": "2025-01-10"},
             "failed": 0, "completed": 0, "results": [],
             "current_tickers": [],
         }
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await scanner._run_single("s1", "BTCUSDT")
+        await scanner._run_single("s1", "BTCUSDT")
         assert scanner._scans["s1"]["failed"] == 1
 
 
@@ -462,10 +459,15 @@ class TestRunSingleDBPersistence:
 
     @pytest.mark.asyncio
     async def test_cancel_during_poll_calls_insert_scan_result(self, scanner):
-        """R2-F3/F4: Cancel path writes cancel_result to DB."""
+        """Cancel path writes cancel_result to DB."""
         scanner._analysis.start_analysis.return_value = "run-1"
-        scanner._analysis.get_run.return_value = {"status": "running"}
         scanner._analysis.cancel_analysis = AsyncMock()
+
+        async def wait_side_effect(run_id, timeout=1860):
+            scanner._scans["s1"]["cancel"] = True
+            raise asyncio.CancelledError()
+
+        scanner._analysis.wait_for_completion = AsyncMock(side_effect=wait_side_effect)
         scanner._scans["s1"] = {
             "scan_id": "s1", "status": "running", "cancel": False,
             "config": {"analysis_date": "2025-01-10"},
@@ -473,15 +475,7 @@ class TestRunSingleDBPersistence:
             "current_tickers": [],
         }
 
-        original_sleep = asyncio.sleep
-
-        async def cancel_on_sleep(t):
-            scanner._scans["s1"]["cancel"] = True
-            await original_sleep(0)
-
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            with patch("backend.services.scanner_service.asyncio.sleep", side_effect=cancel_on_sleep):
-                await scanner._run_single("s1", "BTCUSDT")
+        await scanner._run_single("s1", "BTCUSDT")
 
         scanner._db.insert_scan_result.assert_called_once()
         call_args = scanner._db.insert_scan_result.call_args[0]
@@ -491,17 +485,16 @@ class TestRunSingleDBPersistence:
 
     @pytest.mark.asyncio
     async def test_poll_exception_calls_db_insert_and_increment(self, scanner):
-        """R4-F4: get_run exception path writes failed result to DB."""
+        """wait_for_completion exception path writes failed result to DB."""
         scanner._analysis.start_analysis.return_value = "run-1"
-        scanner._analysis.get_run.side_effect = Exception("poll fail")
+        scanner._analysis.wait_for_completion = AsyncMock(side_effect=Exception("poll fail"))
         scanner._scans["s1"] = {
             "scan_id": "s1", "status": "running", "cancel": False,
             "config": {"analysis_date": "2025-01-10"},
             "failed": 0, "completed": 0, "results": [],
             "current_tickers": [],
         }
-        with patch("backend.services.scanner_service._POLL_INTERVAL", 0):
-            await scanner._run_single("s1", "BTCUSDT")
+        await scanner._run_single("s1", "BTCUSDT")
         scanner._db.insert_scan_result.assert_called_once()
         scanner._db.increment_scan_counter.assert_called_once_with("s1", "failed")
 
@@ -841,8 +834,9 @@ class TestInsertScanDuplicate:
         import os
         dsn = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test")
         db = AnalysisDB(dsn=dsn)
+        scan_id = f"dup-scan-{uuid.uuid4()}"
         s = {
-            "scan_id": "dup-scan-1",
+            "scan_id": scan_id,
             "status": "running",
             "config": "{}",
             "total": 0,
@@ -850,10 +844,16 @@ class TestInsertScanDuplicate:
             "failed": 0,
             "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         }
-        db.insert_scan(s)
-        with pytest.raises(Exception):
+        try:
             db.insert_scan(s)
-        db.close()
+            with pytest.raises(Exception):
+                db.insert_scan(s)
+        finally:
+            with db._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM scans WHERE scan_id = %s", (scan_id,))
+                conn.commit()
+            db.close()
 
 
 class TestPctZeroConfidence:
@@ -867,6 +867,8 @@ class TestPctZeroConfidence:
 class TestResumeIncompleteScanIntegration:
     """R8: resume_incomplete_scans for-loop body with real AnalysisDB."""
 
+    _TEST_SCAN_IDS = []
+
     def _make_db(self):
         from backend.persistence import AnalysisDB
         import os
@@ -876,9 +878,10 @@ class TestResumeIncompleteScanIntegration:
 
     def _running_scan(self, scan_id=None):
         from datetime import datetime, timezone
-        import uuid
+        sid = scan_id or str(uuid.uuid4())
+        self._TEST_SCAN_IDS.append(sid)
         return {
-            "scan_id": scan_id or str(uuid.uuid4()),
+            "scan_id": sid,
             "status": "running",
             "config": "{}",
             "total": 3,
@@ -886,6 +889,22 @@ class TestResumeIncompleteScanIntegration:
             "failed": 0,
             "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         }
+
+    def _cleanup(self, db):
+        if self._TEST_SCAN_IDS:
+            with db._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM scan_results WHERE scan_id = ANY(%s)",
+                        (self._TEST_SCAN_IDS,),
+                    )
+                    cur.execute(
+                        "DELETE FROM scans WHERE scan_id = ANY(%s)",
+                        (self._TEST_SCAN_IDS,),
+                    )
+                conn.commit()
+        self._TEST_SCAN_IDS.clear()
+        db.close()
 
     @pytest.mark.asyncio
     async def test_second_running_scan_marked_failed(self):
@@ -895,20 +914,23 @@ class TestResumeIncompleteScanIntegration:
         analysis = AsyncMock()
         scanner = ScannerService(analysis_service=analysis, db=db)
 
-        s1 = self._running_scan("scan-a")
-        s2 = self._running_scan("scan-b")
+        sid_a = f"scan-a-{uuid.uuid4()}"
+        sid_b = f"scan-b-{uuid.uuid4()}"
+        s1 = self._running_scan(sid_a)
+        s2 = self._running_scan(sid_b)
         db.insert_scan(s1)
         db.insert_scan(s2)
 
-        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["A", "B", "C"]):
-            with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
-                count = await scanner.resume_incomplete_scans()
+        try:
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["A", "B", "C"]):
+                with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+                    count = await scanner.resume_incomplete_scans()
 
-        assert count == 1
-        # s2 should be marked failed
-        result = db.get_scan("scan-b")
-        assert result["status"] == "failed"
-        db.close()
+            assert count == 1
+            result = db.get_scan(sid_b)
+            assert result["status"] == "failed"
+        finally:
+            self._cleanup(db)
 
     @pytest.mark.asyncio
     async def test_symbol_fetch_failure_marks_scan_failed(self):
@@ -918,16 +940,19 @@ class TestResumeIncompleteScanIntegration:
         analysis = AsyncMock()
         scanner = ScannerService(analysis_service=analysis, db=db)
 
-        s = self._running_scan("scan-fail-sym")
+        sid = f"scan-fail-sym-{uuid.uuid4()}"
+        s = self._running_scan(sid)
         db.insert_scan(s)
 
-        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", side_effect=RuntimeError("network")):
-            count = await scanner.resume_incomplete_scans()
+        try:
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", side_effect=RuntimeError("network")):
+                count = await scanner.resume_incomplete_scans()
 
-        assert count == 0
-        result = db.get_scan("scan-fail-sym")
-        assert result["status"] == "failed"
-        db.close()
+            assert count == 0
+            result = db.get_scan(sid)
+            assert result["status"] == "failed"
+        finally:
+            self._cleanup(db)
 
     @pytest.mark.asyncio
     async def test_all_symbols_done_marks_scan_completed(self):
@@ -937,20 +962,22 @@ class TestResumeIncompleteScanIntegration:
         analysis = AsyncMock()
         scanner = ScannerService(analysis_service=analysis, db=db)
 
-        s = self._running_scan("scan-all-done")
+        sid = f"scan-all-done-{uuid.uuid4()}"
+        s = self._running_scan(sid)
         db.insert_scan(s)
-        # Insert results for all 3 symbols
-        db.insert_scan_result("scan-all-done", {"ticker": "A", "score": 1, "status": "completed", "direction": "long"})
-        db.insert_scan_result("scan-all-done", {"ticker": "B", "score": 2, "status": "completed", "direction": "long"})
-        db.insert_scan_result("scan-all-done", {"ticker": "C", "score": 3, "status": "completed", "direction": "long"})
+        db.insert_scan_result(sid, {"ticker": "A", "score": 1, "status": "completed", "direction": "long"})
+        db.insert_scan_result(sid, {"ticker": "B", "score": 2, "status": "completed", "direction": "long"})
+        db.insert_scan_result(sid, {"ticker": "C", "score": 3, "status": "completed", "direction": "long"})
 
-        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["A", "B", "C"]):
-            count = await scanner.resume_incomplete_scans()
+        try:
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["A", "B", "C"]):
+                count = await scanner.resume_incomplete_scans()
 
-        assert count == 0
-        result = db.get_scan("scan-all-done")
-        assert result["status"] == "completed"
-        db.close()
+            assert count == 0
+            result = db.get_scan(sid)
+            assert result["status"] == "completed"
+        finally:
+            self._cleanup(db)
 
     @pytest.mark.asyncio
     async def test_malformed_config_json_uses_empty_dict(self):
@@ -961,25 +988,30 @@ class TestResumeIncompleteScanIntegration:
         analysis = AsyncMock()
         scanner = ScannerService(analysis_service=analysis, db=db)
 
-        # Insert directly via raw SQL to bypass validation
-        with db._lock:
-            db._conn.execute(
-                "INSERT INTO scans (scan_id, status, config, total, completed, failed, started_at) "
-                "VALUES (?, 'running', ?, 2, 0, 0, '2025-01-10T00:00:00Z')",
-                ("scan-bad-cfg", "{not valid json"),
-            )
-            db._conn.commit()
+        sid = f"scan-bad-cfg-{uuid.uuid4()}"
+        self._TEST_SCAN_IDS.append(sid)
 
-        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["X", "Y"]):
-            with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
-                count = await scanner.resume_incomplete_scans()
+        with db._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO scans (scan_id, status, config, total, completed, failed, started_at) "
+                    "VALUES (%s, 'running', %s, 2, 0, 0, '2025-01-10T00:00:00Z')",
+                    (sid, "{not valid json"),
+                )
+            conn.commit()
 
-        assert count == 1
-        async with scanner._lock:
-            in_mem = scanner._scans.get("scan-bad-cfg")
-        assert in_mem is not None
-        assert in_mem["config"] == {}
-        db.close()
+        try:
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["X", "Y"]):
+                with patch.object(scanner, "_run_scan", new_callable=AsyncMock):
+                    count = await scanner.resume_incomplete_scans()
+
+            assert count == 1
+            async with scanner._lock:
+                in_mem = scanner._scans.get(sid)
+            assert in_mem is not None
+            assert in_mem["config"] == {}
+        finally:
+            self._cleanup(db)
 
     @pytest.mark.asyncio
     async def test_symbols_override_used_in_run_scan(self):
@@ -989,18 +1021,20 @@ class TestResumeIncompleteScanIntegration:
         analysis = AsyncMock()
         scanner = ScannerService(analysis_service=analysis, db=db)
 
-        s = self._running_scan("scan-override")
+        sid = f"scan-override-{uuid.uuid4()}"
+        s = self._running_scan(sid)
         db.insert_scan(s)
-        db.insert_scan_result("scan-override", {"ticker": "A", "score": 1, "status": "completed", "direction": "long"})
+        db.insert_scan_result(sid, {"ticker": "A", "score": 1, "status": "completed", "direction": "long"})
 
-        with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["A", "B", "C"]):
-            with patch.object(scanner, "_run_scan", new_callable=AsyncMock) as mock_run:
-                count = await scanner.resume_incomplete_scans()
-                # Yield control so the create_task coroutine can be scheduled
-                await asyncio.sleep(0)
+        try:
+            with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", return_value=["A", "B", "C"]):
+                with patch.object(scanner, "_run_scan", new_callable=AsyncMock) as mock_run:
+                    count = await scanner.resume_incomplete_scans()
+                    await asyncio.sleep(0)
 
-        assert count == 1
-        mock_run.assert_called_once()
-        _, kwargs = mock_run.call_args
-        assert kwargs.get("symbols_override") == ["B", "C"]
-        db.close()
+            assert count == 1
+            mock_run.assert_called_once()
+            _, kwargs = mock_run.call_args
+            assert sorted(kwargs.get("symbols_override")) == ["B", "C"]
+        finally:
+            self._cleanup(db)

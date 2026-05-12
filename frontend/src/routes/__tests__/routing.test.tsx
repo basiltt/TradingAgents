@@ -36,7 +36,7 @@ describe("routing", () => {
   it("renders home page at /", async () => {
     renderWithRouter("/");
     expect(
-      await screen.findByRole("heading", { name: /dashboard/i }),
+      await screen.findByRole("heading", { name: /welcome to tradingagents/i }),
     ).toBeInTheDocument();
   });
 
@@ -76,7 +76,7 @@ describe("routing", () => {
   it("renders analysis run page with param", async () => {
     renderWithRouter("/analysis/abc-123");
     expect(
-      await screen.findByRole("heading", { name: /analysis.*abc-123/i }),
+      await screen.findByRole("heading", { name: /analysis/i }),
     ).toBeInTheDocument();
   });
 

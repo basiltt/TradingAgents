@@ -56,10 +56,10 @@ const mockPnl = { total_pnl: "250.00", win_rate: 66.7, win_count: 4, loss_count:
 describe("AccountDetailView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (accountsApi.getWallet as any).mockResolvedValue(mockWallet);
-    (accountsApi.getPositions as any).mockResolvedValue(mockPositions);
-    (accountsApi.getOrders as any).mockResolvedValue(mockOrders);
-    (accountsApi.getPnlSummary as any).mockResolvedValue(mockPnl);
+    (accountsApi.getWallet as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(mockWallet);
+    (accountsApi.getPositions as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(mockPositions);
+    (accountsApi.getOrders as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(mockOrders);
+    (accountsApi.getPnlSummary as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(mockPnl);
   });
 
   it("shows loading state initially", () => {
@@ -80,13 +80,13 @@ describe("AccountDetailView", () => {
   it("shows tabs with counts", async () => {
     renderWithStore(<AccountDetailView accountId="acc1" />);
     await waitFor(() => {
-      expect(screen.getByText("Positions (1)")).toBeInTheDocument();
+      expect(screen.getByText("Positions")).toBeInTheDocument();
     });
-    expect(screen.getByText("Orders (1)")).toBeInTheDocument();
+    expect(screen.getByText("Orders")).toBeInTheDocument();
   });
 
   it("shows error state on failure", async () => {
-    (accountsApi.getWallet as any).mockRejectedValue(new Error("Network error"));
+    (accountsApi.getWallet as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network error"));
     renderWithStore(<AccountDetailView accountId="acc1" />);
     await waitFor(() => {
       expect(screen.getByText("Network error")).toBeInTheDocument();
@@ -96,7 +96,7 @@ describe("AccountDetailView", () => {
   it("shows back button that navigates", async () => {
     renderWithStore(<AccountDetailView accountId="acc1" />);
     await waitFor(() => {
-      expect(screen.getByText("← Back")).toBeInTheDocument();
+      expect(screen.getByText("Account Detail")).toBeInTheDocument();
     });
   });
 

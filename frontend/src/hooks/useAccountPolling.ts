@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { accountsApi, type DashboardCard } from "@/api/client";
+import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard } from "@/store/accounts-slice";
 

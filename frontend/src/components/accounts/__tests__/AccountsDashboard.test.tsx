@@ -42,16 +42,16 @@ describe("AccountsDashboard", () => {
   });
 
   it("shows empty state when no accounts loaded", async () => {
-    (accountsApi.getDashboard as any).mockResolvedValue([]);
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const store = createStore();
     renderWithStore(store);
     await waitFor(() => {
-      expect(screen.getByText("Connect your first account")).toBeInTheDocument();
+      expect(screen.getByText("No accounts connected")).toBeInTheDocument();
     });
   });
 
   it("shows account cards when accounts exist", async () => {
-    (accountsApi.getDashboard as any).mockResolvedValue([
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: "1", label: "Demo Scalp", account_type: "demo", status: "active", total_equity: "1000", total_perp_upl: "50", positions_count: 2, last_connected_at: new Date().toISOString() },
     ]);
     const store = createStore();
@@ -62,7 +62,7 @@ describe("AccountsDashboard", () => {
   });
 
   it("shows error state", async () => {
-    (accountsApi.getDashboard as any).mockRejectedValue(new Error("Network error"));
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network error"));
     const store = createStore();
     renderWithStore(store);
     await waitFor(() => {
@@ -71,7 +71,7 @@ describe("AccountsDashboard", () => {
   });
 
   it("shows aggregate equity when accounts loaded", async () => {
-    (accountsApi.getDashboard as any).mockResolvedValue([
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: "1", label: "A", account_type: "demo", status: "active", total_equity: "500.00", total_perp_upl: "25.00", positions_count: 1 },
       { id: "2", label: "B", account_type: "live", status: "active", total_equity: "1500.00", total_perp_upl: "-10.00", positions_count: 0 },
     ]);
@@ -83,7 +83,7 @@ describe("AccountsDashboard", () => {
   });
 
   it("renders filter buttons", async () => {
-    (accountsApi.getDashboard as any).mockResolvedValue([]);
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const store = createStore();
     renderWithStore(store);
     await waitFor(() => {
@@ -93,14 +93,17 @@ describe("AccountsDashboard", () => {
     expect(screen.getByText("Live")).toBeInTheDocument();
   });
 
-  it("renders Add Account button", () => {
+  it("renders Add Account button", async () => {
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const store = createStore();
     renderWithStore(store);
-    expect(screen.getByText("+ Add Account")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Add Account")).toBeInTheDocument();
+    });
   });
 
   it("fetches dashboard on mount", async () => {
-    (accountsApi.getDashboard as any).mockResolvedValue([{ id: "1", label: "Fetched", account_type: "demo", status: "active", total_equity: "100", total_perp_upl: "5", positions_count: 0 }]);
+    (accountsApi.getDashboard as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "1", label: "Fetched", account_type: "demo", status: "active", total_equity: "100", total_perp_upl: "5", positions_count: 0 }]);
     const store = createStore();
     renderWithStore(store);
     await waitFor(() => {

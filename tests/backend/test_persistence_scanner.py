@@ -298,14 +298,15 @@ def test_update_scan_nonexistent_scan_id_noop(db):
     db.update_scan("nonexistent-scan-id", status="completed")
 
 
-def test_list_scans_hydrates_results(db):
+def test_list_scans_hydrates_direction_counts(db):
     s = _scan()
     db.insert_scan(s)
-    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "hold"})
-    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 3, "status": "completed", "direction": "hold"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "buy"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 3, "status": "completed", "direction": "buy"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "SOL", "score": -2, "status": "completed", "direction": "sell"})
     scans = db.list_scans()
     assert len(scans) == 1
-    results = scans[0].get("results", [])
-    assert len(results) == 2
-    tickers = {r["ticker"] for r in results}
-    assert tickers == {"BTC", "ETH"}
+    assert scans[0]["results"] == []
+    counts = scans[0].get("direction_counts", {})
+    assert counts.get("buy") == 2
+    assert counts.get("sell") == 1
