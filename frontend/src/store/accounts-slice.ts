@@ -112,6 +112,14 @@ const accountsSlice = createSlice({
 
       state.directions[account_id] = dirs;
     },
+    handleCloseExecution(state, action: PayloadAction<{ account_id: string; data: { closed: number } }>) {
+      const { account_id, data } = action.payload;
+      const idx = state.dashboard.findIndex((d) => d.id === account_id);
+      if (idx < 0) return;
+      const card = state.dashboard[idx];
+      const closed = typeof data?.closed === "number" ? data.closed : 0;
+      card.positions_count = Math.max(0, card.positions_count - closed);
+    },
   },
 });
 
@@ -128,6 +136,7 @@ export const {
   removeAccount,
   updateAccountInList,
   updateCardRealtime,
+  handleCloseExecution,
 } = accountsSlice.actions;
 
 export default accountsSlice.reducer;

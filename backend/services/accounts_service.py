@@ -62,7 +62,13 @@ class AccountsService:
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
-        self._clients.pop(account_id, None)
+        client = self._clients.pop(account_id, None)
+        if client:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(client.close())
+            except RuntimeError:
+                pass
 
     def _can_refresh(self, account_id: str, cooldown: float = 10.0) -> bool:
         last = self._refresh_locks.get(account_id, 0)
@@ -329,7 +335,17 @@ class AccountsService:
         cards = await asyncio.gather(
             *[self._fetch_card(acc, today_start_ms, today_end_ms) for acc in accounts]
         )
-        return list(cards)
+        cards = list(cards)
+
+        try:
+            rule_counts = await asyncio.to_thread(self._db.count_active_rules_by_account)
+            for card in cards:
+                card["active_rules_count"] = rule_counts.get(card["id"], 0)
+        except Exception:
+            for card in cards:
+                card["active_rules_count"] = 0
+
+        return cards
 
     async def get_portfolio_summary(self) -> Dict[str, Any]:
         accounts = await asyncio.to_thread(self._db.list_accounts)

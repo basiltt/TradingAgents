@@ -574,6 +574,7 @@ export interface DashboardCard {
   last_connected_at?: string;
   last_error?: string;
   status: "active" | "stale" | "error" | "disabled";
+  active_rules_count?: number;
 }
 
 export interface DailySnapshot {
@@ -766,6 +767,26 @@ export const accountsApi = {
       "DELETE", `${path}${qs ? `?${qs}` : ""}`, undefined, signal,
     );
   },
+
+  // ── Close Positions ───────────────────────────────────────────
+
+  closeAllPositions: (accountId: string, signal?: AbortSignal) =>
+    mutate<CloseAllResult>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/positions/close-all`, undefined, signal),
+
+  getCloseRules: (accountId: string, signal?: AbortSignal) =>
+    request<CloseRule[]>(`/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules`, undefined, signal),
+
+  createCloseRule: (accountId: string, data: CreateCloseRuleData, signal?: AbortSignal) =>
+    mutate<CloseRule>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules`, data, signal),
+
+  updateCloseRule: (accountId: string, ruleId: string, data: UpdateCloseRuleData, signal?: AbortSignal) =>
+    mutate<CloseRule>("PUT", `/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules/${encodeURIComponent(ruleId)}`, data, signal),
+
+  deleteCloseRule: (accountId: string, ruleId: string, signal?: AbortSignal) =>
+    mutate<{ status: string }>("DELETE", `/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules/${encodeURIComponent(ruleId)}`, undefined, signal),
+
+  getCloseExecutions: (accountId: string, page = 1, limit = 20, signal?: AbortSignal) =>
+    request<CloseExecutionsPage>(`/api/v1/accounts/${encodeURIComponent(accountId)}/close-executions?page=${page}&limit=${limit}`, undefined, signal),
 };
 
 // ── Scheduled Scans ──────────────────────────────────────────────
@@ -848,3 +869,65 @@ export const scheduledScansApi = {
       `/api/v1/scheduled-scans/${encodeURIComponent(id)}/executions?limit=${limit}`, undefined, signal,
     ),
 };
+
+// ── Close Positions Types ─────────────────────────────────────
+
+export type TriggerType = "BALANCE_BELOW" | "BALANCE_ABOVE" | "EQUITY_DROP_PCT" | "EQUITY_RISE_PCT" | "PNL_BELOW" | "PNL_ABOVE";
+
+export interface CloseRule {
+  id: string;
+  account_id: string;
+  trigger_type: TriggerType;
+  threshold_value: string;
+  reference_value: string | null;
+  status: "active" | "paused" | "triggered" | "executed" | "expired";
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+  triggered_at: string | null;
+}
+
+export interface CreateCloseRuleData {
+  trigger_type: TriggerType;
+  threshold_value: string;
+  reference_value?: string;
+}
+
+export interface UpdateCloseRuleData {
+  trigger_type?: TriggerType;
+  threshold_value?: string;
+  reference_value?: string;
+  status?: "active" | "paused";
+}
+
+export interface CloseAllResult {
+  total: number;
+  closed: number;
+  failed: number;
+  results: Array<{
+    symbol: string;
+    status: "closed" | "failed";
+    orderId?: string;
+    error?: string;
+  }>;
+  execution_id: string;
+}
+
+export interface CloseExecution {
+  id: string;
+  account_id: string;
+  rule_id: string | null;
+  trigger_source: "manual" | "rule";
+  total_positions: number;
+  closed_count: number;
+  failed_count: number;
+  results: Array<{ symbol: string; status: string; orderId?: string; error?: string }>;
+  executed_at: string;
+}
+
+export interface CloseExecutionsPage {
+  items: CloseExecution[];
+  total: number;
+  page: number;
+  limit: number;
+}

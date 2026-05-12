@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAppDispatch } from "@/store";
-import { updateCardRealtime } from "@/store/accounts-slice";
+import { updateCardRealtime, handleCloseExecution } from "@/store/accounts-slice";
 
 const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
@@ -15,7 +15,7 @@ export function useAccountWebSocket() {
 
   const connect = useCallback(() => {
     if (!mounted.current) return;
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
@@ -33,6 +33,9 @@ export function useAccountWebSocket() {
         }
         if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
           dispatch(updateCardRealtime(msg));
+        }
+        if (msg.account_id && msg.type === "close_execution") {
+          dispatch(handleCloseExecution(msg));
         }
       } catch {
         // ignore parse errors

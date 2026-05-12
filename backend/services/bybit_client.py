@@ -6,6 +6,7 @@ import asyncio
 import collections
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Any
@@ -111,14 +112,20 @@ class BybitClient:
                     query = "&".join(f"{k}={v}" for k, v in sorted(params.items()) if v is not None)
                     url = URL(f"{self._base_url}{path}?{query}", encoded=True)
                     headers = self._headers(timestamp, query)
+                    request_kwargs: dict[str, Any] = {}
+                elif method == "POST" and params:
+                    body_str = json.dumps(params, separators=(",", ":"))
+                    url = f"{self._base_url}{path}"
+                    headers = self._headers(timestamp, body_str)
+                    request_kwargs = {"data": body_str}
                 else:
                     url = f"{self._base_url}{path}"
-                    query = ""
-                    headers = self._headers(timestamp, query)
+                    headers = self._headers(timestamp, "")
+                    request_kwargs = {}
 
                 try:
                     session = await self._get_session()
-                    async with session.request(method, url, headers=headers) as resp:
+                    async with session.request(method, url, headers=headers, **request_kwargs) as resp:
                         data = await resp.json()
                 except aiohttp.ClientError as e:
                     if attempt < _MAX_RETRIES - 1:
@@ -214,6 +221,7 @@ class BybitClient:
                 "stopLoss": p.get("stopLoss", ""),
                 "positionIM": p.get("positionIM", "0"),
                 "positionMM": p.get("positionMM", "0"),
+                "positionIdx": int(p.get("positionIdx", 0)),
             }
             for p in positions
             if p.get("size", "0") != "0"
@@ -255,4 +263,45 @@ class BybitClient:
         return {
             "list": result.get("list", []),
             "nextPageCursor": result.get("nextPageCursor", ""),
+        }
+
+    async def place_market_close_order(
+        self, symbol: str, side: str, qty: str, position_idx: int = 0
+    ) -> dict[str, Any]:
+        """Place a market order to close a position.
+
+        Args:
+            symbol: Trading pair (e.g. "BTCUSDT").
+            side: Position side ("Buy" or "Sell") — will be flipped for the close order.
+            qty: Position size to close.
+            position_idx: Position index from get_positions (0=One-Way, 1=Buy hedge, 2=Sell hedge).
+        """
+        close_side = "Sell" if side == "Buy" else "Buy"
+        params: dict[str, Any] = {
+            "category": "linear",
+            "symbol": symbol,
+            "side": close_side,
+            "orderType": "Market",
+            "qty": qty,
+            "reduceOnly": True,
+            "positionIdx": position_idx,
+        }
+
+        try:
+            result = await self._request("POST", "/v5/order/create", params)
+        except BybitAPIError as e:
+            if e.ret_code == 110043 and position_idx == 0:
+                hedge_idx = 1 if close_side == "Sell" else 2
+                logger.warning(
+                    "Position mode mismatch for %s, retrying with positionIdx=%d",
+                    symbol, hedge_idx,
+                )
+                params["positionIdx"] = hedge_idx
+                result = await self._request("POST", "/v5/order/create", params)
+            else:
+                raise
+
+        return {
+            "orderId": result.get("orderId", ""),
+            "orderLinkId": result.get("orderLinkId", ""),
         }

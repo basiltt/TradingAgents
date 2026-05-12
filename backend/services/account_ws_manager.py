@@ -88,3 +88,6 @@ class AccountWSManager:
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._frontend_queues.discard(q)
+
+    async def broadcast_event(self, event: dict[str, Any]) -> None:
+        await self._broadcast(event)
