@@ -839,6 +839,7 @@ function ScheduleFormDialog({
           </div>
         ) : (
         <form onSubmit={handleSubmit} className="space-y-5">
+          <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
           <div>
             <Label htmlFor="schedule-name" className="text-xs font-medium">Schedule Name</Label>
             <Input id="schedule-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My daily scan" maxLength={255} className="mt-1.5" />
