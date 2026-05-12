@@ -539,6 +539,27 @@ class RotateCredentialsRequest(BaseModel):
     api_secret: str = Field(..., min_length=10)
 
 
+class PlaceTradeRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    symbol: str = Field(..., min_length=2, max_length=20)
+    signal_direction: Literal["buy", "sell"]
+    trade_direction: Literal["straight", "reverse"]
+    leverage: int = Field(..., ge=1, le=125)
+    take_profit_pct: float = Field(..., gt=0, le=1000)
+    stop_loss_pct: float = Field(..., gt=0, le=1000)
+    capital_pct: float = Field(..., gt=0, le=100)
+    base_capital: float = Field(..., gt=0)
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        v = v.upper().strip()
+        if not CRYPTO_TICKER_RE.match(v):
+            raise ValueError("Invalid symbol format")
+        return v
+
+
 # ── Strategy Schemas ────────────────────────────────────────────
 
 VALID_STRATEGY_CATEGORIES = frozenset(

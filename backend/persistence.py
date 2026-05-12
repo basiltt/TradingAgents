@@ -1953,6 +1953,28 @@ class AnalysisDB:
                 raise
         return {r[0]: r[1] for r in rows}
 
+    def get_active_targets_by_account(self) -> Dict[str, list]:
+        """Return {account_id: [{trigger_type, threshold_value, reference_value}]} for active rules."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT account_id::text, trigger_type, threshold_value, reference_value "
+                    "FROM close_rules WHERE status = 'active' ORDER BY account_id, created_at",
+                )
+                rows = cur.fetchall()
+            except Exception:
+                conn.rollback()
+                raise
+        result: Dict[str, list] = {}
+        for r in rows:
+            result.setdefault(r[0], []).append({
+                "trigger_type": r[1],
+                "threshold_value": str(r[2]) if r[2] is not None else None,
+                "reference_value": str(r[3]) if r[3] is not None else None,
+            })
+        return result
+
     def count_rules_for_account(self, account_id: str) -> int:
         with self._get_conn() as conn:
             cur = conn.cursor()

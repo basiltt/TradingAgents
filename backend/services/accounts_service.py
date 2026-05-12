@@ -93,6 +93,140 @@ class AccountsService:
         self._clients[account_id] = client
         return client
 
+    # ── Trade Execution ──────────────────────────────────────────────────
+
+    async def place_trade(
+        self,
+        account_id: str,
+        symbol: str,
+        signal_direction: str,
+        trade_direction: str,
+        leverage: int,
+        take_profit_pct: float,
+        stop_loss_pct: float,
+        capital_pct: float,
+        base_capital: float,
+    ) -> Dict[str, Any]:
+        """Place a market trade with leverage, TP, and SL.
+
+        TP/SL percentages are leverage-adjusted (e.g. 100% TP at 10x = 10% price move).
+        Qty is calculated from base_capital * capital_pct, leveraged, divided by mark price.
+        """
+        from decimal import Decimal, ROUND_DOWN
+
+        client = await self._build_client(account_id)
+
+        account = await asyncio.to_thread(self._db.get_account, account_id)
+        if not account or not account.get("is_active"):
+            raise ValueError("Account is inactive or not found")
+
+        if trade_direction == "straight":
+            side = "Buy" if signal_direction == "buy" else "Sell"
+        else:
+            side = "Sell" if signal_direction == "buy" else "Buy"
+
+        logger.info("Placing trade: %s %s %sx, capital=%.2f%%/%.2f, signal=%s/%s",
+                     side, symbol, leverage, capital_pct, base_capital, signal_direction, trade_direction)
+
+        mark_price_str, instrument = await asyncio.gather(
+            client.get_mark_price(symbol),
+            client.get_instrument_info(symbol),
+        )
+        mark_price = Decimal(mark_price_str)
+        if mark_price <= 0:
+            raise ValueError(f"Invalid mark price {mark_price} for {symbol}")
+
+        leverage_filter = instrument.get("leverageFilter", {})
+        max_leverage = int(float(leverage_filter.get("maxLeverage", "125")))
+        if leverage > max_leverage:
+            logger.info("Leverage %dx exceeds max %dx for %s, capping", leverage, max_leverage, symbol)
+            leverage = max_leverage
+
+        await client.set_leverage(symbol, leverage)
+
+        lot_filter = instrument.get("lotSizeFilter", {})
+        min_qty = Decimal(lot_filter.get("minOrderQty", "1"))
+        qty_step = Decimal(lot_filter.get("qtyStep", "1"))
+        max_qty = Decimal(lot_filter.get("maxOrderQty", "1000000"))
+        price_filter = instrument.get("priceFilter", {})
+        tick_size = Decimal(price_filter.get("tickSize", "0.01"))
+
+        # Calculate position size:
+        # usdt_amount = base_capital * (capital_pct / 100)
+        # qty = usdt_amount * leverage / mark_price
+        usdt_amount = Decimal(str(base_capital)) * Decimal(str(capital_pct)) / Decimal("100")
+        qty = usdt_amount * Decimal(str(leverage)) / mark_price
+
+        # Round qty down to qty_step
+        qty_rounded = (qty / qty_step).quantize(Decimal("1"), rounding=ROUND_DOWN) * qty_step
+
+        if qty_rounded < min_qty:
+            raise ValueError(
+                f"Calculated qty {qty_rounded} is below minimum {min_qty} for {symbol}. "
+                f"Increase capital % or base capital."
+            )
+        if qty_rounded > max_qty:
+            qty_rounded = max_qty
+
+        # Convert leverage-adjusted percentages to actual price percentages
+        _ONE = Decimal("1")
+        _HUNDRED = Decimal("100")
+        tp_price_pct = Decimal(str(take_profit_pct)) / Decimal(str(leverage))
+        sl_price_pct = Decimal(str(stop_loss_pct)) / Decimal(str(leverage))
+
+        if sl_price_pct >= _HUNDRED:
+            raise ValueError("Stop loss exceeds 100% price move — reduce SL % or increase leverage")
+        if side == "Sell" and tp_price_pct >= _HUNDRED:
+            raise ValueError("Take profit exceeds 100% price move for short — reduce TP % or increase leverage")
+
+        # Calculate TP/SL prices
+        if side == "Buy":
+            tp_price = mark_price * (_ONE + tp_price_pct / _HUNDRED)
+            sl_price = mark_price * (_ONE - sl_price_pct / _HUNDRED)
+        else:
+            tp_price = mark_price * (_ONE - tp_price_pct / _HUNDRED)
+            sl_price = mark_price * (_ONE + sl_price_pct / _HUNDRED)
+
+        if tp_price <= 0 or sl_price <= 0:
+            raise ValueError("Calculated TP/SL price is non-positive — adjust percentages or leverage")
+
+        def round_price(p: Decimal) -> str:
+            rounded = (p / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
+            if rounded <= 0:
+                raise ValueError(f"Price rounded to {rounded} after tick alignment — adjust parameters")
+            return str(rounded)
+
+        tp_price_str = round_price(tp_price)
+        sl_price_str = round_price(sl_price)
+
+        logger.info(
+            "Order params: %s %s qty=%s @ mark=%s, TP=%s SL=%s, leverage=%dx",
+            side, symbol, qty_rounded, mark_price, tp_price_str, sl_price_str, leverage,
+        )
+
+        result = await client.place_market_order(
+            symbol=symbol,
+            side=side,
+            qty=str(qty_rounded),
+            take_profit=tp_price_str,
+            stop_loss=sl_price_str,
+        )
+
+        self._invalidate_cache(account_id)
+
+        return {
+            "orderId": result.get("orderId", ""),
+            "symbol": symbol,
+            "side": side,
+            "leverage": leverage,
+            "max_leverage": max_leverage,
+            "mark_price": str(mark_price),
+            "take_profit_price": tp_price_str,
+            "stop_loss_price": sl_price_str,
+            "qty": str(qty_rounded),
+            "usdt_amount": str(usdt_amount),
+        }
+
     # ── CRUD ────────────────────────────────────────────────────────────
 
     async def create_account(
@@ -296,7 +430,7 @@ class AccountsService:
 
     async def _fetch_card(self, acc: Dict[str, Any], today_start_ms: int, today_end_ms: int) -> Dict[str, Any]:
         if not acc["is_active"]:
-            return {**acc, "total_equity": None, "total_perp_upl": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
+            return {**acc, "total_equity": None, "total_perp_upl": None, "total_wallet_balance": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
 
         try:
             wallet, positions, _ = await asyncio.gather(
@@ -311,6 +445,7 @@ class AccountsService:
                 **acc,
                 "total_equity": wallet.get("totalEquity", "0"),
                 "total_perp_upl": wallet.get("totalPerpUPL", "0"),
+                "total_wallet_balance": wallet.get("totalWalletBalance", "0"),
                 "positions_count": len(positions),
                 "today_pnl": today_summary.get("total_pnl", "0"),
                 "status": "active",
@@ -320,6 +455,7 @@ class AccountsService:
                 **acc,
                 "total_equity": None,
                 "total_perp_upl": None,
+                "total_wallet_balance": None,
                 "positions_count": 0,
                 "today_pnl": None,
                 "status": "error",
@@ -338,12 +474,17 @@ class AccountsService:
         cards = list(cards)
 
         try:
-            rule_counts = await asyncio.to_thread(self._db.count_active_rules_by_account)
+            rule_counts, rule_targets = await asyncio.gather(
+                asyncio.to_thread(self._db.count_active_rules_by_account),
+                asyncio.to_thread(self._db.get_active_targets_by_account),
+            )
             for card in cards:
                 card["active_rules_count"] = rule_counts.get(card["id"], 0)
+                card["active_rule_targets"] = rule_targets.get(card["id"], [])
         except Exception:
             for card in cards:
                 card["active_rules_count"] = 0
+                card["active_rule_targets"] = []
 
         return cards
 

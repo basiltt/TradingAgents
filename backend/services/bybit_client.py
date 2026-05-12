@@ -8,7 +8,9 @@ import hashlib
 import hmac
 import json
 import logging
+import random
 import time
+import uuid
 from typing import Any
 
 import aiohttp
@@ -98,7 +100,8 @@ class BybitClient:
         }
 
     async def _request(
-        self, method: str, path: str, params: dict[str, Any] | None = None
+        self, method: str, path: str, params: dict[str, Any] | None = None,
+        *, retry_on_network_error: bool = True,
     ) -> dict[str, Any]:
         if not self._time_synced:
             await self._sync_time()
@@ -128,30 +131,44 @@ class BybitClient:
                     async with session.request(method, url, headers=headers, **request_kwargs) as resp:
                         data = await resp.json()
                 except aiohttp.ClientError:
+                    if not retry_on_network_error:
+                        logger.error(f"Bybit network error on {path} (no retry for safety)")
+                        raise BybitAPIError(-1, "Network error — order may or may not have been placed, check positions")
                     if attempt < _MAX_RETRIES - 1:
                         delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                        logger.warning(f"Bybit network error on {path}, retrying in {delay}s (attempt {attempt + 1})")
-                        await asyncio.sleep(delay)
+                        jitter = random.uniform(0, delay * 0.1)
+                        total_delay = delay + jitter
+                        logger.warning(f"Bybit network error on {path}, retrying in {total_delay:.2f}s (attempt {attempt + 1})")
+                        await asyncio.sleep(total_delay)
                         continue
                     logger.error(f"Bybit network error on {path} after {_MAX_RETRIES} attempts")
                     raise BybitAPIError(-1, "Network error")
 
                 ret_code = data.get("retCode", -1)
+                ret_msg = str(data.get("retMsg", "")).lower()
+
                 if ret_code == 10002 and attempt < _MAX_RETRIES - 1:
                     logger.warning(f"Bybit timestamp rejected on {path}, re-syncing clock (attempt {attempt + 1})")
                     await self._sync_time()
                     continue
 
-                if ret_code == 10006 and attempt < _MAX_RETRIES - 1:
+                is_rate_limited = (
+                    ret_code == 10006
+                    or "rate limit" in ret_msg
+                    or "too many" in ret_msg
+                )
+                if is_rate_limited and attempt < _MAX_RETRIES - 1:
                     delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                    logger.warning(f"Rate limited on {path}, retrying in {delay}s (attempt {attempt + 1})")
-                    await asyncio.sleep(delay)
+                    jitter = random.uniform(0, delay * 0.1)
+                    total_delay = delay + jitter
+                    logger.warning(f"Rate limited on {path}, retrying in {total_delay:.2f}s (attempt {attempt + 1})")
+                    await asyncio.sleep(total_delay)
                     continue
 
                 if ret_code != 0:
-                    ret_msg = data.get("retMsg", "Unknown error")
-                    logger.warning(f"Bybit API error on {path}: {ret_code}")
-                    raise BybitAPIError(ret_code, ret_msg)
+                    ret_msg_raw = data.get("retMsg", "Unknown error")
+                    logger.warning(f"Bybit API error on {path}: {ret_code} - {ret_msg_raw}")
+                    raise BybitAPIError(ret_code, ret_msg_raw)
 
                 return data.get("result", {})
 
@@ -277,6 +294,7 @@ class BybitClient:
             position_idx: Position index from get_positions (0=One-Way, 1=Buy hedge, 2=Sell hedge).
         """
         close_side = "Sell" if side == "Buy" else "Buy"
+        order_link_id = str(uuid.uuid4()).replace("-", "")[:32]
         params: dict[str, Any] = {
             "category": "linear",
             "symbol": symbol,
@@ -285,10 +303,14 @@ class BybitClient:
             "qty": qty,
             "reduceOnly": True,
             "positionIdx": position_idx,
+            "orderLinkId": order_link_id,
         }
 
         try:
-            result = await self._request("POST", "/v5/order/create", params)
+            result = await self._request(
+                "POST", "/v5/order/create", params,
+                retry_on_network_error=False,
+            )
         except BybitAPIError as e:
             if e.ret_code == 110043 and position_idx == 0:
                 hedge_idx = 1 if close_side == "Sell" else 2
@@ -297,11 +319,114 @@ class BybitClient:
                     symbol, hedge_idx,
                 )
                 params["positionIdx"] = hedge_idx
-                result = await self._request("POST", "/v5/order/create", params)
+                result = await self._request(
+                    "POST", "/v5/order/create", params,
+                    retry_on_network_error=False,
+                )
             else:
                 raise
 
         return {
             "orderId": result.get("orderId", ""),
-            "orderLinkId": result.get("orderLinkId", ""),
+            "orderLinkId": result.get("orderLinkId", order_link_id),
         }
+
+    async def set_leverage(self, symbol: str, leverage: int) -> dict[str, Any]:
+        """Set leverage for a symbol. Silently succeeds if already at target leverage."""
+        try:
+            await self._request("POST", "/v5/position/set-leverage", {
+                "category": "linear",
+                "symbol": symbol,
+                "buyLeverage": str(leverage),
+                "sellLeverage": str(leverage),
+            })
+        except BybitAPIError as e:
+            if e.ret_code == 110043:
+                logger.debug("Leverage already at target for %s: %s", symbol, e.ret_msg)
+                return {"status": "unchanged"}
+            raise
+        return {"status": "ok"}
+
+    async def place_market_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: str,
+        take_profit: str | None = None,
+        stop_loss: str | None = None,
+    ) -> dict[str, Any]:
+        """Place a market order with optional TP/SL.
+
+        Uses orderLinkId for idempotency — if a network error occurs after
+        Bybit accepts the order, a retry with the same orderLinkId won't
+        create a duplicate.
+
+        Args:
+            symbol: Trading pair e.g. "BTCUSDT".
+            side: "Buy" or "Sell".
+            qty: Order quantity as string.
+            take_profit: TP price as string, or None.
+            stop_loss: SL price as string, or None.
+        """
+        order_link_id = str(uuid.uuid4()).replace("-", "")[:32]
+        params: dict[str, Any] = {
+            "category": "linear",
+            "symbol": symbol,
+            "side": side,
+            "orderType": "Market",
+            "qty": qty,
+            "positionIdx": 0,
+            "orderLinkId": order_link_id,
+        }
+        if take_profit:
+            params["takeProfit"] = take_profit
+            params["tpTriggerBy"] = "MarkPrice"
+        if stop_loss:
+            params["stopLoss"] = stop_loss
+            params["slTriggerBy"] = "MarkPrice"
+
+        try:
+            result = await self._request(
+                "POST", "/v5/order/create", params,
+                retry_on_network_error=False,
+            )
+        except BybitAPIError as e:
+            if e.ret_code == 110043:
+                hedge_side_idx = 1 if side == "Buy" else 2
+                params["positionIdx"] = hedge_side_idx
+                result = await self._request(
+                    "POST", "/v5/order/create", params,
+                    retry_on_network_error=False,
+                )
+            else:
+                raise
+
+        return {
+            "orderId": result.get("orderId", ""),
+            "orderLinkId": result.get("orderLinkId", order_link_id),
+        }
+
+    async def get_mark_price(self, symbol: str) -> str:
+        """Get the current mark price for a symbol."""
+        result = await self._request("GET", "/v5/market/tickers", {
+            "category": "linear",
+            "symbol": symbol,
+        })
+        tickers = result.get("list", [])
+        if not tickers:
+            raise ValueError(f"No ticker data found for {symbol}")
+        price = tickers[0].get("markPrice", "0")
+        if not price or price == "0":
+            raise ValueError(f"Mark price unavailable for {symbol}")
+        return price
+
+    async def get_instrument_info(self, symbol: str) -> dict[str, Any]:
+        """Get instrument info (min qty, qty step, etc.)."""
+        result = await self._request("GET", "/v5/market/instruments-info", {
+            "category": "linear",
+            "symbol": symbol,
+        })
+        instruments = result.get("list", [])
+        if not instruments:
+            raise ValueError(f"No instrument info found for {symbol}")
+        return instruments[0]

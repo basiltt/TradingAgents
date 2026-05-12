@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from backend.schemas import CreateAccountRequest, UpdateAccountRequest, RotateCredentialsRequest
+from backend.schemas import CreateAccountRequest, UpdateAccountRequest, RotateCredentialsRequest, PlaceTradeRequest
 from backend.services.bybit_client import BybitAPIError
 
 router = APIRouter(tags=["accounts"])
@@ -144,6 +144,35 @@ async def test_connection(request: Request, account_id: str):
         return result
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
+
+
+@router.post("/accounts/{account_id}/trade")
+async def place_trade(request: Request, account_id: str):
+    _validate_account_id(account_id)
+    body = await request.json()
+    try:
+        req = PlaceTradeRequest(**body)
+    except ValidationError as e:
+        return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
+
+    svc = _get_service(request)
+    try:
+        result = await svc.place_trade(
+            account_id=account_id,
+            symbol=req.symbol,
+            signal_direction=req.signal_direction,
+            trade_direction=req.trade_direction,
+            leverage=req.leverage,
+            take_profit_pct=req.take_profit_pct,
+            stop_loss_pct=req.stop_loss_pct,
+            capital_pct=req.capital_pct,
+            base_capital=req.base_capital,
+        )
+        return result
+    except ValueError as e:
+        return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 400)
+    except BybitAPIError as e:
+        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 @router.get("/accounts/{account_id}/wallet")

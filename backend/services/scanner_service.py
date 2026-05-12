@@ -379,7 +379,7 @@ class ScannerService:
     async def cancel_scan(self, scan_id: str) -> bool:
         async with self._lock:
             scan = self._scans.get(scan_id)
-            if not scan:
+            if not scan or scan["status"] != "running":
                 return False
             scan["cancel"] = True
             task = scan.get("task")

@@ -8,10 +8,68 @@ import { CloseAllConfirmDialog } from "./CloseAllConfirmDialog";
 import { ConditionalRulesDialog } from "./ConditionalRulesDialog";
 import { CloseHistoryDialog } from "./CloseHistoryDialog";
 
-interface AccountCardProps {
-  card: DashboardCard;
-  onRefresh: () => void;
+/* ── Rule resolution ─────────────────────────────────────────────── */
+
+type RuleKind = "target" | "floor";
+
+interface ResolvedRule {
+  kind: RuleKind;
+  label: string;
+  thresholdDisplay: string;
+  pct: number;       // 0-100+ for targets (progress), buffer % for floors
+  reached: boolean;   // target reached or floor breached
+  warn: boolean;      // floor buffer < 25%
 }
+
+const TARGET_TYPES = new Set(["BALANCE_ABOVE", "PNL_ABOVE", "EQUITY_RISE_PCT"]);
+
+function resolveRule(
+  t: { trigger_type: string; threshold_value: string | null; reference_value: string | null },
+  equity: number,
+  balance: number,
+  pnl: number,
+): ResolvedRule | null {
+  if (!t.threshold_value) return null;
+  const th = parseFloat(t.threshold_value);
+  if (!th || th <= 0) return null;
+  const ref = t.reference_value ? parseFloat(t.reference_value) : null;
+  const kind: RuleKind = TARGET_TYPES.has(t.trigger_type) ? "target" : "floor";
+
+  switch (t.trigger_type) {
+    case "BALANCE_ABOVE":
+      return { kind, label: "Target", thresholdDisplay: `$${th.toFixed(2)}`, pct: (balance / th) * 100, reached: balance >= th, warn: false };
+    case "BALANCE_BELOW":
+      return mkFloor("Floor", `$${th.toFixed(2)}`, balance, th);
+    case "PNL_ABOVE":
+      return { kind, label: "PnL Target", thresholdDisplay: `$${th.toFixed(2)}`, pct: th > 0 ? (pnl / th) * 100 : 0, reached: pnl >= th, warn: false };
+    case "PNL_BELOW":
+      return mkFloor("PnL Floor", `-$${th.toFixed(2)}`, pnl, -th);
+    case "EQUITY_RISE_PCT": {
+      if (!ref || ref <= 0) return null;
+      const cur = ((equity - ref) / ref) * 100;
+      const target = ref * (1 + th / 100);
+      return { kind, label: `+${th}% Target`, thresholdDisplay: `$${target.toFixed(2)}`, pct: (cur / th) * 100, reached: cur >= th, warn: false };
+    }
+    case "EQUITY_DROP_PCT": {
+      if (!ref || ref <= 0) return null;
+      const drop = ((ref - equity) / ref) * 100;
+      const floorVal = ref * (1 - th / 100);
+      const bufferPct = th > 0 ? ((th - drop) / th) * 100 : 100;
+      return { kind, label: `-${th}% Floor`, thresholdDisplay: `$${floorVal.toFixed(2)}`, pct: bufferPct, reached: drop >= th, warn: bufferPct > 0 && bufferPct < 25 };
+    }
+    default:
+      return null;
+  }
+}
+
+function mkFloor(label: string, display: string, current: number, threshold: number): ResolvedRule {
+  const buffer = current - threshold;
+  const range = Math.abs(threshold) || 1;
+  const bufferPct = (buffer / range) * 100;
+  return { kind: "floor", label, thresholdDisplay: display, pct: bufferPct, reached: buffer <= 0, warn: bufferPct > 0 && bufferPct < 25 };
+}
+
+/* ── Sub-components ──────────────────────────────────────────────── */
 
 function DirectionIcon({ dir }: { dir?: Direction }) {
   if (!dir || dir === "neutral") return null;
@@ -29,6 +87,56 @@ function StatusDot({ status }: { status: string }) {
   return <span className={`w-2 h-2 rounded-full shadow-[0_0_6px] ${styles[status] ?? styles.disabled}`} />;
 }
 
+function RuleIndicator({ rule }: { rule: ResolvedRule }) {
+  const pctClamped = Math.min(Math.max(rule.pct, 0), 100);
+  const pctDisplay = Math.round(rule.pct);
+
+  if (rule.kind === "target") {
+    const done = rule.reached;
+    return (
+      <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[10px] text-emerald-400">▲</span>
+          <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider font-medium">{rule.label}</span>
+        </div>
+        <div className="flex-1 h-1 rounded-full bg-muted/30 overflow-hidden min-w-[40px]">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ${done ? "bg-emerald-500" : "bg-emerald-500/70"}`}
+            style={{ width: `${pctClamped}%` }}
+          />
+        </div>
+        <span className={`text-[10px] font-semibold tabular-nums shrink-0 ${done ? "text-emerald-400" : "text-muted-foreground/70"}`}>
+          {done ? "✓" : `${pctDisplay}%`}
+        </span>
+        <span className="text-[10px] text-muted-foreground/40 tabular-nums shrink-0">{rule.thresholdDisplay}</span>
+      </div>
+    );
+  }
+
+  // Floor rule
+  const color = rule.reached ? "text-red-400" : rule.warn ? "text-amber-400" : "text-blue-400";
+  const dotColor = rule.reached ? "bg-red-500 animate-pulse" : rule.warn ? "bg-amber-500" : "bg-blue-500/50";
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
+        <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider font-medium">{rule.label}</span>
+      </div>
+      <span className={`text-[10px] font-semibold tabular-nums ml-auto shrink-0 ${color}`}>
+        {rule.reached ? "Breached" : rule.warn ? `${pctDisplay}% left` : `${pctDisplay}% buffer`}
+      </span>
+      <span className="text-[10px] text-muted-foreground/40 tabular-nums shrink-0">{rule.thresholdDisplay}</span>
+    </div>
+  );
+}
+
+/* ── Main card ───────────────────────────────────────────────────── */
+
+interface AccountCardProps {
+  card: DashboardCard;
+  onRefresh: () => void;
+}
+
 export function AccountCard({ card, onRefresh }: AccountCardProps) {
   const navigate = useNavigate();
   const directions = useAppSelector((s) => s.accounts.directions[card.id]);
@@ -41,9 +149,14 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
 
   const pnl = parseFloat(card.total_perp_upl || "0");
   const equity = parseFloat(card.total_equity || "0");
+  const walletBalance = parseFloat(card.total_wallet_balance || "0");
   const todayPnl = parseFloat(card.today_pnl || "0");
   const hasPositions = card.positions_count > 0;
   const activeRules = card.active_rules_count ?? 0;
+
+  const rules = (card.active_rule_targets ?? [])
+    .map((t) => resolveRule(t, equity, walletBalance, pnl))
+    .filter(Boolean) as ResolvedRule[];
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -157,6 +270,13 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
               <DirectionIcon dir={directions?.equity} />
             </div>
             <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-medium">Equity</span>
+          </div>
+        )}
+
+        {/* Rule indicators — compact inline rows */}
+        {card.total_equity != null && rules.length > 0 && (
+          <div className="px-5 pb-3 space-y-1.5">
+            {rules.map((r, i) => <RuleIndicator key={i} rule={r} />)}
           </div>
         )}
 

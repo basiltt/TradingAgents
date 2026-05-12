@@ -569,12 +569,18 @@ export interface DashboardCard {
   include_in_analytics: boolean;
   total_equity?: string;
   total_perp_upl?: string;
+  total_wallet_balance?: string;
   today_pnl?: string;
   positions_count: number;
   last_connected_at?: string;
   last_error?: string;
   status: "active" | "stale" | "error" | "disabled";
   active_rules_count?: number;
+  active_rule_targets?: Array<{
+    trigger_type: string;
+    threshold_value: string | null;
+    reference_value: string | null;
+  }>;
 }
 
 export interface DailySnapshot {
@@ -619,6 +625,30 @@ export interface PerformanceAnalytics {
   total_trades: number;
   total_pnl: string;
   snapshot_count: number;
+}
+
+export interface PlaceTradeRequest {
+  symbol: string;
+  signal_direction: "buy" | "sell";
+  trade_direction: "straight" | "reverse";
+  leverage: number;
+  take_profit_pct: number;
+  stop_loss_pct: number;
+  capital_pct: number;
+  base_capital: number;
+}
+
+export interface PlaceTradeResponse {
+  orderId: string;
+  symbol: string;
+  side: string;
+  leverage: number;
+  max_leverage: number;
+  mark_price: string;
+  take_profit_price: string;
+  stop_loss_price: string;
+  qty: string;
+  usdt_amount: string;
 }
 
 export const accountsApi = {
@@ -787,6 +817,11 @@ export const accountsApi = {
 
   getCloseExecutions: (accountId: string, page = 1, limit = 20, signal?: AbortSignal) =>
     request<CloseExecutionsPage>(`/api/v1/accounts/${encodeURIComponent(accountId)}/close-executions?page=${page}&limit=${limit}`, undefined, signal),
+
+  // ── Place Trade ─────────────────────────────────────────────────
+
+  placeTrade: (accountId: string, data: PlaceTradeRequest, signal?: AbortSignal) =>
+    mutate<PlaceTradeResponse>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/trade`, data, signal),
 };
 
 // ── Scheduled Scans ──────────────────────────────────────────────
