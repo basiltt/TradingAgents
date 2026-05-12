@@ -37,9 +37,9 @@ function resolveRule(
 
   switch (t.trigger_type) {
     case "BALANCE_ABOVE":
-      return { kind, label: "Target", thresholdDisplay: `$${th.toFixed(2)}`, pct: (balance / th) * 100, reached: balance >= th, warn: false };
+      return { kind, label: "Target", thresholdDisplay: `$${th.toFixed(2)}`, pct: (equity / th) * 100, reached: equity >= th, warn: false };
     case "BALANCE_BELOW":
-      return mkFloor("Floor", `$${th.toFixed(2)}`, balance, th);
+      return mkFloor("Floor", `$${th.toFixed(2)}`, equity, th);
     case "PNL_ABOVE":
       return { kind, label: "PnL Target", thresholdDisplay: `$${th.toFixed(2)}`, pct: th > 0 ? (pnl / th) * 100 : 0, reached: pnl >= th, warn: false };
     case "PNL_BELOW":
@@ -108,7 +108,7 @@ function RuleIndicator({ rule }: { rule: ResolvedRule }) {
         <span className={`text-[10px] font-semibold tabular-nums shrink-0 ${done ? "text-emerald-400" : "text-muted-foreground/70"}`}>
           {done ? "✓" : `${pctDisplay}%`}
         </span>
-        <span className="text-[10px] text-muted-foreground/40 tabular-nums shrink-0">{rule.thresholdDisplay}</span>
+        <span className="text-[10px] text-muted-foreground/70 tabular-nums shrink-0 font-medium">{rule.thresholdDisplay}</span>
       </div>
     );
   }
@@ -125,7 +125,7 @@ function RuleIndicator({ rule }: { rule: ResolvedRule }) {
       <span className={`text-[10px] font-semibold tabular-nums ml-auto shrink-0 ${color}`}>
         {rule.reached ? "Breached" : rule.warn ? `${pctDisplay}% left` : `${pctDisplay}% buffer`}
       </span>
-      <span className="text-[10px] text-muted-foreground/40 tabular-nums shrink-0">{rule.thresholdDisplay}</span>
+      <span className="text-[10px] text-muted-foreground/70 tabular-nums shrink-0 font-medium">{rule.thresholdDisplay}</span>
     </div>
   );
 }
