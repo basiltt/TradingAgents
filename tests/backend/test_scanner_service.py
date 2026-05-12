@@ -257,7 +257,7 @@ class TestStartScan:
     @pytest.mark.asyncio
     async def test_start_scan_inserts_into_db(self):
         db = MagicMock()
-        db.insert_scan = MagicMock()
+        db.insert_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
 
         async def noop(scan_id, symbols_override=None):
@@ -293,7 +293,7 @@ class TestGetScan:
     @pytest.mark.asyncio
     async def test_get_scan_from_db_fallback(self):
         db = MagicMock()
-        db.get_scan = MagicMock(return_value={
+        db.get_scan = AsyncMock(return_value={
             "scan_id": "db-scan", "status": "completed",
             "total": 10, "completed": 10, "failed": 0,
             "results": [],
@@ -308,7 +308,7 @@ class TestGetScan:
     @pytest.mark.asyncio
     async def test_get_scan_not_found(self):
         db = MagicMock()
-        db.get_scan = MagicMock(return_value=None)
+        db.get_scan = AsyncMock(return_value=None)
         svc, _ = _make_scanner(db=db)
         result = await svc.get_scan("nonexistent")
         assert result is None
@@ -357,7 +357,7 @@ class TestCancelScan:
     async def test_cancel_updates_db(self):
         import uuid
         db = MagicMock()
-        db.update_scan = MagicMock()
+        db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
         sid = str(uuid.uuid4())
         svc._scans[sid] = {
@@ -406,7 +406,7 @@ class TestListScans:
         db = MagicMock()
         sid1 = str(uuid.uuid4())
         sid2 = str(uuid.uuid4())
-        db.list_scans = MagicMock(return_value=[
+        db.list_scans = AsyncMock(return_value=[
             {"scan_id": sid1, "status": "completed", "total": 1, "completed": 1, "failed": 0,
              "results": [], "started_at": "2025-01-01T00:00:00.000000Z", "completed_at": None},
             {"scan_id": sid2, "status": "completed", "total": 1, "completed": 1, "failed": 0,
@@ -444,7 +444,7 @@ class TestResumeIncompleteScans:
     @pytest.mark.asyncio
     async def test_no_running_scans_returns_zero(self):
         db = MagicMock()
-        db.get_running_scans = MagicMock(return_value=[])
+        db.get_running_scans = AsyncMock(return_value=[])
         svc, _ = _make_scanner(db=db)
         result = await svc.resume_incomplete_scans()
         assert result == 0
@@ -452,13 +452,13 @@ class TestResumeIncompleteScans:
     @pytest.mark.asyncio
     async def test_symbol_fetch_failure_marks_scan_failed(self):
         db = MagicMock()
-        db.get_running_scans = MagicMock(return_value=[
+        db.get_running_scans = AsyncMock(return_value=[
             {"scan_id": "scan-1", "config": '{"analysis_date":"2025-01-01"}',
              "started_at": "2025-01-01T00:00:00.000000Z", "completed": 0, "failed": 0, "results": []},
         ])
-        db.get_scan_completed_tickers = MagicMock(return_value=[])
-        db.get_scan = MagicMock(return_value={"results": []})
-        db.update_scan = MagicMock()
+        db.get_scan_completed_tickers = AsyncMock(return_value=[])
+        db.get_scan = AsyncMock(return_value={"results": []})
+        db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
 
         import sys
@@ -476,13 +476,13 @@ class TestResumeIncompleteScans:
     @pytest.mark.asyncio
     async def test_no_remaining_marks_completed(self):
         db = MagicMock()
-        db.get_running_scans = MagicMock(return_value=[
+        db.get_running_scans = AsyncMock(return_value=[
             {"scan_id": "scan-2", "config": '{}',
              "started_at": "2025-01-01T00:00:00.000000Z", "completed": 5, "failed": 0, "results": []},
         ])
-        db.get_scan_completed_tickers = MagicMock(return_value=["BTCUSDT", "ETHUSDT"])
-        db.get_scan = MagicMock(return_value={"results": []})
-        db.update_scan = MagicMock()
+        db.get_scan_completed_tickers = AsyncMock(return_value=["BTCUSDT", "ETHUSDT"])
+        db.get_scan = AsyncMock(return_value={"results": []})
+        db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
 
         mock_bybit = MagicMock()
@@ -502,15 +502,15 @@ class TestResumeIncompleteScans:
     @pytest.mark.asyncio
     async def test_multiple_running_scans_only_first_resumed(self):
         db = MagicMock()
-        db.get_running_scans = MagicMock(return_value=[
+        db.get_running_scans = AsyncMock(return_value=[
             {"scan_id": "scan-A", "config": '{}',
              "started_at": "2025-01-01T00:00:00.000000Z", "completed": 0, "failed": 0, "results": []},
             {"scan_id": "scan-B", "config": '{}',
              "started_at": "2025-01-01T00:00:00.000000Z", "completed": 0, "failed": 0, "results": []},
         ])
-        db.get_scan_completed_tickers = MagicMock(return_value=[])
-        db.get_scan = MagicMock(return_value={"results": []})
-        db.update_scan = MagicMock()
+        db.get_scan_completed_tickers = AsyncMock(return_value=[])
+        db.get_scan = AsyncMock(return_value={"results": []})
+        db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
 
         # scan-A has a remaining symbol so it will be resumed (not immediately completed)
@@ -599,7 +599,7 @@ class TestRunScan:
     async def test_run_scan_db_updated_on_completion(self):
         import uuid
         db = MagicMock()
-        db.update_scan = MagicMock()
+        db.update_scan = AsyncMock()
         svc, analysis = _make_scanner(db=db)
         sid = str(uuid.uuid4())
         svc._scans[sid] = {
@@ -800,8 +800,8 @@ class TestCollectResult:
     async def test_collect_result_with_db(self):
         import uuid
         db = MagicMock()
-        db.insert_scan_result = MagicMock()
-        db.increment_scan_counter = MagicMock()
+        db.insert_scan_result = AsyncMock()
+        db.increment_scan_counter = AsyncMock()
         svc, analysis = _make_scanner(db=db)
         analysis.get_snapshot = AsyncMock(return_value=None)
         analysis.get_report = AsyncMock(return_value=None)
@@ -889,7 +889,7 @@ class TestRunScanSymbolFetch:
         """When symbols_override is None, DB is updated with total."""
         import uuid, sys
         db = MagicMock()
-        db.update_scan = MagicMock()
+        db.update_scan = AsyncMock()
         svc, analysis = _make_scanner(db=db)
         analysis.get_run = AsyncMock(return_value={"status": "completed"})
         sid = str(uuid.uuid4())
@@ -971,13 +971,13 @@ class TestRemainingLines:
     async def test_resume_invalid_json_config(self):
         """Line 226-227: invalid JSON config falls back to empty dict."""
         db = MagicMock()
-        db.get_running_scans = MagicMock(return_value=[
+        db.get_running_scans = AsyncMock(return_value=[
             {"scan_id": "scan-x", "config": "NOT_JSON",
              "started_at": "2025-01-01T00:00:00.000000Z", "completed": 0, "failed": 0, "results": []},
         ])
-        db.get_scan_completed_tickers = MagicMock(return_value=[])
-        db.get_scan = MagicMock(return_value={"results": []})
-        db.update_scan = MagicMock()
+        db.get_scan_completed_tickers = AsyncMock(return_value=[])
+        db.get_scan = AsyncMock(return_value={"results": []})
+        db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
 
         import sys
@@ -1043,7 +1043,7 @@ class TestRemainingLines:
         """Line 442: DB insert_scan_result called when start_analysis fails and db is set."""
         import uuid
         db = MagicMock()
-        db.insert_scan_result = MagicMock()
+        db.insert_scan_result = AsyncMock()
         svc, analysis = _make_scanner(db=db)
         analysis.start_analysis = AsyncMock(side_effect=Exception("quota exceeded"))
         sid = str(uuid.uuid4())
@@ -1063,8 +1063,8 @@ class TestRemainingLines:
         import uuid
 
         db = MagicMock()
-        db.insert_scan_result = MagicMock()
-        db.increment_scan_counter = MagicMock()
+        db.insert_scan_result = AsyncMock()
+        db.increment_scan_counter = AsyncMock()
         svc, analysis = _make_scanner(db=db)
 
         sid = str(uuid.uuid4())
@@ -1093,8 +1093,8 @@ class TestRemainingLines:
         import uuid
 
         db = MagicMock()
-        db.insert_scan_result = MagicMock()
-        db.increment_scan_counter = MagicMock()
+        db.insert_scan_result = AsyncMock()
+        db.increment_scan_counter = AsyncMock()
         svc, analysis = _make_scanner(db=db)
         analysis.wait_for_completion = AsyncMock(side_effect=Exception("connection error"))
 
@@ -1141,7 +1141,7 @@ class TestRemainingLines2:
         """Line 325: when symbol fetch fails and DB is set, DB is updated to failed."""
         import uuid, sys
         db = MagicMock()
-        db.update_scan = MagicMock()
+        db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
         sid = str(uuid.uuid4())
         svc._scans[sid] = {

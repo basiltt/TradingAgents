@@ -352,8 +352,7 @@ class ScannerService:
 
         if self._db:
             import json as _json
-            await asyncio.to_thread(
-                self._db.insert_scan,
+            await self._db.insert_scan(
                 {"scan_id": scan_id, "status": "running", "config": _json.dumps(config), "started_at": now,
                  "schedule_id": schedule_id, "triggered_by": triggered_by},
             )
@@ -371,7 +370,7 @@ class ScannerService:
             if scan:
                 return self._serialize(scan)
         if self._db:
-            db_scan = await asyncio.to_thread(self._db.get_scan, scan_id)
+            db_scan = await self._db.get_scan(scan_id)
             if db_scan:
                 return self._serialize_db(db_scan)
         return None
@@ -386,7 +385,7 @@ class ScannerService:
             if task and not task.done():
                 task.cancel()
         if self._db:
-            await asyncio.to_thread(self._db.update_scan, scan_id, status="cancelled")
+            await self._db.update_scan(scan_id, status="cancelled")
         return True
 
     async def shutdown(self) -> None:
@@ -409,7 +408,7 @@ class ScannerService:
             self._scans.pop(scan_id, None)
         if not self._db:
             return {"deleted_results": 0, "deleted_analyses": 0, "deleted_sections": 0}
-        result = await asyncio.to_thread(self._db.delete_scan, scan_id)
+        result = await self._db.delete_scan(scan_id)
         if not result:
             return None
         return result
@@ -417,14 +416,14 @@ class ScannerService:
     async def get_scan_analysis_count(self, scan_id: str) -> int:
         if not self._db:
             return 0
-        return await asyncio.to_thread(self._db.get_scan_analysis_count, scan_id)
+        return await self._db.get_scan_analysis_count(scan_id)
 
     async def list_scans(self) -> List[Dict[str, Any]]:
         async with self._lock:
             in_memory_ids = set(self._scans.keys())
             result = [self._serialize(s) for s in self._scans.values()]
         if self._db:
-            db_scans = await asyncio.to_thread(self._db.list_scans)
+            db_scans = await self._db.list_scans()
             for ds in db_scans:
                 if ds["scan_id"] not in in_memory_ids:
                     result.append(self._serialize_db(ds))
@@ -433,11 +432,11 @@ class ScannerService:
     async def resume_incomplete_scans(self) -> int:
         if not self._db:
             return 0
-        running = await asyncio.to_thread(self._db.get_running_scans)
+        running = await self._db.get_running_scans()
         resumed = 0
         for db_scan in running:
             if resumed >= 1:
-                await asyncio.to_thread(self._db.update_scan, db_scan["scan_id"], status="failed")
+                await self._db.update_scan(db_scan["scan_id"], status="failed")
                 logger.warning("Marking extra stale scan %s as failed (only 1 resumed at a time)", db_scan["scan_id"])
                 continue
             scan_id = db_scan["scan_id"]
@@ -447,8 +446,8 @@ class ScannerService:
             except Exception:
                 config = {}
 
-            done_tickers = await asyncio.to_thread(self._db.get_scan_completed_tickers, scan_id)
-            db_results = await asyncio.to_thread(self._db.get_scan, scan_id)
+            done_tickers = await self._db.get_scan_completed_tickers(scan_id)
+            db_results = await self._db.get_scan(scan_id)
             existing_results = (db_results or {}).get("results", [])
 
             try:
@@ -456,15 +455,13 @@ class ScannerService:
                 all_symbols = random.sample(syms := list(await asyncio.to_thread(get_valid_symbols)), len(syms))
             except Exception as e:
                 logger.error("Failed to fetch symbols for resume of %s: %s", scan_id, e)
-                await asyncio.to_thread(self._db.update_scan, scan_id, status="failed")
+                await self._db.update_scan(scan_id, status="failed")
                 continue
 
             remaining = [s for s in all_symbols if s not in done_tickers]
             if not remaining:
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                await asyncio.to_thread(
-                    self._db.update_scan, scan_id, status="completed", completed_at=now,
-                )
+                await self._db.update_scan(scan_id, status="completed", completed_at=now)
                 continue
 
             now = db_scan.get("started_at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
@@ -576,7 +573,7 @@ class ScannerService:
                 if scan:
                     scan["status"] = "failed"
             if self._db:
-                await asyncio.to_thread(self._db.update_scan, scan_id, status="failed")
+                await self._db.update_scan(scan_id, status="failed")
             return
 
         async with self._lock:
@@ -589,7 +586,7 @@ class ScannerService:
             scan["total_batches"] = (len(symbols) + batch_size - 1) // batch_size
 
         if self._db and symbols_override is None:
-            await asyncio.to_thread(self._db.update_scan, scan_id, total=len(symbols))
+            await self._db.update_scan(scan_id, total=len(symbols))
 
         sem = asyncio.Semaphore(batch_size)
         scan_error = False
@@ -642,8 +639,8 @@ class ScannerService:
                 final_failed = scan["failed"]
 
         if self._db:
-            await asyncio.to_thread(
-                self._db.update_scan, scan_id,
+            await self._db.update_scan(
+                scan_id,
                 status=final_status, completed_at=now,
                 completed=final_completed, failed=final_failed,
             )
@@ -701,7 +698,7 @@ class ScannerService:
                     scan["failed"] += 1
                     scan["results"].append(fail_result)
             if self._db:
-                await asyncio.to_thread(self._db.insert_scan_result, scan_id, fail_result)
+                await self._db.insert_scan_result(scan_id, fail_result)
             return
 
         # Event-based wait with cancellation awareness
@@ -725,8 +722,8 @@ class ScannerService:
                     scan["failed"] += 1
                     scan["results"].append(cancel_result)
             if self._db:
-                await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
-                await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
+                await self._db.insert_scan_result(scan_id, cancel_result)
+                await self._db.increment_scan_counter(scan_id, "failed")
             return
         except Exception:
             run = None
@@ -757,8 +754,8 @@ class ScannerService:
                     scan["failed"] += 1
                     scan["results"].append(cancel_result)
             if self._db:
-                await asyncio.to_thread(self._db.insert_scan_result, scan_id, cancel_result)
-                await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
+                await self._db.insert_scan_result(scan_id, cancel_result)
+                await self._db.increment_scan_counter(scan_id, "failed")
             return
 
         if not run:
@@ -774,8 +771,8 @@ class ScannerService:
                     scan["failed"] += 1
                     scan["results"].append(poll_fail_result)
             if self._db:
-                await asyncio.to_thread(self._db.insert_scan_result, scan_id, poll_fail_result)
-                await asyncio.to_thread(self._db.increment_scan_counter, scan_id, "failed")
+                await self._db.insert_scan_result(scan_id, poll_fail_result)
+                await self._db.increment_scan_counter(scan_id, "failed")
 
     async def _collect_result(
         self, scan_id: str, ticker: str, run_id: str, run: Optional[Dict[str, Any]]
@@ -862,6 +859,6 @@ class ScannerService:
                 scan["results"].append(result)
 
         if self._db:
-            await asyncio.to_thread(self._db.insert_scan_result, scan_id, result)
+            await self._db.insert_scan_result(scan_id, result)
             count_field = "completed" if status == "completed" else "failed"
-            await asyncio.to_thread(self._db.increment_scan_counter, scan_id, count_field)
+            await self._db.increment_scan_counter(scan_id, count_field)

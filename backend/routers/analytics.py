@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid as _uuid
 from datetime import date, datetime, timedelta, timezone
@@ -151,9 +150,9 @@ async def get_snapshots(
     svc = _get_service(request)
     if _is_sub_day(period):
         since = _resolve_hf_since(period)
-        return await asyncio.to_thread(svc.get_hf_snapshots, account_id, since)
+        return await svc.get_hf_snapshots(account_id, since)
     sd, ed = _resolve_dates(start_date, end_date, period)
-    return await asyncio.to_thread(svc.get_snapshots, account_id, sd, ed)
+    return await svc.get_snapshots(account_id, sd, ed)
 
 
 @router.get("/accounts/{account_id}/analytics")
@@ -168,9 +167,9 @@ async def get_analytics(
     svc = _get_service(request)
     if _is_sub_day(period):
         since = _resolve_hf_since(period)
-        return await asyncio.to_thread(svc.compute_hf_analytics, account_id, since)
+        return await svc.compute_hf_analytics(account_id, since)
     sd, ed = _resolve_dates(start_date, end_date, period)
-    return await asyncio.to_thread(svc.compute_analytics, account_id, sd, ed)
+    return await svc.compute_analytics(account_id, sd, ed)
 
 
 @router.get("/portfolio/snapshots")
@@ -185,9 +184,9 @@ async def get_portfolio_snapshots(
     _validate_account_type(account_type)
     if _is_sub_day(period):
         since = _resolve_hf_since(period)
-        return await asyncio.to_thread(svc.get_portfolio_hf_snapshots, since, account_type=account_type)
+        return await svc.get_portfolio_hf_snapshots(since, account_type=account_type)
     sd, ed = _resolve_dates(start_date, end_date, period)
-    return await asyncio.to_thread(svc.get_portfolio_snapshots, sd, ed, account_type=account_type)
+    return await svc.get_portfolio_snapshots(sd, ed, account_type=account_type)
 
 
 @router.get("/portfolio/analytics")
@@ -202,9 +201,9 @@ async def get_portfolio_analytics(
     _validate_account_type(account_type)
     if _is_sub_day(period):
         since = _resolve_hf_since(period)
-        return await asyncio.to_thread(svc.compute_portfolio_hf_analytics, since, account_type=account_type)
+        return await svc.compute_portfolio_hf_analytics(since, account_type=account_type)
     sd, ed = _resolve_dates(start_date, end_date, period)
-    return await asyncio.to_thread(svc.compute_portfolio_analytics, sd, ed, account_type=account_type)
+    return await svc.compute_portfolio_analytics(sd, ed, account_type=account_type)
 
 
 _VALID_CLEANUP_PRESETS = {"1w", "1m", "3m", "6m", "1y", "all"}
@@ -235,7 +234,7 @@ async def count_account_snapshots(
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
     try:
-        counts = await asyncio.to_thread(svc.count_snapshot_data, account_id, preset=preset, before_date=before, after_date=after)
+        counts = await svc.count_snapshot_data(account_id, preset=preset, before_date=before, after_date=after)
         return {"counts": counts, "total": sum(counts.values())}
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
@@ -253,7 +252,7 @@ async def cleanup_account_snapshots(
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
     try:
-        result = await asyncio.to_thread(svc.cleanup_snapshot_data, account_id, preset=preset, before_date=before, after_date=after)
+        result = await svc.cleanup_snapshot_data(account_id, preset=preset, before_date=before, after_date=after)
         return {"deleted": result, "total": sum(result.values())}
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
@@ -269,7 +268,7 @@ async def count_portfolio_snapshots(
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
     try:
-        counts = await asyncio.to_thread(svc.count_snapshot_data, None, preset=preset, before_date=before, after_date=after)
+        counts = await svc.count_snapshot_data(None, preset=preset, before_date=before, after_date=after)
         return {"counts": counts, "total": sum(counts.values())}
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
@@ -285,7 +284,7 @@ async def cleanup_portfolio_snapshots(
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
     try:
-        result = await asyncio.to_thread(svc.cleanup_snapshot_data, None, preset=preset, before_date=before, after_date=after)
+        result = await svc.cleanup_snapshot_data(None, preset=preset, before_date=before, after_date=after)
         return {"deleted": result, "total": sum(result.values())}
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)

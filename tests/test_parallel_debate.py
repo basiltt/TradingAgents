@@ -12,7 +12,15 @@ from tradingagents.graph.parallel_debate import (
     create_parallel_researcher_round1,
     _merge_risk_debate_states,
     _merge_invest_debate_states,
+    reset_debate_executor,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_executor():
+    reset_debate_executor()
+    yield
+    reset_debate_executor()
 
 
 def _base_state():
