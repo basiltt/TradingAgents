@@ -19,15 +19,22 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
   const limit = 10;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPage(1);
+      return;
+    }
+    const controller = new AbortController();
     setLoading(true);
-    api.getCloseExecutions(accountId, page, limit)
+    api.getCloseExecutions(accountId, page, limit, controller.signal)
       .then((res) => {
-        setExecutions(res.items);
-        setTotal(res.total);
+        if (!controller.signal.aborted) {
+          setExecutions(res.items);
+          setTotal(res.total);
+        }
       })
-      .catch(() => toast.error("Failed to load history"))
-      .finally(() => setLoading(false));
+      .catch((e) => { if (!controller.signal.aborted) toast.error("Failed to load history"); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [open, accountId, page]);
 
   if (!open) return null;

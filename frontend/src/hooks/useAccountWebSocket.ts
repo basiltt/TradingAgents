@@ -15,7 +15,7 @@ export function useAccountWebSocket() {
 
   const connect = useCallback(() => {
     if (!mounted.current) return;
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;

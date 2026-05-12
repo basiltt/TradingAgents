@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
@@ -34,11 +34,13 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
 
   useEffect(() => {
     if (!open) return;
+    const controller = new AbortController();
     setLoading(true);
-    api.getCloseRules(accountId)
+    api.getCloseRules(accountId, controller.signal)
       .then(setRules)
-      .catch(() => toast.error("Failed to load rules"))
-      .finally(() => setLoading(false));
+      .catch((e) => { if (!controller.signal.aborted) toast.error("Failed to load rules"); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [open, accountId]);
 
   if (!open) return null;
@@ -100,7 +102,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => onOpenChange(false)}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => !saving && onOpenChange(false)}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className="relative bg-popover border border-border/50 rounded-2xl shadow-2xl shadow-black/30 max-w-lg w-full mx-4 max-h-[80vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
@@ -178,6 +180,25 @@ function RuleRow({
   const isTriggered = rule.status === "triggered";
   const isActive = rule.status === "active";
 
+  const [localThreshold, setLocalThreshold] = useState(rule.threshold_value);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    setLocalThreshold(rule.threshold_value);
+  }, [rule.threshold_value]);
+
+  const handleThresholdChange = useCallback((value: string) => {
+    setLocalThreshold(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onUpdate(rule.id, "threshold_value", value);
+    }, 500);
+  }, [rule.id, onUpdate]);
+
+  useEffect(() => {
+    return () => clearTimeout(debounceRef.current);
+  }, []);
+
   return (
     <div className={`rounded-xl border p-3.5 space-y-2.5 transition-colors ${
       isTriggered
@@ -203,8 +224,8 @@ function RuleRow({
             <input
               type="text"
               className="bg-muted/30 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs w-24 tabular-nums"
-              value={rule.threshold_value}
-              onChange={(e) => onUpdate(rule.id, "threshold_value", e.target.value)}
+              value={localThreshold}
+              onChange={(e) => handleThresholdChange(e.target.value)}
               disabled={isTriggered}
             />
             {isPct && (

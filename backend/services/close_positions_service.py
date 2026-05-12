@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from decimal import Decimal
 from typing import Any
 
 from backend.services.bybit_client import BybitAPIError
@@ -20,19 +19,14 @@ class ClosePositionsService:
         self._db = db
         self._accounts_service = accounts_service
         self._ws_manager = ws_manager
-        self._locks: dict[str, asyncio.Lock] = {}
-
-    def _get_lock(self, account_id: str) -> asyncio.Lock:
-        if account_id not in self._locks:
-            self._locks[account_id] = asyncio.Lock()
-        return self._locks[account_id]
+        self._closing_accounts: set[str] = set()
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
-        lock = self._get_lock(account_id)
-        if lock.locked():
+        if account_id in self._closing_accounts:
             raise ValueError("Close already in progress for this account")
+        self._closing_accounts.add(account_id)
 
-        async with lock:
+        try:
             positions = await self._accounts_service.get_positions(account_id)
             if not positions:
                 execution = await asyncio.to_thread(
@@ -107,11 +101,17 @@ class ClosePositionsService:
                 "results": results,
                 "execution_id": execution["id"],
             }
+        finally:
+            self._closing_accounts.discard(account_id)
 
     async def close_all_for_rule(self, account_id: str, rule_id: str) -> dict[str, Any]:
-        """Close all positions triggered by a rule. Acquires the same lock as manual close."""
-        lock = self._get_lock(account_id)
-        async with lock:
+        """Close all positions triggered by a rule. Uses same guard as manual close."""
+        if account_id in self._closing_accounts:
+            logger.info("Skipping rule close for %s — close already in progress", account_id)
+            return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
+        self._closing_accounts.add(account_id)
+
+        try:
             positions = await self._accounts_service.get_positions(account_id)
 
             if not positions:
@@ -168,6 +168,8 @@ class ClosePositionsService:
             await self._broadcast_close_event(account_id, "rule", closed, failed, len(positions))
 
             return {"total": len(positions), "closed": closed, "failed": failed, "results": results}
+        finally:
+            self._closing_accounts.discard(account_id)
 
     # ── WebSocket broadcast ────────────────────────────────────
 
