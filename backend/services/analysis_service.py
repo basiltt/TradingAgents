@@ -13,12 +13,10 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-import psycopg2.pool
-
 from backend.utils import mask_secrets
 from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
-from backend.persistence import AnalysisDB
+from backend.async_persistence import AsyncAnalysisDB
 from backend.services.config_service import ConfigService
 from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, ProgressEvent
 from backend.validators import validate_backend_url
@@ -28,15 +26,17 @@ logger = logging.getLogger(__name__)
 
 _GRAPH_EXECUTOR_WORKERS = int(os.environ.get("GRAPH_EXECUTOR_WORKERS", "8"))
 _graph_executor: concurrent.futures.ThreadPoolExecutor | None = None
+_graph_executor_lock = threading.Lock()
 
 
 def _get_graph_executor() -> concurrent.futures.ThreadPoolExecutor:
     global _graph_executor
-    if _graph_executor is None or _graph_executor._shutdown:
-        _graph_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=_GRAPH_EXECUTOR_WORKERS,
-            thread_name_prefix="langgraph",
-        )
+    with _graph_executor_lock:
+        if _graph_executor is None or _graph_executor._shutdown:
+            _graph_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_GRAPH_EXECUTOR_WORKERS,
+                thread_name_prefix="langgraph",
+            )
     return _graph_executor
 
 _MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
@@ -48,7 +48,7 @@ _HARD_TIMEOUT = 35 * 60  # 35 minutes
 class AnalysisService:
     def __init__(
         self,
-        persistence: AnalysisDB,
+        persistence: AsyncAnalysisDB,
         event_bus: EventBus,
         ws_manager: WSManager,
         config_service: ConfigService,
@@ -89,7 +89,7 @@ class AnalysisService:
             config_snapshot = self._build_config(request)
             safe_config = mask_secrets(config_snapshot)
 
-            await asyncio.to_thread(self._db.insert_run, {
+            await self._db.insert_run({
                 "run_id": run_id,
                 "ticker": request["ticker"],
                 "analysis_date": request["analysis_date"],
@@ -125,7 +125,7 @@ class AnalysisService:
                     task.cancel()
                 return True
 
-        db_run = await asyncio.to_thread(self._db.get_run, run_id)
+        db_run = await self._db.get_run(run_id)
         if not db_run:
             return False
         return db_run["status"] != "running"
@@ -163,7 +163,7 @@ class AnalysisService:
             _graph_executor.shutdown(wait=False, cancel_futures=True)
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        run = await asyncio.to_thread(self._db.get_run, run_id)
+        run = await self._db.get_run(run_id)
         if run and isinstance(run.get("config"), str):
             try:
                 run["config"] = json.loads(run["config"])
@@ -189,17 +189,17 @@ class AnalysisService:
         return await self.get_run(run_id)
 
     async def delete_run(self, run_id: str) -> bool:
-        return await asyncio.to_thread(self._db.delete_run, run_id)
+        return await self._db.delete_run(run_id)
 
     async def delete_all_runs(self) -> int:
         async with self._lock:
             run_ids = list(self._active_runs.keys())
         for rid in run_ids:
             await self.cancel_analysis(rid)
-        return await asyncio.to_thread(self._db.delete_all_runs)
+        return await self._db.delete_all_runs()
 
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
-        result = await asyncio.to_thread(self._db.list_runs, **kwargs)
+        result = await self._db.list_runs(**kwargs)
         for item in result.get("items", []):
             cfg = item.get("config")
             if isinstance(cfg, str):
@@ -217,7 +217,7 @@ class AnalysisService:
         return result
 
     async def get_report(self, run_id: str) -> Optional[str]:
-        sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
+        sections = await self._db.get_report_sections(run_id)
         if not sections:
             return None
         return "\n\n---\n\n".join(
@@ -226,7 +226,7 @@ class AnalysisService:
         )
 
     async def get_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
-        sections = await asyncio.to_thread(self._db.get_report_sections, run_id)
+        sections = await self._db.get_report_sections(run_id)
         snapshot = None
         for s in sections:
             if s["section"] == "_snapshot":
@@ -354,10 +354,10 @@ class AnalysisService:
             if isinstance(result, dict):
                 decision = result.get("final_trade_decision", "")
                 if decision:
-                    await asyncio.to_thread(self._db.save_report_section, run_id, "final_trade_decision", str(decision))
+                    await self._db.save_report_section(run_id, "final_trade_decision", str(decision))
 
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            updated = await asyncio.to_thread(self._db.update_run_status, run_id, "completed", None, now)
+            updated = await self._db.update_run_status(run_id, "completed", None, now)
 
             if updated:
                 self._bus.emit(run_id, ProgressEvent(phase="completed", detail="Analysis complete"))
@@ -370,7 +370,7 @@ class AnalysisService:
 
         except asyncio.CancelledError:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            await asyncio.to_thread(self._db.update_run_status, run_id, "cancelled", "Cancelled by user", now)
+            await self._db.update_run_status(run_id, "cancelled", "Cancelled by user", now)
             self._bus.emit(run_id, ProgressEvent(phase="cancelled", detail="Cancelled"))
             evt = self._completion_events.get(run_id)
             if evt:
@@ -379,7 +379,7 @@ class AnalysisService:
         except asyncio.TimeoutError:
             cancel_event.set()
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Wall-clock timeout (30min)", now)
+            await self._db.update_run_status(run_id, "failed", "Wall-clock timeout (30min)", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="Timeout"))
             evt = self._completion_events.get(run_id)
             if evt:
@@ -394,7 +394,7 @@ class AnalysisService:
         except Exception as e:
             logger.error("Analysis %s failed: %s", run_id, e, exc_info=True)
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            await asyncio.to_thread(self._db.update_run_status, run_id, "failed", "Internal error occurred", now)
+            await self._db.update_run_status(run_id, "failed", "Internal error occurred", now)
             self._bus.emit(run_id, ProgressEvent(phase="failed", detail="An error occurred"))
             evt = self._completion_events.get(run_id)
             if evt:
@@ -407,9 +407,7 @@ class AnalysisService:
             except Exception:
                 pass
             async with self._lock:
-                run_data = self._active_runs.pop(run_id, None)
-                if run_data:
-                    run_data["status"] = "terminal"
+                self._active_runs.pop(run_id, None)
                 self._completion_events.pop(run_id, None)
 
             self._bus.cleanup_run(run_id)
@@ -450,13 +448,15 @@ class AnalysisService:
                 "stats": stats,
                 "reports": reports,
             }
-            self._db.save_report_section(run_id, "_snapshot", json.dumps(snapshot, default=str))
+            self._db.sync_save_report_section(run_id, "_snapshot", json.dumps(snapshot, default=str))
             for section, content in reports.items():
-                self._db.save_report_section(run_id, section, content)
-        except psycopg2.pool.PoolError:
-            logger.debug("Skipped snapshot save for run %s — DB pool closed (shutdown)", run_id)
-        except Exception:
-            logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
+                self._db.sync_save_report_section(run_id, section, content)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "pool" in msg or "shut" in msg or "closed" in msg:
+                logger.debug("Skipped snapshot save for run %s — DB pool closed (shutdown)", run_id)
+            else:
+                logger.warning("Failed to save snapshot for run %s", run_id, exc_info=True)
 
     def _persist_signal_sections(self, run_id: str, last_chunk) -> None:
         """Save _pm_signal and _trader_signal JSON sections from the final graph chunk.
@@ -479,7 +479,7 @@ class AnalysisService:
                     json_str = json.dumps(obj)
                 else:
                     continue
-                self._db.save_report_section(run_id, section_name, json_str)
+                self._db.sync_save_report_section(run_id, section_name, json_str)
             except Exception:
                 logger.warning(
                     "Failed to persist %s for run %s", section_name, run_id, exc_info=True
@@ -516,7 +516,7 @@ class AnalysisService:
                 if not pf_result.should_proceed:
                     # Save prefilter result and skip LLM analysis
                     import json as _json
-                    self._db.save_report_section(
+                    self._db.sync_save_report_section(
                         run_id, "_ta_prefilter",
                         _json.dumps(pf_result.to_dict()),
                     )
@@ -580,7 +580,7 @@ class AnalysisService:
             for event in events:
                 self._bus.emit_threadsafe(run_id, event)
                 if hasattr(event, "type") and event.type == "report_chunk" and event.section:
-                    self._db.save_report_section(run_id, event.section, event.content)
+                    self._db.sync_save_report_section(run_id, event.section, event.content)
 
             last_chunk = chunk
 

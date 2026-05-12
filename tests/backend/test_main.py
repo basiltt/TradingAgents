@@ -2,7 +2,7 @@
 
 import pytest
 import pytest_asyncio
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 from httpx import AsyncClient, ASGITransport
 
 
@@ -85,7 +85,7 @@ def test_lifespan_recover_orphans_exception_closes_db(tmp_path):
     from backend.main import create_app
     from fastapi.testclient import TestClient
 
-    with patch("backend.persistence.AnalysisDB.recover_orphans", side_effect=RuntimeError("db locked")):
+    with patch("backend.async_persistence.AsyncAnalysisDB.recover_orphans", new_callable=AsyncMock, side_effect=RuntimeError("db locked")):
         app = create_app()
         with pytest.raises(Exception):
             with TestClient(app):

@@ -14,7 +14,9 @@ def _make_ws_app():
     app.state.cors_origins = ["http://localhost:3000"]
     app.state.ws_manager = AsyncMock()
     app.state.event_bus = MagicMock()
-    app.state.db = MagicMock()
+    db = MagicMock()
+    db.get_run = AsyncMock(return_value=None)
+    app.state.db = db
     return app
 
 
@@ -56,7 +58,7 @@ class TestAnalysisWsEndpoint:
 
     def test_run_not_found(self):
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value=None)
+        app.state.db.get_run = AsyncMock(return_value=None)
         client = TestClient(app)
         with client.websocket_connect(
             "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
@@ -67,7 +69,7 @@ class TestAnalysisWsEndpoint:
 
     def test_happy_path_connect_disconnect(self):
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111", "status": "running"})
+        app.state.db.get_run = AsyncMock(return_value={"id": "11111111-1111-1111-1111-111111111111", "status": "running"})
         mock_conn = MagicMock()
         app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
         app.state.ws_manager.ensure_consumer = AsyncMock()
@@ -85,7 +87,7 @@ class TestAnalysisWsEndpoint:
 
     def test_frame_too_large_closes(self):
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
+        app.state.db.get_run = AsyncMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
         mock_conn = MagicMock()
         app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
         app.state.ws_manager.ensure_consumer = AsyncMock()
@@ -101,7 +103,7 @@ class TestAnalysisWsEndpoint:
 
     def test_rate_limited_closes(self):
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
+        app.state.db.get_run = AsyncMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
         mock_conn = MagicMock()
         app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
         app.state.ws_manager.ensure_consumer = AsyncMock()
@@ -117,7 +119,7 @@ class TestAnalysisWsEndpoint:
 
     def test_replay_sends_snapshot(self):
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
+        app.state.db.get_run = AsyncMock(return_value={"id": "11111111-1111-1111-1111-111111111111"})
         mock_conn = MagicMock()
         app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
         app.state.ws_manager.ensure_consumer = AsyncMock()
@@ -139,7 +141,7 @@ class TestConsumerAndDisconnect:
         """Covers ws.py:55-60: _consume coroutine with real ensure_consumer."""
         import asyncio
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value={"id": "run1"})
+        app.state.db.get_run = AsyncMock(return_value={"id": "run1"})
         mock_conn = MagicMock()
         app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
         app.state.ws_manager.handle_message = AsyncMock(return_value=None)
@@ -182,7 +184,7 @@ class TestConsumerAndDisconnect:
         """Covers ws.py:77-78: WebSocketDisconnect is caught."""
         from fastapi.websockets import WebSocketDisconnect
         app = _make_ws_app()
-        app.state.db.get_run = MagicMock(return_value={"id": "run1"})
+        app.state.db.get_run = AsyncMock(return_value={"id": "run1"})
         mock_conn = MagicMock()
         app.state.ws_manager.connect = AsyncMock(return_value=mock_conn)
         app.state.ws_manager.ensure_consumer = AsyncMock()

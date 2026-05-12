@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid as _uuid
 from datetime import date
 from typing import Optional
@@ -56,7 +55,7 @@ async def list_accounts(
     account_type: Optional[str] = Query(None, description="Filter by account type: demo or live"),
 ):
     svc = _get_service(request)
-    accounts = await asyncio.to_thread(svc.list_accounts)
+    accounts = await svc.list_accounts()
     if account_type:
         if account_type not in ("demo", "live"):
             return JSONResponse({"detail": "account_type must be 'demo' or 'live'", "code": "VALIDATION_ERROR"}, 422)
@@ -68,7 +67,7 @@ async def list_accounts(
 async def get_account(request: Request, account_id: str):
     _validate_account_id(account_id)
     svc = _get_service(request)
-    account = await asyncio.to_thread(svc.get_account, account_id)
+    account = await svc.get_account(account_id)
     if not account:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return account
@@ -84,7 +83,7 @@ async def update_account(request: Request, account_id: str):
         return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
-    account = await asyncio.to_thread(svc.update_account, account_id, label=req.label, is_active=req.is_active)
+    account = await svc.update_account(account_id, label=req.label, is_active=req.is_active)
     if not account:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return account
@@ -129,7 +128,7 @@ async def toggle_analytics_inclusion(request: Request, account_id: str):
     if not isinstance(include, bool):
         return JSONResponse({"detail": "include must be a boolean", "code": "VALIDATION_ERROR"}, 422)
     svc = _get_service(request)
-    result = await asyncio.to_thread(svc.set_analytics_inclusion, account_id, include)
+    result = await svc.set_analytics_inclusion(account_id, include)
     if not result:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return result

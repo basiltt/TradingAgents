@@ -71,25 +71,25 @@ class TestCreateAccount:
 
 class TestListAccounts:
     def test_empty(self, client, mock_svc):
-        mock_svc.list_accounts = MagicMock(return_value=[])
+        mock_svc.list_accounts = AsyncMock(return_value=[])
         resp = client.get("/accounts")
         assert resp.status_code == 200
         assert resp.json() == []
 
     def test_with_accounts(self, client, mock_svc):
-        mock_svc.list_accounts = MagicMock(return_value=[{"id": "1", "label": "A"}])
+        mock_svc.list_accounts = AsyncMock(return_value=[{"id": "1", "label": "A"}])
         resp = client.get("/accounts")
         assert len(resp.json()) == 1
 
 
 class TestGetAccount:
     def test_found(self, client, mock_svc):
-        mock_svc.get_account = MagicMock(return_value={"id": "1", "label": "A"})
+        mock_svc.get_account = AsyncMock(return_value={"id": "1", "label": "A"})
         resp = client.get(f"/accounts/{_TEST_ID}")
         assert resp.status_code == 200
 
     def test_not_found(self, client, mock_svc):
-        mock_svc.get_account = MagicMock(return_value=None)
+        mock_svc.get_account = AsyncMock(return_value=None)
         resp = client.get(f"/accounts/{_MISSING_ID}")
         assert resp.status_code == 404
 

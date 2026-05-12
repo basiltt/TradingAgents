@@ -14,11 +14,13 @@ def event_loop():
 
 
 @pytest.fixture
-def db(tmp_path):
-    from backend.persistence import AnalysisDB
+def db(event_loop):
+    from backend.async_persistence import AsyncAnalysisDB
     import os
     dsn = os.environ.get("TEST_DATABASE_URL", "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test")
-    return AnalysisDB(dsn=dsn)
+    _db = AsyncAnalysisDB(dsn=dsn)
+    event_loop.run_until_complete(_db.connect())
+    return _db
 
 
 @pytest.fixture
@@ -153,7 +155,7 @@ def test_error_sanitization(service, sample_request, event_loop, db):
         async def _test():
             run_id = await service.start_analysis(sample_request)
             await asyncio.sleep(0.5)
-            run = db.get_run(run_id)
+            run = await db.get_run(run_id)
             assert run["status"] == "failed"
             assert "Internal error" in run["error"]
             assert "secret" not in run["error"]
@@ -187,7 +189,7 @@ def test_persist_signal_sections_saves_pm_signal(tmp_path):
     service._persist_signal_sections("run-123", last_chunk)
 
     # Should have called save_report_section with "_pm_signal" and valid JSON
-    calls = {call[0][1]: call[0][2] for call in db.save_report_section.call_args_list}
+    calls = {call[0][1]: call[0][2] for call in db.sync_save_report_section.call_args_list}
     assert "_pm_signal" in calls
     data = json.loads(calls["_pm_signal"])
     assert data["rating"] == "Buy"
@@ -210,7 +212,7 @@ def test_persist_signal_sections_skips_none_values(tmp_path):
         persistence=db, event_bus=event_bus, ws_manager=ws, config_service=config_svc
     )
     service._persist_signal_sections("run-456", {"_pm_signal_data": None, "_trader_signal_data": None})
-    db.save_report_section.assert_not_called()
+    db.sync_save_report_section.assert_not_called()
 
 
 def test_persist_signal_sections_handles_none_chunk(tmp_path):
@@ -229,17 +231,17 @@ def test_persist_signal_sections_handles_none_chunk(tmp_path):
         persistence=db, event_bus=event_bus, ws_manager=ws, config_service=config_svc
     )
     service._persist_signal_sections("run-789", None)
-    db.save_report_section.assert_not_called()
+    db.sync_save_report_section.assert_not_called()
 
 
 def _make_service_with_sections(sections: list):
     """Return an AnalysisService whose DB returns the given sections list."""
     import asyncio
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, AsyncMock
     from backend.services.analysis_service import AnalysisService
 
     db = MagicMock()
-    db.get_report_sections.return_value = sections
+    db.get_report_sections = AsyncMock(return_value=sections)
     event_bus = MagicMock()
     event_bus.get_snapshot.return_value = []
     ws = MagicMock()
@@ -320,10 +322,10 @@ def test_get_report_no_sections(service, db, event_loop):
 def test_get_report_joins_sections(service, db, event_loop):
     async def _test():
         run_id = "11111111-1111-1111-1111-111111111111"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
-        db.save_report_section(run_id, "market", "Market Analysis")
-        db.save_report_section(run_id, "news", "News Analysis")
-        db.save_report_section(run_id, "_snapshot", '{"agents":{}}')
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        await db.save_report_section(run_id, "market", "Market Analysis")
+        await db.save_report_section(run_id, "news", "News Analysis")
+        await db.save_report_section(run_id, "_snapshot", '{"agents":{}}')
         report = await service.get_report(run_id)
         assert "Market Analysis" in report
         assert "News Analysis" in report
@@ -334,8 +336,8 @@ def test_get_report_joins_sections(service, db, event_loop):
 def test_get_snapshot_returns_parsed_json(service, db, event_loop):
     async def _test():
         run_id = "22222222-2222-2222-2222-222222222222"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
-        db.save_report_section(run_id, "_snapshot", '{"reports":{"market":"data"}}')
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        await db.save_report_section(run_id, "_snapshot", '{"reports":{"market":"data"}}')
         snap = await service.get_snapshot(run_id)
         assert snap is not None
         assert snap["reports"]["market"] == "data"
@@ -345,9 +347,9 @@ def test_get_snapshot_returns_parsed_json(service, db, event_loop):
 def test_get_snapshot_backfills_from_sections(service, db, event_loop):
     async def _test():
         run_id = "33333333-3333-3333-3333-333333333333"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
-        db.save_report_section(run_id, "_snapshot", '{"reports":{}}')
-        db.save_report_section(run_id, "market", "Market Analysis")
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        await db.save_report_section(run_id, "_snapshot", '{"reports":{}}')
+        await db.save_report_section(run_id, "market", "Market Analysis")
         snap = await service.get_snapshot(run_id)
         assert snap["reports"]["market"] == "Market Analysis"
     event_loop.run_until_complete(_test())
@@ -356,7 +358,7 @@ def test_get_snapshot_backfills_from_sections(service, db, event_loop):
 def test_get_snapshot_none_when_no_snapshot(service, db, event_loop):
     async def _test():
         run_id = "44444444-4444-4444-4444-444444444444"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
         snap = await service.get_snapshot(run_id)
         assert snap is None
     event_loop.run_until_complete(_test())
@@ -365,8 +367,8 @@ def test_get_snapshot_none_when_no_snapshot(service, db, event_loop):
 def test_get_snapshot_bad_json(service, db, event_loop):
     async def _test():
         run_id = "55555555-5555-5555-5555-555555555555"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
-        db.save_report_section(run_id, "_snapshot", "not json at all")
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10", "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
+        await db.save_report_section(run_id, "_snapshot", "not json at all")
         snap = await service.get_snapshot(run_id)
         assert snap is None
     event_loop.run_until_complete(_test())
@@ -451,7 +453,7 @@ def test_cancel_non_running_active_run(service, event_loop):
 
 def test_cancel_db_completed_run(service, db, event_loop):
     async def _test():
-        db.insert_run({
+        await db.insert_run({
             "run_id": "r2", "ticker": "SPY", "analysis_date": "2025-01-10",
             "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
         })
@@ -468,14 +470,14 @@ def test_build_config_data_vendors(service):
     assert config["data_vendors"]["stock"] == "yfinance"
 
 
-def test_save_snapshot_event_types(service, db, bus):
+def test_save_snapshot_event_types(service, db, bus, event_loop):
     import json
     from collections import deque
     run_id = "snap-test-1"
-    db.insert_run({
+    event_loop.run_until_complete(db.insert_run({
         "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
         "status": "running", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
-    })
+    }))
     bus._ring_buffers[run_id] = deque([
         ({"type": "agent_status", "agent": "market", "status": "running"}, 50),
         ({"type": "message", "sender": "analyst", "content": "test msg", "seq": 1}, 50),
@@ -483,7 +485,7 @@ def test_save_snapshot_event_types(service, db, bus):
         ({"type": "report_chunk", "section": "market", "content": "Market analysis report"}, 60),
     ])
     service._save_snapshot(run_id)
-    raw = db.get_report_sections(run_id)
+    raw = event_loop.run_until_complete(db.get_report_sections(run_id))
     snap_row = next(r for r in raw if r["section"] == "_snapshot")
     snapshot = json.loads(snap_row["content"])
     assert snapshot["agents"]["market"] == "running"
@@ -506,7 +508,7 @@ def test_timeout_sets_failed_status(service, sample_request, event_loop, db):
         async def _test():
             run_id = await service.start_analysis(sample_request)
             await asyncio.sleep(0.5)
-            run = db.get_run(run_id)
+            run = await db.get_run(run_id)
             assert run["status"] == "failed"
             assert "timeout" in (run["error"] or "").lower() or "Wall-clock" in (run["error"] or "")
         event_loop.run_until_complete(_test())
@@ -539,36 +541,36 @@ def test_safe_json_non_serializable():
     assert result == "{}"
 
 
-def test_save_snapshot_messages_truncated(service, db, bus):
+def test_save_snapshot_messages_truncated(service, db, bus, event_loop):
     from collections import deque
     run_id = "snap-truncate"
-    db.insert_run({
+    event_loop.run_until_complete(db.insert_run({
         "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
         "status": "running", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
-    })
+    }))
     bus._ring_buffers[run_id] = deque(
         [({"type": "message", "sender": "a", "content": f"msg{i}", "seq": i}, 20) for i in range(250)]
     )
     service._save_snapshot(run_id)
     import json
-    raw = db.get_report_sections(run_id)
+    raw = event_loop.run_until_complete(db.get_report_sections(run_id))
     snap_row = next(r for r in raw if r["section"] == "_snapshot")
     snapshot = json.loads(snap_row["content"])
     assert len(snapshot["messages"]) == 200
     assert snapshot["messages"][0]["seq"] == 50
 
 
-def test_save_snapshot_exception_logged(service, db, bus):
+def test_save_snapshot_exception_logged(service, db, bus, event_loop):
     from collections import deque
     run_id = "snap-err-1"
-    db.insert_run({
+    event_loop.run_until_complete(db.insert_run({
         "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
         "status": "running", "config": "{}", "started_at": "2025-01-10T00:00:00Z",
-    })
+    }))
     bus._ring_buffers[run_id] = deque([
         ({"type": "agent_status", "agent": "market", "status": "done"}, 50),
     ])
-    with patch.object(db, "save_report_section", side_effect=Exception("db error")):
+    with patch.object(db, "sync_save_report_section", side_effect=Exception("db error")):
         service._save_snapshot(run_id)
 
 
@@ -596,7 +598,7 @@ def test_execute_graph_streaming_loop(service, db, bus):
 
     with patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph):
         with patch("backend.services.analysis_service.parse_stream_chunk", return_value=[fake_report_chunk]):
-            with patch.object(service._db, "save_report_section"):
+            with patch.object(service._db, "sync_save_report_section"):
                 result = service._execute_graph(
                     "run-stream",
                     {"ticker": "SPY", "analysis_date": "2025-01-10", "analysts": ["market"]},
@@ -651,7 +653,7 @@ def test_lifecycle_snapshot_persisted(service, db, event_loop):
                 "analysts": ["market"],
             })
             await asyncio.sleep(0.5)
-            run = db.get_run(run_id)
+            run = await db.get_run(run_id)
             assert run["status"] == "completed"
             snap = await service.get_snapshot(run_id)
             assert snap is not None
@@ -672,7 +674,7 @@ def test_update_run_status_false_skips_progress_event(service, db, event_loop, b
                 "ticker": "SPY", "analysis_date": "2025-06-01",
             })
             await asyncio.sleep(0.5)
-            run = db.get_run(run_id)
+            run = await db.get_run(run_id)
             # The run should complete successfully
             assert run is not None
             assert run["status"] in ("completed", "running", "failed")
@@ -691,7 +693,7 @@ def test_run_analysis_cancelled_error_sets_db_cancelled(service, db, event_loop)
         async def _test():
             run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
             await asyncio.sleep(0.5)
-            run = db.get_run(run_id)
+            run = await db.get_run(run_id)
             assert run is not None
             assert run["status"] in ("cancelled", "failed")
         event_loop.run_until_complete(_test())
@@ -704,7 +706,7 @@ def test_run_analysis_empty_decision_skips_section(service, db, event_loop):
         async def _test():
             run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
             await asyncio.sleep(0.5)
-            sections = db.get_report_sections(run_id)
+            sections = await db.get_report_sections(run_id)
             section_names = [s["section"] for s in sections]
             assert "final_trade_decision" not in section_names
         event_loop.run_until_complete(_test())
@@ -718,7 +720,7 @@ def test_timeout_increments_zombie_count(service, sample_request, event_loop, db
             run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
             await asyncio.sleep(0.5)
             assert service._zombie_count == 1
-            run = db.get_run(run_id)
+            run = await db.get_run(run_id)
             assert run["status"] == "failed"
         event_loop.run_until_complete(_test())
 
@@ -780,7 +782,7 @@ def test_cancel_returns_false_for_db_running_run(service, db, event_loop):
 
     async def _test():
         run_id = str(uuid.uuid4())
-        db.insert_run({
+        await db.insert_run({
             "run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
             "status": "running", "config": "{}",
             "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -805,21 +807,21 @@ def test_get_snapshot_malformed_json_returns_none(service, db, event_loop):
     """R7-F5: get_snapshot returns None when _snapshot section contains malformed JSON."""
     async def _test():
         run_id = "55555555-5555-5555-5555-555555555555"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
                        "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
-        db.save_report_section(run_id, "_snapshot", "not valid json {{{")
+        await db.save_report_section(run_id, "_snapshot", "not valid json {{{")
         result = await service.get_snapshot(run_id)
         assert result is None
     event_loop.run_until_complete(_test())
 
 
-def test_save_snapshot_exception_swallowed(service, db):
-    """R7-F6: _save_snapshot swallows exceptions from db.save_report_section."""
+def test_save_snapshot_exception_swallowed(service, db, event_loop):
+    """R7-F6: _save_snapshot swallows exceptions from db.sync_save_report_section."""
     from unittest.mock import patch as mpatch
     run_id = "66666666-6666-6666-6666-666666666666"
-    db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
-                   "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
-    with mpatch.object(db, "save_report_section", side_effect=RuntimeError("disk full")):
+    event_loop.run_until_complete(db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+                   "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"}))
+    with mpatch.object(db, "sync_save_report_section", side_effect=RuntimeError("disk full")):
         # Should not raise
         service._save_snapshot(run_id)
 
@@ -828,14 +830,14 @@ def test_get_snapshot_backfills_reports_from_sections(service, db, event_loop):
     """R8-F14: get_snapshot backfills empty reports{} from individual DB section rows."""
     async def _test():
         run_id = "77777777-7777-7777-7777-777777777777"
-        db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
+        await db.insert_run({"run_id": run_id, "ticker": "SPY", "analysis_date": "2025-01-10",
                        "status": "completed", "config": "{}", "started_at": "2025-01-10T00:00:00Z"})
         import json
         # Save snapshot with empty reports
         snapshot_data = {"agents": {}, "messages": [], "stats": None, "reports": {}}
-        db.save_report_section(run_id, "_snapshot", json.dumps(snapshot_data))
+        await db.save_report_section(run_id, "_snapshot", json.dumps(snapshot_data))
         # Save a separate market section
-        db.save_report_section(run_id, "market", "Market analysis text")
+        await db.save_report_section(run_id, "market", "Market analysis text")
         result = await service.get_snapshot(run_id)
         assert result is not None
         assert "market" in result.get("reports", {})

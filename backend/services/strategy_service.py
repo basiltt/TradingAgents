@@ -7,13 +7,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from backend.persistence import AnalysisDB
+from backend.async_persistence import AsyncAnalysisDB
 
 logger = logging.getLogger(__name__)
 
 
 class StrategyService:
-    def __init__(self, db: AnalysisDB):
+    def __init__(self, db: AsyncAnalysisDB):
         self._db = db
 
     def _serialize_datetimes(self, strategy: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,7 +23,7 @@ class StrategyService:
                 strategy[key] = val.isoformat()
         return strategy
 
-    def create_strategy(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_strategy(self, data: Dict[str, Any]) -> Dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
         strategy = {
             "id": str(uuid.uuid4()),
@@ -35,39 +35,39 @@ class StrategyService:
             "created_at": now,
             "updated_at": now,
         }
-        self._db.insert_strategy(strategy)
+        await self._db.insert_strategy(strategy)
         logger.info("Strategy created: %s (%s)", strategy["id"], strategy["name"])
         return strategy
 
-    def list_strategies(
+    async def list_strategies(
         self, status: Optional[str] = None, category: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        rows = self._db.list_strategies(status=status, category=category)
+        rows = await self._db.list_strategies(status=status, category=category)
         return [self._serialize_datetimes(r) for r in rows]
 
-    def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
-        row = self._db.get_strategy(strategy_id)
+    async def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
+        row = await self._db.get_strategy(strategy_id)
         return self._serialize_datetimes(row) if row else None
 
-    def update_strategy(self, strategy_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update_strategy(self, strategy_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not data:
-            return self.get_strategy(strategy_id)
-        ok = self._db.update_strategy(strategy_id, **data)
+            return await self.get_strategy(strategy_id)
+        ok = await self._db.update_strategy(strategy_id, **data)
         if not ok:
             return None
-        return self.get_strategy(strategy_id)
+        return await self.get_strategy(strategy_id)
 
-    def delete_strategy(self, strategy_id: str) -> bool:
-        ok = self._db.delete_strategy(strategy_id)
+    async def delete_strategy(self, strategy_id: str) -> bool:
+        ok = await self._db.delete_strategy(strategy_id)
         if ok:
             logger.info("Strategy deleted: %s", strategy_id)
         return ok
 
-    def import_strategies(self, strategies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def import_strategies(self, strategies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         imported = []
         for s in strategies:
             s.pop("id", None)
             s.pop("created_at", None)
             s.pop("updated_at", None)
-            imported.append(self.create_strategy(s))
+            imported.append(await self.create_strategy(s))
         return imported

@@ -54,7 +54,7 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
         await websocket.close(code=4403, reason="Origin not allowed")
         return
 
-    run = await asyncio.to_thread(db.get_run, run_id)
+    run = await db.get_run(run_id)
     if not run:
         await websocket.accept()
         await websocket.send_json({"type": "error", "seq": 0, "message": "Run not found"})

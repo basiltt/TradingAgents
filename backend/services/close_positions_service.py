@@ -31,8 +31,7 @@ class ClosePositionsService:
             client = await self._accounts_service._build_client(account_id)
             positions = await client.get_positions()
             if not positions:
-                execution = await asyncio.to_thread(
-                    self._db.insert_close_execution,
+                execution = await self._db.insert_close_execution(
                     {
                         "account_id": account_id,
                         "trigger_source": "manual",
@@ -80,8 +79,7 @@ class ClosePositionsService:
             closed = sum(1 for r in results if r["status"] == "closed")
             failed = sum(1 for r in results if r["status"] == "failed")
 
-            execution = await asyncio.to_thread(
-                self._db.insert_close_execution,
+            execution = await self._db.insert_close_execution(
                 {
                     "account_id": account_id,
                     "trigger_source": "manual",
@@ -118,8 +116,7 @@ class ClosePositionsService:
             positions = await client.get_positions()
 
             if not positions:
-                await asyncio.to_thread(
-                    self._db.insert_close_execution,
+                await self._db.insert_close_execution(
                     {
                         "account_id": account_id,
                         "rule_id": rule_id,
@@ -153,8 +150,7 @@ class ClosePositionsService:
             closed = sum(1 for r in results if r["status"] == "closed")
             failed = sum(1 for r in results if r["status"] == "failed")
 
-            await asyncio.to_thread(
-                self._db.insert_close_execution,
+            await self._db.insert_close_execution(
                 {
                     "account_id": account_id,
                     "rule_id": rule_id,
@@ -188,11 +184,11 @@ class ClosePositionsService:
     # ── Rule CRUD ────────────────────────────────────────────────
 
     async def create_rule(self, account_id: str, rule_data: dict) -> dict:
-        account = await asyncio.to_thread(self._db.get_account, account_id)
+        account = await self._db.get_account(account_id)
         if not account:
             raise ValueError("Account not found")
 
-        count = await asyncio.to_thread(self._db.count_rules_for_account, account_id)
+        count = await self._db.count_rules_for_account(account_id)
         if count >= MAX_RULES_PER_ACCOUNT:
             raise ValueError(f"Maximum {MAX_RULES_PER_ACCOUNT} rules per account")
 
@@ -206,8 +202,7 @@ class ClosePositionsService:
             if not reference or Decimal(reference) <= 0:
                 raise ValueError("Cannot create percentage rule: current equity is zero or unavailable")
 
-        row = await asyncio.to_thread(
-            self._db.insert_close_rule,
+        row = await self._db.insert_close_rule(
             {
                 "account_id": account_id,
                 "trigger_type": trigger_type,
@@ -219,10 +214,10 @@ class ClosePositionsService:
         return row
 
     async def list_rules(self, account_id: str) -> list:
-        return await asyncio.to_thread(self._db.list_close_rules, account_id)
+        return await self._db.list_close_rules(account_id)
 
     async def update_rule(self, account_id: str, rule_id: str, data: dict) -> dict | None:
-        rule = await asyncio.to_thread(self._db.get_close_rule, rule_id)
+        rule = await self._db.get_close_rule(rule_id)
         if not rule or rule["account_id"] != account_id:
             return None
 
@@ -254,13 +249,13 @@ class ClosePositionsService:
 
         if not fields:
             return rule
-        return await asyncio.to_thread(self._db.update_close_rule, rule_id, **fields)
+        return await self._db.update_close_rule(rule_id, **fields)
 
     async def delete_rule(self, account_id: str, rule_id: str) -> bool:
-        rule = await asyncio.to_thread(self._db.get_close_rule, rule_id)
+        rule = await self._db.get_close_rule(rule_id)
         if not rule or rule["account_id"] != account_id:
             return False
-        return await asyncio.to_thread(self._db.delete_close_rule, rule_id)
+        return await self._db.delete_close_rule(rule_id)
 
     async def list_executions(self, account_id: str, page: int = 1, limit: int = 20) -> dict:
-        return await asyncio.to_thread(self._db.list_close_executions, account_id, page, limit)
+        return await self._db.list_close_executions(account_id, page, limit)

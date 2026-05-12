@@ -61,19 +61,19 @@ def db():
             "api_secret_encrypted": acc["api_secret_encrypted"],
         }
 
-    mock_db.insert_account.side_effect = _insert_account
-    mock_db.get_account.side_effect = _get_account
-    mock_db.list_accounts.side_effect = _list_accounts
-    mock_db.update_account.side_effect = _update_account
-    mock_db.soft_delete_account.side_effect = _soft_delete
-    mock_db.get_account_credentials.side_effect = _get_credentials
-    mock_db.rotate_account_credentials.return_value = True
-    mock_db.insert_closed_pnl_records.return_value = 0
-    mock_db.get_closed_pnl.return_value = {"items": [], "total": 0, "page": 1, "limit": 100}
-    mock_db.get_closed_pnl_summary.return_value = {
+    mock_db.insert_account = AsyncMock(side_effect=_insert_account)
+    mock_db.get_account = AsyncMock(side_effect=_get_account)
+    mock_db.list_accounts = AsyncMock(side_effect=_list_accounts)
+    mock_db.update_account = AsyncMock(side_effect=_update_account)
+    mock_db.soft_delete_account = AsyncMock(side_effect=_soft_delete)
+    mock_db.get_account_credentials = AsyncMock(side_effect=_get_credentials)
+    mock_db.rotate_account_credentials = AsyncMock(return_value=True)
+    mock_db.insert_closed_pnl_records = AsyncMock(return_value=0)
+    mock_db.get_closed_pnl = AsyncMock(return_value={"items": [], "total": 0, "page": 1, "limit": 100})
+    mock_db.get_closed_pnl_summary = AsyncMock(return_value={
         "total_pnl": "0", "win_count": 0, "loss_count": 0,
         "win_rate": 0.0, "avg_win": "0", "avg_loss": "0",
-    }
+    })
     return mock_db
 
 
@@ -108,8 +108,9 @@ async def test_create_account_connection_failure(svc):
             await svc.create_account("Test", "demo", "apikey12345678", "secret12345678")
 
 
-def test_list_accounts_empty(svc):
-    assert svc.list_accounts() == []
+@pytest.mark.asyncio
+async def test_list_accounts_empty(svc):
+    assert await svc.list_accounts() == []
 
 
 @pytest.mark.asyncio
@@ -121,7 +122,7 @@ async def test_list_accounts_after_create(svc):
         await svc.create_account("A1", "demo", "apikey12345678", "secret12345678")
         await svc.create_account("A2", "live", "apikey99999999", "secret99999999")
 
-    accounts = svc.list_accounts()
+    accounts = await svc.list_accounts()
     assert len(accounts) == 2
 
 
@@ -133,7 +134,7 @@ async def test_update_account(svc):
         instance.close = AsyncMock()
         account = await svc.create_account("Old", "demo", "apikey12345678", "secret12345678")
 
-    updated = svc.update_account(account["id"], label="New")
+    updated = await svc.update_account(account["id"], label="New")
     assert updated["label"] == "New"
 
 
@@ -146,8 +147,8 @@ async def test_delete_account(svc):
         account = await svc.create_account("Del", "demo", "apikey12345678", "secret12345678")
 
     assert await svc.delete_account(account["id"]) is True
-    assert svc.get_account(account["id"]) is None
-    assert svc.list_accounts() == []
+    assert await svc.get_account(account["id"]) is None
+    assert await svc.list_accounts() == []
 
 
 @pytest.mark.asyncio

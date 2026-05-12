@@ -67,7 +67,7 @@ def _make_app(run=None, cors_origins=None):
         cors_origins = ["http://localhost:5177"]
 
     db = MagicMock()
-    db.get_run = MagicMock(return_value=run)
+    db.get_run = AsyncMock(return_value=run)
 
     ws_manager = MagicMock()
     ws_manager.connect = AsyncMock(return_value=MagicMock())
@@ -320,7 +320,7 @@ class TestWebSocketDisconnectDirect:
         ws.iter_text = iter_text_raises
 
         db = MagicMock()
-        db.get_run = MagicMock(return_value={"run_id": run_id, "status": "running"})
+        db.get_run = AsyncMock(return_value={"run_id": run_id, "status": "running"})
 
         ws_manager = MagicMock()
         conn = MagicMock()

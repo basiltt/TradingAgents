@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, Set
 
 from backend.crypto import decrypt_value
-from backend.persistence import AnalysisDB
+from backend.async_persistence import AsyncAnalysisDB
 from backend.services.bybit_ws_client import BybitWSClient
 
 logger = logging.getLogger(__name__)
@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 class AccountWSManager:
     """Orchestrates one BybitWSClient per active account, broadcasting events to connected frontends."""
 
-    def __init__(self, db: AnalysisDB):
+    def __init__(self, db: AsyncAnalysisDB):
         self._db = db
         self._clients: Dict[str, BybitWSClient] = {}
         self._frontend_queues: Set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        accounts = await asyncio.to_thread(self._db.list_accounts)
+        accounts = await self._db.list_accounts()
         for acc in accounts:
             if acc["is_active"]:
                 await self._start_account(acc["id"])
@@ -50,7 +50,7 @@ class AccountWSManager:
     async def _start_account(self, account_id: str) -> None:
         if account_id in self._clients:
             return
-        creds = await asyncio.to_thread(self._db.get_account_credentials, account_id)
+        creds = await self._db.get_account_credentials(account_id)
         if not creds:
             return
         try:

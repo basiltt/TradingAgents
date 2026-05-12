@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid as _uuid
 from typing import Optional
@@ -49,7 +48,7 @@ async def list_strategies(
     if category and category not in VALID_STRATEGY_CATEGORIES:
         return JSONResponse({"detail": f"Invalid category filter: {category}", "code": "VALIDATION_ERROR"}, 422)
     svc = _get_service(request)
-    items = await asyncio.to_thread(svc.list_strategies, status=status, category=category)
+    items = await svc.list_strategies(status=status, category=category)
     return items
 
 
@@ -64,14 +63,14 @@ async def create_strategy(request: Request):
     except ValidationError as e:
         return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
     svc = _get_service(request)
-    strategy = await asyncio.to_thread(svc.create_strategy, req.model_dump())
+    strategy = await svc.create_strategy(req.model_dump())
     return strategy
 
 
 @router.get("/strategies/export")
 async def export_strategies(request: Request):
     svc = _get_service(request)
-    items = await asyncio.to_thread(svc.list_strategies)
+    items = await svc.list_strategies()
     return {"strategies": items}
 
 
@@ -99,7 +98,7 @@ async def import_strategies(request: Request):
     if errors:
         return JSONResponse({"detail": f"Validation errors: {'; '.join(errors)}", "code": "VALIDATION_ERROR"}, 422)
     svc = _get_service(request)
-    imported = await asyncio.to_thread(svc.import_strategies, validated)
+    imported = await svc.import_strategies(validated)
     return {"imported": len(imported), "strategies": imported}
 
 
@@ -107,7 +106,7 @@ async def import_strategies(request: Request):
 async def get_strategy(request: Request, strategy_id: str):
     _validate_id(strategy_id)
     svc = _get_service(request)
-    strategy = await asyncio.to_thread(svc.get_strategy, strategy_id)
+    strategy = await svc.get_strategy(strategy_id)
     if not strategy:
         return JSONResponse({"detail": "Strategy not found", "code": "NOT_FOUND"}, 404)
     return strategy
@@ -126,7 +125,7 @@ async def update_strategy(request: Request, strategy_id: str):
         return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
     svc = _get_service(request)
     updates = req.model_dump(exclude_unset=True)
-    result = await asyncio.to_thread(svc.update_strategy, strategy_id, updates)
+    result = await svc.update_strategy(strategy_id, updates)
     if result is None:
         return JSONResponse({"detail": "Strategy not found", "code": "NOT_FOUND"}, 404)
     return result
@@ -136,7 +135,7 @@ async def update_strategy(request: Request, strategy_id: str):
 async def delete_strategy(request: Request, strategy_id: str):
     _validate_id(strategy_id)
     svc = _get_service(request)
-    ok = await asyncio.to_thread(svc.delete_strategy, strategy_id)
+    ok = await svc.delete_strategy(strategy_id)
     if not ok:
         return JSONResponse({"detail": "Strategy not found", "code": "NOT_FOUND"}, 404)
     return {"deleted": True}

@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.event_bus import EventBus
-from backend.persistence import AnalysisDB
+from backend.async_persistence import AsyncAnalysisDB
 from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
@@ -111,11 +111,12 @@ def create_app() -> FastAPI:
         loop.set_default_executor(_default_executor)
         logger.info("Default thread pool: %d workers", _default_executor._max_workers)
 
-        db = AnalysisDB(dsn=dsn)
+        db = AsyncAnalysisDB(dsn=dsn)
+        await db.connect()
         try:
-            db.recover_orphans()
+            await db.recover_orphans()
         except Exception:
-            db.close()
+            await db.close()
             raise
         event_bus = EventBus(loop=loop)
         ws_manager = WSManager(event_bus=event_bus)
@@ -227,7 +228,7 @@ def create_app() -> FastAPI:
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
         _default_executor.shutdown(wait=False, cancel_futures=True)
-        db.close()
+        await db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
 
@@ -276,8 +277,19 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health(request: Request):
-        db_status = await asyncio.to_thread(request.app.state.db.health_check)
-        return {"status": "ok", "db": db_status}
+        db_ok = request.app.state.db.is_healthy()
+        svc = request.app.state.analysis_service
+        active = sum(1 for r in svc._active_runs.values() if r.get("status") == "running")
+        cap = svc.max_concurrent
+        status = "ok" if db_ok else "degraded"
+        if active > cap * 0.75:
+            status = "degraded"
+        return {
+            "status": status,
+            "db": "ok" if db_ok else "unavailable",
+            "analyses_active": active,
+            "analyses_max": cap,
+        }
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):

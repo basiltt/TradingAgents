@@ -59,13 +59,13 @@ class CloseRuleEvaluator:
 
     async def _evaluate_all_rules(self) -> None:
         try:
-            recovered = await asyncio.to_thread(self._db.recover_stuck_triggered_rules, 90)
+            recovered = await self._db.recover_stuck_triggered_rules(90)
             if recovered:
                 logger.warning("Recovered %d stuck triggered rules", recovered)
         except Exception:
             logger.exception("Failed to recover stuck triggered rules")
 
-        rules = await asyncio.to_thread(self._db.list_active_rules)
+        rules = await self._db.list_active_rules()
         if not rules:
             return
 
@@ -120,24 +120,24 @@ class CloseRuleEvaluator:
                         "Rule %s triggered for account %s (type=%s, threshold=%s)",
                         rule["id"], account_id, rule["trigger_type"], rule["threshold_value"],
                     )
-                    did_transition = await asyncio.to_thread(self._db.atomic_trigger_rule, rule["id"])
+                    did_transition = await self._db.atomic_trigger_rule(rule["id"])
                     if not did_transition:
                         continue
                     try:
                         result = await self._close_service.close_all_for_rule(account_id, rule["id"])
                         if result.get("skipped"):
                             logger.info("Close skipped for rule %s (concurrent close), reverting to active", rule["id"])
-                            await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
+                            await self._db.update_close_rule(rule["id"], status="active")
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
-                            await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="executed")
+                            await self._db.update_close_rule(rule["id"], status="executed")
                     except asyncio.CancelledError:
                         logger.warning("Close cancelled (timeout) for rule %s, reverting to active", rule["id"])
-                        await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
+                        await self._db.update_close_rule(rule["id"], status="active")
                         raise
                     except Exception:
                         logger.exception("Failed to close positions for rule %s, reverting to active", rule["id"])
-                        await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
+                        await self._db.update_close_rule(rule["id"], status="active")
             except Exception:
                 logger.exception("Error evaluating rule %s", rule["id"])
 

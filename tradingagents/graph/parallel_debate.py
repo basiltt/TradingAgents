@@ -15,6 +15,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from typing import Any, Callable, Dict, List
 
@@ -22,23 +23,39 @@ logger = logging.getLogger(__name__)
 
 _DEBATE_EXECUTOR_WORKERS = int(os.environ.get("DEBATE_EXECUTOR_WORKERS", "4"))
 _debate_executor: ThreadPoolExecutor | None = None
+_debate_lock = threading.Lock()
+_debate_shutting_down = False
 
 
 def _get_debate_executor() -> ThreadPoolExecutor:
     global _debate_executor
-    if _debate_executor is None or _debate_executor._shutdown:
-        _debate_executor = ThreadPoolExecutor(
-            max_workers=_DEBATE_EXECUTOR_WORKERS,
-            thread_name_prefix="debate",
-        )
+    with _debate_lock:
+        if _debate_shutting_down:
+            raise RuntimeError("Debate executor is shutting down")
+        if _debate_executor is None or _debate_executor._shutdown:
+            _debate_executor = ThreadPoolExecutor(
+                max_workers=_DEBATE_EXECUTOR_WORKERS,
+                thread_name_prefix="debate",
+            )
     return _debate_executor
 
 
 def shutdown_debate_executor():
-    global _debate_executor
-    if _debate_executor is not None:
-        _debate_executor.shutdown(wait=False, cancel_futures=True)
-        _debate_executor = None
+    global _debate_executor, _debate_shutting_down
+    with _debate_lock:
+        _debate_shutting_down = True
+        if _debate_executor is not None:
+            _debate_executor.shutdown(wait=False, cancel_futures=True)
+            _debate_executor = None
+
+
+def reset_debate_executor():
+    global _debate_executor, _debate_shutting_down
+    with _debate_lock:
+        _debate_shutting_down = False
+        if _debate_executor is not None:
+            _debate_executor.shutdown(wait=False, cancel_futures=True)
+            _debate_executor = None
 
 
 def _merge_risk_debate_states(
