@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
@@ -14,10 +14,13 @@ interface Props {
 
 export function CloseAllConfirmDialog({ open, onOpenChange, accountId, accountLabel, positionsCount, onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
+  const submittingRef = useRef(false);
 
   if (!open) return null;
 
   const handleConfirm = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
     try {
       const result = await api.closeAllPositions(accountId);
@@ -40,6 +43,7 @@ export function CloseAllConfirmDialog({ open, onOpenChange, accountId, accountLa
         toast.error(err?.detail || "Failed to close positions");
       }
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };

@@ -117,7 +117,8 @@ const accountsSlice = createSlice({
       const idx = state.dashboard.findIndex((d) => d.id === account_id);
       if (idx < 0) return;
       const card = state.dashboard[idx];
-      card.positions_count = Math.max(0, card.positions_count - data.closed);
+      const closed = typeof data?.closed === "number" ? data.closed : 0;
+      card.positions_count = Math.max(0, card.positions_count - closed);
     },
   },
 });

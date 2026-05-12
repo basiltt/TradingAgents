@@ -1598,7 +1598,7 @@ class AnalysisDB:
         return affected > 0
 
     def list_active_rules(self) -> list:
-        """Fetch all active rules for non-deleted accounts."""
+        """Fetch all active rules for non-deleted, active accounts."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1606,6 +1606,7 @@ class AnalysisDB:
                     "SELECT cr.* FROM close_rules cr "
                     "JOIN trading_accounts ta ON cr.account_id = ta.id "
                     "WHERE cr.status = 'active' AND ta.deleted_at IS NULL "
+                    "AND ta.is_active = TRUE "
                     "AND (cr.expires_at IS NULL OR cr.expires_at > now()) "
                     "ORDER BY cr.account_id, cr.created_at",
                 )
@@ -1614,6 +1615,24 @@ class AnalysisDB:
                 conn.rollback()
                 raise
         return [self._serialize_row(r) for r in rows]
+
+    def recover_stuck_triggered_rules(self, max_age_seconds: int = 120) -> int:
+        """Revert rules stuck in 'triggered' state for longer than max_age_seconds."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "UPDATE close_rules SET status = 'active', triggered_at = NULL "
+                    "WHERE status = 'triggered' "
+                    "AND triggered_at < now() - interval '1 second' * %s",
+                    (max_age_seconds,),
+                )
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected
 
     def count_active_rules_by_account(self) -> Dict[str, int]:
         """Return {account_id: count} for all accounts with active rules."""

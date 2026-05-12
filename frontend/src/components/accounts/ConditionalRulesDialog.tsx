@@ -31,9 +31,14 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
   const [rules, setRules] = useState<CloseRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const actionRef = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setRules([]);
+      setLoading(true);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     api.getCloseRules(accountId, controller.signal)
@@ -46,6 +51,8 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
   if (!open) return null;
 
   const handleAddRule = async () => {
+    if (actionRef.current) return;
+    actionRef.current = true;
     setSaving("new");
     try {
       const rule = await api.createCloseRule(accountId, {
@@ -62,13 +69,14 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
         toast.error(err?.detail || "Failed to create rule");
       }
     } finally {
+      actionRef.current = false;
       setSaving(null);
     }
   };
 
-  const handleUpdateRule = async (ruleId: string, field: keyof UpdateCloseRuleData, value: string) => {
+  const handleUpdateRule = async (ruleId: string, updates: UpdateCloseRuleData) => {
     try {
-      const updated = await api.updateCloseRule(accountId, ruleId, { [field]: value } as UpdateCloseRuleData);
+      const updated = await api.updateCloseRule(accountId, ruleId, updates);
       setRules((prev) => prev.map((r) => (r.id === ruleId ? updated : r)));
     } catch (err: any) {
       toast.error(err?.detail || "Failed to update rule");
@@ -87,6 +95,8 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
   };
 
   const handleDeleteRule = async (ruleId: string) => {
+    if (actionRef.current) return;
+    actionRef.current = true;
     setSaving(ruleId);
     try {
       await api.deleteCloseRule(accountId, ruleId);
@@ -96,6 +106,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
     } catch (err: any) {
       toast.error(err?.detail || "Failed to delete rule");
     } finally {
+      actionRef.current = false;
       setSaving(null);
     }
   };
@@ -151,7 +162,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
           <button
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm rounded-lg border border-dashed border-border/50 hover:border-border hover:bg-muted/20 text-muted-foreground transition-colors disabled:opacity-50"
             onClick={handleAddRule}
-            disabled={saving === "new" || rules.filter((r) => r.status !== "triggered").length >= 10}
+            disabled={saving === "new" || rules.filter((r) => r.status !== "triggered" && r.status !== "executed").length >= 10}
           >
             {saving === "new" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             Add Rule
@@ -171,12 +182,14 @@ function RuleRow({
 }: {
   rule: CloseRule;
   saving: boolean;
-  onUpdate: (id: string, field: keyof UpdateCloseRuleData, value: string) => void;
+  onUpdate: (id: string, updates: UpdateCloseRuleData) => void;
   onToggle: () => void;
   onDelete: () => void;
 }) {
   const isPct = PCT_TYPES.has(rule.trigger_type);
   const isTriggered = rule.status === "triggered";
+  const isExecuted = rule.status === "executed";
+  const isTerminal = isTriggered || isExecuted;
   const isActive = rule.status === "active";
 
   const [localThreshold, setLocalThreshold] = useState(rule.threshold_value);
@@ -190,7 +203,7 @@ function RuleRow({
     setLocalThreshold(value);
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      onUpdate(rule.id, "threshold_value", value);
+      onUpdate(rule.id, { threshold_value: value });
     }, 500);
   }, [rule.id, onUpdate]);
 
@@ -200,7 +213,7 @@ function RuleRow({
 
   return (
     <div className={`rounded-xl border p-3.5 space-y-2.5 transition-colors ${
-      isTriggered
+      isTerminal
         ? "border-amber-500/30 bg-amber-500/[0.03]"
         : isActive
           ? "border-border/50 bg-card/50"
@@ -211,8 +224,19 @@ function RuleRow({
           <select
             className="bg-muted/30 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs flex-1 min-w-0"
             value={rule.trigger_type}
-            onChange={(e) => onUpdate(rule.id, "trigger_type", e.target.value)}
-            disabled={isTriggered}
+            onChange={(e) => {
+              clearTimeout(debounceRef.current);
+              const newType = e.target.value as TriggerType;
+              const wasPct = PCT_TYPES.has(rule.trigger_type);
+              const isPctNow = PCT_TYPES.has(newType);
+              const updates: UpdateCloseRuleData = { trigger_type: newType };
+              if (wasPct !== isPctNow) {
+                updates.threshold_value = isPctNow ? "5" : "100";
+                setLocalThreshold(updates.threshold_value);
+              }
+              onUpdate(rule.id, updates);
+            }}
+            disabled={isTerminal}
           >
             {TRIGGER_OPTIONS.map((t) => (
               <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>
@@ -227,7 +251,7 @@ function RuleRow({
               }`}
               value={localThreshold}
               onChange={(e) => handleThresholdChange(e.target.value)}
-              disabled={isTriggered}
+              disabled={isTerminal}
             />
             {isPct && (
               <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground/50">%</span>
@@ -239,9 +263,11 @@ function RuleRow({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {isTriggered ? (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 font-medium">
-              Triggered
+          {isTerminal ? (
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+              isExecuted ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
+            }`}>
+              {isExecuted ? "Executed" : "Triggered"}
             </span>
           ) : (
             <button

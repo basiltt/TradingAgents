@@ -697,3 +697,12 @@ class UpdateCloseRuleRequest(BaseModel):
         if val <= 0:
             raise ValueError("threshold_value must be positive")
         return v
+
+    @model_validator(mode="after")
+    def validate_pct_bounds(self) -> "UpdateCloseRuleRequest":
+        if self.trigger_type and self.trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and self.threshold_value:
+            from decimal import Decimal as D
+            val = D(self.threshold_value)
+            if val > D("100"):
+                raise ValueError("Percentage threshold must be between 0.01 and 100")
+        return self

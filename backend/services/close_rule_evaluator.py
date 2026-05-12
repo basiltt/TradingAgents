@@ -10,7 +10,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 EVALUATION_INTERVAL = 30  # seconds
-PER_ACCOUNT_TIMEOUT = 10  # seconds
+PER_ACCOUNT_TIMEOUT = 30  # seconds — must accommodate closing multiple positions
 MAX_CONCURRENT_ACCOUNTS = 5
 
 
@@ -58,6 +58,13 @@ class CloseRuleEvaluator:
                 break
 
     async def _evaluate_all_rules(self) -> None:
+        try:
+            recovered = await asyncio.to_thread(self._db.recover_stuck_triggered_rules, 90)
+            if recovered:
+                logger.warning("Recovered %d stuck triggered rules", recovered)
+        except Exception:
+            logger.exception("Failed to recover stuck triggered rules")
+
         rules = await asyncio.to_thread(self._db.list_active_rules)
         if not rules:
             return
@@ -92,9 +99,13 @@ class CloseRuleEvaluator:
             logger.warning("Cannot fetch wallet for account %s, skipping rules", account_id)
             return
 
-        equity = Decimal(wallet.get("totalEquity", "0"))
-        pnl = Decimal(wallet.get("totalPerpUPL", "0"))
-        balance = Decimal(wallet.get("totalWalletBalance", "0"))
+        try:
+            equity = Decimal(wallet.get("totalEquity") or "0")
+            pnl = Decimal(wallet.get("totalPerpUPL") or "0")
+            balance = Decimal(wallet.get("totalWalletBalance") or "0")
+        except Exception:
+            logger.warning("Invalid wallet data for account %s, skipping rules", account_id)
+            return
 
         for rule in rules:
             try:
@@ -108,7 +119,13 @@ class CloseRuleEvaluator:
                     if not did_transition:
                         continue
                     try:
-                        await self._close_service.close_all_for_rule(account_id, rule["id"])
+                        result = await self._close_service.close_all_for_rule(account_id, rule["id"])
+                        if result.get("skipped"):
+                            logger.info("Close skipped for rule %s (concurrent close), reverting to active", rule["id"])
+                            await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
+                        else:
+                            logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
+                            await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="executed")
                     except Exception:
                         logger.exception("Failed to close positions for rule %s, reverting to active", rule["id"])
                         await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")

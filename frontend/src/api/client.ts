@@ -801,7 +801,7 @@ export interface CloseRule {
   trigger_type: TriggerType;
   threshold_value: string;
   reference_value: string | null;
-  status: "active" | "paused" | "triggered" | "expired";
+  status: "active" | "paused" | "triggered" | "executed" | "expired";
   expires_at: string | null;
   created_at: string;
   updated_at: string;

@@ -291,7 +291,6 @@ class BybitClient:
             result = await self._request("POST", "/v5/order/create", params)
         except BybitAPIError as e:
             if e.ret_code == 110043 and position_idx == 0:
-                # positionIdx mismatch — account is in Hedge mode, retry with correct idx
                 hedge_idx = 1 if close_side == "Sell" else 2
                 logger.warning(
                     "Position mode mismatch for %s, retrying with positionIdx=%d",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from decimal import Decimal
 from typing import Any
 
 from backend.services.bybit_client import BybitAPIError
@@ -27,7 +28,8 @@ class ClosePositionsService:
         self._closing_accounts.add(account_id)
 
         try:
-            positions = await self._accounts_service.get_positions(account_id)
+            client = await self._accounts_service._build_client(account_id)
+            positions = await client.get_positions()
             if not positions:
                 execution = await asyncio.to_thread(
                     self._db.insert_close_execution,
@@ -42,7 +44,6 @@ class ClosePositionsService:
                 )
                 return {"total": 0, "closed": 0, "failed": 0, "results": [], "execution_id": execution["id"]}
 
-            client = await self._accounts_service._build_client(account_id)
             semaphore = asyncio.Semaphore(CLOSE_RATE_LIMIT)
 
             async def close_one(pos: dict) -> dict:
@@ -113,7 +114,8 @@ class ClosePositionsService:
         self._closing_accounts.add(account_id)
 
         try:
-            positions = await self._accounts_service.get_positions(account_id)
+            client = await self._accounts_service._build_client(account_id)
+            positions = await client.get_positions()
 
             if not positions:
                 await asyncio.to_thread(
@@ -130,7 +132,6 @@ class ClosePositionsService:
                 )
                 return {"total": 0, "closed": 0, "failed": 0, "results": []}
 
-            client = await self._accounts_service._build_client(account_id)
             semaphore = asyncio.Semaphore(CLOSE_RATE_LIMIT)
 
             async def close_one(pos: dict) -> dict:
@@ -202,6 +203,8 @@ class ClosePositionsService:
         if trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and not reference:
             wallet = await self._accounts_service.get_wallet(account_id)
             reference = wallet.get("totalEquity", "0")
+            if not reference or Decimal(reference) <= 0:
+                raise ValueError("Cannot create percentage rule: current equity is zero or unavailable")
 
         row = await asyncio.to_thread(
             self._db.insert_close_rule,
@@ -222,6 +225,10 @@ class ClosePositionsService:
         rule = await asyncio.to_thread(self._db.get_close_rule, rule_id)
         if not rule or rule["account_id"] != account_id:
             return None
+
+        if rule["status"] in ("triggered", "executed"):
+            raise ValueError(f"Cannot update rule in '{rule['status']}' state")
+
         fields = {}
         if data.get("trigger_type") is not None:
             fields["trigger_type"] = data["trigger_type"]
@@ -234,6 +241,11 @@ class ClosePositionsService:
 
         new_type = fields.get("trigger_type", rule["trigger_type"])
         pct_types = {"EQUITY_DROP_PCT", "EQUITY_RISE_PCT"}
+
+        effective_threshold = fields.get("threshold_value", rule["threshold_value"])
+        if new_type in pct_types and Decimal(effective_threshold) > Decimal("100"):
+            raise ValueError("Percentage threshold must be between 0.01 and 100")
+
         if new_type in pct_types and "reference_value" not in fields:
             old_type = rule["trigger_type"]
             if old_type not in pct_types or "trigger_type" in fields:
