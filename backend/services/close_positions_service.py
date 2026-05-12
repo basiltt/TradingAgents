@@ -231,6 +231,15 @@ class ClosePositionsService:
             fields["reference_value"] = data["reference_value"]
         if data.get("status") is not None:
             fields["status"] = data["status"]
+
+        new_type = fields.get("trigger_type", rule["trigger_type"])
+        pct_types = {"EQUITY_DROP_PCT", "EQUITY_RISE_PCT"}
+        if new_type in pct_types and "reference_value" not in fields:
+            old_type = rule["trigger_type"]
+            if old_type not in pct_types or "trigger_type" in fields:
+                wallet = await self._accounts_service.get_wallet(account_id)
+                fields["reference_value"] = wallet.get("totalEquity", "0")
+
         if not fields:
             return rule
         return await asyncio.to_thread(self._db.update_close_rule, rule_id, **fields)

@@ -49,7 +49,10 @@ async def close_all_positions(request: Request, account_id: str):
 @router.post("/accounts/{account_id}/close-rules")
 async def create_close_rule(request: Request, account_id: str):
     _validate_id(account_id, "account ID")
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
     try:
         req = CreateCloseRuleRequest(**body)
     except ValidationError as e:
@@ -79,14 +82,20 @@ async def list_close_rules(request: Request, account_id: str):
 async def update_close_rule(request: Request, account_id: str, rule_id: str):
     _validate_id(account_id, "account ID")
     _validate_id(rule_id, "rule ID")
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
     try:
         req = UpdateCloseRuleRequest(**body)
     except ValidationError as e:
         return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
-    result = await svc.update_rule(account_id, rule_id, req.model_dump(exclude_none=True))
+    try:
+        result = await svc.update_rule(account_id, rule_id, req.model_dump(exclude_none=True))
+    except ValueError as e:
+        return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 400)
     if not result:
         return JSONResponse({"detail": "Rule not found", "code": "NOT_FOUND"}, 404)
     return result

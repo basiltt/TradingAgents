@@ -62,7 +62,13 @@ class AccountsService:
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
-        self._clients.pop(account_id, None)
+        client = self._clients.pop(account_id, None)
+        if client:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(client.close())
+            except RuntimeError:
+                pass
 
     def _can_refresh(self, account_id: str, cooldown: float = 10.0) -> bool:
         last = self._refresh_locks.get(account_id, 0)

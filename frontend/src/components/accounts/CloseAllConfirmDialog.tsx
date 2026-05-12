@@ -23,7 +23,9 @@ export function CloseAllConfirmDialog({ open, onOpenChange, accountId, accountLa
       const result = await api.closeAllPositions(accountId);
       onOpenChange(false);
 
-      if (result.failed === 0) {
+      if (result.total === 0) {
+        toast.info("No open positions found");
+      } else if (result.failed === 0) {
         toast.success(`All ${result.closed} positions closed for ${accountLabel}`);
       } else if (result.closed > 0) {
         toast.warning(`${result.closed} of ${result.total} positions closed for ${accountLabel}. ${result.failed} failed.`);

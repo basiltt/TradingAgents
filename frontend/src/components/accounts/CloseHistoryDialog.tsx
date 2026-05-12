@@ -21,6 +21,8 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
   useEffect(() => {
     if (!open) {
       setPage(1);
+      setExecutions([]);
+      setTotal(0);
       return;
     }
     const controller = new AbortController();

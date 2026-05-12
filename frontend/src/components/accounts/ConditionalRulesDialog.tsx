@@ -222,7 +222,9 @@ function RuleRow({
           <div className="relative">
             <input
               type="text"
-              className="bg-muted/30 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs w-24 tabular-nums"
+              className={`bg-muted/30 border border-border/30 rounded-lg py-1.5 text-xs w-24 tabular-nums ${
+                isPct ? "px-2.5 pr-6" : "pl-5 pr-2.5"
+              }`}
               value={localThreshold}
               onChange={(e) => handleThresholdChange(e.target.value)}
               disabled={isTriggered}

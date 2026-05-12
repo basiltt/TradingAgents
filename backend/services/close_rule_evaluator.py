@@ -111,7 +111,7 @@ class CloseRuleEvaluator:
                         await self._close_service.close_all_for_rule(account_id, rule["id"])
                     except Exception:
                         logger.exception("Failed to close positions for rule %s, reverting to active", rule["id"])
-                        await asyncio.to_thread(self._db.update_close_rule, rule["id"], {"status": "active"})
+                        await asyncio.to_thread(self._db.update_close_rule, rule["id"], status="active")
             except Exception:
                 logger.exception("Error evaluating rule %s", rule["id"])
 
