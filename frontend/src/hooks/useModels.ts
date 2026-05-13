@@ -1,31 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/api/client";
 
 export interface ModelInfo {
   id: string;
   name?: string;
 }
 
-interface OpenAIModelsResponse {
-  data: Array<{ id: string; name?: string }>;
-}
-
-async function fetchModels(modelsUrl: string, apiKey?: string): Promise<ModelInfo[]> {
-  const url = modelsUrl.replace(/\/+$/, "");
-  const endpoint = url.endsWith("/v1/models") ? url : `${url}/v1/models`;
-  const res = await fetch(endpoint, {
-    signal: AbortSignal.timeout(5_000),
-    headers: { Authorization: `Bearer ${apiKey || "dummy"}` },
-  });
-  if (!res.ok) throw new Error(`${res.status}`);
-  const json: OpenAIModelsResponse = await res.json();
-  return (json.data ?? []).map((m) => ({ id: m.id, name: m.name }));
+function normalizeUrl(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\/+$/, "");
 }
 
 export function useModels(modelsUrl: string | undefined, apiKey?: string) {
+  const url = normalizeUrl(modelsUrl);
   return useQuery({
-    queryKey: ["proxy-models", modelsUrl, apiKey],
-    queryFn: () => fetchModels(modelsUrl!, apiKey),
-    enabled: !!modelsUrl?.trim(),
+    queryKey: ["proxy-models", url, apiKey],
+    queryFn: async (): Promise<ModelInfo[]> => {
+      const resp = await apiClient.fetchRemoteModels(url!, apiKey);
+      return resp.models ?? [];
+    },
+    enabled: !!url,
     staleTime: 120_000,
     retry: 1,
   });

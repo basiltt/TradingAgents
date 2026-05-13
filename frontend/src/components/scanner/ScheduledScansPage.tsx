@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   scheduledScansApi,
@@ -14,7 +14,10 @@ import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModelSelect } from "@/components/ui/model-select";
 import { useModels } from "@/hooks/useModels";
+import { useConnectivityCheck } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
+import { ConnBadge } from "@/components/ui/conn-badge";
+import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
 import { cn } from "@/lib/utils";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import {
@@ -558,6 +561,10 @@ interface ScheduledFormDefaults {
   checkpointEnabled?: boolean;
   llmMaxConcurrent?: number;
   llmMinSpacingMs?: number;
+  backendUrl?: string;
+  llmApiKey?: string;
+  deepModel?: string;
+  quickModel?: string;
 }
 
 function loadFormDefaults(): ScheduledFormDefaults {
@@ -605,10 +612,10 @@ function ScheduleFormDialog({
 
   const [saved] = useState(loadSavedSettings);
   const [provider, setProvider] = useState(() => formDefaults.provider ?? saved.provider ?? "anthropic");
-  const [llmApiKey, setLlmApiKey] = useState(() => saved.llm_api_key ?? "");
-  const [backendUrl, setBackendUrl] = useState(() => saved.backend_url ?? "http://localhost:4141");
-  const [deepModel, setDeepModel] = useState(() => saved.deep_think_llm ?? "");
-  const [quickModel, setQuickModel] = useState(() => saved.quick_think_llm ?? "");
+  const [llmApiKey, setLlmApiKey] = useState(() => formDefaults.llmApiKey ?? saved.llm_api_key ?? "");
+  const [backendUrl, setBackendUrl] = useState(() => formDefaults.backendUrl ?? saved.backend_url ?? "http://localhost:4141");
+  const [deepModel, setDeepModel] = useState(() => formDefaults.deepModel ?? saved.deep_think_llm ?? "");
+  const [quickModel, setQuickModel] = useState(() => formDefaults.quickModel ?? saved.quick_think_llm ?? "");
   const [klineInterval, setKlineInterval] = useState<CryptoInterval>(() => formDefaults.klineInterval ?? "D");
   const [analysts, setAnalysts] = useState<string[]>(() => formDefaults.analysts ?? [...CRYPTO_ANALYSTS]);
   const [researchDepth, setResearchDepth] = useState(() => formDefaults.researchDepth ?? 3);
@@ -627,6 +634,11 @@ function ScheduleFormDialog({
   const [showWorkflowSettings, setShowWorkflowSettings] = useState(false);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
 
+  const [endpoints, setEndpoints] = useState(loadEndpoints);
+  const [showEndpoints, setShowEndpoints] = useState(false);
+  const endpointsRef = useRef<HTMLDivElement>(null);
+  const conn = useConnectivityCheck(backendUrl, llmApiKey || undefined, 800, provider);
+
   const { data: providersData } = useQuery({
     queryKey: ["providers"],
     queryFn: ({ signal }) => apiClient.getProviders(signal),
@@ -634,16 +646,45 @@ function ScheduleFormDialog({
   });
   const PROVIDERS = providersData?.providers ?? PROVIDERS_FALLBACK;
 
-  const { data: remoteModels } = useModels(backendUrl, llmApiKey);
+  const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined);
   const remoteIds = (remoteModels ?? []).map((m) => m.id);
   const catalogDeep = getModelOptions(provider, "deep");
   const catalogQuick = getModelOptions(provider, "quick");
-  const deepOptions = remoteIds.length > 0
-    ? remoteIds.map((id) => ({ label: id, value: id }))
+  const deepOptions = remoteModels?.length
+    ? remoteModels.map((m) => ({ label: m.name ?? m.id, value: m.id }))
     : catalogDeep;
-  const quickOptions = remoteIds.length > 0
-    ? remoteIds.map((id) => ({ label: id, value: id }))
+  const quickOptions = remoteModels?.length
+    ? remoteModels.map((m) => ({ label: m.name ?? m.id, value: m.id }))
     : catalogQuick;
+
+  useEffect(() => {
+    if (backendUrl.trim()) {
+      saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing localStorage into state after write
+      setEndpoints(loadEndpoints());
+    }
+  }, [backendUrl, llmApiKey, deepModel, quickModel]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (endpointsRef.current && !endpointsRef.current.contains(e.target as Node)) setShowEndpoints(false);
+    }
+    if (showEndpoints) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showEndpoints]);
+
+  function selectEndpoint(ep: EndpointProfile) {
+    setBackendUrl(ep.url);
+    if (ep.apiKey != null) setLlmApiKey(ep.apiKey);
+    if (ep.deepModel) setDeepModel(ep.deepModel);
+    if (ep.quickModel) setQuickModel(ep.quickModel);
+    setShowEndpoints(false);
+  }
+
+  function deleteEndpoint(url: string) {
+    removeEndpoint(url);
+    setEndpoints(loadEndpoints());
+  }
 
   const { data: editData, isLoading: editLoading } = useQuery({
     queryKey: ["scheduled-scan", editingId],
@@ -704,6 +745,7 @@ function ScheduleFormDialog({
       researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
       maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
       taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
+      backendUrl, llmApiKey, deepModel, quickModel,
     });
   }, [
     editingId, name, scheduleType, runAt, intervalMinutes, time, days, day,
@@ -711,9 +753,13 @@ function ScheduleFormDialog({
     researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
     maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
     taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
+    backendUrl, llmApiKey, deepModel, quickModel,
   ]);
 
   function handleOpenChange(v: boolean) {
+    if (v) {
+      setEndpoints(loadEndpoints());
+    }
     if (!v) {
       const fresh = loadSavedSettings();
       const fd = loadFormDefaults();
@@ -722,9 +768,11 @@ function ScheduleFormDialog({
       setTime(fd.time ?? "09:00"); setDays(fd.days ?? DAYS_OF_WEEK.map((d) => d.value));
       setDay(fd.day ?? "mon"); setCronExpression(fd.cronExpression ?? "0 9 * * *");
       setTimezone(fd.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
-      setProvider(fd.provider ?? fresh.provider ?? "anthropic"); setLlmApiKey(fresh.llm_api_key ?? "");
-      setBackendUrl(fresh.backend_url ?? "http://localhost:4141");
-      setDeepModel(fresh.deep_think_llm ?? ""); setQuickModel(fresh.quick_think_llm ?? "");
+      setProvider(fd.provider ?? fresh.provider ?? "anthropic");
+      setLlmApiKey(fd.llmApiKey ?? fresh.llm_api_key ?? "");
+      setBackendUrl(fd.backendUrl ?? fresh.backend_url ?? "http://localhost:4141");
+      setDeepModel(fd.deepModel ?? fresh.deep_think_llm ?? "");
+      setQuickModel(fd.quickModel ?? fresh.quick_think_llm ?? "");
       setKlineInterval(fd.klineInterval ?? "D"); setAnalysts(fd.analysts ?? [...CRYPTO_ANALYSTS]);
       setResearchDepth(fd.researchDepth ?? 3); setOutputLanguage(fd.outputLanguage ?? "English");
       setMaxDebateRounds(fd.maxDebateRounds ?? 1); setMaxRiskRounds(fd.maxRiskRounds ?? 1);
@@ -734,7 +782,7 @@ function ScheduleFormDialog({
       setCheckpointEnabled(fd.checkpointEnabled ?? false);
       setLlmMaxConcurrent(fd.llmMaxConcurrent ?? 0); setLlmMinSpacingMs(fd.llmMinSpacingMs ?? 0);
       setAgentModelOverrides(loadOverrides());
-      setShowScanConfig(false); setShowWorkflowSettings(false); setShowLlmSettings(false);
+      setShowScanConfig(false); setShowWorkflowSettings(false); setShowLlmSettings(false); setShowEndpoints(false);
     }
     onOpenChange(v);
   }
@@ -776,10 +824,10 @@ function ScheduleFormDialog({
           asset_type: "crypto",
           interval: klineInterval,
           provider: provider || undefined,
-          llm_api_key: llmApiKey || undefined,
-          deep_think_llm: deepModel || undefined,
-          quick_think_llm: quickModel || undefined,
-          backend_url: backendUrl || undefined,
+          llm_api_key: llmApiKey.trim() || undefined,
+          deep_think_llm: deepModel.trim() || undefined,
+          quick_think_llm: quickModel.trim() || undefined,
+          backend_url: backendUrl.trim() || undefined,
           analysts,
           research_depth: clamp(researchDepth, 1, 5),
           output_language: outputLanguage,
@@ -1038,21 +1086,89 @@ function ScheduleFormDialog({
           {/* LLM & Proxy Settings (collapsible) */}
           <CollapsibleSection title="LLM & Proxy Settings" open={showLlmSettings} onToggle={() => setShowLlmSettings(!showLlmSettings)}>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Backend URL</Label>
-              <Input value={backendUrl} onChange={(e) => setBackendUrl(e.target.value)} placeholder="http://localhost:4141" className="text-xs" />
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">Backend URL / Proxy Endpoint</Label>
+                <ConnBadge status={conn.status} latency={conn.latency} error={conn.errorMsg} />
+              </div>
+              <div className="relative" ref={endpointsRef}>
+                <Input
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
+                  placeholder="Enter your LLM provider override URL"
+                  className="text-xs pr-9 placeholder:text-muted-foreground/40"
+                />
+                {endpoints.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowEndpoints(!showEndpoints)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted transition-colors"
+                  >
+                    <svg className={cn("w-4 h-4 text-muted-foreground transition-transform", showEndpoints && "rotate-180")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                )}
+                {showEndpoints && endpoints.length > 1 && (
+                  <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                    {endpoints.map((ep) => (
+                      <div
+                        key={ep.url}
+                        className={cn(
+                          "flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-muted transition-colors",
+                          ep.url === backendUrl && "bg-primary/10 text-primary",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="flex-1 text-left truncate font-mono text-xs"
+                          onClick={() => selectEndpoint(ep)}
+                        >
+                          {ep.url}
+                          {ep.deepModel && <span className="ml-2 text-muted-foreground">({ep.deepModel})</span>}
+                        </button>
+                        {ep.url !== backendUrl && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.url); }}
+                            className="ml-2 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                            title="Remove endpoint"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Custom API endpoint. Models are fetched from <code className="text-[10px] px-1 py-0.5 rounded bg-muted">/v1/models</code> automatically.
+                {remoteIds.length > 0 && (
+                  <span className="ml-1 text-primary">{remoteIds.length} models loaded</span>
+                )}
+              </p>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">API Key</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">API Key</Label>
+                {llmApiKey.trim() && <ConnBadge status={conn.status} latency={null} error={conn.errorMsg} label="Authenticated" />}
+              </div>
               <Input type="password" value={llmApiKey} onChange={(e) => setLlmApiKey(e.target.value)} placeholder="Provider API key (optional)" className="text-xs" />
+              <p className="text-[11px] text-muted-foreground">Optional. Overrides the environment variable for the selected provider.</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-medium">Deep Think Model</Label>
                 <ModelSelect options={deepOptions} value={deepModel} onChange={(v) => setDeepModel(v ?? "")} placeholder="Select model..." />
+                <p className="text-[11px] text-muted-foreground">Model for complex reasoning tasks</p>
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-medium">Quick Think Model</Label>
                 <ModelSelect options={quickOptions} value={quickModel} onChange={(v) => setQuickModel(v ?? "")} placeholder="Select model..." />
+                <p className="text-[11px] text-muted-foreground">Model for fast, lightweight tasks</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">

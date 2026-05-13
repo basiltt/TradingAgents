@@ -62,6 +62,45 @@ async def connectivity_check(req: ConnectivityRequest):
         return {"status": "error", "error": str(e)}
 
 
+class FetchModelsRequest(BaseModel):
+    url: str
+    api_key: str | None = None
+
+
+@router.post("/fetch-models")
+async def fetch_models(req: FetchModelsRequest):
+    """Proxy model list from a custom/self-hosted endpoint (avoids browser CORS)."""
+    base = req.url.strip().rstrip("/")
+    if not base:
+        raise HTTPException(status_code=400, detail="URL is required")
+    endpoint = base if base.endswith("/v1/models") else f"{base}/v1/models"
+
+    headers = {}
+    if req.api_key:
+        headers["Authorization"] = f"Bearer {req.api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(endpoint, headers=headers)
+        if resp.status_code not in (200, 201):
+            return {"models": [], "error": f"HTTP {resp.status_code}"}
+        data = resp.json()
+        if not isinstance(data, dict):
+            return {"models": [], "error": "Unexpected response format"}
+        models = [
+            {"id": m.get("id", ""), "name": m.get("name")}
+            for m in (data.get("data") or [])
+            if isinstance(m, dict) and m.get("id")
+        ]
+        return {"models": models}
+    except httpx.ConnectError:
+        return {"models": [], "error": "Connection refused"}
+    except httpx.TimeoutException:
+        return {"models": [], "error": "Connection timeout"}
+    except Exception as e:
+        return {"models": [], "error": str(e)}
+
+
 @router.get("/models/{provider}")
 async def get_models(provider: str):
     if provider not in VALID_PROVIDERS:
