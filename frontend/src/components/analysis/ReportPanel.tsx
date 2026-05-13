@@ -218,7 +218,16 @@ function SidebarGroupLabel({ name }: { name: string }) {
 /* ── Main panel ─────────────────────────────────────────────────────── */
 
 export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: ReportPanelProps) {
-  const entries = Object.entries(reports);
+  // Parse data_warnings (JSON array of error strings) before filtering
+  const dataWarnings = useMemo(() => {
+    const raw = reports.data_warnings;
+    if (!raw) return [];
+    try { return JSON.parse(raw) as string[]; } catch { return []; }
+  }, [reports]);
+
+  const entries = Object.entries(reports).filter(
+    ([k]) => !k.startsWith("_") && k !== "data_warnings",
+  );
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const tradeCardData = useMemo(() => parseTradeCard(reports), [reports]);
 
@@ -318,6 +327,28 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
           </p>
         </div>
       </div>
+
+      {/* Data quality warnings banner */}
+      {dataWarnings.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <svg className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-amber-500">Data Quality Warning</p>
+              <p className="text-xs text-amber-500/70 mt-1">
+                Some data sources were unavailable during this analysis. Results may be incomplete.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {dataWarnings.map((w, i) => (
+                  <li key={i} className="text-xs text-amber-500/60">{w.replace(/\[ERROR\]\s*/g, "")}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mobile: collapsible report sections */}
       <div className="md:hidden space-y-2">

@@ -79,7 +79,7 @@ def make_coingecko_tools(
             parts.append(fundamentals)
         except Exception as exc:
             logger.warning("CoinGecko fundamentals unavailable for %s: %s", symbol, exc)
-            parts.append("CoinGecko fundamentals: unavailable")
+            parts.append(f"[ERROR] CoinGecko fundamentals unavailable: {exc}")
 
         # Bybit: price change percentages (24h, 7d, 14d, 30d, 60d, 200d, 1y)
         try:
@@ -98,6 +98,7 @@ def make_coingecko_tools(
             logger.info("Symbol %s not on Bybit, skipping price changes", symbol)
         except Exception as exc:
             logger.warning("Bybit price changes unavailable for %s: %s", symbol, exc)
+            parts.append(f"\n[ERROR] Bybit price changes unavailable: {exc}")
 
         return _sanitize("\n".join(parts))
 
@@ -111,7 +112,7 @@ def make_coingecko_tools(
             return _sanitize(raw)
         except Exception as exc:
             logger.warning("CoinGecko community data unavailable for %s: %s", symbol, exc)
-            return _sanitize("Data unavailable: community metrics could not be retrieved")
+            return _sanitize(f"[ERROR] Community metrics unavailable: {exc}")
 
     @tool
     def get_crypto_derivatives_data(
@@ -129,6 +130,6 @@ def make_coingecko_tools(
             return _sanitize(f"Symbol '{symbol}' is not available on Bybit linear perpetuals")
         except Exception as exc:
             logger.warning("Bybit derivatives data unavailable for %s: %s", symbol, exc)
-            return _sanitize("Data unavailable: derivatives metrics could not be retrieved")
+            return _sanitize(f"[ERROR] Derivatives metrics unavailable: {exc}")
 
     return [get_crypto_market_data, get_crypto_community_data, get_crypto_derivatives_data]

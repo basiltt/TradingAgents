@@ -186,6 +186,8 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
             "(if supply is growing), concentration risk, and sector positioning. "
             "Compare to major benchmarks (BTC, ETH) where relevant. "
             "If data is unavailable, acknowledge it and continue with what you have. "
+            "If any tool returns an [ERROR], include a **Data Quality Warning** section "
+            "at the end of your report listing which data sources were unavailable. "
             "Write a detailed report with a Markdown summary table at the end."
 
             + get_language_instruction()
@@ -230,6 +232,8 @@ def create_crypto_social_analyst(llm, coingecko_tools: list):
             "influencer mentions, and community sentiment around the coin. "
             "Assess whether social momentum supports or contradicts the price action. "
             "If data is unavailable, acknowledge it and continue with what you have. "
+            "If any tool returns an [ERROR], include a **Data Quality Warning** section "
+            "at the end of your report listing which data sources were unavailable. "
             "Write a detailed report with a Markdown summary table at the end."
 
             + get_language_instruction()

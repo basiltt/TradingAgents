@@ -356,6 +356,22 @@ class AnalysisService:
                 if decision:
                     await self._db.save_report_section(run_id, "final_trade_decision", str(decision))
 
+                data_warnings = []
+                _REPORT_KEYS = [
+                    "crypto_fundamentals_report", "sentiment_report", "market_report",
+                    "news_report", "fundamentals_report",
+                ]
+                for rk in _REPORT_KEYS:
+                    report_text = str(result.get(rk, ""))
+                    if "[ERROR]" in report_text:
+                        for line in report_text.splitlines():
+                            if "[ERROR]" in line:
+                                data_warnings.append(line.strip())
+                if data_warnings:
+                    await self._db.save_report_section(
+                        run_id, "data_warnings", json.dumps(data_warnings),
+                    )
+
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             updated = await self._db.update_run_status(run_id, "completed", None, now)
 

@@ -152,18 +152,35 @@ def _cached_get(path: str, params: dict | None = None) -> dict | list:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
             return copy.deepcopy(_cache[key][1])
 
+    _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
     max_retries = 3
+    last_exc: Exception | None = None
     for attempt in range(max_retries):
-        resp = _gated_get(path, params=params)
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", 60))
-            wait_time = max(retry_after, 60) + (attempt * 30)
+        try:
+            resp = _gated_get(path, params=params)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_exc = exc
+            wait_time = 10 + (attempt * 15)
             logger.warning(
-                "CoinGecko 429 rate limited, waiting %ds (attempt %d/%d)",
-                wait_time, attempt + 1, max_retries,
+                "CoinGecko connection error on %s, waiting %ds (attempt %d/%d): %s",
+                path, wait_time, attempt + 1, max_retries, exc,
             )
             time.sleep(wait_time)
             continue
+
+        if resp.status_code in _RETRYABLE_STATUS:
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", 60))
+                wait_time = max(retry_after, 60) + (attempt * 30)
+            else:
+                wait_time = 10 + (attempt * 15)
+            logger.warning(
+                "CoinGecko %d on %s, waiting %ds (attempt %d/%d)",
+                resp.status_code, path, wait_time, attempt + 1, max_retries,
+            )
+            time.sleep(wait_time)
+            continue
+
         resp.raise_for_status()
         data = resp.json()
         with _cache_lock:
@@ -171,6 +188,8 @@ def _cached_get(path: str, params: dict | None = None) -> dict | list:
             _evict_oldest(_cache, _CACHE_MAX)
         return data
 
+    if last_exc:
+        raise last_exc
     resp.raise_for_status()
     return {}
 
@@ -278,6 +297,18 @@ def _normalize_bulk_to_coin_format(bulk_item: dict) -> dict:
             "atl": {"usd": bulk_item.get("atl")},
             "atl_change_percentage": {"usd": bulk_item.get("atl_change_percentage")},
             "fully_diluted_valuation": {"usd": bulk_item.get("fully_diluted_valuation")},
+            "price_change_percentage_24h": bulk_item.get("price_change_percentage_24h"),
+            "price_change_percentage_7d": bulk_item.get("price_change_percentage_7d"),
+            "price_change_percentage_14d": bulk_item.get("price_change_percentage_14d"),
+            "price_change_percentage_30d": bulk_item.get("price_change_percentage_30d"),
+            "price_change_percentage_60d": bulk_item.get("price_change_percentage_60d"),
+            "price_change_percentage_200d": bulk_item.get("price_change_percentage_200d"),
+            "price_change_percentage_1y": bulk_item.get("price_change_percentage_1y"),
+            "high_24h": {"usd": bulk_item.get("high_24h")},
+            "low_24h": {"usd": bulk_item.get("low_24h")},
+            "price_change_24h": bulk_item.get("price_change_24h"),
+            "market_cap_change_24h": bulk_item.get("market_cap_change_24h"),
+            "market_cap_change_percentage_24h": bulk_item.get("market_cap_change_percentage_24h"),
         },
     }
 
@@ -479,6 +510,7 @@ def get_coingecko_community_data(symbol: str) -> str:
         f"| Reddit | Avg Posts (48h) | {_val(cd.get('reddit_average_posts_48h'))} |",
         f"| Reddit | Avg Comments (48h) | {_val(cd.get('reddit_average_comments_48h'))} |",
         f"| Telegram | Members | {cd.get('telegram_channel_user_count', 'N/A'):,} |" if isinstance(cd.get('telegram_channel_user_count'), (int, float)) else "| Telegram | Members | N/A |",
+        f"| Facebook | Likes | {cd.get('facebook_likes', 'N/A'):,} |" if isinstance(cd.get('facebook_likes'), (int, float)) else "| Facebook | Likes | N/A |",
         "",
         "## Sentiment",
         f"- Bullish: {sent}%",
@@ -561,7 +593,32 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
         f"| ATL (USD) | ${_usd(md.get('atl', {}))} |",
         f"| ATL Change % | {_usd(md.get('atl_change_percentage', {}))}% |",
         f"| FDV (USD) | ${_usd(md.get('fully_diluted_valuation', {})):,} |" if isinstance(_usd(md.get('fully_diluted_valuation', {})), (int, float)) else "| FDV (USD) | N/A |",
+        f"| 24h Volume (USD) | ${_usd(md.get('total_volume', {})):,} |" if isinstance(_usd(md.get('total_volume', {})), (int, float)) else "| 24h Volume (USD) | N/A |",
+        f"| High 24h (USD) | ${_usd(md.get('high_24h', {}))} |",
+        f"| Low 24h (USD) | ${_usd(md.get('low_24h', {}))} |",
+        f"| Price Change 24h (USD) | {_val(md.get('price_change_24h'))} |",
+        f"| Market Cap Change 24h | {_val(md.get('market_cap_change_24h'))} |",
+        f"| Market Cap Change % 24h | {_val(md.get('market_cap_change_percentage_24h'))}% |" if md.get('market_cap_change_percentage_24h') is not None else "| Market Cap Change % 24h | N/A |",
     ]
+
+    price_changes = {
+        "24h": md.get("price_change_percentage_24h"),
+        "7d": md.get("price_change_percentage_7d"),
+        "14d": md.get("price_change_percentage_14d"),
+        "30d": md.get("price_change_percentage_30d"),
+        "60d": md.get("price_change_percentage_60d"),
+        "200d": md.get("price_change_percentage_200d"),
+        "1y": md.get("price_change_percentage_1y"),
+    }
+    if any(v is not None for v in price_changes.values()):
+        lines += [
+            "",
+            "## Price Changes (CoinGecko)",
+            "| Period | Change % |",
+            "|--------|----------|",
+        ]
+        for period, pct in price_changes.items():
+            lines.append(f"| {period} | {pct:.2f}% |" if isinstance(pct, (int, float)) else f"| {period} | N/A |")
 
     desc_text = data.get("description", {}).get("en", "")
     if desc_text:

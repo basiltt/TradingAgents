@@ -451,3 +451,107 @@ class TestPrefetchFundamentals:
             mod._desc_cache.clear()
         mod.prefetch_fundamentals(["BTCUSDT", "BTCUSD"])
         mock_bulk.assert_called_once_with(["bitcoin"])
+
+
+class TestFundamentalsIncludesPriceChanges:
+    @patch("tradingagents.dataflows.coingecko_data._get_description_and_categories",
+           return_value=("Desc.", ["Crypto"]))
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id", return_value="bitcoin")
+    def test_price_change_fields_in_output(self, mock_id, mock_desc):
+        import tradingagents.dataflows.coingecko_data as mod
+        _force_configured()
+        bulk_data = {
+            "name": "Bitcoin", "symbol": "btc", "market_cap_rank": 1,
+            "market_data": {
+                "market_cap": {"usd": 1_000_000_000},
+                "total_volume": {"usd": 50_000_000},
+                "current_price": {"usd": 50000},
+                "circulating_supply": 19_000_000, "total_supply": 21_000_000,
+                "max_supply": 21_000_000, "ath": {"usd": 69000},
+                "ath_change_percentage": {"usd": -27.5}, "atl": {"usd": 67.81},
+                "atl_change_percentage": {"usd": 100000},
+                "fully_diluted_valuation": {"usd": 1_050_000_000},
+                "high_24h": {"usd": 51000}, "low_24h": {"usd": 49000},
+                "price_change_24h": 500,
+                "market_cap_change_24h": 2_000_000,
+                "market_cap_change_percentage_24h": 0.2,
+                "price_change_percentage_24h": 2.5,
+                "price_change_percentage_7d": -1.3,
+                "price_change_percentage_30d": 5.0,
+            },
+        }
+        with mod._bulk_cache_lock:
+            mod._bulk_cache["bitcoin"] = (time.time(), bulk_data)
+        result = mod.get_coingecko_fundamentals_only("BTCUSDT")
+        assert "Price Changes (CoinGecko)" in result
+        assert "24h" in result
+        assert "2.50%" in result
+        assert "High 24h" in result
+        assert "Market Cap Change" in result
+
+
+class TestNormalizationPreservesPriceChanges:
+    def test_bulk_normalization_includes_price_fields(self):
+        from tradingagents.dataflows.coingecko_data import _normalize_bulk_to_coin_format
+        bulk = {
+            "name": "Bitcoin", "symbol": "btc", "market_cap_rank": 1,
+            "market_cap": 1_000_000, "total_volume": 50000,
+            "current_price": 50000, "circulating_supply": 19_000_000,
+            "total_supply": 21_000_000, "max_supply": 21_000_000,
+            "ath": 69000, "ath_change_percentage": -27.5,
+            "atl": 67.81, "atl_change_percentage": 100000,
+            "fully_diluted_valuation": 1_050_000_000,
+            "price_change_percentage_24h": 2.5,
+            "price_change_percentage_7d": -1.3,
+            "price_change_percentage_14d": 3.0,
+            "price_change_percentage_30d": 5.0,
+            "high_24h": 51000, "low_24h": 49000,
+            "price_change_24h": 500,
+            "market_cap_change_24h": 2_000_000,
+            "market_cap_change_percentage_24h": 0.2,
+        }
+        result = _normalize_bulk_to_coin_format(bulk)
+        md = result["market_data"]
+        assert md["price_change_percentage_24h"] == 2.5
+        assert md["price_change_percentage_7d"] == -1.3
+        assert md["high_24h"]["usd"] == 51000
+        assert md["market_cap_change_percentage_24h"] == 0.2
+
+
+class TestCachedGetRetry:
+    @patch("tradingagents.dataflows.coingecko_data.time.sleep")
+    @patch("tradingagents.dataflows.coingecko_data._gated_get")
+    def test_retries_on_500(self, mock_get, mock_sleep):
+        from tradingagents.dataflows.coingecko_data import _cached_get, _cache, _cache_lock
+        _force_configured()
+        with _cache_lock:
+            _cache.clear()
+        mock_resp_500 = MagicMock()
+        mock_resp_500.status_code = 500
+        mock_resp_500.headers = {}
+        mock_resp_ok = MagicMock()
+        mock_resp_ok.status_code = 200
+        mock_resp_ok.json.return_value = {"ok": True}
+        mock_resp_ok.raise_for_status = MagicMock()
+        mock_get.side_effect = [mock_resp_500, mock_resp_ok]
+        result = _cached_get("/test/retry500")
+        assert result == {"ok": True}
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("tradingagents.dataflows.coingecko_data.time.sleep")
+    @patch("tradingagents.dataflows.coingecko_data._gated_get")
+    def test_retries_on_connection_error(self, mock_get, mock_sleep):
+        import requests as req
+        from tradingagents.dataflows.coingecko_data import _cached_get, _cache, _cache_lock
+        _force_configured()
+        with _cache_lock:
+            _cache.clear()
+        mock_resp_ok = MagicMock()
+        mock_resp_ok.status_code = 200
+        mock_resp_ok.json.return_value = {"ok": True}
+        mock_resp_ok.raise_for_status = MagicMock()
+        mock_get.side_effect = [req.ConnectionError("refused"), mock_resp_ok]
+        result = _cached_get("/test/connfail")
+        assert result == {"ok": True}
+        assert mock_get.call_count == 2
