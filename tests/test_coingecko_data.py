@@ -198,10 +198,9 @@ class TestTierConfiguration:
         mod._configured = False
         env = {"COINGECKO_API_KEY": "", "COINGECKO_PLAN": "", "COINGECKO_MAX_PER_MIN": "50"}
         with patch.dict("os.environ", env, clear=False):
-            if "COINGECKO_RATE_LIMIT_RPM" in os.environ:
-                del os.environ["COINGECKO_RATE_LIMIT_RPM"]
+            os.environ.pop("COINGECKO_RATE_LIMIT_RPM", None)
             mod._configure()
-        assert mod._limiter.rpm == 50
+            assert mod._limiter.rpm == 50
 
     def test_concurrency_override(self):
         import tradingagents.dataflows.coingecko_data as mod

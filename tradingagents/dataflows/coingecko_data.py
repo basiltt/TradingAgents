@@ -144,6 +144,7 @@ def _gated_get(path: str, params: dict | None = None, timeout: int = 20) -> requ
 _cache: dict[str, tuple[float, str]] = {}
 _cache_lock = threading.Lock()
 _CACHE_TTL = 600  # 10 min
+_CACHE_MAX = 500
 
 
 def _cached_get(path: str, params: dict | None = None) -> dict | list:
@@ -170,6 +171,7 @@ def _cached_get(path: str, params: dict | None = None) -> dict | list:
         data = resp.json()
         with _cache_lock:
             _cache[key] = (time.time(), _json.dumps(data))
+            _evict_oldest(_cache, _CACHE_MAX)
         return data
 
     resp.raise_for_status()
@@ -229,7 +231,8 @@ def _get_coin_id(symbol: str) -> str | None:
     if not sym:
         sym = symbol.upper()
 
-    return _coin_list_cache.get(sym)
+    with _coin_list_lock:
+        return _coin_list_cache.get(sym)
 
 
 # ---------------------------------------------------------------------------
