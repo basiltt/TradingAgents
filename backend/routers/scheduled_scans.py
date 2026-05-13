@@ -55,7 +55,14 @@ async def create_schedule(request: Request, body: CreateScheduledScanRequest):
 async def list_schedules(request: Request):
     svc = _get_service(request)
     schedules = await svc.list_all()
-    return {"schedules": [_redact_response(s) for s in schedules]}
+    running_ids = svc.get_running_schedule_ids()
+    results = []
+    for s in schedules:
+        resp = _redact_response(s)
+        if s.get("id") in running_ids:
+            resp.is_running = True
+        results.append(resp)
+    return {"schedules": results}
 
 
 @router.get("/scheduled-scans/{schedule_id}")
@@ -66,8 +73,11 @@ async def get_schedule(request: Request, schedule_id: str):
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
     executions = await svc.list_executions(schedule_id, limit=5)
+    resp = _redact_response(schedule)
+    if schedule.get("id") in svc.get_running_schedule_ids():
+        resp.is_running = True
     return {
-        **_redact_response(schedule).model_dump(),
+        **resp.model_dump(),
         "recent_executions": [ScheduleExecutionResponse(**e) for e in executions],
     }
 
@@ -131,7 +141,10 @@ async def trigger_schedule(request: Request, schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
     except ValueError as e:
         raise HTTPException(status_code=429, detail=str(e))
-    return _redact_response(result)
+    resp = _redact_response(result)
+    if schedule_id in svc.get_running_schedule_ids():
+        resp.is_running = True
+    return resp
 
 
 @router.get("/scheduled-scans/{schedule_id}/executions")

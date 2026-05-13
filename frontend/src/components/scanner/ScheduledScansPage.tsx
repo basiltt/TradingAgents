@@ -155,16 +155,18 @@ function ScheduleCard({
 }) {
   const status = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.completed;
   const typeInfo = TYPE_CONFIG[s.schedule_type] ?? TYPE_CONFIG.once;
+  const isRunning = s.is_running;
 
   return (
     <div className="group relative rounded-2xl border border-border/30 bg-card hover:border-border/60 transition-all duration-200 hover:shadow-lg hover:shadow-black/5 overflow-hidden">
       {/* Subtle top accent line */}
       <div className={cn(
         "absolute top-0 left-0 right-0 h-[2px] opacity-60",
-        s.status === "active" && "bg-gradient-to-r from-emerald-500/0 via-emerald-500 to-emerald-500/0",
-        s.status === "paused" && "bg-gradient-to-r from-amber-500/0 via-amber-500 to-amber-500/0",
-        s.status === "error" && "bg-gradient-to-r from-red-500/0 via-red-500 to-red-500/0",
-        s.status === "completed" && "bg-gradient-to-r from-zinc-500/0 via-zinc-500 to-zinc-500/0",
+        isRunning && "bg-gradient-to-r from-primary/0 via-primary to-primary/0",
+        !isRunning && s.status === "active" && "bg-gradient-to-r from-emerald-500/0 via-emerald-500 to-emerald-500/0",
+        !isRunning && s.status === "paused" && "bg-gradient-to-r from-amber-500/0 via-amber-500 to-amber-500/0",
+        !isRunning && s.status === "error" && "bg-gradient-to-r from-red-500/0 via-red-500 to-red-500/0",
+        !isRunning && s.status === "completed" && "bg-gradient-to-r from-zinc-500/0 via-zinc-500 to-zinc-500/0",
       )} />
 
       <div className="p-5">
@@ -180,8 +182,17 @@ function ScheduleCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5 mb-1">
               <h3 className="font-semibold text-sm text-foreground truncate" title={s.name}>{s.name}</h3>
+              {isRunning && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-primary/10 text-primary border-primary/20">
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Running
+                </span>
+              )}
               <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider", status.color)}>
-                {s.status === "active" && <PulsingDot className={status.dot} />}
+                {s.status === "active" && !isRunning && <PulsingDot className={status.dot} />}
                 {status.label}
               </span>
             </div>
@@ -256,7 +267,7 @@ function ScheduleCard({
               className="p-2 rounded-lg hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               aria-label="Run Now"
               title="Run Now"
-              disabled={s.status === "completed" || isPending}
+              disabled={s.status === "completed" || isRunning || isPending}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -299,7 +310,10 @@ export function ScheduledScansPage() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["scheduled-scans"],
     queryFn: ({ signal }) => scheduledScansApi.list(signal),
-    refetchInterval: 10_000,
+    refetchInterval: (query) => {
+      const hasRunning = query.state.data?.schedules?.some((s: ScheduledScan) => s.is_running);
+      return hasRunning ? 3_000 : 10_000;
+    },
   });
 
   const addPending = (id: string) => setPendingActionIds((s) => new Set(s).add(id));
@@ -335,7 +349,7 @@ export function ScheduledScansPage() {
       queryClient.invalidateQueries({ queryKey: ["scheduled-scans"] });
       toast.success("Schedule triggered");
     },
-    onError: (e) => toast.error(e instanceof ApiError && e.status === 429 ? "Schedule was triggered recently — please wait before triggering again" : `Failed to trigger: ${e.message}`),
+    onError: (e) => toast.error(e instanceof ApiError && e.status === 429 ? e.message : `Failed to trigger: ${e.message}`),
   });
 
   const deleteMut = useMutation({

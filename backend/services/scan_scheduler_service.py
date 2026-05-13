@@ -9,7 +9,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from croniter import croniter
 
@@ -25,6 +25,11 @@ MAX_CONSECUTIVE_FAILURES = 3
 MISSED_ONCE_WINDOW_HOURS = 24
 MIN_INTERVAL_MINUTES = 15
 MIN_CRON_INTERVAL_SECONDS = 900
+SENTINEL_STALE_SECONDS = 120
+
+
+def _is_sentinel(val: Any) -> bool:
+    return isinstance(val, datetime)
 
 
 class ScanSchedulerService:
@@ -34,7 +39,7 @@ class ScanSchedulerService:
         self._config = config_service
         self._loop_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
-        self._in_flight: Dict[str, Union[int, str]] = {}  # schedule_id -> exec_id (or -1 sentinel)
+        self._in_flight: Dict[str, Any] = {}  # schedule_id -> exec_id (int/str) or sentinel datetime
         self._last_cleanup: Optional[datetime] = None
 
     # ── CRUD ─────────────────────────────────────────────────────────
@@ -119,11 +124,15 @@ class ScanSchedulerService:
     async def delete(self, scan_id: str) -> bool:
         result = await self._db.delete_scheduled_scan(scan_id)
         if result:
+            self._in_flight.pop(scan_id, None)
             logger.info("Deleted schedule %s", scan_id)
         return result
 
     async def list_all(self) -> List[Dict[str, Any]]:
         return await self._db.list_scheduled_scans()
+
+    def get_running_schedule_ids(self) -> set:
+        return set(self._in_flight.keys())
 
     async def get(self, scan_id: str) -> Optional[Dict[str, Any]]:
         return await self._db.get_scheduled_scan(scan_id)
@@ -173,11 +182,11 @@ class ScanSchedulerService:
             if (datetime.now(timezone.utc) - last).total_seconds() < COOLDOWN_SECONDS:
                 raise ValueError("Cooldown: must wait 60 seconds between triggers")
 
-        self._in_flight[scan_id] = -1  # sentinel to prevent concurrent execution
+        self._in_flight[scan_id] = datetime.now(timezone.utc)  # sentinel to prevent concurrent execution
         try:
             await self._execute_schedule(existing, triggered_by="run_now")
         except Exception:
-            if self._in_flight.get(scan_id) == -1:
+            if _is_sentinel(self._in_flight.get(scan_id)):
                 del self._in_flight[scan_id]
             raise
         return await self._db.get_scheduled_scan(scan_id)
@@ -205,7 +214,7 @@ class ScanSchedulerService:
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         for schedule_id, exec_id in list(self._in_flight.items()):
-            if exec_id != -1:
+            if not _is_sentinel(exec_id):
                 try:
                     await self._db.update_schedule_execution(
                         exec_id,
@@ -259,7 +268,7 @@ class ScanSchedulerService:
         if not claimed:
             return
 
-        self._in_flight[schedule["id"]] = -1  # sentinel until _execute_schedule sets real exec_id
+        self._in_flight[schedule["id"]] = datetime.now(timezone.utc)  # sentinel until _execute_schedule sets real exec_id
         try:
             await self._execute_schedule(schedule, triggered_by="scheduled")
         except Exception:
@@ -352,8 +361,11 @@ class ScanSchedulerService:
     async def _check_in_flight_completions(self) -> None:
         completed = []
         for schedule_id, exec_id in list(self._in_flight.items()):
-            if exec_id == -1:
-                logger.warning("Stale sentinel in _in_flight for %s, removing", schedule_id)
+            if _is_sentinel(exec_id):
+                age = (datetime.now(timezone.utc) - exec_id).total_seconds()
+                if age < SENTINEL_STALE_SECONDS:
+                    continue
+                logger.warning("Stale sentinel in _in_flight for %s (%.0fs old), removing", schedule_id, age)
                 completed.append(schedule_id)
                 continue
 

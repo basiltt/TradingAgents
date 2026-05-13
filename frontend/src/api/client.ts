@@ -855,6 +855,7 @@ export interface ScheduledScan {
   last_run_at: string | null;
   last_scan_id: string | null;
   consecutive_failures: number;
+  is_running: boolean;
   created_at: string;
   updated_at: string;
 }

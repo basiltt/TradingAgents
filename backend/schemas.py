@@ -886,6 +886,7 @@ class ScheduledScanResponse(BaseModel):
     last_run_at: Optional[str] = None
     last_scan_id: Optional[str] = None
     consecutive_failures: int = 0
+    is_running: bool = False
     created_at: str
     updated_at: str
 
