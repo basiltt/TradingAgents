@@ -173,7 +173,7 @@ class CycleRepository:
         rows = await self._pool.fetch(
             """
             SELECT * FROM trading_cycles
-            WHERE status IN ('running', 'placing_trades', 'stopping')
+            WHERE status IN ('pending', 'running', 'placing_trades', 'stopping')
               AND created_at < NOW() - make_interval(secs => $1::int)
             """,
             max_age_seconds,
@@ -210,3 +210,10 @@ class CycleRepository:
             "UPDATE close_rules SET status = 'expired' WHERE cycle_id = $1 AND status IN ('active', 'pending_activation')",
             cycle_id,
         )
+
+    async def get_cycle_trade_symbols(self, cycle_id: int) -> list[str]:
+        rows = await self._pool.fetch(
+            "SELECT DISTINCT symbol FROM cycle_trades WHERE cycle_id = $1 AND status = 'filled'",
+            cycle_id,
+        )
+        return [r["symbol"] for r in rows]

@@ -104,8 +104,8 @@ class ClosePositionsService:
         finally:
             self._closing_accounts.discard(account_id)
 
-    async def close_all_for_rule(self, account_id: str, rule_id: str) -> dict[str, Any]:
-        """Close all positions triggered by a rule. Uses same guard as manual close."""
+    async def close_all_for_rule(self, account_id: str, rule_id: str, *, symbols: list[str] | None = None) -> dict[str, Any]:
+        """Close positions triggered by a rule. If symbols is provided, only close those symbols."""
         if account_id in self._closing_accounts:
             logger.info("Skipping rule close for %s — close already in progress", account_id)
             return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
@@ -114,6 +114,10 @@ class ClosePositionsService:
         try:
             client = await self._accounts_service._build_client(account_id)
             positions = await client.get_positions()
+
+            if symbols:
+                symbol_set = set(symbols)
+                positions = [p for p in positions if p["symbol"] in symbol_set]
 
             if not positions:
                 await self._db.insert_close_execution(

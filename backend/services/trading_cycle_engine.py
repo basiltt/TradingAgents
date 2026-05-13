@@ -436,6 +436,16 @@ class TradingCycleEngine:
 
         target_type = cfg.get("target_type", "percentage")
         target_value = float(cfg.get("target_value", 10))
+        intended_trades = len(filtered)
+        if trades_placed < intended_trades and target_type == "percentage":
+            fill_ratio = trades_placed / intended_trades
+            adjusted_target = target_value * fill_ratio
+            logger.info(
+                "Cycle %d: partial fill %d/%d, scaling target from %.1f%% to %.1f%%",
+                cycle_id, trades_placed, intended_trades, target_value, adjusted_target,
+            )
+            target_value = adjusted_target
+
         if target_type == "percentage":
             balance_above = Decimal(str(initial_equity)) * (1 + Decimal(str(target_value)) / 100)
         else:
@@ -481,6 +491,17 @@ class TradingCycleEngine:
             return
 
         await self._expire_cycle_rules(cycle_id)
+
+        if stop_reason in ("user_stopped", "server_shutdown", "server_restart", "max_duration_exceeded"):
+            try:
+                symbols = await self._repo.get_cycle_trade_symbols(cycle_id)
+                if symbols:
+                    await self._close_positions.close_all_for_rule(
+                        account_id, f"cycle-{cycle_id}", symbols=symbols,
+                    )
+            except Exception:
+                logger.warning("Failed to close positions for cycle %d on stop", cycle_id)
+
         await self._notify("cycle.status_change", {
             "cycle_id": cycle_id, "status": terminal_status,
             "account_id": account_id,

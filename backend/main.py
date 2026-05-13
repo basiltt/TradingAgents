@@ -225,6 +225,7 @@ def create_app() -> FastAPI:
             await cycle_engine.start()
             app.state.cycle_engine = cycle_engine
             rule_evaluator.set_cycle_callback(cycle_engine.on_rule_triggered)
+            rule_evaluator.set_cycle_repo(cycle_repo)
         else:
             app.state.accounts_service = None
             app.state.account_ws_manager = None
