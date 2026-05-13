@@ -151,7 +151,7 @@ def _cached_get(path: str, params: dict | None = None) -> dict | list:
     key = path + (_json.dumps(params, sort_keys=True) if params else "")
     with _cache_lock:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
-            return _json.loads(_cache[key][1])
+            return copy.deepcopy(_cache[key][1])
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -168,7 +168,7 @@ def _cached_get(path: str, params: dict | None = None) -> dict | list:
         resp.raise_for_status()
         data = resp.json()
         with _cache_lock:
-            _cache[key] = (time.time(), _json.dumps(data))
+            _cache[key] = (time.time(), copy.deepcopy(data))
             _evict_oldest(_cache, _CACHE_MAX)
         return data
 
@@ -249,10 +249,13 @@ _DESC_CACHE_MAX = 1000
 
 
 def _evict_oldest(cache: dict, max_size: int) -> None:
-    """Evict entries with oldest timestamps to bring cache under max_size."""
-    while len(cache) > max_size:
-        oldest_key = min(cache, key=lambda k: cache[k][0])
-        del cache[oldest_key]
+    """Evict oldest entries to bring cache under max_size (batch for O(n) amortized)."""
+    if len(cache) <= max_size:
+        return
+    evict_count = max(len(cache) - max_size, max_size // 10)
+    by_ts = sorted(cache, key=lambda k: cache[k][0])
+    for key in by_ts[:evict_count]:
+        del cache[key]
 
 
 def _normalize_bulk_to_coin_format(bulk_item: dict) -> dict:

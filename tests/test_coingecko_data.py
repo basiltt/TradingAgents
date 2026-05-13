@@ -226,11 +226,10 @@ class TestCachedGet:
     @patch("tradingagents.dataflows.coingecko_data._limiter")
     @patch("tradingagents.dataflows.coingecko_data._SESSION")
     def test_cache_hit(self, mock_session, mock_limiter):
-        import json as _json
         from tradingagents.dataflows.coingecko_data import _cached_get, _cache, _cache_lock
         _force_configured()
         with _cache_lock:
-            _cache["/cached/api"] = (time.time(), _json.dumps({"cached": True}))
+            _cache["/cached/api"] = (time.time(), {"cached": True})
         result = _cached_get("/cached/api")
         assert result == {"cached": True}
         mock_session.get.assert_not_called()

@@ -588,11 +588,21 @@ class ScannerService:
         if self._db and symbols_override is None:
             await self._db.update_scan(scan_id, total=len(symbols))
 
-        try:
-            from tradingagents.dataflows.coingecko_data import prefetch_fundamentals
-            await asyncio.to_thread(prefetch_fundamentals, symbols)
-        except Exception:
-            logger.warning("CoinGecko prefetch failed, analyses will use individual calls", exc_info=True)
+        # Only prefetch CoinGecko data when fundamentals/social analysts are selected
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+        scan_analysts = (scan["config"].get("analysts") if scan else None) or []
+        _COINGECKO_ANALYSTS = {"crypto_fundamentals", "crypto_social"}
+        needs_coingecko = not scan_analysts or _COINGECKO_ANALYSTS.intersection(scan_analysts)
+
+        if needs_coingecko:
+            try:
+                from tradingagents.dataflows.coingecko_data import prefetch_fundamentals
+                await asyncio.to_thread(prefetch_fundamentals, symbols)
+            except Exception:
+                logger.warning("CoinGecko prefetch failed, analyses will use individual calls", exc_info=True)
+        else:
+            logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
 
         sem = asyncio.Semaphore(batch_size)
         scan_error = False
