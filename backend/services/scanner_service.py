@@ -588,6 +588,12 @@ class ScannerService:
         if self._db and symbols_override is None:
             await self._db.update_scan(scan_id, total=len(symbols))
 
+        try:
+            from tradingagents.dataflows.coingecko_data import prefetch_fundamentals
+            await asyncio.to_thread(prefetch_fundamentals, symbols)
+        except Exception:
+            logger.warning("CoinGecko prefetch failed, analyses will use individual calls", exc_info=True)
+
         sem = asyncio.Semaphore(batch_size)
         scan_error = False
 

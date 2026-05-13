@@ -1,7 +1,7 @@
 """CoinGecko data access for crypto fundamentals and community metrics.
 
-Supports optional Demo API key via COINGECKO_API_KEY env var.
-Rate-limited to 30 req/min by default (free tier allows 30 req/min).
+Supports Demo and Basic (Pro) API plans via COINGECKO_PLAN env var.
+Lazy-configured on first API call via _ensure_configured().
 
 ALL outbound HTTP requests to CoinGecko go through the central semaphore
 and rate limiter — no direct _SESSION.get() calls are allowed outside
@@ -10,9 +10,9 @@ the gated helpers.
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
-import random
 import threading
 import time
 from typing import Optional
@@ -24,20 +24,25 @@ logger = logging.getLogger(__name__)
 _SESSION = requests.Session()
 _SESSION.headers.update({"Accept": "application/json"})
 
-# Support CoinGecko Demo API key for a dedicated rate-limit bucket
-_API_KEY = os.environ.get("COINGECKO_API_KEY", "")
-if _API_KEY:
-    _SESSION.headers.update({"x-cg-demo-api-key": _API_KEY})
-    _BASE = "https://api.coingecko.com/api/v3"
-    logger.info("CoinGecko: using Demo API key")
-else:
-    _BASE = "https://api.coingecko.com/api/v3"
-    logger.info("CoinGecko: no API key, using public rate limits")
+# ---------------------------------------------------------------------------
+# Tier configuration — lazy-initialized by _ensure_configured()
+# ---------------------------------------------------------------------------
+
+_TIER_DEFAULTS = {
+    "demo":  {"base": "https://api.coingecko.com/api/v3",     "auth": "header", "rpm": 30,  "concurrency": 2},
+    "basic": {"base": "https://pro-api.coingecko.com/api/v3", "auth": "param",  "rpm": 250, "concurrency": 5},
+}
+
+_configured = False
+_configure_lock = threading.Lock()
+_plan: str = "demo"
+_BASE: str = "https://api.coingecko.com/api/v3"
+_API_KEY: str = ""
+_AUTH_MODE: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# Central rate limiter & concurrency gate — ALL CoinGecko HTTP requests
-# (including coin list refresh) MUST go through these.
+# Central rate limiter & concurrency gate
 # ---------------------------------------------------------------------------
 
 class _RateLimiter:
@@ -48,6 +53,10 @@ class _RateLimiter:
         self._timestamps: list[float] = []
         self._max = max_per_min
 
+    @property
+    def rpm(self) -> int:
+        return self._max
+
     def wait(self) -> None:
         while True:
             with self._lock:
@@ -56,46 +65,76 @@ class _RateLimiter:
                 if len(self._timestamps) < self._max:
                     self._timestamps.append(now)
                     return
-                sleep_for = min(60 - (now - self._timestamps[0]) + 0.1, 10.0)
-                sleep_for += random.uniform(0, 0.5)
+                sleep_for = 60 - (now - self._timestamps[0]) + 0.1
             logger.warning("CoinGecko rate limit: sleeping %.1fs", sleep_for)
             time.sleep(sleep_for)
 
 
 _limiter = _RateLimiter(max_per_min=30)
-
 _coingecko_semaphore = threading.Semaphore(2)
-_coingecko_sem_lock = threading.Lock()
 
 
-def configure_coingecko_concurrency(max_concurrent: int) -> None:
-    global _coingecko_semaphore
-    with _coingecko_sem_lock:
-        _coingecko_semaphore = threading.Semaphore(max_concurrent)
-    logger.info("CoinGecko concurrency limit set to %d", max_concurrent)
+def _configure() -> None:
+    global _plan, _BASE, _API_KEY, _AUTH_MODE, _limiter, _coingecko_semaphore
+
+    _API_KEY = os.environ.get("COINGECKO_API_KEY", "")
+    explicit_plan = os.environ.get("COINGECKO_PLAN", "")
+
+    if explicit_plan:
+        _plan = explicit_plan.lower()
+    else:
+        _plan = "demo"
+
+    if _plan not in _TIER_DEFAULTS:
+        raise ValueError(f"Invalid COINGECKO_PLAN: {_plan!r}. Must be one of: demo, basic")
+
+    if _plan == "basic" and not _API_KEY:
+        logger.warning("COINGECKO_PLAN=basic but no COINGECKO_API_KEY set — falling back to demo plan (30 RPM)")
+        _plan = "demo"
+
+    tier = _TIER_DEFAULTS[_plan]
+    _BASE = tier["base"]
+    _AUTH_MODE = tier["auth"] if _API_KEY else None
+
+    rpm = int(os.environ.get("COINGECKO_RATE_LIMIT_RPM",
+              os.environ.get("COINGECKO_MAX_PER_MIN", str(tier["rpm"]))))
+    concurrency = int(os.environ.get("COINGECKO_MAX_CONCURRENT", str(tier["concurrency"])))
+
+    _limiter = _RateLimiter(max_per_min=rpm)
+    _coingecko_semaphore = threading.Semaphore(concurrency)
+
+    if _AUTH_MODE == "header":
+        _SESSION.headers.update({"x-cg-demo-api-key": _API_KEY})
+
+    logger.info("CoinGecko: plan=%s base=%s rpm=%d concurrency=%d key=%s",
+                _plan, _BASE, rpm, concurrency, "****" + _API_KEY[-4:] if _API_KEY else "none")
 
 
-def configure_coingecko_rate_limit(max_per_min: int) -> None:
-    global _limiter
-    _limiter = _RateLimiter(max_per_min=max_per_min)
-    logger.info("CoinGecko rate limit set to %d req/min", max_per_min)
+def _ensure_configured() -> None:
+    global _configured
+    if _configured:
+        return
+    with _configure_lock:
+        if _configured:
+            return
+        _configure()
+        _configured = True
 
 
-def _gated_get(url: str, params: dict | None = None, timeout: int = 20) -> requests.Response:
-    """Single choke-point for ALL CoinGecko HTTP requests.
-
-    Acquires the concurrency semaphore and waits on the rate limiter
-    before issuing the request. Every caller MUST use this instead of
-    _SESSION.get() directly.
-    """
-    _coingecko_semaphore.acquire()
+def _gated_get(path: str, params: dict | None = None, timeout: int = 20) -> requests.Response:
+    """Single choke-point for ALL CoinGecko HTTP requests."""
+    _ensure_configured()
+    url = f"{_BASE}{path}"
+    if _AUTH_MODE == "param" and _API_KEY:
+        params = dict(params or {})
+        params["x_cg_pro_api_key"] = _API_KEY
+    sem = _coingecko_semaphore
+    sem.acquire()
     try:
         _limiter.wait()
         return _SESSION.get(url, params=params, timeout=timeout)
-    except Exception:
-        raise
     finally:
-        _coingecko_semaphore.release()
+        sem.release()
 
 
 # ---------------------------------------------------------------------------
@@ -107,17 +146,17 @@ _cache_lock = threading.Lock()
 _CACHE_TTL = 600  # 10 min
 
 
-def _cached_get(url: str, params: dict | None = None) -> dict:
+def _cached_get(path: str, params: dict | None = None) -> dict:
     import json as _json
 
-    key = url + (_json.dumps(params, sort_keys=True) if params else "")
+    key = path + (_json.dumps(params, sort_keys=True) if params else "")
     with _cache_lock:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
             return _json.loads(_cache[key][1])
 
     max_retries = 3
     for attempt in range(max_retries):
-        resp = _gated_get(url, params=params)
+        resp = _gated_get(path, params=params)
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", 60))
             wait_time = max(retry_after, 60) + (attempt * 30)
@@ -134,7 +173,7 @@ def _cached_get(url: str, params: dict | None = None) -> dict:
         return data
 
     resp.raise_for_status()
-    return {}  # unreachable but satisfies type checker
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +188,7 @@ _COIN_LIST_TTL = 3600 * 6  # refresh every 6 hours
 
 def _fetch_coin_list() -> dict[str, str]:
     """Return {SYMBOL_UPPER: coingecko_id} mapping."""
-    resp = _gated_get(f"{_BASE}/coins/list", timeout=15)
+    resp = _gated_get("/coins/list", timeout=15)
     resp.raise_for_status()
     mapping: dict[str, str] = {}
     for coin in resp.json():
@@ -189,6 +228,133 @@ def _get_coin_id(symbol: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Bulk market data & description caches
+# ---------------------------------------------------------------------------
+
+_bulk_cache: dict[str, tuple[float, dict]] = {}
+_bulk_cache_lock = threading.Lock()
+_BULK_CACHE_TTL = 7200  # 2 hours — must outlast a full scan round
+_BULK_CACHE_MAX = 1000
+
+_desc_cache: dict[str, tuple[float, str, list[str]]] = {}
+_desc_cache_lock = threading.Lock()
+_DESC_CACHE_TTL = 86400  # 24 hours
+_DESC_CACHE_MAX = 1000
+
+
+def _evict_oldest(cache: dict, max_size: int) -> None:
+    """Evict entries with oldest timestamps to bring cache under max_size."""
+    while len(cache) > max_size:
+        oldest_key = min(cache, key=lambda k: cache[k][0])
+        del cache[oldest_key]
+
+
+def _normalize_bulk_to_coin_format(bulk_item: dict) -> dict:
+    """Map flat /coins/markets response to nested /coins/{id} format."""
+    def _num(val):
+        return val if val is not None else 0
+
+    return {
+        "name": bulk_item.get("name", ""),
+        "symbol": bulk_item.get("symbol", ""),
+        "market_cap_rank": bulk_item.get("market_cap_rank"),
+        "market_data": {
+            "market_cap": {"usd": _num(bulk_item.get("market_cap"))},
+            "total_volume": {"usd": _num(bulk_item.get("total_volume"))},
+            "current_price": {"usd": bulk_item.get("current_price")},
+            "circulating_supply": _num(bulk_item.get("circulating_supply")),
+            "total_supply": _num(bulk_item.get("total_supply")),
+            "max_supply": bulk_item.get("max_supply"),
+            "ath": {"usd": bulk_item.get("ath")},
+            "ath_change_percentage": {"usd": bulk_item.get("ath_change_percentage")},
+            "atl": {"usd": bulk_item.get("atl")},
+            "atl_change_percentage": {"usd": bulk_item.get("atl_change_percentage")},
+            "fully_diluted_valuation": {"usd": bulk_item.get("fully_diluted_valuation")},
+        },
+    }
+
+
+def get_bulk_market_data(coin_ids: list[str]) -> dict[str, dict]:
+    """Fetch market data for up to 250 coins per API call via /coins/markets."""
+    _ensure_configured()
+    result: dict[str, dict] = {}
+    for i in range(0, len(coin_ids), 250):
+        chunk = coin_ids[i:i + 250]
+        items = _cached_get(
+            "/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "ids": ",".join(chunk),
+                "per_page": "250",
+                "sparkline": "false",
+            },
+        )
+        for item in items:
+            cid = item.get("id")
+            if cid:
+                normalized = _normalize_bulk_to_coin_format(item)
+                result[cid] = normalized
+                with _bulk_cache_lock:
+                    _bulk_cache[cid] = (time.time(), normalized)
+                    _evict_oldest(_bulk_cache, _BULK_CACHE_MAX)
+    return result
+
+
+def _get_description_and_categories(coin_id: str) -> tuple[str, list[str]]:
+    """Fetch and cache description/categories for a coin (24h TTL)."""
+    with _desc_cache_lock:
+        entry = _desc_cache.get(coin_id)
+        if entry and (time.time() - entry[0]) < _DESC_CACHE_TTL:
+            return entry[1], entry[2]
+
+    data = _cached_get(
+        f"/coins/{coin_id}",
+        params={
+            "localization": "false",
+            "tickers": "false",
+            "market_data": "false",
+            "community_data": "false",
+            "developer_data": "false",
+            "sparkline": "false",
+        },
+    )
+    desc = data.get("description", {}).get("en", "")
+    categories = data.get("categories", []) or []
+
+    with _desc_cache_lock:
+        _desc_cache[coin_id] = (time.time(), desc, categories)
+        _evict_oldest(_desc_cache, _DESC_CACHE_MAX)
+
+    return desc, categories
+
+
+def prefetch_fundamentals(symbols: list[str]) -> None:
+    """Bulk-fetch market data + descriptions for a list of symbols before analysis."""
+    _ensure_configured()
+    valid_ids: list[str] = []
+    for sym in symbols:
+        cid = _get_coin_id(sym)
+        if cid:
+            valid_ids.append(cid)
+
+    if not valid_ids:
+        return
+
+    get_bulk_market_data(valid_ids)
+
+    desc_misses = 0
+    for cid in valid_ids:
+        with _desc_cache_lock:
+            entry = _desc_cache.get(cid)
+        if not entry or (time.time() - entry[0]) >= _DESC_CACHE_TTL:
+            _get_description_and_categories(cid)
+            desc_misses += 1
+
+    logger.info("Prefetched %d/%d coins (bulk), %d desc cache misses",
+                len(valid_ids), len(symbols), desc_misses)
+
+
+# ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
 
@@ -199,7 +365,7 @@ def get_coingecko_market_data(symbol: str) -> str:
         return f"Could not resolve CoinGecko ID for symbol '{symbol}'"
 
     data = _cached_get(
-        f"{_BASE}/coins/{coin_id}",
+        f"/coins/{coin_id}",
         params={
             "localization": "false",
             "tickers": "false",
@@ -260,7 +426,7 @@ def get_coingecko_community_data(symbol: str) -> str:
         return f"Could not resolve CoinGecko ID for symbol '{symbol}'"
 
     data = _cached_get(
-        f"{_BASE}/coins/{coin_id}",
+        f"/coins/{coin_id}",
         params={
             "localization": "false",
             "tickers": "false",
@@ -327,23 +493,32 @@ def get_coingecko_community_data(symbol: str) -> str:
 def get_coingecko_fundamentals_only(symbol: str) -> str:
     """Fetch ONLY data that Bybit cannot provide: market cap, supply, ATH/ATL, FDV, description.
 
-    This is a lighter version that skips price changes (computed from Bybit klines)
-    and current price/volume (from Bybit ticker). Saves CoinGecko rate limit budget.
+    Uses bulk cache if available (populated by prefetch_fundamentals), otherwise
+    falls back to individual /coins/{id} call.
     """
     coin_id = _get_coin_id(symbol)
     if not coin_id:
         return f"Could not resolve CoinGecko ID for symbol '{symbol}'"
 
-    data = _cached_get(
-        f"{_BASE}/coins/{coin_id}",
-        params={
-            "localization": "false",
-            "tickers": "false",
-            "community_data": "false",
-            "developer_data": "false",
-            "sparkline": "false",
-        },
-    )
+    with _bulk_cache_lock:
+        entry = _bulk_cache.get(coin_id)
+    if entry and (time.time() - entry[0]) < _BULK_CACHE_TTL:
+        data = copy.deepcopy(entry[1])
+    else:
+        data = _cached_get(
+            f"/coins/{coin_id}",
+            params={
+                "localization": "false",
+                "tickers": "false",
+                "community_data": "false",
+                "developer_data": "false",
+                "sparkline": "false",
+            },
+        )
+
+    desc, categories = _get_description_and_categories(coin_id)
+    data.setdefault("description", {})["en"] = desc
+    data["categories"] = categories
 
     md = data.get("market_data", {})
     lines = [
@@ -363,13 +538,23 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
         f"| FDV (USD) | ${md.get('fully_diluted_valuation', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('fully_diluted_valuation', {}).get('usd'), (int, float)) else "| FDV (USD) | N/A |",
     ]
 
-    desc = data.get("description", {}).get("en", "")
-    if desc:
-        short = desc[:500] + ("..." if len(desc) > 500 else "")
+    desc_text = data.get("description", {}).get("en", "")
+    if desc_text:
+        short = desc_text[:500] + ("..." if len(desc_text) > 500 else "")
         lines += ["", "## Project Description", short]
 
-    categories = data.get("categories", [])
-    if categories:
-        lines += ["", f"**Categories:** {', '.join(c for c in categories if c)}"]
+    cats = data.get("categories", [])
+    if cats:
+        lines += ["", f"**Categories:** {', '.join(c for c in cats if c)}"]
 
     return "\n".join(lines)
+
+
+def get_coingecko_status() -> dict:
+    """Return CoinGecko configuration status for health checks."""
+    _ensure_configured()
+    return {
+        "plan": _plan,
+        "key_configured": bool(_API_KEY),
+        "rate_limit_rpm": _limiter.rpm,
+    }
