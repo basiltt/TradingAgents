@@ -379,15 +379,7 @@ def _get_description_and_categories(coin_id: str) -> tuple[str, list[str]]:
 
 def prefetch_fundamentals(symbols: list[str]) -> None:
     """Bulk-fetch market data + descriptions for a list of symbols before analysis."""
-    _ensure_configured()
-    seen: set[str] = set()
-    valid_ids: list[str] = []
-    for sym in symbols:
-        cid = _get_coin_id(sym)
-        if cid and cid not in seen:
-            valid_ids.append(cid)
-            seen.add(cid)
-
+    valid_ids = _resolve_coin_ids(symbols)
     if not valid_ids:
         return
 
@@ -403,6 +395,47 @@ def prefetch_fundamentals(symbols: list[str]) -> None:
 
     logger.info("Prefetched %d/%d coins (bulk), %d desc cache misses",
                 len(valid_ids), len(symbols), desc_misses)
+
+
+def _resolve_coin_ids(symbols: list[str]) -> list[str]:
+    """Deduplicate and resolve symbol list to CoinGecko IDs."""
+    _ensure_configured()
+    seen: set[str] = set()
+    valid_ids: list[str] = []
+    for sym in symbols:
+        cid = _get_coin_id(sym)
+        if cid and cid not in seen:
+            valid_ids.append(cid)
+            seen.add(cid)
+    return valid_ids
+
+
+def prefetch_bulk_market_only(symbols: list[str]) -> None:
+    """Fetch only bulk market data (fast: ~3 API calls for 558 coins)."""
+    valid_ids = _resolve_coin_ids(symbols)
+    if valid_ids:
+        get_bulk_market_data(valid_ids)
+        logger.info("Bulk market prefetch done for %d/%d coins", len(valid_ids), len(symbols))
+
+
+def prefetch_descriptions_background(symbols: list[str]) -> None:
+    """Fetch per-coin descriptions (slow). Safe to run in background thread."""
+    try:
+        valid_ids = _resolve_coin_ids(symbols)
+    except Exception:
+        logger.warning("Background desc prefetch: failed to resolve coin IDs")
+        return
+    desc_misses = 0
+    for cid in valid_ids:
+        with _desc_cache_lock:
+            entry = _desc_cache.get(cid)
+        if not entry or (time.time() - entry[0]) >= _DESC_CACHE_TTL:
+            try:
+                _get_description_and_categories(cid)
+                desc_misses += 1
+            except Exception:
+                logger.debug("Background desc fetch failed for %s", cid)
+    logger.info("Background desc prefetch done: %d cache misses filled", desc_misses)
 
 
 # ---------------------------------------------------------------------------

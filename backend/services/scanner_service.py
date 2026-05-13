@@ -599,10 +599,18 @@ class ScannerService:
 
         if needs_coingecko:
             try:
-                from tradingagents.dataflows.coingecko_data import prefetch_fundamentals
-                await asyncio.to_thread(prefetch_fundamentals, symbols)
+                from tradingagents.dataflows.coingecko_data import prefetch_bulk_market_only
+                await asyncio.to_thread(prefetch_bulk_market_only, symbols)
             except Exception:
-                logger.warning("CoinGecko prefetch failed, analyses will use individual calls", exc_info=True)
+                logger.warning("CoinGecko bulk prefetch failed", exc_info=True)
+            # Descriptions are fetched lazily on cache miss — warm up in background
+            try:
+                from tradingagents.dataflows.coingecko_data import prefetch_descriptions_background
+                loop = asyncio.get_running_loop()
+                fut = loop.run_in_executor(None, prefetch_descriptions_background, symbols)
+                fut.add_done_callback(lambda f: f.exception() and logger.warning("Background desc prefetch error: %s", f.exception()))
+            except Exception:
+                pass
         else:
             logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
 
@@ -691,7 +699,7 @@ class ScannerService:
             "data_vendors": config.get("data_vendors"),
             "workflow_mode": config.get("workflow_mode"),
             "agent_model_overrides": config.get("agent_model_overrides"),
-            "ta_prefilter_enabled": config.get("ta_prefilter_enabled"),
+            "ta_prefilter_enabled": config.get("ta_prefilter_enabled", True),
             "ta_prefilter_threshold": config.get("ta_prefilter_threshold"),
             "llm_max_concurrent": config.get("llm_max_concurrent"),
             "llm_min_spacing_ms": config.get("llm_min_spacing_ms"),

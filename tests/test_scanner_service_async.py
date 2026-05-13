@@ -7,10 +7,20 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+@pytest.fixture(autouse=True)
+def _mock_coingecko_prefetch():
+    """Prevent real CoinGecko API calls during scanner tests."""
+    with patch("tradingagents.dataflows.coingecko_data.prefetch_bulk_market_only"), \
+         patch("tradingagents.dataflows.coingecko_data.prefetch_descriptions_background"), \
+         patch("tradingagents.dataflows.coingecko_data.prefetch_fundamentals"):
+        yield
+
+
 @pytest.fixture
 def scanner():
     from backend.services.scanner_service import ScannerService
     analysis = AsyncMock()
+    analysis.max_concurrent = 6
     db = MagicMock()
     # All DB methods are now async
     db.insert_scan = AsyncMock()
@@ -29,6 +39,7 @@ def scanner():
 def scanner_no_db():
     from backend.services.scanner_service import ScannerService
     analysis = AsyncMock()
+    analysis.max_concurrent = 6
     return ScannerService(analysis_service=analysis, db=None)
 
 
@@ -920,6 +931,7 @@ class TestResumeIncompleteScanIntegration:
         db = await self._make_db()
         from backend.services.scanner_service import ScannerService
         analysis = AsyncMock()
+        analysis.max_concurrent = 6
         scanner = ScannerService(analysis_service=analysis, db=db)
 
         sid_a = f"scan-a-{uuid.uuid4()}"
@@ -946,6 +958,7 @@ class TestResumeIncompleteScanIntegration:
         db = await self._make_db()
         from backend.services.scanner_service import ScannerService
         analysis = AsyncMock()
+        analysis.max_concurrent = 6
         scanner = ScannerService(analysis_service=analysis, db=db)
 
         sid = f"scan-fail-sym-{uuid.uuid4()}"
@@ -968,6 +981,7 @@ class TestResumeIncompleteScanIntegration:
         db = await self._make_db()
         from backend.services.scanner_service import ScannerService
         analysis = AsyncMock()
+        analysis.max_concurrent = 6
         scanner = ScannerService(analysis_service=analysis, db=db)
 
         sid = f"scan-all-done-{uuid.uuid4()}"
@@ -994,6 +1008,7 @@ class TestResumeIncompleteScanIntegration:
         db = await self._make_db()
         from backend.services.scanner_service import ScannerService
         analysis = AsyncMock()
+        analysis.max_concurrent = 6
         scanner = ScannerService(analysis_service=analysis, db=db)
 
         sid = f"scan-bad-cfg-{uuid.uuid4()}"
@@ -1025,6 +1040,7 @@ class TestResumeIncompleteScanIntegration:
         db = await self._make_db()
         from backend.services.scanner_service import ScannerService
         analysis = AsyncMock()
+        analysis.max_concurrent = 6
         scanner = ScannerService(analysis_service=analysis, db=db)
 
         sid = f"scan-override-{uuid.uuid4()}"
