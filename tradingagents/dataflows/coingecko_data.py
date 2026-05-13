@@ -380,7 +380,12 @@ def _val(v, fallback: str = "N/A"):
     return v if v is not None else fallback
 
 def get_coingecko_market_data(symbol: str) -> str:
-    """Fetch market data: market cap, volume, supply, ATH/ATL, price changes."""
+    """Fetch market data: market cap, volume, supply, ATH/ATL, price changes.
+
+    NOTE: Not used in the crypto graph — the crypto_fundamentals analyst calls
+    get_coingecko_fundamentals_only (CoinGecko) + get_bybit_price_changes (Bybit)
+    instead.  Kept for standalone/API usage and potential stock-crypto convergence.
+    """
     coin_id = _get_coin_id(symbol)
     if not coin_id:
         return f"Could not resolve CoinGecko ID for symbol '{symbol}'"

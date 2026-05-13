@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, List
 logger = logging.getLogger(__name__)
 
 _MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
-_WORKERS_PER_ANALYSIS = int(os.environ.get("DEBATE_WORKERS_PER_ANALYSIS", "5"))
+_WORKERS_PER_ANALYSIS = int(os.environ.get("DEBATE_WORKERS_PER_ANALYSIS", "3"))
 _DEBATE_EXECUTOR_WORKERS = int(os.environ.get(
     "DEBATE_EXECUTOR_WORKERS",
     str(_MAX_CONCURRENT * _WORKERS_PER_ANALYSIS),
