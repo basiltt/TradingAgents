@@ -21,7 +21,12 @@ from typing import Any, Callable, Dict, List
 
 logger = logging.getLogger(__name__)
 
-_DEBATE_EXECUTOR_WORKERS = int(os.environ.get("DEBATE_EXECUTOR_WORKERS", "4"))
+_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
+_WORKERS_PER_ANALYSIS = int(os.environ.get("DEBATE_WORKERS_PER_ANALYSIS", "5"))
+_DEBATE_EXECUTOR_WORKERS = int(os.environ.get(
+    "DEBATE_EXECUTOR_WORKERS",
+    str(_MAX_CONCURRENT * _WORKERS_PER_ANALYSIS),
+))
 _debate_executor: ThreadPoolExecutor | None = None
 _debate_lock = threading.Lock()
 _debate_shutting_down = False
