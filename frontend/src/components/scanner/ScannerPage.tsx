@@ -761,8 +761,8 @@ export function ScannerPage() {
 
                 <div className="flex flex-col gap-2">
                   <Label className="font-medium text-sm">Max Parallel Analyses</Label>
-                  <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(25, Math.max(1, Number(e.target.value))))} />
-                  <p className="text-xs text-muted-foreground">How many symbols to analyse concurrently (1–25)</p>
+                  <Input type="number" min={1} max={15} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(15, Math.max(1, Number(e.target.value))))} />
+                  <p className="text-xs text-muted-foreground">How many symbols to analyse concurrently (1–15)</p>
                 </div>
 
                 <label className="flex items-start gap-3 cursor-pointer">

@@ -39,7 +39,8 @@ def _get_graph_executor() -> concurrent.futures.ThreadPoolExecutor:
             )
     return _graph_executor
 
-_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
+DEFAULT_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
+_HARD_MAX_CONCURRENT = 15
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
@@ -70,19 +71,23 @@ class AnalysisService:
         self._prefilter_limiter: Any = None
         self._prefilter_cb: Any = None
         self._prefilter_init_lock = threading.Lock()
+        self._max_concurrent = DEFAULT_MAX_CONCURRENT
 
     @property
     def max_concurrent(self) -> int:
-        return _MAX_CONCURRENT
+        return self._max_concurrent
+
+    def set_max_concurrent(self, value: int) -> None:
+        self._max_concurrent = max(1, min(value, _HARD_MAX_CONCURRENT))
 
     async def start_analysis(self, request: Dict[str, Any]) -> str:
         if self._shutting_down:
             raise ConcurrencyLimitError("Server is shutting down, not accepting new analyses.")
         async with self._lock:
             active = sum(1 for r in self._active_runs.values() if r["status"] == "running")
-            if active >= _MAX_CONCURRENT:
+            if active >= self._max_concurrent:
                 raise ConcurrencyLimitError(
-                    f"Maximum {_MAX_CONCURRENT} concurrent analyses reached. "
+                    f"Maximum {self._max_concurrent} concurrent analyses reached. "
                     f"Please wait for a running analysis to complete."
                 )
             if self._zombie_count >= _MAX_ZOMBIES:

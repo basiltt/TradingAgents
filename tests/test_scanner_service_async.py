@@ -21,6 +21,7 @@ def scanner():
     from backend.services.scanner_service import ScannerService
     analysis = AsyncMock()
     analysis.max_concurrent = 6
+    analysis.set_max_concurrent = MagicMock()
     db = MagicMock()
     # All DB methods are now async
     db.insert_scan = AsyncMock()
@@ -40,6 +41,7 @@ def scanner_no_db():
     from backend.services.scanner_service import ScannerService
     analysis = AsyncMock()
     analysis.max_concurrent = 6
+    analysis.set_max_concurrent = MagicMock()
     return ScannerService(analysis_service=analysis, db=None)
 
 

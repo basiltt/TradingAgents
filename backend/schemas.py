@@ -340,7 +340,7 @@ class ScanRequest(BaseModel):
     max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
     checkpoint_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
-    max_parallel: Optional[int] = Field(None, ge=1, le=25)
+    max_parallel: Optional[int] = Field(None, ge=1, le=15)
     workflow_mode: Optional[str] = None
     agent_model_overrides: Optional[Dict[str, str]] = None
     ta_prefilter_enabled: Optional[bool] = None

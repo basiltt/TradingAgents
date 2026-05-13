@@ -11,12 +11,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from backend.services.analysis_service import ConcurrencyLimitError
+from backend.services.analysis_service import ConcurrencyLimitError, DEFAULT_MAX_CONCURRENT
 
 logger = logging.getLogger(__name__)
 
-_BATCH_SIZE = 10  # default; overridden by config max_parallel (1–25)
-_MAX_PARALLEL_CAP = 25
+_BATCH_SIZE = 10  # default; overridden by config max_parallel (1–15)
+_MAX_PARALLEL_CAP = 15
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 _VALID_DIRECTIONS = frozenset({"buy", "sell", "hold"})
@@ -608,13 +608,15 @@ class ScannerService:
                 from tradingagents.dataflows.coingecko_data import prefetch_descriptions_background
                 loop = asyncio.get_running_loop()
                 fut = loop.run_in_executor(None, prefetch_descriptions_background, symbols)
-                fut.add_done_callback(lambda f: f.exception() and logger.warning("Background desc prefetch error: %s", f.exception()))
+                fut.add_done_callback(lambda f: None if f.cancelled() else (f.exception() and logger.warning("Background desc prefetch error: %s", f.exception())))
             except Exception:
                 pass
         else:
             logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
 
-        sem = asyncio.Semaphore(min(batch_size, self._analysis.max_concurrent))
+        # Raise the analysis service concurrency limit to match user's max_parallel
+        self._analysis.set_max_concurrent(batch_size)
+        sem = asyncio.Semaphore(batch_size)
         scan_error = False
 
         async def _process_ticker(ticker: str) -> None:
@@ -643,6 +645,8 @@ class ScannerService:
         except Exception as e:
             logger.error("Scan %s error: %s", scan_id, e, exc_info=True)
             scan_error = True
+        finally:
+            self._analysis.set_max_concurrent(DEFAULT_MAX_CONCURRENT)
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         final_status = "failed" if scan_error else "completed"
