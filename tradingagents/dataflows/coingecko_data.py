@@ -144,6 +144,7 @@ _cache: dict[str, tuple[float, str]] = {}
 _cache_lock = threading.Lock()
 _CACHE_TTL = 600  # 10 min
 _CACHE_MAX = 1000
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
 def _cached_get(path: str, params: dict | None = None) -> dict | list:
@@ -152,7 +153,6 @@ def _cached_get(path: str, params: dict | None = None) -> dict | list:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
             return copy.deepcopy(_cache[key][1])
 
-    _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
     max_retries = 3
     last_exc: Exception | None = None
     for attempt in range(max_retries):
@@ -461,11 +461,11 @@ def get_coingecko_market_data(symbol: str) -> str:
         "## Price Changes",
         "| Period | Change % |",
         "|--------|----------|",
+        f"| 1h | {_val(md.get('price_change_percentage_1h'))}% |",
         f"| 24h | {_val(md.get('price_change_percentage_24h'))}% |",
         f"| 7d | {_val(md.get('price_change_percentage_7d'))}% |",
         f"| 14d | {_val(md.get('price_change_percentage_14d'))}% |",
         f"| 30d | {_val(md.get('price_change_percentage_30d'))}% |",
-        f"| 60d | {_val(md.get('price_change_percentage_60d'))}% |",
         f"| 200d | {_val(md.get('price_change_percentage_200d'))}% |",
         f"| 1y | {_val(md.get('price_change_percentage_1y'))}% |",
         "",
@@ -583,7 +583,11 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
             },
         )
 
-    desc, categories = _get_description_and_categories(coin_id)
+    try:
+        desc, categories = _get_description_and_categories(coin_id)
+    except Exception as exc:
+        logger.warning("Failed to fetch description for %s: %s", coin_id, exc)
+        desc, categories = "", []
     data.setdefault("description", {})["en"] = desc
     data["categories"] = categories
 

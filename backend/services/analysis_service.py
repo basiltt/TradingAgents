@@ -43,6 +43,11 @@ _MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
+_REPORT_KEYS = [
+    "crypto_fundamentals_report", "sentiment_report", "market_report",
+    "news_report", "fundamentals_report",
+]
+_WARNING_MARKERS = ("[ERROR]", "Data Quality Warning", "data was unavailable", "metrics unavailable")
 
 
 class AnalysisService:
@@ -357,16 +362,14 @@ class AnalysisService:
                     await self._db.save_report_section(run_id, "final_trade_decision", str(decision))
 
                 data_warnings = []
-                _REPORT_KEYS = [
-                    "crypto_fundamentals_report", "sentiment_report", "market_report",
-                    "news_report", "fundamentals_report",
-                ]
                 for rk in _REPORT_KEYS:
                     report_text = str(result.get(rk, ""))
-                    if "[ERROR]" in report_text:
+                    if any(m in report_text for m in _WARNING_MARKERS):
                         for line in report_text.splitlines():
-                            if "[ERROR]" in line:
-                                data_warnings.append(line.strip())
+                            if any(m in line for m in _WARNING_MARKERS):
+                                cleaned = line.strip()
+                                if cleaned and cleaned not in data_warnings:
+                                    data_warnings.append(cleaned)
                 if data_warnings:
                     await self._db.save_report_section(
                         run_id, "data_warnings", json.dumps(data_warnings),

@@ -56,7 +56,9 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             "technical indicators (RSI, MACD, Bollinger Bands, EMA) for the given perpetual "
             "futures contract. Identify trends, support/resistance levels, momentum signals, "
             "and potential entry/exit zones. Include the current price and data timestamp in "
-            "your report. Call get_crypto_klines first, then get_crypto_indicators."
+            "your report. Call get_crypto_klines first, then get_crypto_indicators. "
+            "If any tool returns an [ERROR], include a **Data Quality Warning** section "
+            "at the end of your report listing which data sources were unavailable."
             " Write a detailed report with a Markdown summary table at the end."
 
             + get_language_instruction()
@@ -103,7 +105,9 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
             "Assess funding cost impact on position holding, OI trends as a proxy for market "
             "sentiment and potential liquidation cascades, long/short ratio for crowd positioning, "
             "multi-timeframe price changes, and current market snapshot. "
-            "If any data source is unavailable, acknowledge it and continue with available data."
+            "If any data source is unavailable, acknowledge it and continue with available data. "
+            "If any tool returns an [ERROR], include a **Data Quality Warning** section "
+            "at the end of your report listing which data sources were unavailable."
             " Write a detailed report with a Markdown summary table at the end."
 
             + get_language_instruction()
@@ -142,7 +146,9 @@ def create_crypto_news_analyst(llm):
             "cryptocurrency futures contract. Search for the coin name (e.g. 'Bitcoin', "
             "'Ethereum'), related futures/derivatives news, and broader crypto market events. "
             "Use get_news for targeted searches and get_global_news for macro context. "
-            "Write a comprehensive report with a Markdown summary table at the end."
+            "If any tool returns an [ERROR], include a **Data Quality Warning** section "
+            "at the end of your report listing which data sources were unavailable."
+            " Write a comprehensive report with a Markdown summary table at the end."
 
             + get_language_instruction()
         )
@@ -303,6 +309,9 @@ def create_confluence_checker(llm):
             "6. **KEY RISK**: The single biggest risk that could invalidate the consensus\n\n"
             "IMPORTANT: If analysts contradict each other, say 'Conflicting' — do NOT force a direction. "
             "A 'Conflicting' consensus with low confidence is more valuable than a false consensus.\n\n"
+            "IMPORTANT: If any analyst report contains a 'Data Quality Warning' section, reduce "
+            "CONSENSUS CONFIDENCE by 1-3 points depending on how critical the missing data was. "
+            "Note which analysts had incomplete data in your summary.\n\n"
             "Be concise. Focus on actionable information for a trader."
         )
 
