@@ -47,7 +47,7 @@ _REPORT_KEYS = [
     "crypto_fundamentals_report", "sentiment_report", "market_report",
     "news_report", "fundamentals_report",
 ]
-_WARNING_MARKERS = ("[ERROR]", "Data Quality Warning", "data was unavailable", "metrics unavailable")
+_WARNING_MARKERS = ("[ERROR]", "Data Quality Warning")
 
 
 class AnalysisService:

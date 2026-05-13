@@ -657,6 +657,7 @@ class AnalysisDB:
         score = max(-10, min(10, score))
         status = result.get("status", "failed")
         if status not in ("completed", "failed", "cancelled", "unknown"):
+            logger.warning("insert_scan_result: invalid status %r — forcing unknown", status)
             status = "unknown"
 
         with self._get_conn() as conn:

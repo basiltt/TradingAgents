@@ -207,11 +207,12 @@ def _kline_response(rows, ret_code=0, ret_msg="OK"):
     }
 
 
-def _mock_response(json_data, status_code=200):
+def _mock_response(json_data, status_code=200, headers=None):
     """Create a mock requests.Response."""
     resp = Mock()
     resp.status_code = status_code
     resp.json.return_value = json_data
+    resp.headers = headers or {}
     resp.raise_for_status = Mock()
     if status_code >= 400:
         resp.raise_for_status.side_effect = Exception(f"HTTP {status_code}")
@@ -705,3 +706,87 @@ class TestNormalizeBybitSymbolUnit:
         from tradingagents.dataflows.bybit_data import normalize_bybit_symbol, InvalidSymbolError
         with pytest.raises(InvalidSymbolError):
             normalize_bybit_symbol("FAKEUSDT")
+
+
+# ---------------------------------------------------------------------------
+# retCode 10006 (rate limit) retry tests
+# ---------------------------------------------------------------------------
+
+class TestBybitRequestRetryOnRateLimit:
+    """_bybit_request should retry on retCode 10006/10018 instead of raising."""
+
+    def test_retries_on_retcode_10006_then_succeeds(self):
+        from tradingagents.dataflows.bybit_data import _bybit_request, BybitRateLimiter, BybitCircuitBreaker
+
+        rate_limited_resp = _mock_response(
+            {"retCode": 10006, "retMsg": "Too many visits!"},
+            headers={"X-Bapi-Limit-Reset-Timestamp": str(int(time.time() * 1000) + 100)},
+        )
+        success_resp = _mock_response(
+            {"retCode": 0, "result": {"list": [{"symbol": "BTCUSDT"}]}},
+        )
+
+        limiter = BybitRateLimiter(capacity=80, refill_rate=16.0)
+        cb = BybitCircuitBreaker()
+
+        with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
+            mock_session.get.side_effect = [rate_limited_resp, success_resp]
+            result = _bybit_request(
+                "/v5/market/tickers",
+                {"category": "linear", "symbol": "BTCUSDT"},
+                ("test", "BTCUSDT"),
+                limiter=limiter,
+                circuit_breaker=cb,
+            )
+
+        assert mock_session.get.call_count == 2
+        assert result["list"][0]["symbol"] == "BTCUSDT"
+
+    def test_raises_after_max_retries_on_10006(self):
+        from tradingagents.dataflows.bybit_data import _bybit_request, BybitRateLimiter, BybitCircuitBreaker
+
+        rate_limited_resp = _mock_response(
+            {"retCode": 10006, "retMsg": "Too many visits!"},
+        )
+
+        limiter = BybitRateLimiter(capacity=80, refill_rate=16.0)
+        cb = BybitCircuitBreaker()
+
+        with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
+            mock_session.get.return_value = rate_limited_resp
+            with pytest.raises(ValueError, match="retCode=10006"):
+                _bybit_request(
+                    "/v5/market/tickers",
+                    {"category": "linear", "symbol": "BTCUSDT"},
+                    ("test2", "BTCUSDT"),
+                    limiter=limiter,
+                    circuit_breaker=cb,
+                )
+
+        assert mock_session.get.call_count == 3  # _MAX_RETRIES = 3
+
+    def test_retries_on_retcode_10018(self):
+        from tradingagents.dataflows.bybit_data import _bybit_request, BybitRateLimiter, BybitCircuitBreaker
+
+        rate_limited_resp = _mock_response(
+            {"retCode": 10018, "retMsg": "Too many requests"},
+        )
+        success_resp = _mock_response(
+            {"retCode": 0, "result": {"data": "ok"}},
+        )
+
+        limiter = BybitRateLimiter(capacity=80, refill_rate=16.0)
+        cb = BybitCircuitBreaker()
+
+        with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
+            mock_session.get.side_effect = [rate_limited_resp, success_resp]
+            result = _bybit_request(
+                "/v5/market/tickers",
+                {"category": "linear", "symbol": "ETHUSDT"},
+                ("test3", "ETHUSDT"),
+                limiter=limiter,
+                circuit_breaker=cb,
+            )
+
+        assert mock_session.get.call_count == 2
+        assert result["data"] == "ok"

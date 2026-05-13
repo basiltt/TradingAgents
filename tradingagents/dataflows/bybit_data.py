@@ -340,9 +340,6 @@ def _bybit_request(
                 continue
             raise
 
-        if circuit_breaker:
-            circuit_breaker.record_success()
-
         try:
             data = resp.json()
         except Exception:
@@ -351,6 +348,35 @@ def _bybit_request(
         ret_code = data.get("retCode")
         if ret_code is None:
             raise ValueError(f"Malformed response from {endpoint}: missing retCode")
+
+        if ret_code in (10006, 10018):
+            if attempt < _MAX_RETRIES - 1:
+                last_exc = ValueError(
+                    f"Bybit rate limited on {endpoint}: retCode={ret_code}"
+                )
+                reset_ts = resp.headers.get("X-Bapi-Limit-Reset-Timestamp")
+                if reset_ts:
+                    try:
+                        delay = max((int(reset_ts) - int(time.time() * 1000)) / 1000.0, 0.5)
+                        delay = min(delay, 10.0)
+                    except (ValueError, TypeError):
+                        delay = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                else:
+                    delay = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    "Bybit rate limited on %s (retCode=%d), retrying in %.1fs (attempt %d/%d)",
+                    endpoint, ret_code, delay, attempt + 1, _MAX_RETRIES,
+                )
+                time.sleep(min(delay, max(0, deadline - time.monotonic())))
+                continue
+            raise ValueError(
+                f"Bybit API error on {endpoint}: "
+                f"retCode={ret_code}, retMsg={data.get('retMsg', 'unknown')}"
+            )
+
+        if circuit_breaker:
+            circuit_breaker.record_success()
+
         if ret_code != 0:
             raise ValueError(
                 f"Bybit API error on {endpoint}: "

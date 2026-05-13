@@ -718,7 +718,7 @@ class ScannerService:
                 "ticker": ticker,
                 "run_id": None,
                 "status": "failed",
-                "direction": "unknown",
+                "direction": "hold",
                 "confidence": "none",
                 "score": 0,
                 "decision_summary": f"Failed to start: {e}",
@@ -742,7 +742,7 @@ class ScannerService:
                 "ticker": ticker,
                 "run_id": run_id,
                 "status": "cancelled",
-                "direction": "unknown",
+                "direction": "hold",
                 "confidence": "none",
                 "score": 0,
                 "decision_summary": "Cancelled",
@@ -774,7 +774,7 @@ class ScannerService:
                 "ticker": ticker,
                 "run_id": run_id,
                 "status": "cancelled",
-                "direction": "unknown",
+                "direction": "hold",
                 "confidence": "none",
                 "score": 0,
                 "decision_summary": "Cancelled",
@@ -792,7 +792,7 @@ class ScannerService:
         if not run:
             poll_fail_result = {
                 "ticker": ticker, "run_id": run_id,
-                "status": "failed", "direction": "unknown",
+                "status": "failed", "direction": "hold",
                 "confidence": "none", "score": 0,
                 "decision_summary": "Timeout waiting for completion",
             }

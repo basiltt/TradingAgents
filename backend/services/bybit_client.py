@@ -18,8 +18,8 @@ from yarl import URL
 
 logger = logging.getLogger(__name__)
 
-_RATE_LIMIT_WINDOW = 60
-_RATE_LIMIT_MAX = 110  # conservative: Bybit limit is 120, leave headroom
+_RATE_LIMIT_WINDOW = 5
+_RATE_LIMIT_MAX = 550  # conservative: Bybit IP limit is 600/5s
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 0.5
 
@@ -155,6 +155,7 @@ class BybitClient:
                     session = await self._get_session()
                     async with session.request(method, url, headers=headers, **request_kwargs) as resp:
                         data = await resp.json()
+                        resp_headers = dict(resp.headers)
                 except aiohttp.ClientError:
                     if not retry_on_network_error:
                         logger.error(f"Bybit network error on {path} (no retry for safety)")
@@ -183,7 +184,7 @@ class BybitClient:
                     or "too many" in ret_msg
                 )
                 if is_rate_limited and attempt < _MAX_RETRIES - 1:
-                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    delay = self._parse_reset_delay_from_headers(resp_headers) or (_RETRY_BASE_DELAY * (2 ** attempt))
                     jitter = random.uniform(0, delay * 0.1)
                     total_delay = delay + jitter
                     logger.warning(f"Rate limited on {path}, retrying in {total_delay:.2f}s (attempt {attempt + 1})")
@@ -198,6 +199,20 @@ class BybitClient:
                 return data.get("result", {})
 
         raise BybitAPIError(10006, "Rate limit exceeded after retries")
+
+    @staticmethod
+    def _parse_reset_delay_from_headers(headers: dict) -> float | None:
+        """Extract delay from X-Bapi-Limit-Reset-Timestamp header."""
+        reset_ts = headers.get("X-Bapi-Limit-Reset-Timestamp")
+        if not reset_ts:
+            return None
+        try:
+            reset_ms = int(reset_ts)
+            now_ms = int(time.time() * 1000)
+            delay = max((reset_ms - now_ms) / 1000.0, 0.1)
+            return min(delay, 10.0)
+        except (ValueError, TypeError):
+            return None
 
     async def _wait_for_rate_limit(self) -> None:
         while True:
