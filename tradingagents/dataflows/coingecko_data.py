@@ -15,8 +15,6 @@ import logging
 import os
 import threading
 import time
-from typing import Optional
-
 import requests
 
 logger = logging.getLogger(__name__)
@@ -77,7 +75,7 @@ _coingecko_semaphore = threading.Semaphore(2)
 def _configure() -> None:
     global _plan, _BASE, _API_KEY, _AUTH_MODE, _limiter, _coingecko_semaphore
 
-    _API_KEY = os.environ.get("COINGECKO_API_KEY", "")
+    _API_KEY = os.environ.get("COINGECKO_API_KEY", "").strip()
     explicit_plan = os.environ.get("COINGECKO_PLAN", "")
 
     if explicit_plan:
@@ -339,11 +337,13 @@ def _get_description_and_categories(coin_id: str) -> tuple[str, list[str]]:
 def prefetch_fundamentals(symbols: list[str]) -> None:
     """Bulk-fetch market data + descriptions for a list of symbols before analysis."""
     _ensure_configured()
+    seen: set[str] = set()
     valid_ids: list[str] = []
     for sym in symbols:
         cid = _get_coin_id(sym)
-        if cid:
+        if cid and cid not in seen:
             valid_ids.append(cid)
+            seen.add(cid)
 
     if not valid_ids:
         return
