@@ -502,9 +502,9 @@ class TestNormalizationPreservesPriceChanges:
             "atl": 67.81, "atl_change_percentage": 100000,
             "fully_diluted_valuation": 1_050_000_000,
             "price_change_percentage_24h": 2.5,
-            "price_change_percentage_7d": -1.3,
-            "price_change_percentage_14d": 3.0,
-            "price_change_percentage_30d": 5.0,
+            "price_change_percentage_7d_in_currency": {"usd": -1.3},
+            "price_change_percentage_14d_in_currency": {"usd": 3.0},
+            "price_change_percentage_30d_in_currency": {"usd": 5.0},
             "high_24h": 51000, "low_24h": 49000,
             "price_change_24h": 500,
             "market_cap_change_24h": 2_000_000,
@@ -514,6 +514,7 @@ class TestNormalizationPreservesPriceChanges:
         md = result["market_data"]
         assert md["price_change_percentage_24h"] == 2.5
         assert md["price_change_percentage_7d"] == -1.3
+        assert md["price_change_percentage_14d"] == 3.0
         assert md["high_24h"]["usd"] == 51000
         assert md["market_cap_change_percentage_24h"] == 0.2
 

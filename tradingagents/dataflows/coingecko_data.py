@@ -281,6 +281,15 @@ def _normalize_bulk_to_coin_format(bulk_item: dict) -> dict:
     def _num(val):
         return val if val is not None else 0
 
+    def _pct(period: str):
+        """Extract price change % from bulk response — flat for 24h, nested for others."""
+        if period == "24h":
+            return bulk_item.get("price_change_percentage_24h")
+        nested = bulk_item.get(f"price_change_percentage_{period}_in_currency")
+        if isinstance(nested, dict):
+            return nested.get("usd")
+        return bulk_item.get(f"price_change_percentage_{period}")
+
     return {
         "name": bulk_item.get("name", ""),
         "symbol": bulk_item.get("symbol", ""),
@@ -297,13 +306,13 @@ def _normalize_bulk_to_coin_format(bulk_item: dict) -> dict:
             "atl": {"usd": bulk_item.get("atl")},
             "atl_change_percentage": {"usd": bulk_item.get("atl_change_percentage")},
             "fully_diluted_valuation": {"usd": bulk_item.get("fully_diluted_valuation")},
-            "price_change_percentage_24h": bulk_item.get("price_change_percentage_24h"),
-            "price_change_percentage_7d": bulk_item.get("price_change_percentage_7d"),
-            "price_change_percentage_14d": bulk_item.get("price_change_percentage_14d"),
-            "price_change_percentage_30d": bulk_item.get("price_change_percentage_30d"),
-            "price_change_percentage_60d": bulk_item.get("price_change_percentage_60d"),
-            "price_change_percentage_200d": bulk_item.get("price_change_percentage_200d"),
-            "price_change_percentage_1y": bulk_item.get("price_change_percentage_1y"),
+            "price_change_percentage_1h": _pct("1h"),
+            "price_change_percentage_24h": _pct("24h"),
+            "price_change_percentage_7d": _pct("7d"),
+            "price_change_percentage_14d": _pct("14d"),
+            "price_change_percentage_30d": _pct("30d"),
+            "price_change_percentage_200d": _pct("200d"),
+            "price_change_percentage_1y": _pct("1y"),
             "high_24h": {"usd": bulk_item.get("high_24h")},
             "low_24h": {"usd": bulk_item.get("low_24h")},
             "price_change_24h": bulk_item.get("price_change_24h"),
@@ -326,6 +335,7 @@ def get_bulk_market_data(coin_ids: list[str]) -> dict[str, dict]:
                 "ids": ",".join(chunk),
                 "per_page": "250",
                 "sparkline": "false",
+                "price_change_percentage": "1h,24h,7d,14d,30d,200d,1y",
             },
         )
         for item in items:
@@ -602,11 +612,11 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
     ]
 
     price_changes = {
+        "1h": md.get("price_change_percentage_1h"),
         "24h": md.get("price_change_percentage_24h"),
         "7d": md.get("price_change_percentage_7d"),
         "14d": md.get("price_change_percentage_14d"),
         "30d": md.get("price_change_percentage_30d"),
-        "60d": md.get("price_change_percentage_60d"),
         "200d": md.get("price_change_percentage_200d"),
         "1y": md.get("price_change_percentage_1y"),
     }
