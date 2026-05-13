@@ -175,30 +175,34 @@ class AccountsService:
         tp_price_pct = Decimal(str(take_profit_pct)) / Decimal(str(leverage))
         sl_price_pct = Decimal(str(stop_loss_pct)) / Decimal(str(leverage))
 
-        if sl_price_pct >= _HUNDRED:
+        if sl_price_pct > 0 and sl_price_pct >= _HUNDRED:
             raise ValueError("Stop loss exceeds 100% price move — reduce SL % or increase leverage")
-        if side == "Sell" and tp_price_pct >= _HUNDRED:
+        if side == "Sell" and tp_price_pct > 0 and tp_price_pct >= _HUNDRED:
             raise ValueError("Take profit exceeds 100% price move for short — reduce TP % or increase leverage")
 
-        # Calculate TP/SL prices
-        if side == "Buy":
-            tp_price = mark_price * (_ONE + tp_price_pct / _HUNDRED)
-            sl_price = mark_price * (_ONE - sl_price_pct / _HUNDRED)
-        else:
-            tp_price = mark_price * (_ONE - tp_price_pct / _HUNDRED)
-            sl_price = mark_price * (_ONE + sl_price_pct / _HUNDRED)
-
-        if tp_price <= 0 or sl_price <= 0:
-            raise ValueError("Calculated TP/SL price is non-positive — adjust percentages or leverage")
-
+        # Calculate TP/SL prices (skip when pct is 0 or not provided)
         def round_price(p: Decimal) -> str:
             rounded = (p / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
             if rounded <= 0:
                 raise ValueError(f"Price rounded to {rounded} after tick alignment — adjust parameters")
             return str(rounded)
 
-        tp_price_str = round_price(tp_price)
-        sl_price_str = round_price(sl_price)
+        tp_price_str: str | None = None
+        sl_price_str: str | None = None
+        if tp_price_pct > 0:
+            if side == "Buy":
+                tp_price = mark_price * (_ONE + tp_price_pct / _HUNDRED)
+            else:
+                tp_price = mark_price * (_ONE - tp_price_pct / _HUNDRED)
+            if tp_price > 0:
+                tp_price_str = round_price(tp_price)
+        if sl_price_pct > 0:
+            if side == "Buy":
+                sl_price = mark_price * (_ONE - sl_price_pct / _HUNDRED)
+            else:
+                sl_price = mark_price * (_ONE + sl_price_pct / _HUNDRED)
+            if sl_price > 0:
+                sl_price_str = round_price(sl_price)
 
         logger.info(
             "Order params: %s %s qty=%s @ mark=%s, TP=%s SL=%s, leverage=%dx",

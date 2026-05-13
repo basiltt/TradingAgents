@@ -991,6 +991,10 @@ export interface CycleResponse {
   status: "pending" | "placing_trades" | "running" | "stopping" | "completed" | "stopped" | "failed";
   account_id: string;
   scan_id: string | null;
+  trade_direction: string;
+  leverage: number;
+  target_value: number;
+  max_drawdown_pct: number;
   trades_placed: number;
   trades_failed: number;
   created_at: string;
@@ -1003,6 +1007,7 @@ export interface CycleTradeResponse {
   id: number;
   symbol: string;
   side: string;
+  order_link_id: string | null;
   qty: number | null;
   entry_price: number | null;
   status: "pending" | "submitted" | "filled" | "failed" | "cancelled";
@@ -1013,8 +1018,6 @@ export interface CycleTradeResponse {
 
 export interface CycleDetail extends CycleResponse {
   trades: CycleTradeResponse[];
-  trade_direction: string;
-  leverage: number;
   capital_pct: number;
   take_profit_pct: number | null;
   stop_loss_pct: number | null;
@@ -1023,8 +1026,6 @@ export interface CycleDetail extends CycleResponse {
   signal_filter: string;
   max_trades: number;
   target_type: string;
-  target_value: number;
-  max_drawdown_pct: number;
   initial_equity: number | null;
   final_pnl: number | null;
 }

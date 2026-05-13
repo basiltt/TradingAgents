@@ -340,18 +340,6 @@ class TradingCycleEngine:
             await self._finalize_cycle(cycle_id, "failed", "insufficient_balance")
             return
 
-        max_drawdown_pct = float(cfg.get("max_drawdown_pct", 5))
-        balance_below = Decimal(str(initial_equity)) * (1 - Decimal(str(max_drawdown_pct)) / 100)
-
-        await self._db.insert_close_rule({
-            "account_id": account_id,
-            "trigger_type": "BALANCE_BELOW",
-            "threshold_value": balance_below,
-            "reference_value": Decimal(str(initial_equity)),
-            "status": "pending_activation",
-            "cycle_id": cycle_id,
-        })
-
         positions = await self._accounts.get_positions(account_id)
         position_symbols = {
             p["symbol"] for p in positions if float(p.get("size", 0)) > 0
@@ -391,14 +379,16 @@ class TradingCycleEngine:
 
             try:
                 async with semaphore:
+                    tp_pct = cfg.get("take_profit_pct")
+                    sl_pct = cfg.get("stop_loss_pct")
                     result = await self._accounts.place_trade(
                         account_id=account_id,
                         symbol=symbol,
                         signal_direction=direction,
                         trade_direction=trade_direction,
                         leverage=int(cfg.get("leverage", 10)),
-                        take_profit_pct=float(cfg.get("take_profit_pct", 0) or 0),
-                        stop_loss_pct=float(cfg.get("stop_loss_pct", 0) or 0),
+                        take_profit_pct=float(tp_pct) if tp_pct else 0,
+                        stop_loss_pct=float(sl_pct) if sl_pct else 0,
                         capital_pct=float(cfg.get("capital_pct", 5)),
                         base_capital=initial_equity,
                     )
@@ -440,15 +430,26 @@ class TradingCycleEngine:
 
         target_type = cfg.get("target_type", "percentage")
         target_value = float(cfg.get("target_value", 10))
+        max_drawdown_pct = float(cfg.get("max_drawdown_pct", 5))
         intended_trades = len(filtered)
         if trades_placed < intended_trades:
             fill_ratio = trades_placed / intended_trades
-            adjusted_target = target_value * fill_ratio
+            target_value *= fill_ratio
+            max_drawdown_pct *= fill_ratio
             logger.info(
-                "Cycle %d: partial fill %d/%d, scaling target from %s to %s",
-                cycle_id, trades_placed, intended_trades, target_value, adjusted_target,
+                "Cycle %d: partial fill %d/%d, scaling target/drawdown by %.2f",
+                cycle_id, trades_placed, intended_trades, fill_ratio,
             )
-            target_value = adjusted_target
+
+        balance_below = Decimal(str(initial_equity)) * (1 - Decimal(str(max_drawdown_pct)) / 100)
+        await self._db.insert_close_rule({
+            "account_id": account_id,
+            "trigger_type": "BALANCE_BELOW",
+            "threshold_value": balance_below,
+            "reference_value": Decimal(str(initial_equity)),
+            "status": "pending_activation",
+            "cycle_id": cycle_id,
+        })
 
         if target_type == "percentage":
             balance_above = Decimal(str(initial_equity)) * (1 + Decimal(str(target_value)) / 100)
@@ -501,7 +502,7 @@ class TradingCycleEngine:
                 symbols = await self._repo.get_cycle_trade_symbols(cycle_id)
                 if symbols:
                     result = await self._close_positions.close_all_for_rule(
-                        account_id, f"cycle-{cycle_id}", symbols=symbols,
+                        account_id, None, symbols=symbols,
                     )
                     if result.get("skipped"):
                         logger.warning("Position close skipped for cycle %d (concurrent close in progress)", cycle_id)
