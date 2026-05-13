@@ -237,10 +237,10 @@ def create_app() -> FastAPI:
         yield
         _watchdog_task.cancel()
         await app.state.scheduler_service.shutdown()
-        if getattr(app.state, "cycle_engine", None):
-            await app.state.cycle_engine.shutdown()
         if getattr(app.state, "rule_evaluator", None):
             await app.state.rule_evaluator.shutdown()
+        if getattr(app.state, "cycle_engine", None):
+            await app.state.cycle_engine.shutdown()
         if app.state.snapshot_scheduler:
             await app.state.snapshot_scheduler.shutdown()
             await asyncio.sleep(0.5)

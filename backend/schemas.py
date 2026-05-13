@@ -1024,6 +1024,7 @@ class CycleTradeResponse(BaseModel):
     id: int
     symbol: str
     side: str
+    order_link_id: Optional[str] = None
     qty: Optional[float] = None
     entry_price: Optional[float] = None
     status: Literal["pending", "submitted", "filled", "failed", "cancelled"]
@@ -1038,6 +1039,10 @@ class CycleResponse(BaseModel):
     status: Literal["pending", "placing_trades", "running", "stopping", "completed", "stopped", "failed"]
     account_id: str
     scan_id: Optional[str] = None
+    trade_direction: str = ""
+    leverage: int = 1
+    target_value: float = 0
+    max_drawdown_pct: float = 0
     trades_placed: int
     trades_failed: int
     created_at: datetime

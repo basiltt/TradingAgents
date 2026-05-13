@@ -225,6 +225,10 @@ class TradingCycleEngine:
         task = self._active_tasks.get(cycle_id)
         if task and not task.done():
             task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
 
         await self._finalize_cycle(cycle_id, "stopped", "user_stopped")
         cycle = await self._repo.get_cycle(cycle_id)
@@ -437,11 +441,11 @@ class TradingCycleEngine:
         target_type = cfg.get("target_type", "percentage")
         target_value = float(cfg.get("target_value", 10))
         intended_trades = len(filtered)
-        if trades_placed < intended_trades and target_type == "percentage":
+        if trades_placed < intended_trades:
             fill_ratio = trades_placed / intended_trades
             adjusted_target = target_value * fill_ratio
             logger.info(
-                "Cycle %d: partial fill %d/%d, scaling target from %.1f%% to %.1f%%",
+                "Cycle %d: partial fill %d/%d, scaling target from %s to %s",
                 cycle_id, trades_placed, intended_trades, target_value, adjusted_target,
             )
             target_value = adjusted_target
@@ -496,9 +500,11 @@ class TradingCycleEngine:
             try:
                 symbols = await self._repo.get_cycle_trade_symbols(cycle_id)
                 if symbols:
-                    await self._close_positions.close_all_for_rule(
+                    result = await self._close_positions.close_all_for_rule(
                         account_id, f"cycle-{cycle_id}", symbols=symbols,
                     )
+                    if result.get("skipped"):
+                        logger.warning("Position close skipped for cycle %d (concurrent close in progress)", cycle_id)
             except Exception:
                 logger.warning("Failed to close positions for cycle %d on stop", cycle_id)
 
@@ -536,7 +542,7 @@ class TradingCycleEngine:
         await self._finalize_cycle(cycle_id, "completed" if reason == "target_reached" else "stopped", reason)
 
     async def _startup_recovery(self) -> None:
-        stuck = await self._repo.find_stuck_cycles(0)
+        stuck = await self._repo.find_all_non_terminal_cycles()
         for cycle in stuck:
             cycle_id = cycle["id"]
             logger.warning("Recovering stuck cycle %d (status=%s)", cycle_id, cycle["status"])

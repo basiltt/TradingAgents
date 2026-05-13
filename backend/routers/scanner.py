@@ -110,18 +110,14 @@ async def filter_preview(
     from backend.services.trading_cycle_engine import TradingCycleEngine
     _validate_scan_id(scan_id)
     db = request.app.state.db
-    scan = await db._pool.fetchrow("SELECT scan_id FROM scans WHERE scan_id = $1", scan_id)
+    scan = await db.get_scan(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
-    results = await db._pool.fetch(
-        "SELECT ticker, direction, confidence, score FROM scan_results WHERE scan_id = $1",
-        scan_id,
-    )
     config = {
         "min_score": min_score, "min_confidence": min_confidence,
         "signal_filter": signal_filter, "max_trades": 999,
     }
-    filtered = TradingCycleEngine.filter_scan_results([dict(r) for r in results], config)
+    filtered = TradingCycleEngine.filter_scan_results(scan.get("results", []), config)
     direction_breakdown: dict[str, int] = {}
     for r in filtered:
         d = r["direction"]

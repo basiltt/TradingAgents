@@ -212,7 +212,10 @@ class TestShutdown:
     async def test_marks_active_failed(self):
         repo = AsyncMock()
         repo.update_status.return_value = True
-        engine = _make_engine(repo=repo)
+        repo.get_cycle_trade_symbols.return_value = ["BTC"]
+        close_svc = AsyncMock()
+        close_svc.close_all_for_rule.return_value = {"total": 0, "closed": 0, "failed": 0, "results": []}
+        engine = _make_engine(repo=repo, close_svc=close_svc)
         engine._active_tasks[1] = asyncio.create_task(asyncio.sleep(999))
         await engine.shutdown()
         repo.update_status.assert_called()
@@ -410,7 +413,7 @@ class TestStartupRecovery:
     @pytest.mark.asyncio
     async def test_marks_stuck_cycles_failed(self):
         repo = AsyncMock()
-        repo.find_stuck_cycles.return_value = [
+        repo.find_all_non_terminal_cycles.return_value = [
             {"id": 1, "status": "running"},
             {"id": 2, "status": "placing_trades"},
         ]

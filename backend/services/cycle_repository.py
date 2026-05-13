@@ -173,10 +173,19 @@ class CycleRepository:
         rows = await self._pool.fetch(
             """
             SELECT * FROM trading_cycles
-            WHERE status IN ('pending', 'running', 'placing_trades', 'stopping')
+            WHERE status IN ('running', 'placing_trades', 'stopping')
               AND created_at < NOW() - make_interval(secs => $1::int)
             """,
             max_age_seconds,
+        )
+        return [dict(r) for r in rows]
+
+    async def find_all_non_terminal_cycles(self) -> list[dict]:
+        rows = await self._pool.fetch(
+            """
+            SELECT * FROM trading_cycles
+            WHERE status IN ('pending', 'running', 'placing_trades', 'stopping')
+            """,
         )
         return [dict(r) for r in rows]
 
