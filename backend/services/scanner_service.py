@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from backend.services.analysis_service import ConcurrencyLimitError
+
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 10  # default; overridden by config max_parallel (1–25)
@@ -604,7 +606,7 @@ class ScannerService:
         else:
             logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
 
-        sem = asyncio.Semaphore(batch_size)
+        sem = asyncio.Semaphore(min(batch_size, self._analysis.max_concurrent))
         scan_error = False
 
         async def _process_ticker(ticker: str) -> None:
@@ -696,7 +698,20 @@ class ScannerService:
         }
 
         try:
-            run_id = await self._analysis.start_analysis(request)
+            run_id: Optional[str] = None
+            for attempt in range(3):
+                async with self._lock:
+                    s = self._scans.get(scan_id)
+                    if not s or s["cancel"]:
+                        return
+                try:
+                    run_id = await self._analysis.start_analysis(request)
+                    break
+                except ConcurrencyLimitError:
+                    if attempt < 2:
+                        await asyncio.sleep(5 + random.uniform(0, 3))
+                        continue
+                    raise
         except Exception as e:
             logger.warning("Failed to start analysis for %s: %s", ticker, e)
             fail_result = {
@@ -853,6 +868,8 @@ class ScannerService:
         else:
             signal = {"direction": "hold", "confidence": "none", "score": 0}
             signal_source = "none"
+            if not decision_text:
+                decision_text = (run or {}).get("error", "") or ""
 
         result = {
             "ticker": ticker,

@@ -1274,7 +1274,7 @@ class AnalysisDB:
     # ── High-Frequency Snapshots ──────────────────────────────────────
 
     def get_hf_snapshots(
-        self, account_id: str, since_ts: str,
+        self, account_id: str, since_ts: datetime,
     ) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -1292,7 +1292,7 @@ class AnalysisDB:
         return [dict(r) for r in rows]
 
     def get_all_hf_snapshots(
-        self, since_ts: str, account_type: Optional[str] = None,
+        self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)

@@ -150,11 +150,11 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                 <td className="px-4 py-3 text-xs capitalize hidden md:table-cell">{r.confidence}</td>
                 <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  {r.status === "failed" && r.decision_summary ? (
+                  {r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger>
-                          <Badge variant="destructive" className="text-xs cursor-help">
+                          <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs cursor-help">
                             {r.status}
                           </Badge>
                         </TooltipTrigger>
@@ -197,7 +197,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                         View
                       </Link>
                     )}
-                    {!r.run_id && r.status === "failed" && r.decision_summary && (
+                    {!r.run_id && r.status !== "completed" && r.decision_summary && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>

@@ -673,7 +673,7 @@ export function HistoryList() {
                         </Link>
                       </td>
                       <td className="px-4 py-2.5">
-                        {item.status === "failed" && item.error ? (
+                        {item.status !== "completed" && item.status !== "running" && item.error ? (
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger>
@@ -777,7 +777,7 @@ export function HistoryList() {
                           {item.asset_type === "crypto" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium leading-none">CRYPTO</span>
                           )}
-                          {item.status === "failed" && item.error ? (
+                          {item.status !== "completed" && item.status !== "running" && item.error ? (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger>

@@ -698,13 +698,13 @@ class AccountsService:
             prev_equity = s["equity"]
         return snapshots
 
-    async def get_hf_snapshots(self, account_id: str, since_ts) -> List[Dict[str, Any]]:
+    async def get_hf_snapshots(self, account_id: str, since_ts: datetime) -> List[Dict[str, Any]]:
         rows = await self._db.get_hf_snapshots(account_id, since_ts)
         snapshots = [self._hf_to_snapshot(r) for r in rows]
         return self._enrich_hf_snapshots(snapshots)
 
     async def get_portfolio_hf_snapshots(
-        self, since_ts, account_type: Optional[str] = None,
+        self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         rows = await self._db.get_all_hf_snapshots(since_ts, account_type=account_type)
         by_ts: Dict[str, Dict[str, Any]] = {}
@@ -727,12 +727,12 @@ class AccountsService:
         result = sorted(by_ts.values(), key=lambda x: x["snapshot_date"])
         return self._enrich_hf_snapshots(result)
 
-    async def compute_hf_analytics(self, account_id: str, since_ts) -> Dict[str, Any]:
+    async def compute_hf_analytics(self, account_id: str, since_ts: datetime) -> Dict[str, Any]:
         snapshots = await self.get_hf_snapshots(account_id, since_ts)
         return self._compute_analytics_from_snapshots(snapshots, account_id)
 
     async def compute_portfolio_hf_analytics(
-        self, since_ts, account_type: Optional[str] = None,
+        self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshots = await self.get_portfolio_hf_snapshots(since_ts, account_type=account_type)
         return self._compute_analytics_from_snapshots(snapshots, None)
