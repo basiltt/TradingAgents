@@ -1,8 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { apiClient, type ScanStatus } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
+
+function getScannerWsUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws/v1/scanner`;
+}
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -38,16 +43,57 @@ interface DeleteConfirmState {
 export function ScanHistoryPage() {
   const queryClient = useQueryClient();
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["scans"],
     queryFn: ({ signal }) => apiClient.listScans(signal),
     refetchInterval: (query) => {
       const scans = query.state.data?.scans;
       const hasRunning = scans?.some((s) => s.status === "running");
-      return hasRunning ? 3000 : 15000;
+      return hasRunning ? 2_000 : 30_000;
     },
   });
+
+  useEffect(() => {
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let ws: WebSocket;
+
+    function connect() {
+      ws = new WebSocket(getScannerWsUrl());
+      wsRef.current = ws;
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "scan_list_changed") {
+            queryClient.invalidateQueries({ queryKey: ["scans"] });
+          } else if (msg.type === "heartbeat") {
+            ws.send(JSON.stringify({ type: "pong" }));
+          }
+        } catch { /* ignore malformed */ }
+      };
+
+      ws.onclose = () => {
+        wsRef.current = null;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, 3_000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [queryClient]);
 
   const deleteMutation = useMutation({
     mutationFn: (scanId: string) => apiClient.deleteScan(scanId),

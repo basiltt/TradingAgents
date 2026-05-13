@@ -304,6 +304,9 @@ ALTER TABLE close_rules ADD CONSTRAINT close_rules_status_check
     CHECK (status IN ('active','paused','triggered','executed','expired','pending_activation'));
 CREATE INDEX IF NOT EXISTS idx_close_rules_cycle_id ON close_rules(cycle_id) WHERE cycle_id IS NOT NULL
 """),
+    (23, """
+CREATE INDEX IF NOT EXISTS idx_scans_started_desc ON scans(started_at DESC)
+"""),
 ]
 
 
@@ -733,7 +736,9 @@ class AsyncAnalysisDB:
 
     async def list_scans(self) -> List[Dict[str, Any]]:
         rows = await self._pool.fetch(
-            "SELECT * FROM scans ORDER BY started_at DESC"
+            "SELECT scan_id, status, config, total, completed, failed, "
+            "started_at, completed_at, schedule_id, triggered_by "
+            "FROM scans ORDER BY started_at DESC LIMIT 50"
         )
         scans = [dict(r) for r in rows]
         if not scans:

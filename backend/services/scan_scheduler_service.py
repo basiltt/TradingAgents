@@ -272,7 +272,7 @@ class ScanSchedulerService:
         try:
             await self._execute_schedule(schedule, triggered_by="scheduled")
         except Exception:
-            if self._in_flight.get(schedule["id"]) == -1:
+            if _is_sentinel(self._in_flight.get(schedule["id"])):
                 del self._in_flight[schedule["id"]]
             raise
 
@@ -460,11 +460,11 @@ class ScanSchedulerService:
                 age = now - next_run
                 if age <= timedelta(hours=MISSED_ONCE_WINDOW_HOURS) and replayed < 1:
                     logger.info("Replaying missed once schedule %s", schedule["id"])
-                    self._in_flight[schedule["id"]] = -1
+                    self._in_flight[schedule["id"]] = datetime.now(timezone.utc)
                     try:
                         await self._execute_schedule(schedule, triggered_by="scheduled")
                     except Exception:
-                        if self._in_flight.get(schedule["id"]) == -1:
+                        if _is_sentinel(self._in_flight.get(schedule["id"])):
                             del self._in_flight[schedule["id"]]
                         logger.exception("Recovery replay failed for schedule %s", schedule["id"])
                     replayed += 1

@@ -142,6 +142,7 @@ def create_app() -> FastAPI:
         app.state.scanner_service = ScannerService(
             analysis_service=app.state.analysis_service,
             db=db,
+            ws_manager=ws_manager,
         )
 
         from backend.services.strategy_service import StrategyService

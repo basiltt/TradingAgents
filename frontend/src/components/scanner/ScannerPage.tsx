@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type ScanRequest, type ScanStatus, type ScanResultItem, type CryptoInterval } from "@/api/client";
 import { ModelSelect } from "@/components/ui/model-select";
 import { Button } from "@/components/ui/button";
@@ -209,6 +209,7 @@ function ScanConfigBanner({ scan }: { scan: ScanStatus }) {
 }
 
 export function ScannerPage() {
+  const queryClient = useQueryClient();
   const [saved] = useState(loadSavedSettings);
   const [scanner] = useState(loadScannerSettings);
   const [analysisDate, setAnalysisDate] = useState(scanner.analysisDate ?? getToday());
@@ -326,6 +327,10 @@ export function ScannerPage() {
 
   const cancelMutation = useMutation({
     mutationFn: (scanId: string) => apiClient.cancelScan(scanId),
+    onSuccess: () => {
+      if (activeScanId) queryClient.invalidateQueries({ queryKey: ["scan", activeScanId] });
+      queryClient.invalidateQueries({ queryKey: ["scans"] });
+    },
   });
 
   const saveLlmConcurrency = (value: number) => {

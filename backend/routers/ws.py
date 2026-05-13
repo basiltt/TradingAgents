@@ -92,3 +92,35 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
     finally:
         await ws_manager.disconnect(conn)
         await ws_manager.remove_consumer_if_empty(run_id)
+
+
+@router.websocket("/ws/v1/scanner")
+async def scanner_ws(websocket: WebSocket):
+    """Push scan_list_changed events so the Scan History page updates instantly."""
+    if not _check_origin(websocket):
+        await websocket.accept()
+        await websocket.close(code=4403, reason="Origin not allowed")
+        return
+
+    app = websocket.app
+    ws_manager = app.state.ws_manager
+
+    await websocket.accept()
+
+    from backend.services.scanner_service import ScannerService
+    topic = ScannerService._SCAN_LIST_TOPIC
+    conn = await ws_manager.connect(websocket, topic)
+
+    try:
+        async for raw in websocket.iter_text():
+            msg_type = await ws_manager.handle_message(conn, raw)
+            if msg_type == "frame_too_large":
+                await websocket.close(code=1009, reason="Frame too large")
+                break
+            elif msg_type == "rate_limited":
+                await websocket.close(code=1008, reason="Rate limit exceeded")
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await ws_manager.disconnect(conn)

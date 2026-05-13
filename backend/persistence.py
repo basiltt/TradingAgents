@@ -238,6 +238,37 @@ CREATE TABLE IF NOT EXISTS close_executions (
 );
 CREATE INDEX IF NOT EXISTS idx_close_executions_account ON close_executions(account_id, executed_at DESC)
 """),
+    (19, "ALTER TABLE closed_pnl_records ALTER COLUMN created_time TYPE BIGINT"),
+    (20, """
+ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS include_in_analytics INTEGER NOT NULL DEFAULT 1
+"""),
+    (21, """
+CREATE TABLE IF NOT EXISTS trading_cycles (
+    id SERIAL PRIMARY KEY,
+    scan_id TEXT NOT NULL,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','filtering','placing_orders','monitoring','closing','completed','failed','cancelled','partial')),
+    config JSONB NOT NULL DEFAULT '{}',
+    results JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_account ON trading_cycles(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_status ON trading_cycles(status) WHERE status NOT IN ('completed','failed','cancelled')
+"""),
+    (22, """
+ALTER TABLE close_rules ADD COLUMN IF NOT EXISTS cycle_id INTEGER REFERENCES trading_cycles(id) ON DELETE RESTRICT;
+ALTER TABLE close_rules DROP CONSTRAINT IF EXISTS close_rules_status_check;
+ALTER TABLE close_rules ADD CONSTRAINT close_rules_status_check
+    CHECK (status IN ('active','paused','triggered','executed','expired','pending_activation'));
+CREATE INDEX IF NOT EXISTS idx_close_rules_cycle_id ON close_rules(cycle_id) WHERE cycle_id IS NOT NULL
+"""),
+    (23, """
+CREATE INDEX IF NOT EXISTS idx_scans_started_desc ON scans(started_at DESC)
+"""),
 ]
 
 
@@ -716,7 +747,11 @@ class AnalysisDB:
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
-                cur.execute("SELECT * FROM scans ORDER BY started_at DESC")
+                cur.execute(
+                    "SELECT scan_id, status, config, total, completed, failed, "
+                    "started_at, completed_at, schedule_id, triggered_by "
+                    "FROM scans ORDER BY started_at DESC LIMIT 50"
+                )
                 rows = cur.fetchall()
                 scans = [dict(r) for r in rows]
                 if not scans:

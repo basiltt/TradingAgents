@@ -312,11 +312,21 @@ class ScannerBusyError(Exception):
 
 
 class ScannerService:
-    def __init__(self, analysis_service: Any, db: Any = None):
+    _SCAN_LIST_TOPIC = "__scan_list__"
+
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None):
         self._analysis = analysis_service
         self._db = db
+        self._ws = ws_manager
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+
+    async def _notify_scan_list_changed(self) -> None:
+        if self._ws:
+            try:
+                await self._ws.broadcast(self._SCAN_LIST_TOPIC, {"type": "scan_list_changed"})
+            except Exception:
+                pass
 
     async def start_scan(self, config: Dict[str, Any], schedule_id: str | None = None, triggered_by: str = "manual") -> str:
         async with self._lock:
@@ -364,6 +374,8 @@ class ScannerService:
             if scan_id in self._scans:
                 self._scans[scan_id]["task"] = task
 
+        await self._notify_scan_list_changed()
+
         return scan_id
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
@@ -383,11 +395,14 @@ class ScannerService:
             if not scan or scan["status"] != "running":
                 return False
             scan["cancel"] = True
+            scan["status"] = "cancelled"
+            scan["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             task = scan.get("task")
             if task and not task.done():
                 task.cancel()
         if self._db:
             await self._db.update_scan(scan_id, status="cancelled")
+        await self._notify_scan_list_changed()
         return True
 
     async def shutdown(self) -> None:
@@ -413,6 +428,7 @@ class ScannerService:
         result = await self._db.delete_scan(scan_id)
         if not result:
             return None
+        await self._notify_scan_list_changed()
         return result
 
     async def get_scan_analysis_count(self, scan_id: str) -> int:
@@ -429,6 +445,7 @@ class ScannerService:
             for ds in db_scans:
                 if ds["scan_id"] not in in_memory_ids:
                     result.append(self._serialize_db(ds))
+        result.sort(key=lambda s: s.get("started_at", ""), reverse=True)
         return result
 
     async def resume_incomplete_scans(self) -> int:
@@ -576,6 +593,7 @@ class ScannerService:
                     scan["status"] = "failed"
             if self._db:
                 await self._db.update_scan(scan_id, status="failed")
+            await self._notify_scan_list_changed()
             return
 
         async with self._lock:
@@ -655,10 +673,10 @@ class ScannerService:
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan:
-                if scan_error:
-                    scan["status"] = "failed"
-                elif scan["cancel"]:
+                if scan["cancel"]:
                     scan["status"] = "cancelled"
+                elif scan_error:
+                    scan["status"] = "failed"
                 else:
                     scan["status"] = "completed"
                 scan["completed_at"] = now
@@ -674,6 +692,8 @@ class ScannerService:
                 status=final_status, completed_at=now,
                 completed=final_completed, failed=final_failed,
             )
+
+        await self._notify_scan_list_changed()
 
     async def _run_single(self, scan_id: str, ticker: str) -> None:
         """Launch one analysis, poll until done, collect result."""
