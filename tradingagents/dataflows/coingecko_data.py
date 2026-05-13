@@ -142,7 +142,7 @@ def _gated_get(path: str, params: dict | None = None, timeout: int = 20) -> requ
 _cache: dict[str, tuple[float, str]] = {}
 _cache_lock = threading.Lock()
 _CACHE_TTL = 600  # 10 min
-_CACHE_MAX = 500
+_CACHE_MAX = 1000
 
 
 def _cached_get(path: str, params: dict | None = None) -> dict | list:
@@ -366,6 +366,16 @@ def prefetch_fundamentals(symbols: list[str]) -> None:
 # Public functions
 # ---------------------------------------------------------------------------
 
+def _usd(nested: dict, fallback: str = "N/A"):
+    """Extract USD value from nested CoinGecko dict, returning fallback for None."""
+    val = nested.get("usd")
+    return val if val is not None else fallback
+
+
+def _val(v, fallback: str = "N/A"):
+    """Return v unless it is None, in which case return fallback."""
+    return v if v is not None else fallback
+
 def get_coingecko_market_data(symbol: str) -> str:
     """Fetch market data: market cap, volume, supply, ATH/ATL, price changes."""
     coin_id = _get_coin_id(symbol)
@@ -390,29 +400,29 @@ def get_coingecko_market_data(symbol: str) -> str:
         "| Metric | Value |",
         "|--------|-------|",
         f"| Market Cap Rank | #{data.get('market_cap_rank', 'N/A')} |",
-        f"| Market Cap (USD) | ${md.get('market_cap', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('market_cap', {}).get('usd'), (int, float)) else "| Market Cap (USD) | N/A |",
-        f"| 24h Volume (USD) | ${md.get('total_volume', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('total_volume', {}).get('usd'), (int, float)) else "| 24h Volume (USD) | N/A |",
-        f"| Current Price (USD) | ${md.get('current_price', {}).get('usd', 'N/A')} |",
+        f"| Market Cap (USD) | ${_usd(md.get('market_cap', {})):,} |" if isinstance(_usd(md.get('market_cap', {})), (int, float)) else "| Market Cap (USD) | N/A |",
+        f"| 24h Volume (USD) | ${_usd(md.get('total_volume', {})):,} |" if isinstance(_usd(md.get('total_volume', {})), (int, float)) else "| 24h Volume (USD) | N/A |",
+        f"| Current Price (USD) | ${_usd(md.get('current_price', {}))} |",
         f"| Circulating Supply | {md.get('circulating_supply', 'N/A'):,} |" if isinstance(md.get('circulating_supply'), (int, float)) else "| Circulating Supply | N/A |",
         f"| Total Supply | {md.get('total_supply', 'N/A'):,} |" if isinstance(md.get('total_supply'), (int, float)) else "| Total Supply | N/A |",
         f"| Max Supply | {md.get('max_supply', 'N/A'):,} |" if isinstance(md.get('max_supply'), (int, float)) else "| Max Supply | N/A |",
-        f"| ATH (USD) | ${md.get('ath', {}).get('usd', 'N/A')} |",
-        f"| ATH Change % | {md.get('ath_change_percentage', {}).get('usd', 'N/A')}% |",
-        f"| ATL (USD) | ${md.get('atl', {}).get('usd', 'N/A')} |",
+        f"| ATH (USD) | ${_usd(md.get('ath', {}))} |",
+        f"| ATH Change % | {_usd(md.get('ath_change_percentage', {}))}% |",
+        f"| ATL (USD) | ${_usd(md.get('atl', {}))} |",
         "",
         "## Price Changes",
         "| Period | Change % |",
         "|--------|----------|",
-        f"| 24h | {md.get('price_change_percentage_24h', 'N/A')}% |",
-        f"| 7d | {md.get('price_change_percentage_7d', 'N/A')}% |",
-        f"| 14d | {md.get('price_change_percentage_14d', 'N/A')}% |",
-        f"| 30d | {md.get('price_change_percentage_30d', 'N/A')}% |",
-        f"| 60d | {md.get('price_change_percentage_60d', 'N/A')}% |",
-        f"| 200d | {md.get('price_change_percentage_200d', 'N/A')}% |",
-        f"| 1y | {md.get('price_change_percentage_1y', 'N/A')}% |",
+        f"| 24h | {_val(md.get('price_change_percentage_24h'))}% |",
+        f"| 7d | {_val(md.get('price_change_percentage_7d'))}% |",
+        f"| 14d | {_val(md.get('price_change_percentage_14d'))}% |",
+        f"| 30d | {_val(md.get('price_change_percentage_30d'))}% |",
+        f"| 60d | {_val(md.get('price_change_percentage_60d'))}% |",
+        f"| 200d | {_val(md.get('price_change_percentage_200d'))}% |",
+        f"| 1y | {_val(md.get('price_change_percentage_1y'))}% |",
         "",
         "## Fully Diluted Valuation",
-        f"FDV (USD): ${md.get('fully_diluted_valuation', {}).get('usd', 'N/A'):,}" if isinstance(md.get('fully_diluted_valuation', {}).get('usd'), (int, float)) else "FDV (USD): N/A",
+        f"FDV (USD): ${_usd(md.get('fully_diluted_valuation', {})):,}" if isinstance(_usd(md.get('fully_diluted_valuation', {})), (int, float)) else "FDV (USD): N/A",
     ]
 
     desc = data.get("description", {}).get("en", "")
@@ -447,8 +457,8 @@ def get_coingecko_community_data(symbol: str) -> str:
 
     cd = data.get("community_data", {})
     dd = data.get("developer_data", {})
-    sent = data.get("sentiment_votes_up_percentage", "N/A")
-    sent_down = data.get("sentiment_votes_down_percentage", "N/A")
+    sent = _val(data.get("sentiment_votes_up_percentage"))
+    sent_down = _val(data.get("sentiment_votes_down_percentage"))
 
     lines = [
         f"# {data.get('name', symbol)} ({data.get('symbol', '').upper()}) — Community & Social Metrics",
@@ -459,8 +469,8 @@ def get_coingecko_community_data(symbol: str) -> str:
         f"| Twitter/X | Followers | {cd.get('twitter_followers', 'N/A'):,} |" if isinstance(cd.get('twitter_followers'), (int, float)) else "| Twitter/X | Followers | N/A |",
         f"| Reddit | Subscribers | {cd.get('reddit_subscribers', 'N/A'):,} |" if isinstance(cd.get('reddit_subscribers'), (int, float)) else "| Reddit | Subscribers | N/A |",
         f"| Reddit | Active Users (48h) | {cd.get('reddit_accounts_active_48h', 'N/A'):,} |" if isinstance(cd.get('reddit_accounts_active_48h'), (int, float)) else "| Reddit | Active Users (48h) | N/A |",
-        f"| Reddit | Avg Posts (48h) | {cd.get('reddit_average_posts_48h', 'N/A')} |",
-        f"| Reddit | Avg Comments (48h) | {cd.get('reddit_average_comments_48h', 'N/A')} |",
+        f"| Reddit | Avg Posts (48h) | {_val(cd.get('reddit_average_posts_48h'))} |",
+        f"| Reddit | Avg Comments (48h) | {_val(cd.get('reddit_average_comments_48h'))} |",
         f"| Telegram | Members | {cd.get('telegram_channel_user_count', 'N/A'):,} |" if isinstance(cd.get('telegram_channel_user_count'), (int, float)) else "| Telegram | Members | N/A |",
         "",
         "## Sentiment",
@@ -470,21 +480,21 @@ def get_coingecko_community_data(symbol: str) -> str:
         "## Developer Activity",
         "| Metric | Value |",
         "|--------|-------|",
-        f"| Forks | {dd.get('forks', 'N/A')} |",
-        f"| Stars | {dd.get('stars', 'N/A')} |",
-        f"| Subscribers | {dd.get('subscribers', 'N/A')} |",
-        f"| Total Issues | {dd.get('total_issues', 'N/A')} |",
-        f"| Closed Issues | {dd.get('closed_issues', 'N/A')} |",
-        f"| PR Merged (4w) | {dd.get('pull_requests_merged', 'N/A')} |",
-        f"| PR Contributors (4w) | {dd.get('pull_request_contributors', 'N/A')} |",
-        f"| Commit Count (4w) | {dd.get('commit_count_4_weeks', 'N/A')} |",
+        f"| Forks | {_val(dd.get('forks'))} |",
+        f"| Stars | {_val(dd.get('stars'))} |",
+        f"| Subscribers | {_val(dd.get('subscribers'))} |",
+        f"| Total Issues | {_val(dd.get('total_issues'))} |",
+        f"| Closed Issues | {_val(dd.get('closed_issues'))} |",
+        f"| PR Merged (4w) | {_val(dd.get('pull_requests_merged'))} |",
+        f"| PR Contributors (4w) | {_val(dd.get('pull_request_contributors'))} |",
+        f"| Commit Count (4w) | {_val(dd.get('commit_count_4_weeks'))} |",
     ]
 
     code_changes = dd.get("code_additions_deletions_4_weeks", {})
     if code_changes:
         lines += [
-            f"| Code Additions (4w) | {code_changes.get('additions', 'N/A')} |",
-            f"| Code Deletions (4w) | {code_changes.get('deletions', 'N/A')} |",
+            f"| Code Additions (4w) | {_val(code_changes.get('additions'))} |",
+            f"| Code Deletions (4w) | {_val(code_changes.get('deletions'))} |",
         ]
 
     links = data.get("links", {})
@@ -535,15 +545,15 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
         "| Metric | Value |",
         "|--------|-------|",
         f"| Market Cap Rank | #{data.get('market_cap_rank', 'N/A')} |",
-        f"| Market Cap (USD) | ${md.get('market_cap', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('market_cap', {}).get('usd'), (int, float)) else "| Market Cap (USD) | N/A |",
+        f"| Market Cap (USD) | ${_usd(md.get('market_cap', {})):,} |" if isinstance(_usd(md.get('market_cap', {})), (int, float)) else "| Market Cap (USD) | N/A |",
         f"| Circulating Supply | {md.get('circulating_supply', 'N/A'):,} |" if isinstance(md.get('circulating_supply'), (int, float)) else "| Circulating Supply | N/A |",
         f"| Total Supply | {md.get('total_supply', 'N/A'):,} |" if isinstance(md.get('total_supply'), (int, float)) else "| Total Supply | N/A |",
         f"| Max Supply | {md.get('max_supply', 'N/A'):,} |" if isinstance(md.get('max_supply'), (int, float)) else "| Max Supply | N/A |",
-        f"| ATH (USD) | ${md.get('ath', {}).get('usd', 'N/A')} |",
-        f"| ATH Change % | {md.get('ath_change_percentage', {}).get('usd', 'N/A')}% |",
-        f"| ATL (USD) | ${md.get('atl', {}).get('usd', 'N/A')} |",
-        f"| ATL Change % | {md.get('atl_change_percentage', {}).get('usd', 'N/A')}% |",
-        f"| FDV (USD) | ${md.get('fully_diluted_valuation', {}).get('usd', 'N/A'):,} |" if isinstance(md.get('fully_diluted_valuation', {}).get('usd'), (int, float)) else "| FDV (USD) | N/A |",
+        f"| ATH (USD) | ${_usd(md.get('ath', {}))} |",
+        f"| ATH Change % | {_usd(md.get('ath_change_percentage', {}))}% |",
+        f"| ATL (USD) | ${_usd(md.get('atl', {}))} |",
+        f"| ATL Change % | {_usd(md.get('atl_change_percentage', {}))}% |",
+        f"| FDV (USD) | ${_usd(md.get('fully_diluted_valuation', {})):,} |" if isinstance(_usd(md.get('fully_diluted_valuation', {})), (int, float)) else "| FDV (USD) | N/A |",
     ]
 
     desc_text = data.get("description", {}).get("en", "")
