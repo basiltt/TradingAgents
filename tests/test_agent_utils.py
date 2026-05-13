@@ -38,6 +38,35 @@ class TestBuildInstrumentContext:
         result = build_instrument_context("AAPL")
         assert "exchange suffix" in result.lower() or ".TO" in result
 
+    def test_no_interval_no_timeframe_section(self):
+        from tradingagents.agents.utils.agent_utils import build_instrument_context
+        result = build_instrument_context("BTCUSDT")
+        assert "Primary timeframe" not in result
+
+    def test_interval_15_adds_primary_timeframe(self):
+        from tradingagents.agents.utils.agent_utils import build_instrument_context
+        result = build_instrument_context("BTCUSDT", crypto_interval="15")
+        assert "15-minute" in result
+        assert "Primary timeframe" in result
+        assert "interval=`15`" in result
+
+    def test_interval_60_adds_primary_timeframe(self):
+        from tradingagents.agents.utils.agent_utils import build_instrument_context
+        result = build_instrument_context("ETHUSDT", crypto_interval="60")
+        assert "1-hour" in result
+        assert "MUST be based on this interval" in result
+
+    def test_interval_D_adds_primary_timeframe(self):
+        from tradingagents.agents.utils.agent_utils import build_instrument_context
+        result = build_instrument_context("BTCUSDT", crypto_interval="D")
+        assert "daily" in result
+
+    def test_unknown_interval_uses_raw_value(self):
+        from tradingagents.agents.utils.agent_utils import build_instrument_context
+        result = build_instrument_context("BTCUSDT", crypto_interval="30")
+        assert "30" in result
+        assert "Primary timeframe" in result
+
 
 class TestCreateMsgDelete:
     def test_returns_removal_and_placeholder(self):

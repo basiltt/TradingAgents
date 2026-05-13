@@ -575,6 +575,7 @@ class AnalysisService:
             request["ticker"], request["analysis_date"],
             past_context=past_context,
             asset_type=config.get("asset_type", "stock"),
+            crypto_interval=config.get("crypto_interval"),
         )
 
         # For crypto: fetch live price + lower-timeframe candles so all agents
@@ -582,7 +583,11 @@ class AnalysisService:
         if config.get("asset_type") == "crypto" and hasattr(graph, "_crypto_shared"):
             from tradingagents.dataflows.bybit_data import build_current_price_context
             try:
-                price_ctx = build_current_price_context(request["ticker"], **graph._crypto_shared)
+                price_ctx = build_current_price_context(
+                    request["ticker"],
+                    **graph._crypto_shared,
+                    primary_interval=config.get("crypto_interval"),
+                )
             except Exception as exc:
                 logger.warning("Failed to fetch current price context: %s", exc)
                 price_ctx = f"Current price data unavailable: {exc}"

@@ -519,13 +519,18 @@ class TradingAgentsGraph:
         init_agent_state = self.propagator.create_initial_state(
             company_name, trade_date, past_context=past_context,
             asset_type=self.config.get("asset_type", "stock"),
+            crypto_interval=self.config.get("crypto_interval"),
         )
 
         # For crypto: fetch live price + lower-timeframe candles BEFORE agents run
         if self.config.get("asset_type") == "crypto" and hasattr(self, "_crypto_shared"):
             from tradingagents.dataflows.bybit_data import build_current_price_context
             try:
-                price_ctx = build_current_price_context(company_name, **self._crypto_shared)
+                price_ctx = build_current_price_context(
+                    company_name,
+                    **self._crypto_shared,
+                    primary_interval=self.config.get("crypto_interval"),
+                )
             except Exception as exc:
                 logger.warning("Failed to fetch current price context for %s: %s", company_name, exc)
                 price_ctx = f"Current price data unavailable: {exc}"

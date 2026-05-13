@@ -40,7 +40,8 @@ _MONITOR_PROMPT = (
 
 def create_execution_monitor(llm):
     def node(state):
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "") or "Not available"
         final_decision = state.get("final_trade_decision", "")
         trader_plan = state.get("trader_investment_plan", "")

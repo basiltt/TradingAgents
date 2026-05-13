@@ -58,6 +58,9 @@ class AgentState(MessagesState):
     # Asset type: "stock" or "crypto"
     asset_type: Annotated[str, _last]
 
+    # User-selected kline interval for crypto analysis (e.g. "15", "60", "240", "D")
+    crypto_interval: Annotated[Optional[str], _last]
+
     # Error propagation: set by analyst on critical failure, checked by downstream nodes
     error: Annotated[Optional[str], _last]
 

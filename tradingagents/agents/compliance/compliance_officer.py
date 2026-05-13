@@ -56,7 +56,8 @@ def create_compliance_officer(llm, max_leverage: int = 20):
 
     def node(state):
         company = state["company_of_interest"]
-        instrument_context = build_instrument_context(company)
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(company, crypto_interval)
         trader_plan = state.get("trader_investment_plan", "")
         price_context = state.get("current_price_context", "")
         past_context = state.get("past_context", "")

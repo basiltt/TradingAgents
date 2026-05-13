@@ -45,7 +45,8 @@ _ANALYST_SYSTEM_PREFIX = (
 def create_crypto_technical_analyst(llm, crypto_tools: list):
     def node(state):
         current_date = state["trade_date"]
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "")
         tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
         if not tools:
@@ -88,7 +89,8 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
 def create_crypto_derivatives_analyst(llm, crypto_tools: list):
     def node(state):
         current_date = state["trade_date"]
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "")
         # Prefer the combined derivatives tool; fall back to individual tools
         combined = [t for t in crypto_tools if t.name == "get_crypto_derivatives_data"]
@@ -451,7 +453,8 @@ def create_crypto_research_manager(llm):
     structured_llm = bind_structured(llm, ResearchPlan, "Crypto Research Manager")
 
     def node(state):
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
 
@@ -505,7 +508,8 @@ def create_crypto_trader(llm, max_leverage: int = 20):
 
     def node(state):
         company = state["company_of_interest"]
-        instrument_context = build_instrument_context(company)
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(company, crypto_interval)
         price_context = state.get("current_price_context", "")
         investment_plan = state.get("investment_plan", "")
         confluence_summary = state.get("confluence_summary", "")
@@ -574,9 +578,18 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                     messages.append({"role": "assistant", "content": result.content})
                     messages.append({"role": "user", "content": "Failed to parse JSON. Please output ONLY a JSON object in a ```json``` block."})
                     continue
+                logger.warning(
+                    "CryptoTrader: could not parse signal for %s after %d attempts — defaulting to No Trade.",
+                    company, max_attempts,
+                )
+                no_trade = {
+                    "trade_type": "No Trade",
+                    "confidence": 1,
+                    "reasoning": "Signal parse failure after retries. Cannot produce a valid execution plan.",
+                }
                 return {
-                    "messages": [AIMessage(content=result.content)],
-                    "trader_investment_plan": "Error: Could not parse trading signal from LLM output.",
+                    "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
+                    "trader_investment_plan": json.dumps(no_trade, indent=2),
                     "sender": "CryptoTrader",
                 }
 
@@ -593,9 +606,18 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                 messages.append({"role": "user", "content": f"Signal validation failed: {'; '.join(errors)}. Fix the issues and output the corrected JSON."})
                 continue
 
+        logger.warning(
+            "CryptoTrader: signal validation failed for %s after %d attempts — defaulting to No Trade. Errors: %s",
+            company, max_attempts, "; ".join(errors),
+        )
+        no_trade = {
+            "trade_type": "No Trade",
+            "confidence": 1,
+            "reasoning": f"Signal validation failed after {max_attempts} attempts: {'; '.join(errors)}",
+        }
         return {
-            "messages": [AIMessage(content=result.content)],
-            "trader_investment_plan": f"Error: Invalid signal after {max_attempts} attempts. Errors: {'; '.join(errors)}",
+            "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
+            "trader_investment_plan": json.dumps(no_trade, indent=2),
             "sender": "CryptoTrader",
         }
 
@@ -728,7 +750,8 @@ def create_crypto_risk_bear_debater(llm):
 
 def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
     def node(state):
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "")
         history = state["risk_debate_state"]["history"]
         research_plan = state.get("investment_plan", "")

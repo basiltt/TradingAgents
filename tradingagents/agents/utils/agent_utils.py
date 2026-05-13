@@ -34,13 +34,25 @@ def get_language_instruction() -> str:
     return f" Write your entire response in {lang}."
 
 
-def build_instrument_context(ticker: str) -> str:
+_INTERVAL_LABELS = {"15": "15-minute", "60": "1-hour", "240": "4-hour", "D": "daily"}
+
+
+def build_instrument_context(ticker: str, crypto_interval: str | None = None) -> str:
     """Describe the exact instrument so agents preserve exchange-qualified tickers."""
-    return (
+    base = (
         f"The instrument to analyze is `{ticker}`. "
         "Use this exact ticker in every tool call, report, and recommendation, "
         "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`)."
     )
+    if crypto_interval:
+        label = _INTERVAL_LABELS.get(crypto_interval, crypto_interval)
+        base += (
+            f"\n\n**Primary timeframe: {label} (`{crypto_interval}`).** "
+            f"Use interval=`{crypto_interval}` for your main analysis in every kline/indicator tool call. "
+            "You may reference other timeframes for additional context, but your core "
+            "trend analysis, signals, and recommendations MUST be based on this interval."
+        )
+    return base
 
 def create_msg_delete():
     def delete_messages(state):

@@ -131,6 +131,19 @@ class TestPropagator:
         p = Propagator()
         state = p.create_initial_state("BTCUSDT", "2025-01-10", asset_type="crypto")
         assert state["asset_type"] == "crypto"
+        assert state["crypto_interval"] is None
+
+    def test_create_initial_state_crypto_interval(self):
+        from tradingagents.graph.propagation import Propagator
+        p = Propagator()
+        state = p.create_initial_state("BTCUSDT", "2025-01-10", asset_type="crypto", crypto_interval="15")
+        assert state["crypto_interval"] == "15"
+
+    def test_create_initial_state_stock_no_interval(self):
+        from tradingagents.graph.propagation import Propagator
+        p = Propagator()
+        state = p.create_initial_state("AAPL", "2025-01-10")
+        assert state["crypto_interval"] is None
 
     def test_get_graph_args_no_callbacks(self):
         from tradingagents.graph.propagation import Propagator

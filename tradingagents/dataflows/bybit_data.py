@@ -461,13 +461,21 @@ def get_bybit_klines(
         prev_min_ts = min_ts
         current_end = min_ts - 1
 
-    # Bybit returns [startTime, open, high, low, close, volume, turnover] — 7 fields.
-    # Only keep the first 6 to match our header.
+    truncated = len(all_rows) >= _MAX_KLINE_PAGES * _KLINE_PAGE_SIZE
+
     csv_lines = [
         ",".join(str(v) for v in row[:6])
         for row in all_rows
     ]
     csv_result = "timestamp,open,high,low,close,volume\n" + "\n".join(csv_lines)
+
+    if truncated:
+        csv_result = (
+            f"[WARNING: Data truncated to {len(all_rows)} candles due to API pagination limit. "
+            f"The requested date range requires more data than was fetched. "
+            f"Analysis based on this data may not reflect the full historical period.]\n"
+            + csv_result
+        )
 
     if cache is not None:
         cache[cache_key] = csv_result
@@ -666,15 +674,18 @@ def build_current_price_context(
     api_key: str | None = None,
     api_secret: str | None = None,
     as_of_ms: int | None = None,
+    primary_interval: str | None = None,
 ) -> str:
-    """Fetch live ticker + last ~2 hours of 5-min candles for immediate price context.
+    """Fetch live ticker + multi-timeframe candles for immediate price context.
 
-    This gives all agents awareness of the CURRENT price and very recent
-    price action (lower timeframe), not just the historical klines used
-    for technical analysis.
+    This gives all agents awareness of the CURRENT price and recent
+    price action across multiple timeframes (5m, 15m, 1h, 4h, daily).
 
     Pass ``as_of_ms`` to pin the time window so parallel analyses that
     start seconds apart use the same candle boundaries.
+
+    Pass ``primary_interval`` to tag the section matching the user's
+    selected kline interval with ``(PRIMARY TIMEFRAME)``.
     """
     import time as _time
 
@@ -693,6 +704,9 @@ def build_current_price_context(
     except Exception as exc:
         parts.append(f"## LIVE PRICE SNAPSHOT\nUnavailable: {exc}")
 
+    def _ptag(interval: str) -> str:
+        return " (PRIMARY TIMEFRAME)" if primary_interval == interval else ""
+
     # 2) Recent 5-min klines (last 2 hours = 24 candles)
     try:
         two_hours_ago = now_ms - (2 * 60 * 60 * 1000)
@@ -701,7 +715,7 @@ def build_current_price_context(
             cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
             api_key=api_key, api_secret=api_secret,
         )
-        parts.append("\n## RECENT 5-MIN CANDLES (last ~2 hours)")
+        parts.append(f"\n## RECENT 5-MIN CANDLES (last ~2 hours){_ptag('5')}")
         parts.append(recent_klines)
     except Exception as exc:
         parts.append(f"\n## RECENT 5-MIN CANDLES\nUnavailable: {exc}")
@@ -714,12 +728,25 @@ def build_current_price_context(
             cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
             api_key=api_key, api_secret=api_secret,
         )
-        parts.append("\n## RECENT 15-MIN CANDLES (last ~6 hours)")
+        parts.append(f"\n## RECENT 15-MIN CANDLES (last ~6 hours){_ptag('15')}")
         parts.append(recent_15m)
     except Exception as exc:
         parts.append(f"\n## RECENT 15-MIN CANDLES\nUnavailable: {exc}")
 
-    # 4) 4-hour klines (last 48 hours = 12 candles) — medium-term trend
+    # 4) 1-hour klines (last 24 hours = 24 candles)
+    try:
+        one_day_ago = now_ms - (24 * 60 * 60 * 1000)
+        recent_1h = get_bybit_klines(
+            symbol, "60", one_day_ago, now_ms,
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        parts.append(f"\n## 1-HOUR CANDLES (last ~24 hours){_ptag('60')}")
+        parts.append(recent_1h)
+    except Exception as exc:
+        parts.append(f"\n## 1-HOUR CANDLES\nUnavailable: {exc}")
+
+    # 5) 4-hour klines (last 48 hours = 12 candles) — medium-term trend
     try:
         two_days_ago = now_ms - (48 * 60 * 60 * 1000)
         recent_4h = get_bybit_klines(
@@ -727,12 +754,12 @@ def build_current_price_context(
             cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
             api_key=api_key, api_secret=api_secret,
         )
-        parts.append("\n## 4-HOUR CANDLES (last ~48 hours)")
+        parts.append(f"\n## 4-HOUR CANDLES (last ~48 hours){_ptag('240')}")
         parts.append(recent_4h)
     except Exception as exc:
         parts.append(f"\n## 4-HOUR CANDLES\nUnavailable: {exc}")
 
-    # 5) Daily klines (last 30 days) — higher-timeframe trend context
+    # 6) Daily klines (last 30 days) — higher-timeframe trend context
     try:
         thirty_days_ago = now_ms - (30 * 24 * 60 * 60 * 1000)
         recent_1d = get_bybit_klines(
@@ -740,7 +767,7 @@ def build_current_price_context(
             cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
             api_key=api_key, api_secret=api_secret,
         )
-        parts.append("\n## DAILY CANDLES (last ~30 days)")
+        parts.append(f"\n## DAILY CANDLES (last ~30 days){_ptag('D')}")
         parts.append(recent_1d)
     except Exception as exc:
         parts.append(f"\n## DAILY CANDLES\nUnavailable: {exc}")
