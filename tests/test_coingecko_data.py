@@ -1,5 +1,6 @@
 """Tests for tradingagents.dataflows.coingecko_data."""
 
+import os
 import threading
 import time
 from unittest.mock import patch, MagicMock
@@ -15,6 +16,8 @@ def _force_configured():
     mod._API_KEY = ""
     mod._AUTH_MODE = None
     mod._plan = "demo"
+    mod._limiter = mod._RateLimiter(max_per_min=30)
+    mod._coingecko_semaphore = threading.Semaphore(2)
 
 
 class TestGetCoinId:
@@ -336,6 +339,3 @@ class TestGetCoingeckoStatus:
         assert status["plan"] == "demo"
         assert status["key_configured"] is False
         assert isinstance(status["rate_limit_rpm"], int)
-
-
-import os

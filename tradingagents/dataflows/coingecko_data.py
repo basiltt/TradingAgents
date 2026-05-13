@@ -146,7 +146,7 @@ _cache_lock = threading.Lock()
 _CACHE_TTL = 600  # 10 min
 
 
-def _cached_get(path: str, params: dict | None = None) -> dict:
+def _cached_get(path: str, params: dict | None = None) -> dict | list:
     import json as _json
 
     key = path + (_json.dumps(params, sort_keys=True) if params else "")
@@ -203,16 +203,21 @@ def _fetch_coin_list() -> dict[str, str]:
 def _get_coin_id(symbol: str) -> str | None:
     """Convert a trading symbol like BTCUSDT to a CoinGecko id like 'bitcoin'."""
     global _coin_list_ts
+    needs_refresh = False
     with _coin_list_lock:
-        if not _coin_list_cache or (time.time() - _coin_list_ts > _COIN_LIST_TTL):
-            try:
-                new_map = _fetch_coin_list()
+        needs_refresh = not _coin_list_cache or (time.time() - _coin_list_ts > _COIN_LIST_TTL)
+
+    if needs_refresh:
+        try:
+            new_map = _fetch_coin_list()
+            with _coin_list_lock:
                 _coin_list_cache.clear()
                 _coin_list_cache.update(new_map)
                 _coin_list_ts = time.time()
-                logger.info("CoinGecko coin list refreshed: %d entries", len(_coin_list_cache))
-            except Exception:
-                logger.warning("Failed to refresh CoinGecko coin list")
+            logger.info("CoinGecko coin list refreshed: %d entries", len(new_map))
+        except Exception:
+            logger.warning("Failed to refresh CoinGecko coin list")
+            with _coin_list_lock:
                 if not _coin_list_cache:
                     return None
 
@@ -295,7 +300,7 @@ def get_bulk_market_data(coin_ids: list[str]) -> dict[str, dict]:
                 normalized = _normalize_bulk_to_coin_format(item)
                 result[cid] = normalized
                 with _bulk_cache_lock:
-                    _bulk_cache[cid] = (time.time(), normalized)
+                    _bulk_cache[cid] = (time.time(), copy.deepcopy(normalized))
                     _evict_oldest(_bulk_cache, _BULK_CACHE_MAX)
     return result
 
