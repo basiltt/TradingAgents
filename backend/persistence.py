@@ -269,6 +269,11 @@ CREATE INDEX IF NOT EXISTS idx_close_rules_cycle_id ON close_rules(cycle_id) WHE
     (23, """
 CREATE INDEX IF NOT EXISTS idx_scans_started_desc ON scans(started_at DESC)
 """),
+    (24, """
+ALTER TABLE scheduled_scans DROP CONSTRAINT IF EXISTS scheduled_scans_status_check;
+ALTER TABLE scheduled_scans ADD CONSTRAINT scheduled_scans_status_check
+    CHECK (status IN ('active','paused','completed','error','cancelled'))
+"""),
 ]
 
 

@@ -108,7 +108,7 @@ async def scanner_ws(websocket: WebSocket):
     await websocket.accept()
 
     from backend.services.scanner_service import ScannerService
-    topic = ScannerService._SCAN_LIST_TOPIC
+    topic = ScannerService.SCAN_LIST_TOPIC
     conn = await ws_manager.connect(websocket, topic)
 
     try:

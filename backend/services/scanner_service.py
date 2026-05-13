@@ -312,7 +312,7 @@ class ScannerBusyError(Exception):
 
 
 class ScannerService:
-    _SCAN_LIST_TOPIC = "__scan_list__"
+    SCAN_LIST_TOPIC = "__scan_list__"
 
     def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None):
         self._analysis = analysis_service
@@ -324,7 +324,7 @@ class ScannerService:
     async def _notify_scan_list_changed(self) -> None:
         if self._ws:
             try:
-                await self._ws.broadcast(self._SCAN_LIST_TOPIC, {"type": "scan_list_changed"})
+                await self._ws.broadcast(self.SCAN_LIST_TOPIC, {"type": "scan_list_changed"})
             except Exception:
                 pass
 
@@ -401,7 +401,7 @@ class ScannerService:
             if task and not task.done():
                 task.cancel()
         if self._db:
-            await self._db.update_scan(scan_id, status="cancelled")
+            await self._db.update_scan(scan_id, status="cancelled", completed_at=scan["completed_at"])
         await self._notify_scan_list_changed()
         return True
 
@@ -445,7 +445,7 @@ class ScannerService:
             for ds in db_scans:
                 if ds["scan_id"] not in in_memory_ids:
                     result.append(self._serialize_db(ds))
-        result.sort(key=lambda s: s.get("started_at", ""), reverse=True)
+        result.sort(key=lambda s: s.get("started_at") or "", reverse=True)
         return result
 
     async def resume_incomplete_scans(self) -> int:
@@ -512,6 +512,8 @@ class ScannerService:
             resumed += 1
             logger.info("Resumed scan %s with %d/%d remaining symbols", scan_id, len(remaining), len(all_symbols))
 
+        if resumed:
+            await self._notify_scan_list_changed()
         return resumed
 
     def _serialize(self, scan: Dict[str, Any]) -> Dict[str, Any]:
@@ -587,12 +589,14 @@ class ScannerService:
                 symbols = random.sample(syms := list(await asyncio.to_thread(get_valid_symbols)), len(syms))
         except Exception as e:
             logger.error("Failed to fetch symbols for scan %s: %s", scan_id, e)
+            fail_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             async with self._lock:
                 scan = self._scans.get(scan_id)
                 if scan:
                     scan["status"] = "failed"
+                    scan["completed_at"] = fail_time
             if self._db:
-                await self._db.update_scan(scan_id, status="failed")
+                await self._db.update_scan(scan_id, status="failed", completed_at=fail_time)
             await self._notify_scan_list_changed()
             return
 
@@ -670,6 +674,7 @@ class ScannerService:
         final_status = "failed" if scan_error else "completed"
         final_completed = 0
         final_failed = 0
+        final_completed_at = now
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan:
@@ -679,17 +684,19 @@ class ScannerService:
                     scan["status"] = "failed"
                 else:
                     scan["status"] = "completed"
-                scan["completed_at"] = now
+                if not scan.get("completed_at"):
+                    scan["completed_at"] = now
                 scan["current_tickers"] = []
                 scan["task"] = None
                 final_status = scan["status"]
                 final_completed = scan["completed"]
                 final_failed = scan["failed"]
+                final_completed_at = scan["completed_at"]
 
         if self._db:
             await self._db.update_scan(
                 scan_id,
-                status=final_status, completed_at=now,
+                status=final_status, completed_at=final_completed_at,
                 completed=final_completed, failed=final_failed,
             )
 

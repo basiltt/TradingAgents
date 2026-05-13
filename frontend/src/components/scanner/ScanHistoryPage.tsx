@@ -57,9 +57,12 @@ export function ScanHistoryPage() {
 
   useEffect(() => {
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let debounceTimer: ReturnType<typeof setTimeout>;
+    let disposed = false;
     let ws: WebSocket;
 
     function connect() {
+      if (disposed) return;
       ws = new WebSocket(getScannerWsUrl());
       wsRef.current = ws;
 
@@ -67,7 +70,10 @@ export function ScanHistoryPage() {
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === "scan_list_changed") {
-            queryClient.invalidateQueries({ queryKey: ["scans"] });
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              queryClient.invalidateQueries({ queryKey: ["scans"] });
+            }, 500);
           } else if (msg.type === "heartbeat") {
             ws.send(JSON.stringify({ type: "pong" }));
           }
@@ -76,8 +82,10 @@ export function ScanHistoryPage() {
 
       ws.onclose = () => {
         wsRef.current = null;
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(connect, 3_000);
+        if (!disposed) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, 3_000);
+        }
       };
 
       ws.onerror = () => ws.close();
@@ -86,7 +94,9 @@ export function ScanHistoryPage() {
     connect();
 
     return () => {
+      disposed = true;
       clearTimeout(reconnectTimer);
+      clearTimeout(debounceTimer);
       if (wsRef.current) {
         wsRef.current.onclose = null;
         wsRef.current.close();

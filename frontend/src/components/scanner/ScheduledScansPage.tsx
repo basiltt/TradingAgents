@@ -79,6 +79,7 @@ const STATUS_CONFIG: Record<string, { color: string; dot: string; label: string 
   paused: { color: "bg-amber-500/10 text-amber-400 border-amber-500/20", dot: "bg-amber-400", label: "Paused" },
   completed: { color: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20", dot: "bg-zinc-400", label: "Completed" },
   error: { color: "bg-red-500/10 text-red-400 border-red-500/20", dot: "bg-red-400", label: "Error" },
+  cancelled: { color: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20", dot: "bg-zinc-400", label: "Cancelled" },
 };
 
 const TYPE_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
@@ -166,6 +167,7 @@ function ScheduleCard({
         !isRunning && s.status === "active" && "bg-gradient-to-r from-emerald-500/0 via-emerald-500 to-emerald-500/0",
         !isRunning && s.status === "paused" && "bg-gradient-to-r from-amber-500/0 via-amber-500 to-amber-500/0",
         !isRunning && s.status === "error" && "bg-gradient-to-r from-red-500/0 via-red-500 to-red-500/0",
+        !isRunning && s.status === "cancelled" && "bg-gradient-to-r from-zinc-500/0 via-zinc-500 to-zinc-500/0",
         !isRunning && s.status === "completed" && "bg-gradient-to-r from-zinc-500/0 via-zinc-500 to-zinc-500/0",
       )} />
 
@@ -248,7 +250,7 @@ function ScheduleCard({
                 </svg>
               </button>
             )}
-            {(s.status === "paused" || s.status === "error") && (
+            {(s.status === "paused" || s.status === "error" || s.status === "cancelled") && (
               <button
                 onClick={onResume}
                 className="p-2 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
@@ -267,7 +269,7 @@ function ScheduleCard({
               className="p-2 rounded-lg hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               aria-label="Run Now"
               title="Run Now"
-              disabled={s.status === "completed" || isRunning || isPending}
+              disabled={s.status === "completed" || s.status === "cancelled" || isRunning || isPending}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -366,6 +368,8 @@ export function ScheduledScansPage() {
   const activeCount = schedules.filter((s) => s.status === "active").length;
   const pausedCount = schedules.filter((s) => s.status === "paused").length;
   const errorCount = schedules.filter((s) => s.status === "error").length;
+  const cancelledCount = schedules.filter((s) => s.status === "cancelled").length;
+  const completedCount = schedules.filter((s) => s.status === "completed").length;
 
   function openCreate() {
     setEditingId(null);
@@ -419,7 +423,7 @@ export function ScheduledScansPage() {
 
       {/* Stats bar */}
       {!isLoading && schedules.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center">
               <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -451,6 +455,28 @@ export function ScheduledScansPage() {
             <div>
               <p className="text-lg font-bold text-foreground">{errorCount}</p>
               <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Errors</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center">
+              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-foreground">{cancelledCount}</p>
+              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Cancelled</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center">
+              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-foreground">{completedCount}</p>
+              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Completed</p>
             </div>
           </div>
         </div>

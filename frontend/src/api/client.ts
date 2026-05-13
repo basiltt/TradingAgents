@@ -832,7 +832,7 @@ export const accountsApi = {
 // ── Scheduled Scans ──────────────────────────────────────────────
 
 export type ScheduleType = "once" | "interval" | "daily" | "weekly" | "cron";
-export type ScheduleStatus = "active" | "paused" | "completed" | "error";
+export type ScheduleStatus = "active" | "paused" | "completed" | "error" | "cancelled";
 
 export interface ScheduleConfig {
   run_at?: string;

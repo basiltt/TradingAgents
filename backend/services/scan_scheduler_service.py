@@ -156,11 +156,15 @@ class ScanSchedulerService:
         existing = await self._db.get_scheduled_scan(scan_id)
         if not existing:
             raise KeyError(f"Schedule {scan_id} not found")
-        if existing["status"] not in ("paused", "error"):
+        if existing["status"] not in ("paused", "error", "cancelled"):
             raise ValueError(f"Cannot resume schedule in '{existing['status']}' status")
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         next_run = self._compute_next_run(existing)
+        if existing["schedule_type"] == "once" and next_run:
+            parsed = datetime.fromisoformat(next_run.replace("Z", "+00:00"))
+            if parsed < datetime.now(timezone.utc):
+                next_run = now
         await self._db.update_scheduled_scan(
             scan_id,
             {"status": "active", "next_run_at": next_run, "consecutive_failures": 0, "updated_at": now},
@@ -172,8 +176,8 @@ class ScanSchedulerService:
         existing = await self._db.get_scheduled_scan(scan_id)
         if not existing:
             raise KeyError(f"Schedule {scan_id} not found")
-        if existing["status"] == "completed":
-            raise ValueError("Cannot trigger a completed schedule")
+        if existing["status"] in ("completed", "cancelled"):
+            raise ValueError(f"Cannot trigger a {existing['status']} schedule")
         if scan_id in self._in_flight:
             raise ValueError("A scan is already running for this schedule")
 
@@ -407,12 +411,18 @@ class ScanSchedulerService:
                             {"consecutive_failures": 0, "updated_at": now},
                         )
                 elif status == "failed":
-                    await self._record_failure(schedule_id)
+                    if schedule.get("schedule_type") == "once":
+                        await self._db.update_scheduled_scan(
+                            schedule_id,
+                            {"status": "error", "next_run_at": None, "consecutive_failures": schedule.get("consecutive_failures", 0) + 1, "updated_at": now},
+                        )
+                    else:
+                        await self._record_failure(schedule_id)
                 elif status == "cancelled":
                     if schedule.get("schedule_type") == "once":
                         await self._db.update_scheduled_scan(
                             schedule_id,
-                            {"status": "error", "next_run_at": None, "updated_at": now},
+                            {"status": "cancelled", "next_run_at": None, "updated_at": now},
                         )
                 elif status == "completed":
                     updates: Dict[str, Any] = {"consecutive_failures": 0, "updated_at": now}
