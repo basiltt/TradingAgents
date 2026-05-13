@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
@@ -1336,9 +1337,24 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                 <td className="px-4 py-3 text-xs capitalize hidden md:table-cell">{r.confidence}</td>
                 <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs">
-                    {r.status}
-                  </Badge>
+                  {r.status === "failed" && r.decision_summary ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger>
+                          <Badge variant="destructive" className="text-xs cursor-help">
+                            {r.status}
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-sm">
+                          {r.decision_summary}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : (
+                    <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs">
+                      {r.status}
+                    </Badge>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2">
@@ -1367,6 +1383,20 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       >
                         View
                       </Link>
+                    )}
+                    {!r.run_id && r.status === "failed" && r.decision_summary && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <span className="text-xs text-muted-foreground hover:text-foreground cursor-help underline decoration-dotted">
+                              Why?
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="max-w-sm">
+                            {r.decision_summary}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                   </div>
                 </td>

@@ -132,10 +132,9 @@ def _is_sub_day(period: str) -> bool:
     return period in _SUB_DAY_PERIODS
 
 
-def _resolve_hf_since(period: str) -> str:
+def _resolve_hf_since(period: str) -> datetime:
     delta = _SUB_DAY_DELTAS.get(period, timedelta(minutes=1))
-    since = datetime.now(timezone.utc) - delta
-    return since.isoformat()
+    return datetime.now(timezone.utc) - delta
 
 
 @router.get("/accounts/{account_id}/snapshots")

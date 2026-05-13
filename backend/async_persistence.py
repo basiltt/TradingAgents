@@ -1130,7 +1130,7 @@ class AsyncAnalysisDB:
     # ── High-Frequency Snapshots ──────────────────────────────────────
 
     async def get_hf_snapshots(
-        self, account_id: str, since_ts: str,
+        self, account_id: str, since_ts,
     ) -> List[Dict[str, Any]]:
         rows = await self._pool.fetch(
             "SELECT * FROM high_freq_snapshots "
@@ -1141,7 +1141,7 @@ class AsyncAnalysisDB:
         return [dict(r) for r in rows]
 
     async def get_all_hf_snapshots(
-        self, since_ts: str, account_type: Optional[str] = None,
+        self, since_ts, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         sql = (
             "SELECT hf.* FROM high_freq_snapshots hf "

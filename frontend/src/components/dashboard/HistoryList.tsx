@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { apiClient } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { parseTradeCard, type TradeCardData } from "@/components/analysis/parseTradeCard";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 
 const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; dot: string }> = {
   running: { variant: "default", dot: "bg-primary animate-pulse" },
@@ -672,10 +673,26 @@ export function HistoryList() {
                         </Link>
                       </td>
                       <td className="px-4 py-2.5">
-                        <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize">
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
-                          {item.status}
-                        </span>
+                        {item.status === "failed" && item.error ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize cursor-help">
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                                  {item.status}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-sm">
+                                {item.error}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                            {item.status}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5">
                         {item.status === "completed"
@@ -760,10 +777,26 @@ export function HistoryList() {
                           {item.asset_type === "crypto" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium leading-none">CRYPTO</span>
                           )}
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
-                            {item.status}
-                          </span>
+                          {item.status === "failed" && item.error ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize cursor-help">
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                                    {item.status}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-sm">
+                                  {item.error}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium capitalize">
+                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                              {item.status}
+                            </span>
+                          )}
                           {item.status === "completed" && <TradeScoreDisplay card={scoreMap.get(item.run_id)} />}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
