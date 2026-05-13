@@ -98,7 +98,6 @@ class TradingCycleEngine:
         self._accounts = accounts_svc
         self._close_positions = close_positions_svc
         self._db = db
-        self._pool = db._pool
         self._ws_manager = ws_manager
         self._concurrency = bybit_concurrency
         self._cb_threshold = circuit_breaker_threshold
@@ -175,9 +174,7 @@ class TradingCycleEngine:
         if not account or not account.get("is_active"):
             raise AccountNotConfiguredError()
 
-        scan = await self._pool.fetchrow(
-            "SELECT scan_id, status, started_at FROM scans WHERE scan_id = $1", scan_id
-        )
+        scan = await self._db.get_scan(scan_id)
         if not scan:
             raise ScanNotFoundError()
 
@@ -193,11 +190,7 @@ class TradingCycleEngine:
             except (ValueError, TypeError):
                 pass
 
-        results = await self._pool.fetch(
-            "SELECT ticker, direction, confidence, score FROM scan_results WHERE scan_id = $1",
-            scan_id,
-        )
-        filtered = self.filter_scan_results([dict(r) for r in results], cfg)
+        filtered = self.filter_scan_results(scan.get("results", []), cfg)
         if not filtered:
             raise NoQualifyingResultsError()
 
@@ -225,6 +218,8 @@ class TradingCycleEngine:
             cycle = await self._repo.get_cycle(cycle_id)
             if not cycle:
                 raise CycleNotFoundError()
+            if cycle["status"] in ("stopping", "stopped", "completed", "failed"):
+                return cycle
             raise CycleNotRunningError()
 
         task = self._active_tasks.get(cycle_id)
@@ -244,9 +239,7 @@ class TradingCycleEngine:
         if not account or not account.get("is_active"):
             raise AccountNotConfiguredError()
 
-        scan = await self._pool.fetchrow(
-            "SELECT scan_id, started_at FROM scans WHERE scan_id = $1", scan_id
-        )
+        scan = await self._db.get_scan(scan_id)
         if not scan:
             raise ScanNotFoundError()
 
@@ -263,11 +256,7 @@ class TradingCycleEngine:
             except (ValueError, TypeError):
                 pass
 
-        results = await self._pool.fetch(
-            "SELECT ticker, direction, confidence, score FROM scan_results WHERE scan_id = $1",
-            scan_id,
-        )
-        filtered = self.filter_scan_results([dict(r) for r in results], cfg)
+        filtered = self.filter_scan_results(scan.get("results", []), cfg)
         if not filtered:
             raise NoQualifyingResultsError()
 
@@ -326,8 +315,8 @@ class TradingCycleEngine:
         except asyncio.CancelledError:
             self._active_tasks.pop(cycle_id, None)
             raise
-        except Exception:
-            logger.exception("Cycle %d failed unexpectedly", cycle_id)
+        except Exception as e:
+            logger.warning("Cycle %d failed unexpectedly: %s", cycle_id, e)
             await self._finalize_cycle(cycle_id, "failed", "circuit_breaker")
         finally:
             self._active_tasks.pop(cycle_id, None)

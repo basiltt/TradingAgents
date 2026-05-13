@@ -21,13 +21,9 @@ from backend.services.trading_cycle_engine import (
 
 
 def _make_engine(
-    repo=None, accounts=None, close_svc=None, db=None, pool=None, ws=None
+    repo=None, accounts=None, close_svc=None, db=None, ws=None
 ):
     mock_db = db or AsyncMock()
-    if pool:
-        mock_db._pool = pool
-    elif not hasattr(mock_db, '_pool'):
-        mock_db._pool = AsyncMock()
     return TradingCycleEngine(
         cycle_repo=repo or AsyncMock(),
         accounts_svc=accounts or AsyncMock(),
@@ -108,9 +104,8 @@ class TestStartCycle:
     async def test_scan_not_found(self):
         db = AsyncMock()
         db.get_account.return_value = {"id": "x", "is_active": 1}
-        pool = AsyncMock()
-        pool.fetchrow.return_value = None
-        engine = _make_engine(db=db, pool=pool)
+        db.get_scan.return_value = None
+        engine = _make_engine(db=db)
         with pytest.raises(ScanNotFoundError):
             await engine.start_cycle({"account_id": "x", "scan_id": "s1"})
 
@@ -120,17 +115,18 @@ class TestDryRun:
     async def test_returns_qualifying(self):
         db = AsyncMock()
         db.get_account.return_value = {"id": "x", "is_active": 1}
-        pool = AsyncMock()
-        pool.fetchrow.return_value = {"scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat()}
-        pool.fetch.return_value = [
-            {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
-            {"ticker": "ETH", "direction": "sell", "confidence": "low", "score": 2},
-        ]
+        db.get_scan.return_value = {
+            "scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat(),
+            "results": [
+                {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
+                {"ticker": "ETH", "direction": "sell", "confidence": "low", "score": 2},
+            ],
+        }
         accounts = AsyncMock()
         accounts.get_wallet.return_value = {"totalEquity": "1000"}
         accounts.get_positions.return_value = []
 
-        engine = _make_engine(db=db, pool=pool, accounts=accounts)
+        engine = _make_engine(db=db, accounts=accounts)
         result = await engine.dry_run({
             "account_id": "x", "scan_id": "s1",
             "min_score": 3, "min_confidence": "moderate",
@@ -146,16 +142,17 @@ class TestDryRun:
     async def test_warns_existing_position(self):
         db = AsyncMock()
         db.get_account.return_value = {"id": "x", "is_active": 1}
-        pool = AsyncMock()
-        pool.fetchrow.return_value = {"scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat()}
-        pool.fetch.return_value = [
-            {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
-        ]
+        db.get_scan.return_value = {
+            "scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat(),
+            "results": [
+                {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
+            ],
+        }
         accounts = AsyncMock()
         accounts.get_wallet.return_value = {"totalEquity": "1000"}
         accounts.get_positions.return_value = [{"symbol": "BTC", "size": "1.0"}]
 
-        engine = _make_engine(db=db, pool=pool, accounts=accounts)
+        engine = _make_engine(db=db, accounts=accounts)
         result = await engine.dry_run({
             "account_id": "x", "scan_id": "s1",
             "min_score": 3, "min_confidence": "none",
@@ -178,10 +175,19 @@ class TestStopCycle:
             await engine.stop_cycle(999)
 
     @pytest.mark.asyncio
-    async def test_not_running(self):
+    async def test_already_completed_returns_cycle(self):
         repo = AsyncMock()
         repo.update_status.return_value = False
         repo.get_cycle.return_value = {"id": 1, "status": "completed"}
+        engine = _make_engine(repo=repo)
+        result = await engine.stop_cycle(1)
+        assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_not_running(self):
+        repo = AsyncMock()
+        repo.update_status.return_value = False
+        repo.get_cycle.return_value = {"id": 1, "status": "pending"}
         engine = _make_engine(repo=repo)
         with pytest.raises(CycleNotRunningError):
             await engine.stop_cycle(1)
@@ -193,11 +199,8 @@ class TestOnRuleTriggered:
         repo = AsyncMock()
         repo.update_status.return_value = True
         repo.get_cycle.return_value = {"id": 1, "account_id": "x", "status": "stopping"}
-        pool = AsyncMock()
-        pool.execute.return_value = None
-        pool.fetch.return_value = []
         db = AsyncMock()
-        engine = _make_engine(repo=repo, pool=pool, db=db)
+        engine = _make_engine(repo=repo, db=db)
         await engine.on_rule_triggered({
             "cycle_id": 1, "trigger_type": "BALANCE_ABOVE",
         })
@@ -209,9 +212,7 @@ class TestShutdown:
     async def test_marks_active_failed(self):
         repo = AsyncMock()
         repo.update_status.return_value = True
-        pool = AsyncMock()
-        pool.execute.return_value = None
-        engine = _make_engine(repo=repo, pool=pool)
+        engine = _make_engine(repo=repo)
         engine._active_tasks[1] = asyncio.create_task(asyncio.sleep(999))
         await engine.shutdown()
         repo.update_status.assert_called()
@@ -241,14 +242,15 @@ class TestStartCycleErrors:
     async def test_scan_too_old(self):
         db = AsyncMock()
         db.get_account.return_value = {"id": "x", "is_active": 1}
-        pool = AsyncMock()
         old_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-        pool.fetchrow.return_value = {"scan_id": "s1", "started_at": old_time}
-        pool.fetch.return_value = [
-            {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
-        ]
+        db.get_scan.return_value = {
+            "scan_id": "s1", "started_at": old_time,
+            "results": [
+                {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
+            ],
+        }
         repo = AsyncMock()
-        engine = _make_engine(db=db, pool=pool, repo=repo)
+        engine = _make_engine(db=db, repo=repo)
         with pytest.raises(ScanTooOldError):
             await engine.start_cycle({
                 "account_id": "x", "scan_id": "s1",
@@ -260,15 +262,16 @@ class TestStartCycleErrors:
     async def test_no_qualifying_results(self):
         db = AsyncMock()
         db.get_account.return_value = {"id": "x", "is_active": 1}
-        pool = AsyncMock()
-        pool.fetchrow.return_value = {"scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat()}
-        pool.fetch.return_value = [
-            {"ticker": "A", "direction": "hold", "confidence": "low", "score": 1},
-        ]
+        db.get_scan.return_value = {
+            "scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat(),
+            "results": [
+                {"ticker": "A", "direction": "hold", "confidence": "low", "score": 1},
+            ],
+        }
         accounts = AsyncMock()
         accounts.get_wallet.return_value = {"totalEquity": "1000"}
         repo = AsyncMock()
-        engine = _make_engine(db=db, pool=pool, accounts=accounts, repo=repo)
+        engine = _make_engine(db=db, accounts=accounts, repo=repo)
         with pytest.raises(NoQualifyingResultsError):
             await engine.start_cycle({
                 "account_id": "x", "scan_id": "s1",
@@ -280,14 +283,15 @@ class TestStartCycleErrors:
     async def test_insufficient_equity_dry_run(self):
         db = AsyncMock()
         db.get_account.return_value = {"id": "x", "is_active": 1}
-        pool = AsyncMock()
-        pool.fetchrow.return_value = {"scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat()}
-        pool.fetch.return_value = [
-            {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
-        ]
+        db.get_scan.return_value = {
+            "scan_id": "s1", "started_at": datetime.now(timezone.utc).isoformat(),
+            "results": [
+                {"ticker": "BTC", "direction": "buy", "confidence": "high", "score": 8},
+            ],
+        }
         accounts = AsyncMock()
         accounts.get_wallet.return_value = {"totalEquity": "0"}
-        engine = _make_engine(db=db, pool=pool, accounts=accounts)
+        engine = _make_engine(db=db, accounts=accounts)
         with pytest.raises(InsufficientEquityError):
             await engine.dry_run({
                 "account_id": "x", "scan_id": "s1",

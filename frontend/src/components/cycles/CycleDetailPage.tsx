@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatDate, isActive } from "./utils";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   pending: "outline",
@@ -25,20 +26,6 @@ const TRADE_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructiv
   failed: "destructive",
   cancelled: "outline",
 };
-
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short", day: "numeric", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  } catch { return iso; }
-}
-
-function isActive(status: string): boolean {
-  return ["pending", "placing_trades", "running", "stopping"].includes(status);
-}
 
 export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   const id = Number(cycleId);

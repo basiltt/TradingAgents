@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { cyclesApi, type CycleResponse } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { formatDate, isActive } from "./utils";
 
 const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   pending: { label: "Pending", variant: "outline" },
@@ -14,24 +15,6 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
   stopped: { label: "Stopped", variant: "outline" },
   failed: { label: "Failed", variant: "destructive" },
 };
-
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-function isActive(status: string): boolean {
-  return ["pending", "placing_trades", "running", "stopping"].includes(status);
-}
 
 export function CycleListPage() {
   const [offset, setOffset] = useState(0);
