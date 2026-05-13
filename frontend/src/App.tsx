@@ -4,6 +4,7 @@ import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persist
 import { QueryClient } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { Provider as ReduxProvider } from "react-redux";
+import { Toaster } from "@/components/ui/sonner";
 import { store } from "./store";
 import { createAppRouter } from "./routes/route-tree";
 
@@ -46,6 +47,7 @@ function App() {
         }}
       >
         <RouterProvider router={router} />
+        <Toaster />
       </PersistQueryClientProvider>
     </ReduxProvider>
   );
