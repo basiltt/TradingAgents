@@ -534,7 +534,7 @@ class AnalysisService:
         graph = TradingAgentsGraph(
             config=config,
             selected_analysts=[a.value if hasattr(a, "value") else a for a in (request.get("analysts") or (
-                ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals"]
+                ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"]
                 if config.get("asset_type") == "crypto"
                 else ["market", "news"]
             ))],

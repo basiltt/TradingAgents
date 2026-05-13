@@ -337,3 +337,117 @@ class TestGetCoingeckoStatus:
         assert status["plan"] == "demo"
         assert status["key_configured"] is False
         assert isinstance(status["rate_limit_rpm"], int)
+
+
+class TestEvictOldest:
+    def test_no_op_when_under_limit(self):
+        from tradingagents.dataflows.coingecko_data import _evict_oldest
+        cache = {"a": (1.0, "x"), "b": (2.0, "y")}
+        _evict_oldest(cache, max_size=5)
+        assert len(cache) == 2
+
+    def test_evicts_oldest_entries(self):
+        from tradingagents.dataflows.coingecko_data import _evict_oldest
+        cache = {f"k{i}": (float(i), f"v{i}") for i in range(20)}
+        _evict_oldest(cache, max_size=10)
+        assert len(cache) <= 10
+        assert "k0" not in cache
+        assert "k19" in cache
+
+    def test_batch_eviction_removes_at_least_10_percent(self):
+        from tradingagents.dataflows.coingecko_data import _evict_oldest
+        cache = {f"k{i}": (float(i), f"v{i}") for i in range(100)}
+        _evict_oldest(cache, max_size=99)
+        assert len(cache) <= 99
+        assert len(cache) <= 91
+
+
+class TestGetCoingeckoFundamentalsOnly:
+    @patch("tradingagents.dataflows.coingecko_data._get_description_and_categories",
+           return_value=("A decentralized currency.", ["Cryptocurrency"]))
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id", return_value="bitcoin")
+    def test_uses_bulk_cache_when_available(self, mock_id, mock_desc):
+        import tradingagents.dataflows.coingecko_data as mod
+        _force_configured()
+        bulk_data = {
+            "name": "Bitcoin", "symbol": "btc", "market_cap_rank": 1,
+            "market_data": {
+                "market_cap": {"usd": 1_000_000_000},
+                "total_volume": {"usd": 50_000_000},
+                "current_price": {"usd": 50000},
+                "circulating_supply": 19_000_000, "total_supply": 21_000_000,
+                "max_supply": 21_000_000, "ath": {"usd": 69000},
+                "ath_change_percentage": {"usd": -27.5}, "atl": {"usd": 67.81},
+                "atl_change_percentage": {"usd": 100000},
+                "fully_diluted_valuation": {"usd": 1_050_000_000},
+            },
+        }
+        with mod._bulk_cache_lock:
+            mod._bulk_cache["bitcoin"] = (time.time(), bulk_data)
+        result = mod.get_coingecko_fundamentals_only("BTCUSDT")
+        assert "Bitcoin" in result
+        assert "Market Cap Rank" in result
+        assert "Project Description" in result
+
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id", return_value=None)
+    def test_unresolved_symbol(self, mock_id):
+        from tradingagents.dataflows.coingecko_data import get_coingecko_fundamentals_only
+        result = get_coingecko_fundamentals_only("UNKNOWN")
+        assert "Could not resolve" in result
+
+    @patch("tradingagents.dataflows.coingecko_data._get_description_and_categories",
+           return_value=("", []))
+    @patch("tradingagents.dataflows.coingecko_data._cached_get")
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id", return_value="bitcoin")
+    def test_falls_back_to_individual_fetch(self, mock_id, mock_get, mock_desc):
+        import tradingagents.dataflows.coingecko_data as mod
+        _force_configured()
+        with mod._bulk_cache_lock:
+            mod._bulk_cache.pop("bitcoin", None)
+        mock_get.return_value = {
+            "name": "Bitcoin", "symbol": "btc", "market_cap_rank": 1,
+            "market_data": {
+                "market_cap": {"usd": 1_000_000_000},
+                "ath": {"usd": 69000}, "ath_change_percentage": {"usd": -27.5},
+                "atl": {"usd": 67.81}, "atl_change_percentage": {"usd": 100000},
+                "fully_diluted_valuation": {"usd": 1_050_000_000},
+            },
+        }
+        result = mod.get_coingecko_fundamentals_only("BTCUSDT")
+        assert "Bitcoin" in result
+        mock_get.assert_called_once()
+
+
+class TestPrefetchFundamentals:
+    @patch("tradingagents.dataflows.coingecko_data._get_description_and_categories")
+    @patch("tradingagents.dataflows.coingecko_data.get_bulk_market_data")
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id")
+    def test_calls_bulk_and_descriptions(self, mock_id, mock_bulk, mock_desc):
+        import tradingagents.dataflows.coingecko_data as mod
+        _force_configured()
+        mock_id.side_effect = lambda s: {"BTCUSDT": "bitcoin", "ETHUSDT": "ethereum"}.get(s)
+        with mod._desc_cache_lock:
+            mod._desc_cache.clear()
+        mod.prefetch_fundamentals(["BTCUSDT", "ETHUSDT"])
+        mock_bulk.assert_called_once_with(["bitcoin", "ethereum"])
+        assert mock_desc.call_count == 2
+
+    @patch("tradingagents.dataflows.coingecko_data.get_bulk_market_data")
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id", return_value=None)
+    def test_skips_unresolvable_symbols(self, mock_id, mock_bulk):
+        import tradingagents.dataflows.coingecko_data as mod
+        _force_configured()
+        mod.prefetch_fundamentals(["UNKNOWN1", "UNKNOWN2"])
+        mock_bulk.assert_not_called()
+
+    @patch("tradingagents.dataflows.coingecko_data._get_description_and_categories")
+    @patch("tradingagents.dataflows.coingecko_data.get_bulk_market_data")
+    @patch("tradingagents.dataflows.coingecko_data._get_coin_id")
+    def test_deduplicates_coin_ids(self, mock_id, mock_bulk, mock_desc):
+        import tradingagents.dataflows.coingecko_data as mod
+        _force_configured()
+        mock_id.return_value = "bitcoin"
+        with mod._desc_cache_lock:
+            mod._desc_cache.clear()
+        mod.prefetch_fundamentals(["BTCUSDT", "BTCUSD"])
+        mock_bulk.assert_called_once_with(["bitcoin"])

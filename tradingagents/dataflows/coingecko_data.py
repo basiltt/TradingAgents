@@ -11,6 +11,7 @@ the gated helpers.
 from __future__ import annotations
 
 import copy
+import json as _json
 import logging
 import os
 import threading
@@ -146,8 +147,6 @@ _CACHE_MAX = 1000
 
 
 def _cached_get(path: str, params: dict | None = None) -> dict | list:
-    import json as _json
-
     key = path + (_json.dumps(params, sort_keys=True) if params else "")
     with _cache_lock:
         if key in _cache and (time.time() - _cache[key][0]) < _CACHE_TTL:
@@ -498,7 +497,7 @@ def get_coingecko_community_data(symbol: str) -> str:
         f"| Commit Count (4w) | {_val(dd.get('commit_count_4_weeks'))} |",
     ]
 
-    code_changes = dd.get("code_additions_deletions_4_weeks", {})
+    code_changes = dd.get("code_additions_deletions_4_weeks") or {}
     if code_changes:
         lines += [
             f"| Code Additions (4w) | {_val(code_changes.get('additions'))} |",
