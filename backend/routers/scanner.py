@@ -6,9 +6,9 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
-from backend.schemas import ScanRequest, ScanResultItem, PROVIDER_API_KEY_MAP
+from backend.schemas import ScanRequest, ScanResultItem, FilterPreviewResponse, PROVIDER_API_KEY_MAP
 from backend.services.scanner_service import ScannerBusyError
 
 logger = logging.getLogger(__name__)
@@ -97,3 +97,33 @@ async def delete_scan(request: Request, scan_id: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Scan not found")
     return result
+
+
+@router.get("/scans/{scan_id}/filter-preview", response_model=FilterPreviewResponse)
+async def filter_preview(
+    request: Request,
+    scan_id: str,
+    min_score: float = Query(default=3.0, ge=-10, le=10),
+    min_confidence: str = Query(default="moderate"),
+    signal_filter: str = Query(default="both"),
+):
+    from backend.services.trading_cycle_engine import TradingCycleEngine
+    _validate_scan_id(scan_id)
+    db = request.app.state.db
+    scan = await db.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    config = {
+        "min_score": min_score, "min_confidence": min_confidence,
+        "signal_filter": signal_filter, "max_trades": 999,
+    }
+    filtered = TradingCycleEngine.filter_scan_results(scan.get("results", []), config)
+    direction_breakdown: dict[str, int] = {}
+    for r in filtered:
+        d = r["direction"]
+        direction_breakdown[d] = direction_breakdown.get(d, 0) + 1
+    return FilterPreviewResponse(
+        qualifying_count=len(filtered),
+        symbols=[r["ticker"] for r in filtered],
+        direction_breakdown=direction_breakdown,
+    )

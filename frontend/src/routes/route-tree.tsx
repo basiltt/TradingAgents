@@ -20,6 +20,8 @@ import { AccountsDashboard } from "@/components/accounts/AccountsDashboard";
 import { AccountDetailView } from "@/components/accounts/AccountDetailView";
 import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 import { StrategiesPage as StrategiesPageComponent } from "@/components/strategies/StrategiesPage";
+import { CycleListPage } from "@/components/cycles/CycleListPage";
+import { CycleDetailPage } from "@/components/cycles/CycleDetailPage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -87,6 +89,15 @@ function PerformancePage() {
 
 function StrategiesPage() {
   return <StrategiesPageComponent />;
+}
+
+function CyclesPage() {
+  return <CycleListPage />;
+}
+
+function CyclesDetailPage() {
+  const { cycleId } = useParams({ from: "/cycles/$cycleId" });
+  return <CycleDetailPage cycleId={cycleId} />;
 }
 
 
@@ -174,6 +185,18 @@ const strategiesRoute = createRoute({
   component: StrategiesPage,
 });
 
+const cyclesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cycles",
+  component: CyclesPage,
+});
+
+const cycleDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cycles/$cycleId",
+  component: CyclesDetailPage,
+});
+
 
 export const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -190,6 +213,8 @@ export const routeTree = rootRoute.addChildren([
   accountDetailRoute,
   performanceRoute,
   strategiesRoute,
+  cyclesRoute,
+  cycleDetailRoute,
 ]);
 
 export function createAppRouter() {

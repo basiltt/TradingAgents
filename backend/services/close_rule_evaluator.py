@@ -17,10 +17,18 @@ MAX_CONCURRENT_ACCOUNTS = 5
 class CloseRuleEvaluator:
     def __init__(self, close_service: Any, accounts_service: Any, db: Any):
         self._close_service = close_service
+        self._cycle_callback: Optional[Any] = None
+        self._cycle_repo: Optional[Any] = None
         self._accounts_service = accounts_service
         self._db = db
         self._task: Optional[asyncio.Task] = None
         self._running = False
+
+    def set_cycle_callback(self, callback: Any) -> None:
+        self._cycle_callback = callback
+
+    def set_cycle_repo(self, repo: Any) -> None:
+        self._cycle_repo = repo
 
     async def start(self) -> None:
         if self._running:
@@ -124,13 +132,24 @@ class CloseRuleEvaluator:
                     if not did_transition:
                         continue
                     try:
-                        result = await self._close_service.close_all_for_rule(account_id, rule["id"])
+                        close_kwargs: dict[str, Any] = {}
+                        if rule.get("cycle_id") and self._cycle_repo:
+                            try:
+                                close_kwargs["symbols"] = await self._cycle_repo.get_cycle_trade_symbols(rule["cycle_id"])
+                            except Exception:
+                                logger.warning("Failed to get cycle trade symbols for rule %s, closing all", rule["id"])
+                        result = await self._close_service.close_all_for_rule(account_id, rule["id"], **close_kwargs)
                         if result.get("skipped"):
                             logger.info("Close skipped for rule %s (concurrent close), reverting to active", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="active")
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")
+                            if self._cycle_callback and rule.get("cycle_id"):
+                                try:
+                                    await self._cycle_callback(rule)
+                                except Exception:
+                                    logger.exception("Cycle callback failed for rule %s", rule["id"])
                     except asyncio.CancelledError:
                         logger.warning("Close cancelled (timeout) for rule %s, reverting to active", rule["id"])
                         await self._db.update_close_rule(rule["id"], status="active")

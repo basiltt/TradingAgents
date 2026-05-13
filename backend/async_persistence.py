@@ -239,6 +239,71 @@ CREATE TABLE IF NOT EXISTS close_executions (
 CREATE INDEX IF NOT EXISTS idx_close_executions_account ON close_executions(account_id, executed_at DESC)
 """),
     (19, "ALTER TABLE closed_pnl_records ALTER COLUMN created_time TYPE BIGINT"),
+    (20, """
+CREATE TABLE IF NOT EXISTS trading_cycles (
+    id SERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    scan_id TEXT REFERENCES scans(scan_id) ON DELETE SET NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','placing_trades','running','stopping','completed','stopped','failed')),
+    trade_direction VARCHAR(10) NOT NULL CHECK (trade_direction IN ('straight','reverse')),
+    leverage INTEGER NOT NULL CHECK (leverage BETWEEN 1 AND 125),
+    capital_pct NUMERIC(5,2) NOT NULL CHECK (capital_pct > 0 AND capital_pct <= 100),
+    take_profit_pct NUMERIC(6,2) CHECK (take_profit_pct > 0 AND take_profit_pct <= 1000),
+    stop_loss_pct NUMERIC(6,2) CHECK (stop_loss_pct > 0 AND stop_loss_pct <= 1000),
+    min_score INTEGER NOT NULL DEFAULT 3 CHECK (min_score BETWEEN -10 AND 10),
+    min_confidence VARCHAR(10) NOT NULL DEFAULT 'moderate'
+        CHECK (min_confidence IN ('none','low','moderate','high')),
+    signal_filter VARCHAR(4) NOT NULL DEFAULT 'both'
+        CHECK (signal_filter IN ('buy','sell','both')),
+    max_trades INTEGER NOT NULL CHECK (max_trades BETWEEN 1 AND 20),
+    target_type VARCHAR(10) NOT NULL CHECK (target_type IN ('percentage','amount')),
+    target_value NUMERIC(12,2) NOT NULL CHECK (target_value > 0),
+    max_drawdown_pct NUMERIC(5,2) NOT NULL CHECK (max_drawdown_pct > 0 AND max_drawdown_pct <= 100),
+    initial_equity NUMERIC(14,4),
+    final_pnl NUMERIC(14,4),
+    stop_reason VARCHAR(200),
+    trades_placed INTEGER NOT NULL DEFAULT 0,
+    trades_failed INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_account_status ON trading_cycles(account_id, status);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_created ON trading_cycles(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_scan_id ON trading_cycles(scan_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_cycle ON trading_cycles(account_id)
+    WHERE status IN ('pending','placing_trades','running','stopping');
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_stuck ON trading_cycles(status, created_at)
+    WHERE status IN ('running','placing_trades','stopping')
+"""),
+    (21, """
+CREATE TABLE IF NOT EXISTS cycle_trades (
+    id SERIAL PRIMARY KEY,
+    cycle_id INTEGER NOT NULL REFERENCES trading_cycles(id) ON DELETE RESTRICT,
+    symbol VARCHAR(30) NOT NULL,
+    order_id VARCHAR(50),
+    order_link_id VARCHAR(50),
+    side VARCHAR(4) NOT NULL CHECK (side IN ('Buy','Sell')),
+    qty NUMERIC(18,8),
+    entry_price NUMERIC(18,8),
+    status VARCHAR(15) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','submitted','filled','failed','cancelled')),
+    error_msg VARCHAR(500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    filled_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_cycle_trades_cycle_id ON cycle_trades(cycle_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_trades_order_link_id ON cycle_trades(order_link_id)
+    WHERE order_link_id IS NOT NULL
+"""),
+    (22, """
+ALTER TABLE close_rules ADD COLUMN IF NOT EXISTS cycle_id INTEGER REFERENCES trading_cycles(id) ON DELETE RESTRICT;
+ALTER TABLE close_rules DROP CONSTRAINT IF EXISTS close_rules_status_check;
+ALTER TABLE close_rules ADD CONSTRAINT close_rules_status_check
+    CHECK (status IN ('active','paused','triggered','executed','expired','pending_activation'));
+CREATE INDEX IF NOT EXISTS idx_close_rules_cycle_id ON close_rules(cycle_id) WHERE cycle_id IS NOT NULL
+"""),
 ]
 
 
@@ -1431,7 +1496,7 @@ class AsyncAnalysisDB:
 
     async def insert_close_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
         cols = ["account_id", "trigger_type", "threshold_value", "reference_value",
-                "status", "expires_at"]
+                "status", "expires_at", "cycle_id"]
         vals = {c: rule.get(c) for c in cols}
         if vals.get("status") is None:
             vals["status"] = "active"

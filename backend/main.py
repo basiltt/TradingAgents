@@ -203,18 +203,44 @@ def create_app() -> FastAPI:
             )
             await rule_evaluator.start()
             app.state.rule_evaluator = rule_evaluator
+
+            from backend.services.cycle_repository import CycleRepository
+            from backend.services.trading_cycle_engine import TradingCycleEngine
+            cycle_repo = CycleRepository(db._pool)
+            cycle_engine = TradingCycleEngine(
+                cycle_repo=cycle_repo,
+                accounts_svc=app.state.accounts_service,
+                close_positions_svc=app.state.close_positions_service,
+                db=db,
+                ws_manager=account_ws_mgr,
+            )
+
+            async def _broadcast_cycle_event(event_type: str, payload: dict) -> None:
+                if account_ws_mgr and event_type in ("cycle.status_change", "cycle.progress"):
+                    await account_ws_mgr.broadcast_event({
+                        "type": event_type, **payload,
+                    })
+
+            cycle_engine.register_lifecycle_callback(_broadcast_cycle_event)
+            await cycle_engine.start()
+            app.state.cycle_engine = cycle_engine
+            rule_evaluator.set_cycle_callback(cycle_engine.on_rule_triggered)
+            rule_evaluator.set_cycle_repo(cycle_repo)
         else:
             app.state.accounts_service = None
             app.state.account_ws_manager = None
             app.state.snapshot_scheduler = None
             app.state.close_positions_service = None
             app.state.rule_evaluator = None
+            app.state.cycle_engine = None
 
         yield
         _watchdog_task.cancel()
         await app.state.scheduler_service.shutdown()
         if getattr(app.state, "rule_evaluator", None):
             await app.state.rule_evaluator.shutdown()
+        if getattr(app.state, "cycle_engine", None):
+            await app.state.cycle_engine.shutdown()
         if app.state.snapshot_scheduler:
             await app.state.snapshot_scheduler.shutdown()
             await asyncio.sleep(0.5)
@@ -272,6 +298,8 @@ def create_app() -> FastAPI:
     app.include_router(scheduled_scans_router, prefix="/api/v1")
     app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(close_positions_router, prefix="/api/v1")
+    from backend.routers.trading_cycles import router as trading_cycles_router
+    app.include_router(trading_cycles_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
 

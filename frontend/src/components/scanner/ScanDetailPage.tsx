@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
+import { TradingCycleDialog } from "@/components/cycles/TradingCycleDialog";
 
 const DIRECTION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   buy: { label: "BUY", color: "text-emerald-400", bg: "bg-emerald-500/10" },
@@ -201,6 +202,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const [tradeTarget, setTradeTarget] = useState<{ symbol: string; direction: "buy" | "sell" } | null>(null);
   const [tradedSymbols, setTradedSymbols] = useState<Set<string>>(new Set());
+  const [showCycleDialog, setShowCycleDialog] = useState(false);
   const handleTradeSuccess = (symbol: string) => setTradedSymbols((prev) => new Set(prev).add(symbol));
 
   const { data: scan, isLoading, error } = useQuery({
@@ -311,15 +313,28 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             {cancelMutation.isPending ? "Cancelling..." : "Cancel Scan"}
           </button>
         ) : (
-          <button
-            onClick={handleDeleteClick}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
-          >
+          <div className="flex items-center gap-2">
+            {isCrypto && scan.status === "completed" && (
+              <button
+                onClick={() => setShowCycleDialog(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Start Cycle
+              </button>
+            )}
+            <button
+              onClick={handleDeleteClick}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors"
+            >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
-            Delete Scan
-          </button>
+              Delete Scan
+            </button>
+          </div>
         )}
       </div>
 
@@ -479,6 +494,13 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
           </div>
         </div>
       )}
+
+      <TradingCycleDialog
+        open={showCycleDialog}
+        onOpenChange={setShowCycleDialog}
+        scanId={scanId}
+        scanLabel={`Scan ${scanId.slice(0, 8)}`}
+      />
     </div>
   );
 }
