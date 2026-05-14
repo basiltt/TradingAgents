@@ -46,7 +46,119 @@ CREATE TABLE IF NOT EXISTS report_sections (
 CREATE INDEX IF NOT EXISTS idx_reports_run_id ON report_sections(run_id)
 """.strip()
 
-_MIGRATIONS: list[tuple[int, str]] = [
+_SCHEMA_V25_TABLES = """
+CREATE TABLE IF NOT EXISTS trades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id) ON DELETE RESTRICT,
+    symbol VARCHAR(30) NOT NULL,
+    side VARCHAR(4) NOT NULL CHECK (side IN ('Buy', 'Sell')),
+    order_type VARCHAR(10) NOT NULL DEFAULT 'market' CHECK (order_type IN ('market', 'limit')),
+    qty NUMERIC(20,8) NOT NULL,
+    filled_qty NUMERIC(20,8),
+    entry_price NUMERIC(20,8),
+    avg_fill_price NUMERIC(20,8),
+    exit_price NUMERIC(20,8),
+    stop_loss_price NUMERIC(20,8),
+    take_profit_price NUMERIC(20,8),
+    leverage INTEGER NOT NULL DEFAULT 1,
+    margin_mode VARCHAR(10) DEFAULT 'isolated' CHECK (margin_mode IN ('cross', 'isolated')),
+    position_idx INTEGER NOT NULL DEFAULT 0,
+    mark_price_at_open NUMERIC(20,8),
+    capital_pct NUMERIC(8,4),
+    base_capital NUMERIC(20,8),
+    signal_direction VARCHAR(4) CHECK (signal_direction IN ('buy', 'sell')),
+    trade_direction VARCHAR(8) CHECK (trade_direction IN ('straight', 'reverse')),
+    take_profit_pct NUMERIC(8,4),
+    stop_loss_pct NUMERIC(8,4),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'open', 'partially_filled', 'closing', 'partially_closed', 'closed', 'failed', 'cancelled')),
+    order_id VARCHAR(50),
+    order_link_id VARCHAR(50),
+    close_reason VARCHAR(20)
+        CHECK (close_reason IN ('take_profit', 'stop_loss', 'manual_single', 'manual_close_all',
+               'rule_triggered', 'cycle_target', 'cycle_drawdown', 'external', 'liquidation', 'adl')),
+    close_rule_id UUID REFERENCES close_rules(id) ON DELETE SET NULL,
+    parent_trade_id UUID REFERENCES trades(id) ON DELETE RESTRICT,
+    realized_pnl NUMERIC(20,8),
+    realized_pnl_pct NUMERIC(12,4),
+    fees NUMERIC(20,8) DEFAULT 0,
+    net_pnl NUMERIC(20,8),
+    source VARCHAR(10) NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'cycle')),
+    source_id INTEGER REFERENCES trading_cycles(id) ON DELETE SET NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    metadata JSONB DEFAULT '{}' CHECK (octet_length(metadata::text) < 8192),
+    opened_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ,
+    archived_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_source_id CHECK (
+        (source = 'cycle' AND source_id IS NOT NULL) OR
+        (source = 'manual' AND source_id IS NULL)
+    )
+);
+CREATE INDEX idx_trades_account_status_created ON trades(account_id, status, created_at DESC, id DESC);
+CREATE INDEX idx_trades_account_created ON trades(account_id, created_at DESC, id DESC);
+CREATE INDEX idx_trades_account_opened ON trades(account_id, opened_at DESC, id DESC);
+CREATE INDEX idx_trades_account_closed ON trades(account_id, closed_at DESC NULLS LAST, id DESC);
+CREATE INDEX idx_trades_account_pnl ON trades(account_id, realized_pnl DESC NULLS LAST, id DESC);
+CREATE INDEX idx_trades_account_symbol ON trades(account_id, symbol, created_at DESC, id DESC);
+CREATE INDEX idx_trades_order_id ON trades(order_id) WHERE order_id IS NOT NULL;
+CREATE INDEX idx_trades_active ON trades(account_id) WHERE status IN ('open', 'partially_filled', 'closing', 'partially_closed');
+CREATE INDEX idx_trades_source ON trades(source, source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX idx_trades_parent ON trades(parent_trade_id) WHERE parent_trade_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_trades_order_link_id ON trades(order_link_id) WHERE order_link_id IS NOT NULL;
+CREATE INDEX idx_trades_archived ON trades(archived_at) WHERE archived_at IS NOT NULL;
+CREATE INDEX idx_trades_pending_orphan ON trades(created_at) WHERE status = 'pending' AND order_id IS NULL;
+CREATE TABLE IF NOT EXISTS trade_events (
+    id BIGSERIAL PRIMARY KEY,
+    trade_id UUID NOT NULL REFERENCES trades(id) ON DELETE RESTRICT,
+    event_type VARCHAR(30) NOT NULL
+        CHECK (event_type IN ('placed', 'filled', 'partially_filled', 'tp_triggered', 'sl_triggered',
+               'close_requested', 'closed', 'failed', 'cancelled', 'amended', 'reconciled')),
+    old_status VARCHAR(20) CHECK (old_status IS NULL OR old_status IN ('pending','open','partially_filled','closing','partially_closed','closed','failed','cancelled')),
+    new_status VARCHAR(20) CHECK (new_status IS NULL OR new_status IN ('pending','open','partially_filled','closing','partially_closed','closed','failed','cancelled')),
+    fill_qty NUMERIC(20,8),
+    fill_price NUMERIC(20,8),
+    actor VARCHAR(20) NOT NULL DEFAULT 'system'
+        CHECK (actor IN ('system', 'user', 'rule_engine', 'cycle_engine', 'reconciliation', 'exchange')),
+    payload JSONB DEFAULT '{}' CHECK (octet_length(payload::text) < 8192),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_trade_events_trade_id ON trade_events(trade_id, created_at)
+""".strip()
+
+
+def _schema_v26_triggers_sync(cur) -> None:
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION update_trades_updated_at() RETURNS TRIGGER AS $t$
+        BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+        $t$ LANGUAGE plpgsql
+    """)
+    cur.execute("""
+        CREATE TRIGGER trg_trades_updated_at BEFORE UPDATE ON trades
+        FOR EACH ROW EXECUTE FUNCTION update_trades_updated_at()
+    """)
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION prevent_trade_events_mutation() RETURNS TRIGGER AS $t$
+        BEGIN
+            IF TG_OP = 'UPDATE' THEN
+                RAISE EXCEPTION 'trade_events: UPDATE is prohibited';
+            END IF;
+            IF TG_OP = 'DELETE' AND current_setting('app.purge_mode', 'false') <> 'true' THEN
+                RAISE EXCEPTION 'trade_events: DELETE requires purge_mode';
+            END IF;
+            RETURN OLD;
+        END;
+        $t$ LANGUAGE plpgsql
+    """)
+    cur.execute("""
+        CREATE TRIGGER trg_trade_events_immutable BEFORE UPDATE OR DELETE ON trade_events
+        FOR EACH ROW EXECUTE FUNCTION prevent_trade_events_mutation()
+    """)
+
+
+_MIGRATIONS: list[tuple[int, str | object]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
     (3, "CREATE INDEX IF NOT EXISTS idx_runs_asset_type_started ON analysis_runs(asset_type, started_at DESC)"),
@@ -274,9 +386,9 @@ ALTER TABLE scheduled_scans DROP CONSTRAINT IF EXISTS scheduled_scans_status_che
 ALTER TABLE scheduled_scans ADD CONSTRAINT scheduled_scans_status_check
     CHECK (status IN ('active','paused','completed','error','cancelled'))
 """),
+    (25, _SCHEMA_V25_TABLES),
+    (26, _schema_v26_triggers_sync),
 ]
-
-
 def _default_dsn() -> str:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
@@ -376,10 +488,13 @@ class AnalysisDB:
                         if version <= current:
                             continue
                         try:
-                            for stmt in sql.split(";"):
-                                stmt = stmt.strip()
-                                if stmt:
-                                    cur.execute(stmt)
+                            if callable(sql):
+                                sql(cur)
+                            else:
+                                for stmt in sql.split(";"):
+                                    stmt = stmt.strip()
+                                    if stmt:
+                                        cur.execute(stmt)
                             cur.execute(
                                 "UPDATE schema_version SET version = %s", (version,)
                             )
