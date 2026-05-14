@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage
 
@@ -34,7 +35,7 @@ class TestRiskSchemas:
         assert len(assessment.findings) == 1
 
     def test_risk_score_bounds(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             RiskAssessment(
                 overall_verdict=RiskVerdict.APPROVE,
                 risk_score=101,
@@ -127,7 +128,7 @@ class TestCryptoPMStructuredOutput:
 
 class TestRiskScoreLowerBound:
     def test_negative_risk_score_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             RiskAssessment(
                 overall_verdict=RiskVerdict.APPROVE,
                 risk_score=-1,
@@ -256,7 +257,9 @@ class TestRiskManagerOverrideLogic:
         assessment = RiskAssessment(
             overall_verdict=RiskVerdict.MODIFY,
             risk_score=60,
-            findings=[],
+            findings=[
+                RiskFinding(check="Leverage", verdict=RiskVerdict.MODIFY, detail="Reduce leverage"),
+            ],
             adjusted_leverage=50,
             summary="Reduce leverage.",
         )
@@ -283,3 +286,19 @@ class TestRiskManagerOverrideLogic:
         ):
             result = node(self._base_state())
         assert result["_risk_manager_verdict"] == "Approve"
+
+    def test_empty_findings_rejected(self):
+        """LLM returning empty findings list must be rejected (fail-closed)."""
+        node, llm = self._make_node()
+        assessment = RiskAssessment(
+            overall_verdict=RiskVerdict.APPROVE,
+            risk_score=10,
+            findings=[],
+            summary="All clear.",
+        )
+        with patch(
+            "tradingagents.agents.risk.risk_manager.invoke_structured_or_freetext",
+            return_value=(render_risk_assessment(assessment), assessment),
+        ):
+            result = node(self._base_state())
+        assert result["_risk_manager_verdict"] == "Reject"

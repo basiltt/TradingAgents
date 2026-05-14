@@ -14,6 +14,7 @@ import threading
 import time
 
 import pandas as pd
+import numpy as np
 import requests
 from requests.adapters import HTTPAdapter
 from stockstats import wrap
@@ -621,7 +622,10 @@ def get_bybit_indicators(
         api_key=api_key, api_secret=api_secret,
     )
 
-    df = pd.read_csv(io.StringIO(kline_csv))
+    # Strip any warning prefix lines (e.g., from truncated data) before CSV parsing
+    csv_lines = kline_csv.split("\n")
+    csv_clean = "\n".join(line for line in csv_lines if not line.startswith("["))
+    df = pd.read_csv(io.StringIO(csv_clean))
     df.columns = [c.lower() for c in df.columns]
 
     for col in ["open", "high", "low", "close", "volume"]:
@@ -1112,7 +1116,6 @@ def get_bybit_orderbook(
 # Volatility Metrics (F7)
 # ---------------------------------------------------------------------------
 
-import numpy as np
 
 
 def get_volatility_metrics(kline_csv: str, lookback: int = 90) -> dict:

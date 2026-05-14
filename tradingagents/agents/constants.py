@@ -117,5 +117,5 @@ WRITABLE_KEYS: dict[str, list[str]] = {
     "risk_bull_debater": ["risk_debate_state"],
     "risk_bear_debater": ["risk_debate_state"],
     "portfolio_manager": ["final_trade_decision", "_pm_signal_data", "risk_debate_state"],
-    "execution_monitor": ["execution_notes"],
+    "execution_monitor": ["execution_notes", "final_trade_decision"],
 }

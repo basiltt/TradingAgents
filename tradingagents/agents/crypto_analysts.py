@@ -35,7 +35,11 @@ def _truncate_history(text: str, max_chars: int = _MAX_DEBATE_HISTORY_CHARS) -> 
     """Keep only the most recent portion of debate history to prevent token blowup."""
     if len(text) <= max_chars:
         return text
-    return "[earlier rounds truncated]\n" + text[-max_chars:]
+    truncated = text[-max_chars:]
+    first_newline = truncated.find("\n")
+    if first_newline != -1:
+        truncated = truncated[first_newline + 1:]
+    return "[earlier rounds truncated]\n" + truncated
 
 
 _ANALYST_SYSTEM_PREFIX = (
@@ -93,7 +97,11 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         result = chain.invoke(filtered.get("messages", []))
 
         report = result.content or ""
-        return validate_state_write({"messages": [result], "market_report": report}, "technical_analyst")
+        return validate_state_write({
+            "messages": [result],
+            "market_report": report,
+            "technical_levels_summary": report,
+        }, "technical_analyst")
 
     return node
 

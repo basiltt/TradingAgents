@@ -24,6 +24,7 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,12 @@ def create_risk_manager(llm, max_leverage: int = 20):
         company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
-        trader_plan = filtered.get("trader_investment_plan", "")
-        price_context = filtered.get("current_price_context", "")
+        trader_plan = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         microstructure = filtered.get("market_microstructure", "")
         cfg_max_leverage = filtered.get("max_leverage", max_leverage)
 
-        micro_str = str(microstructure) if microstructure else "Not available"
+        micro_str = wrap_external_data(str(microstructure) if microstructure else "Not available", "market_microstructure")
 
         prompt = [
             {"role": "system", "content": _RISK_SYSTEM},
@@ -99,7 +100,13 @@ def create_risk_manager(llm, max_leverage: int = 20):
         )
 
         if obj is not None:
-            if any(f.verdict == RiskVerdict.REJECT for f in obj.findings):
+            if not obj.findings:
+                overall = RiskVerdict.REJECT
+                logger.warning(
+                    "Risk Manager: LLM returned empty findings list; "
+                    "defaulting to REJECT (fail-closed)."
+                )
+            elif any(f.verdict == RiskVerdict.REJECT for f in obj.findings):
                 overall = RiskVerdict.REJECT
             elif any(f.verdict == RiskVerdict.MODIFY for f in obj.findings):
                 overall = RiskVerdict.MODIFY if obj.overall_verdict != RiskVerdict.REJECT else RiskVerdict.REJECT

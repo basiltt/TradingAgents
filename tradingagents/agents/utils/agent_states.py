@@ -49,13 +49,6 @@ class RiskDebateState(TypedDict):
     count: Annotated[int, "Length of the current conversation"]  # Conversation length
 
 
-class CryptoRiskDebateState(TypedDict):
-    bull_history: Annotated[str, "Bull risk debater history"]
-    bear_history: Annotated[str, "Bear risk debater history"]
-    history: Annotated[str, "Combined debate history"]
-    count: Annotated[int, "Debate round count"]
-
-
 class AgentState(MessagesState):
     company_of_interest: Annotated[str, _last]
     trade_date: Annotated[str, _last]

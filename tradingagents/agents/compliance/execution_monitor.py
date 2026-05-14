@@ -14,6 +14,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,15 @@ _MONITOR_PROMPT = (
 
 def create_execution_monitor(llm):
     def node(state):
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "") or "Not available"
-        final_decision = state.get("final_trade_decision", "")
-        trader_plan = state.get("trader_investment_plan", "")
-        compliance_result = state.get("compliance_result", "") or "Not reviewed"
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "execution_monitor")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        price_context = wrap_external_data(filtered.get("current_price_context", "") or "Not available", "exchange_ticker")
+        final_decision = wrap_external_data(filtered.get("final_trade_decision", ""), "portfolio_manager")
+        trader_plan = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        compliance_result = wrap_external_data(filtered.get("compliance_result", "") or "Not reviewed", "compliance_officer")
 
         prompt = _MONITOR_PROMPT.format(
             instrument_context=instrument_context,
@@ -65,11 +69,11 @@ def create_execution_monitor(llm):
             + notes
         )
 
-        return {
+        return validate_state_write({
             "messages": [AIMessage(content=notes)],
             "execution_notes": notes,
             "final_trade_decision": updated_decision,
             "sender": "Execution Monitor",
-        }
+        }, "execution_monitor")
 
     return node

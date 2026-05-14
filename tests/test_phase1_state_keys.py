@@ -5,7 +5,6 @@ import pytest
 from tradingagents.agents.constants import ReportKeys, READABLE_KEYS, WRITABLE_KEYS
 from tradingagents.agents.utils.agent_states import (
     AgentState,
-    CryptoRiskDebateState,
 )
 from tradingagents.config.feature_flags import FEATURE_FLAGS, is_enabled
 from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
@@ -43,12 +42,6 @@ class TestAgentStateNewFields:
 
     def test_max_leverage_field(self):
         assert "max_leverage" in AgentState.__annotations__
-
-    def test_crypto_risk_debate_state(self):
-        s = CryptoRiskDebateState(
-            bull_history="", bear_history="", history="", count=0,
-        )
-        assert s["count"] == 0
 
 
 class TestFeatureFlags:

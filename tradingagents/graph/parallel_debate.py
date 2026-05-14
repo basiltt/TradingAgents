@@ -13,6 +13,7 @@ instead of 2-3.
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import logging
 import os
 import threading
@@ -142,7 +143,7 @@ def create_parallel_risk_round1(
     aggressive/conservative/neutral) debates.
     """
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        ordered_futures = [_get_debate_executor().submit(fn, state) for fn in debater_nodes]
+        ordered_futures = [_get_debate_executor().submit(fn, copy.deepcopy(state)) for fn in debater_nodes]
         done, not_done = futures_wait(ordered_futures, timeout=300)
         for f in not_done:
             f.cancel()
@@ -170,8 +171,8 @@ def create_parallel_researcher_round1(
 ) -> Callable:
     """Return a node that runs bull and bear researchers in parallel for round 1."""
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        bull_future = _get_debate_executor().submit(bull_researcher, state)
-        bear_future = _get_debate_executor().submit(bear_researcher, state)
+        bull_future = _get_debate_executor().submit(bull_researcher, copy.deepcopy(state))
+        bear_future = _get_debate_executor().submit(bear_researcher, copy.deepcopy(state))
         done, not_done = futures_wait([bull_future, bear_future], timeout=300)
         for f in not_done:
             f.cancel()

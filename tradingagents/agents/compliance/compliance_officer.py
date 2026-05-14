@@ -20,6 +20,7 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,11 @@ def create_compliance_officer(llm, max_leverage: int = 20):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "compliance_officer")
-        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
-        trader_plan = filtered.get("trader_investment_plan", "")
-        price_context = filtered.get("current_price_context", "")
+        trader_plan = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
 
         prompt = [
             {"role": "system", "content": _COMPLIANCE_SYSTEM},

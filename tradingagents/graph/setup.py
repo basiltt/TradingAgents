@@ -1,11 +1,14 @@
 # TradingAgents/graph/setup.py
 
 from typing import Any, Callable, Dict, List, Optional
+import logging
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents import *
 from tradingagents.agents.utils.agent_states import AgentState
+
+logger = logging.getLogger(__name__)
 
 from .conditional_logic import ConditionalLogic
 from .parallel_debate import create_parallel_risk_round1, create_parallel_researcher_round1
@@ -37,7 +40,9 @@ def _risk_manager_router(state) -> str:
 
 def _blocked_trade_node(state) -> dict:
     """Terminal node for compliance-blocked trades. Writes a clear rejection."""
-    compliance_result = state.get("compliance_result", "No details available.")
+    from tradingagents.agents.utils.state_filter import filter_state_for_read
+    filtered = filter_state_for_read(state, "compliance_officer")
+    compliance_result = filtered.get("compliance_result", "No details available.")
     return {
         "final_trade_decision": (
             "## TRADE BLOCKED BY COMPLIANCE\n\n"
@@ -49,7 +54,9 @@ def _blocked_trade_node(state) -> dict:
 
 def _risk_blocked_trade_node(state) -> dict:
     """Terminal node for risk-manager-blocked trades."""
-    risk_result = state.get("risk_manager_result", "No details available.")
+    from tradingagents.agents.utils.state_filter import filter_state_for_read
+    filtered = filter_state_for_read(state, "risk_manager")
+    risk_result = filtered.get("risk_manager_result", "No details available.")
     return {
         "final_trade_decision": (
             "## TRADE BLOCKED BY RISK MANAGER\n\n"
@@ -57,6 +64,26 @@ def _risk_blocked_trade_node(state) -> dict:
             f"### Risk Assessment\n{risk_result}"
         ),
     }
+
+
+def _build_microstructure_enrichment_node():
+    """Create a node that populates market_microstructure from Bybit API."""
+    def node(state):
+        from tradingagents.config.feature_flags import is_enabled
+        if not is_enabled("use_multi_timeframe"):
+            return {}
+        symbol = state.get("company_of_interest", "")
+        if not symbol:
+            return {}
+        try:
+            from tradingagents.dataflows.bybit_data import get_market_microstructure
+            micro = get_market_microstructure(symbol)
+            if micro:
+                return {"market_microstructure": micro}
+        except Exception as exc:
+            logger.warning("Microstructure enrichment failed: %s", exc)
+        return {}
+    return node
 
 
 def _build_analyst_subgraph(
@@ -120,7 +147,7 @@ class GraphSetup:
 
     def setup_graph(
         self,
-        selected_analysts=["market", "social", "news", "fundamentals"],
+        selected_analysts=None,
         compliance_officer_node=None,
         execution_monitor_node=None,
         workflow_mode: str = "deep_analysis",
@@ -130,6 +157,8 @@ class GraphSetup:
         Analysts run in parallel via compiled subgraphs, then fan-in
         to the Bull Researcher for the debate phase.
         """
+        if selected_analysts is None:
+            selected_analysts = ["market", "social", "news", "fundamentals"]
         if len(selected_analysts) == 0:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
 
@@ -204,6 +233,7 @@ class GraphSetup:
         workflow.add_edge("Research Manager", "Trader")
 
         if workflow_mode == "quick_trade":
+            logger.warning("quick_trade mode: Compliance, Risk Manager, and risk debate gates are SKIPPED.")
             workflow.add_edge("Trader", END)
             return workflow
 
@@ -321,7 +351,7 @@ class GraphSetup:
 
         # Fan-in target after analysts complete
         fan_in_target = "Confluence Checker" if confluence_checker_node else (
-            "Parallel Research R1" if has_research_layer else "Trader"
+            "Parallel Research R1" if has_research_layer else "Microstructure Enrichment"
         )
 
         workflow = StateGraph(AgentState)
@@ -344,7 +374,7 @@ class GraphSetup:
             if has_research_layer:
                 workflow.add_edge("Confluence Checker", "Parallel Research R1")
             else:
-                workflow.add_edge("Confluence Checker", "Trader")
+                workflow.add_edge("Confluence Checker", "Microstructure Enrichment")
 
         if has_research_layer:
             parallel_research_r1 = create_parallel_researcher_round1(
@@ -380,15 +410,16 @@ class GraphSetup:
                     "Research Manager": "Research Manager",
                 },
             )
-            workflow.add_edge("Research Manager", "Trader")
+            workflow.add_edge("Research Manager", "Microstructure Enrichment")
 
+        workflow.add_node("Microstructure Enrichment", _build_microstructure_enrichment_node())
+        workflow.add_edge("Microstructure Enrichment", "Trader")
         workflow.add_node("Trader", crypto_trader_node)
 
         if workflow_mode == "quick_trade":
+            logger.warning("quick_trade mode: Compliance, Risk Manager, and risk debate gates are SKIPPED.")
             workflow.add_edge("Trader", END)
-            return workflow
-
-        # Parallel round-1 risk node: bull + bear run simultaneously
+            return workflow        # Parallel round-1 risk node: bull + bear run simultaneously
         parallel_risk_r1 = create_parallel_risk_round1(
             [crypto_bull_debater, crypto_bear_debater],
         )
@@ -427,7 +458,7 @@ class GraphSetup:
             else:
                 workflow.add_conditional_edges(
                     "Compliance Officer",
-                    lambda state: "risk_debate" if state.get("_compliance_verdict") in ("Pass", "Flag") else "blocked",
+                    _stock_compliance_router,
                     {
                         "risk_debate": "Parallel Risk R1",
                         "blocked": "Blocked Trade",
