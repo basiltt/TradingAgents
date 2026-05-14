@@ -193,11 +193,8 @@ class TestTraderAgent:
         trader(_make_trader_state())
         prompt = captured["direction_prompt"]
         user_msg = next(m["content"] for m in prompt if m["role"] == "user")
-        assert "Market Analyst Report" in user_msg
-        assert "Sentiment Report" in user_msg
-        assert "News Report" in user_msg
-        assert "Fundamentals Report" in user_msg
         assert "Investment Plan" in user_msg
+        assert "Technical Levels Summary" in user_msg
 
     def test_pass2_receives_price_data(self):
         captured = {}
@@ -211,16 +208,17 @@ class TestTraderAgent:
         assert "LIVE PRICE DATA" in user_msg
         assert "95000.0" in user_msg
 
-    def test_pass2_uses_market_report_when_no_live_data(self):
+    def test_pass2_uses_technical_levels_when_no_live_data(self):
         captured = {}
         state = _make_trader_state()
         state["current_price_context"] = ""
+        state["technical_levels_summary"] = "RSI: 65, ATR: 3.2, Close: 189.0"
         llm = _two_pass_trader_llm(captured)
         trader = create_trader(llm)
         trader(state)
         prompt = captured["levels_prompt"]
         user_msg = next(m["content"] for m in prompt if m["role"] == "user")
-        assert "TECHNICAL INDICATORS" in user_msg
+        assert "TECHNICAL LEVELS" in user_msg
         assert "RSI: 65" in user_msg
 
     def test_falls_back_to_freetext_when_structured_unavailable(self):
