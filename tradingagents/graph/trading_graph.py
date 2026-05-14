@@ -155,17 +155,21 @@ class TradingAgentsGraph:
         if workflow_mode == "quick_trade":
             compliance_node = None
             monitor_node = None
+            risk_manager_node = None
         else:
             from tradingagents.agents.compliance import (
                 create_compliance_officer,
                 create_execution_monitor,
             )
+            from tradingagents.agents.risk.risk_manager import create_risk_manager
             compliance_node = create_compliance_officer(self._get_agent_llm("compliance_officer", self.quick_thinking_llm))
             monitor_node = create_execution_monitor(self._get_agent_llm("execution_monitor", self.quick_thinking_llm))
+            risk_manager_node = create_risk_manager(self._get_agent_llm("risk_manager", self.quick_thinking_llm))
 
         if asset_type == "crypto":
             self.workflow = self._setup_crypto_workflow(
                 selected_analysts, compliance_node, monitor_node, workflow_mode,
+                risk_manager_node=risk_manager_node,
             )
         else:
             self.workflow = self.graph_setup.setup_graph(
@@ -177,7 +181,7 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _setup_crypto_workflow(self, selected_analysts, compliance_node=None, monitor_node=None, workflow_mode="deep_analysis"):
+    def _setup_crypto_workflow(self, selected_analysts, compliance_node=None, monitor_node=None, workflow_mode="deep_analysis", risk_manager_node=None):
         from tradingagents.agents.utils.crypto_agent_utils import make_crypto_tools
         from tradingagents.agents.utils.coingecko_tools import make_coingecko_tools
         from tradingagents.agents.crypto_analysts import (
@@ -289,6 +293,7 @@ class TradingAgentsGraph:
             crypto_bear_researcher=bear_researcher,
             crypto_research_manager=research_manager,
             compliance_officer_node=compliance_node,
+            risk_manager_node=risk_manager_node,
             execution_monitor_node=monitor_node,
             workflow_mode=workflow_mode,
         )

@@ -15,8 +15,16 @@ def _compliance_router(state) -> str:
     """Route based on compliance verdict: fail-closed — only Pass/Flag proceed."""
     verdict = state.get("_compliance_verdict")
     if verdict in ("Pass", "Flag"):
-        return "risk_debate"
+        return "risk_manager"
     return "blocked"
+
+
+def _risk_manager_router(state) -> str:
+    """Route based on risk manager verdict: fail-closed — only Approve/Modify proceed."""
+    verdict = state.get("_risk_manager_verdict")
+    if verdict in ("Approve", "Modify"):
+        return "risk_debate"
+    return "risk_blocked"
 
 
 def _blocked_trade_node(state) -> dict:
@@ -27,6 +35,18 @@ def _blocked_trade_node(state) -> dict:
             "## TRADE BLOCKED BY COMPLIANCE\n\n"
             "This trade was blocked by the Compliance Officer and **must not be executed**.\n\n"
             f"### Compliance Review\n{compliance_result}"
+        ),
+    }
+
+
+def _risk_blocked_trade_node(state) -> dict:
+    """Terminal node for risk-manager-blocked trades."""
+    risk_result = state.get("risk_manager_result", "No details available.")
+    return {
+        "final_trade_decision": (
+            "## TRADE BLOCKED BY RISK MANAGER\n\n"
+            "This trade was rejected by the Risk Manager and **must not be executed**.\n\n"
+            f"### Risk Assessment\n{risk_result}"
         ),
     }
 
@@ -272,6 +292,7 @@ class GraphSetup:
         crypto_bear_researcher: Any = None,
         crypto_research_manager: Any = None,
         compliance_officer_node: Any = None,
+        risk_manager_node: Any = None,
         execution_monitor_node: Any = None,
         workflow_mode: str = "deep_analysis",
     ):
@@ -369,20 +390,55 @@ class GraphSetup:
         workflow.add_node("Bear Analyst", crypto_bear_debater)
         workflow.add_node("Portfolio Manager", crypto_portfolio_manager)
 
-        # Compliance gate between Trader and Risk Debate
+        # Compliance + Risk Manager gate between Trader and Risk Debate
         if compliance_officer_node:
             workflow.add_node("Compliance Officer", compliance_officer_node)
             workflow.add_node("Blocked Trade", _blocked_trade_node)
             workflow.add_edge("Trader", "Compliance Officer")
+
+            if risk_manager_node:
+                workflow.add_node("Risk Manager", risk_manager_node)
+                workflow.add_node("Risk Blocked", _risk_blocked_trade_node)
+                workflow.add_conditional_edges(
+                    "Compliance Officer",
+                    _compliance_router,
+                    {
+                        "risk_manager": "Risk Manager",
+                        "blocked": "Blocked Trade",
+                    },
+                )
+                workflow.add_conditional_edges(
+                    "Risk Manager",
+                    _risk_manager_router,
+                    {
+                        "risk_debate": "Parallel Risk R1",
+                        "risk_blocked": "Risk Blocked",
+                    },
+                )
+                workflow.add_edge("Risk Blocked", END)
+            else:
+                workflow.add_conditional_edges(
+                    "Compliance Officer",
+                    lambda state: "risk_debate" if state.get("_compliance_verdict") in ("Pass", "Flag") else "blocked",
+                    {
+                        "risk_debate": "Parallel Risk R1",
+                        "blocked": "Blocked Trade",
+                    },
+                )
+            workflow.add_edge("Blocked Trade", END)
+        elif risk_manager_node:
+            workflow.add_node("Risk Manager", risk_manager_node)
+            workflow.add_node("Risk Blocked", _risk_blocked_trade_node)
+            workflow.add_edge("Trader", "Risk Manager")
             workflow.add_conditional_edges(
-                "Compliance Officer",
-                _compliance_router,
+                "Risk Manager",
+                _risk_manager_router,
                 {
                     "risk_debate": "Parallel Risk R1",
-                    "blocked": "Blocked Trade",
+                    "risk_blocked": "Risk Blocked",
                 },
             )
-            workflow.add_edge("Blocked Trade", END)
+            workflow.add_edge("Risk Blocked", END)
         else:
             workflow.add_edge("Trader", "Parallel Risk R1")
 
