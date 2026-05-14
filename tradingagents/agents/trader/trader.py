@@ -21,6 +21,11 @@ from tradingagents.agents.schemas import (
     render_trader_proposal,
 )
 from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
+from tradingagents.agents.utils.state_filter import (
+    filter_state_for_read,
+    validate_state_write,
+)
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
@@ -33,28 +38,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DIRECTION_SYSTEM = (
-    "You are a senior trader synthesising analyst reports into a directional "
-    "trading decision. You have four analyst reports and a research manager's "
-    "investment plan. Your job is to determine:\n\n"
+    "You are a senior trader synthesising the research manager's investment "
+    "plan into a directional trading decision. You receive the research "
+    "manager's synthesised plan (not raw analyst reports) and any technical "
+    "levels summary. Your job is to determine:\n\n"
     "1. **Direction**: Buy, Hold, or Sell\n"
-    "2. **Confidence**: 1-10 conviction score based on analyst signal alignment\n"
-    "3. **Reasoning**: cite specific signals from the reports\n\n"
+    "2. **Confidence**: 1-10 conviction score based on signal alignment\n"
+    "3. **Reasoning**: cite specific signals from the plan\n\n"
     "Scoring guide:\n"
-    "- 1-3: Analysts conflict or signals are weak/mixed\n"
+    "- 1-3: Signals are weak or conflicting\n"
     "- 4-6: Moderate alignment, some uncertainty remains\n"
-    "- 7-10: Strong alignment across technicals, sentiment, news, and fundamentals\n\n"
+    "- 7-10: Strong alignment across all dimensions\n\n"
     "Do NOT calculate price levels yet — focus only on the directional decision."
 )
 
 _DIRECTION_USER = (
-    "Analyse the following reports for {company} and decide the trading direction.\n"
+    "Analyse the following for {company} and decide the trading direction.\n"
     "{instrument_context}\n\n"
     "## Research Manager's Investment Plan\n{investment_plan}\n\n"
-    "## Market Analyst Report\n{market_report}\n\n"
-    "## Sentiment Report\n{sentiment_report}\n\n"
-    "## News Report\n{news_report}\n\n"
-    "## Fundamentals Report\n{fundamentals_report}\n\n"
-    "Based on the alignment (or conflict) across these reports, provide your "
+    "## Technical Levels Summary\n{technical_levels}\n\n"
+    "Based on the alignment (or conflict) in the plan, provide your "
     "directional decision."
 )
 
@@ -92,25 +95,23 @@ _LEVELS_USER = (
 )
 
 
-def _build_price_data_section(state: dict) -> str:
-    """Build the price data section from available state data."""
+def _build_price_data_section(filtered: dict) -> str:
+    """Build the price data section from filtered state data."""
     parts: list[str] = []
 
-    price_ctx = state.get("current_price_context", "")
+    price_ctx = filtered.get("current_price_context", "")
     if price_ctx and price_ctx.strip():
-        parts.append("## LIVE PRICE DATA (real-time)\n" + price_ctx)
+        parts.append("## LIVE PRICE DATA (real-time)\n" + wrap_external_data(price_ctx, "exchange_ticker"))
 
-    market_report = state.get("market_report", "")
-    if market_report and market_report.strip():
-        parts.append(
-            "## TECHNICAL INDICATORS (from Market Analyst)\n" + market_report
-        )
+    tech_levels = filtered.get("technical_levels_summary", "")
+    if tech_levels and tech_levels.strip():
+        parts.append("## TECHNICAL LEVELS\n" + wrap_external_data(tech_levels, "technical_analyst"))
 
     if not parts:
         parts.append(
             "## PRICE DATA\n"
             "No live price data available. Use conservative estimates based on "
-            "the analyst reports and clearly state that levels are approximate."
+            "the investment plan and clearly state that levels are approximate."
         )
 
     return "\n\n".join(parts) + "\n\n"
@@ -121,9 +122,12 @@ def create_trader(llm):
     levels_llm = bind_structured(llm, TraderProposal, "Trader-Levels")
 
     def trader_node(state, name):
-        company_name = state["company_of_interest"]
-        instrument_context = build_instrument_context(company_name)
-        investment_plan = state.get("investment_plan", "")
+        filtered = filter_state_for_read(state, "trader")
+        company_name = filtered.get("company_of_interest", "")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(company_name, crypto_interval)
+        investment_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
+        technical_levels = wrap_external_data(filtered.get("technical_levels_summary", "Not available"), "technical_analyst")
 
         # ---- Pass 1: Directional Decision ----
         direction_messages = [
@@ -134,13 +138,7 @@ def create_trader(llm):
                     company=company_name,
                     instrument_context=instrument_context,
                     investment_plan=investment_plan,
-                    market_report=state.get("market_report", "N/A"),
-                    sentiment_report=state.get("sentiment_report", "N/A"),
-                    news_report=state.get("news_report", "N/A"),
-                    fundamentals_report=state.get(
-                        "fundamentals_report",
-                        state.get("crypto_fundamentals_report", "N/A"),
-                    ),
+                    technical_levels=technical_levels,
                 ),
             },
         ]
@@ -173,7 +171,7 @@ def create_trader(llm):
             )
 
         # ---- Pass 2: Level Calculation ----
-        price_data_section = _build_price_data_section(state)
+        price_data_section = _build_price_data_section(filtered)
 
         levels_messages = [
             {"role": "system", "content": _LEVELS_SYSTEM},
@@ -220,7 +218,7 @@ def create_trader(llm):
             levels_text = render_trader_proposal(proposal_obj)
 
         has_live_prices = bool(
-            state.get("current_price_context", "").strip()
+            filtered.get("current_price_context", "").strip()
         )
         if not has_live_prices and proposal_obj.entry_price is not None:
             levels_text += (
@@ -230,11 +228,12 @@ def create_trader(llm):
                 "market prices before execution."
             )
 
-        return {
+        updates = {
             "messages": [AIMessage(content=levels_text)],
             "trader_investment_plan": levels_text,
             "_trader_signal_data": proposal_obj,
             "sender": name,
         }
+        return validate_state_write(updates, "trader")
 
     return functools.partial(trader_node, name="Trader")

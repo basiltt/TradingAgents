@@ -125,4 +125,4 @@ def invoke_structured_or_freetext(
 
     schema_hint = _schema_instruction(schema) if schema else ""
     response = plain_llm.invoke(_augment_prompt(prompt, schema_hint))
-    return response.content, None
+    return response.content or "", None

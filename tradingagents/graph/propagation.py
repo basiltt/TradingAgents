@@ -54,11 +54,22 @@ class Propagator:
             ),
             "market_report": "",
             "fundamentals_report": "",
+            "derivatives_report": "",
             "sentiment_report": "",
             "news_report": "",
             "current_price_context": "",
             "confluence_summary": "",
             "crypto_fundamentals_report": "",
+            "risk_manager_result": "",
+            "_risk_manager_verdict": "",
+            "_compliance_verdict": "",
+            "compliance_result": "",
+            "execution_notes": "",
+            "_pm_signal_data": None,
+            "_trader_signal_data": None,
+            "technical_levels_summary": "",
+            "market_microstructure": None,
+            "max_leverage": None,
         }
 
     def get_graph_args(self, callbacks: Optional[List] = None) -> Dict[str, Any]:

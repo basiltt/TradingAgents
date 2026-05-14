@@ -46,7 +46,7 @@ _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
 _REPORT_KEYS = [
     "crypto_fundamentals_report", "sentiment_report", "market_report",
-    "news_report", "fundamentals_report",
+    "news_report", "fundamentals_report", "derivatives_report",
 ]
 _WARNING_MARKERS = ("[ERROR]", "Data Quality Warning")
 
@@ -517,11 +517,11 @@ class AnalysisService:
         if config.get("ta_prefilter_enabled") and config.get("asset_type") == "crypto":
             try:
                 from tradingagents.ta_prefilter import TAPreFilterEngine
-                from tradingagents.dataflows.bybit_data import BybitRateLimiter, BybitCircuitBreaker
+                from tradingagents.dataflows.bybit_data import get_shared_limiter, get_shared_circuit_breaker
                 with self._prefilter_init_lock:
                     if self._prefilter_limiter is None:
-                        self._prefilter_limiter = BybitRateLimiter()
-                        self._prefilter_cb = BybitCircuitBreaker()
+                        self._prefilter_limiter = get_shared_limiter()
+                        self._prefilter_cb = get_shared_circuit_breaker()
                 threshold = config.get("ta_prefilter_threshold", 40)
                 engine = TAPreFilterEngine(
                     symbol=request["ticker"],
@@ -555,13 +555,28 @@ class AnalysisService:
             logger.warning("TradingAgentsGraph not available, using mock")
             return {"final_trade_decision": "Mock decision — TradingAgentsGraph not installed"}
 
-        graph = TradingAgentsGraph(
-            config=config,
-            selected_analysts=[a.value if hasattr(a, "value") else a for a in (request.get("analysts") or (
+        # Determine analysts: user-specified > quick_trade defaults > full defaults
+        explicit_analysts = request.get("analysts")
+        if explicit_analysts:
+            analyst_list = [a.value if hasattr(a, "value") else a for a in explicit_analysts]
+        elif config.get("workflow_mode") == "quick_trade":
+            qt_defaults = config.get("quick_trade_analysts", {})
+            asset_key = "crypto" if config.get("asset_type") == "crypto" else "stock"
+            analyst_list = qt_defaults.get(asset_key, (
+                ["crypto_technical", "crypto_derivatives", "crypto_news"]
+                if asset_key == "crypto"
+                else ["market", "news"]
+            ))
+        else:
+            analyst_list = (
                 ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"]
                 if config.get("asset_type") == "crypto"
                 else ["market", "news"]
-            ))],
+            )
+
+        graph = TradingAgentsGraph(
+            config=config,
+            selected_analysts=analyst_list,
         )
 
         past_context = ""
@@ -582,10 +597,13 @@ class AnalysisService:
         # are aware of the current market price, not just historical klines.
         if config.get("asset_type") == "crypto" and hasattr(graph, "_crypto_shared"):
             from tradingagents.dataflows.bybit_data import build_current_price_context
+            import time as _time
+            as_of_ms = int(_time.time() * 1000)
             try:
                 price_ctx = build_current_price_context(
                     request["ticker"],
                     **graph._crypto_shared,
+                    as_of_ms=as_of_ms,
                     primary_interval=config.get("crypto_interval"),
                 )
             except Exception as exc:

@@ -68,7 +68,8 @@ class AgentState(MessagesState):
     market_report: Annotated[str, _last]
     sentiment_report: Annotated[str, _last]
     news_report: Annotated[str, _last]
-    fundamentals_report: Annotated[str, _last]
+    fundamentals_report: Annotated[str, _last]  # deprecated alias — use derivatives_report
+    derivatives_report: Annotated[str, _last]
     crypto_fundamentals_report: Annotated[str, _last]
 
     # researcher team discussion step
@@ -92,6 +93,17 @@ class AgentState(MessagesState):
     # Compliance Officer result (pre-trade gate)
     compliance_result: Annotated[Optional[str], _last]
     _compliance_verdict: Annotated[Optional[str], _last]
+
+    # Risk Manager
+    risk_manager_result: Annotated[Optional[str], _last]
+    _risk_manager_verdict: Annotated[Optional[str], _last]
+
+    # Technical levels (bias-free) and market microstructure data
+    technical_levels_summary: Annotated[Optional[str], _last]
+    market_microstructure: Annotated[Optional[Any], _last]
+
+    # Max leverage (moved from closure to state for barrier filtering)
+    max_leverage: Annotated[Optional[int], _last]
 
     # Execution Monitor notes (post-decision addendum)
     execution_notes: Annotated[Optional[str], _last]

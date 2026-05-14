@@ -21,6 +21,8 @@ from .trader.trader import create_trader
 from .compliance.compliance_officer import create_compliance_officer
 from .compliance.execution_monitor import create_execution_monitor
 
+from .risk.risk_manager import create_risk_manager
+
 __all__ = [
     "AgentState",
     "create_msg_delete",
@@ -40,4 +42,5 @@ __all__ = [
     "create_trader",
     "create_compliance_officer",
     "create_execution_monitor",
+    "create_risk_manager",
 ]

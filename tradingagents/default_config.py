@@ -42,6 +42,12 @@ DEFAULT_CONFIG = {
     "max_recur_limit": 100,
     # Asset type: "stock" (default) or "crypto"
     "asset_type": "stock",
+    # Default analysts for quick_trade mode (user-configurable).
+    # Full analysis uses all available analysts; quick_trade uses this subset.
+    "quick_trade_analysts": {
+        "crypto": ["crypto_technical", "crypto_derivatives", "crypto_news"],
+        "stock": ["market", "news"],
+    },
     # Crypto-specific settings
     "crypto_interval": "60",
     "crypto_max_leverage": 20,

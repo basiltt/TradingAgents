@@ -29,6 +29,7 @@ def _base_state():
         "sentiment_report": "",
         "news_report": "",
         "fundamentals_report": "",
+        "derivatives_report": "",
         "investment_plan": "",
         "current_price_context": "Last Traded Price: $100000.00",
         "trader_investment_plan": "",
@@ -98,7 +99,7 @@ class TestCryptoDerivativesAnalyst:
         node = create_crypto_derivatives_analyst(llm, tools)
         state = _base_state()
         result = node(state)
-        assert "fundamentals_report" in result
+        assert "derivatives_report" in result
 
 
 class TestCryptoTrader:
@@ -175,7 +176,7 @@ class TestCryptoTrader:
         state = _base_state()
         state["investment_plan"] = "Analysts say buy"
         result = node(state)
-        assert "error" in result["trader_investment_plan"].lower() or "invalid" in result["trader_investment_plan"].lower()
+        assert "error" in result["trader_investment_plan"].lower() or "failed" in result["trader_investment_plan"].lower()
 
 
 class TestCryptoRiskDebaters:
@@ -207,6 +208,9 @@ class TestCryptoPortfolioManager:
         from tradingagents.agents.crypto_analysts import create_crypto_portfolio_manager
         llm = MagicMock()
         llm.invoke.return_value = AIMessage(content="Final: Buy BTC with 3x leverage")
+        structured = MagicMock()
+        structured.invoke.return_value = AIMessage(content="Final: Buy BTC with 3x leverage")
+        llm.with_structured_output.return_value = structured
         node = create_crypto_portfolio_manager(llm)
         state = _base_state()
         state["investment_plan"] = "Buy BTC"
@@ -214,17 +218,21 @@ class TestCryptoPortfolioManager:
         state["risk_debate_state"]["history"] = "Bull: good. Bear: risky."
         result = node(state)
         assert "final_trade_decision" in result
+        assert "_pm_signal_data" in result
 
     def test_with_past_context(self):
         from tradingagents.agents.crypto_analysts import create_crypto_portfolio_manager
         llm = MagicMock()
         llm.invoke.return_value = AIMessage(content="Decision with lessons")
+        structured = MagicMock()
+        structured.invoke.return_value = AIMessage(content="Decision with lessons")
+        llm.with_structured_output.return_value = structured
         node = create_crypto_portfolio_manager(llm)
         state = _base_state()
         state["past_context"] = "lost money last time"
         state["risk_debate_state"]["history"] = "debate"
         result = node(state)
-        assert result["final_trade_decision"] == "Decision with lessons"
+        assert "Decision with lessons" in result["final_trade_decision"]
 
 
 class TestCryptoTechnicalAnalystNoTools:
@@ -360,7 +368,7 @@ class TestCryptoTraderAllReports:
         state = _base_state()
         state["investment_plan"] = "Buy BTC"
         result = node(state)
-        assert "Error" in result["trader_investment_plan"]
+        assert "Error" in result["trader_investment_plan"] or "failure" in result["trader_investment_plan"].lower()
         assert llm.invoke.call_count == 2
 
     def test_empty_investment_plan_returns_no_trade(self):

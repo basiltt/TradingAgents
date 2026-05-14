@@ -14,6 +14,7 @@ import threading
 import time
 
 import pandas as pd
+import numpy as np
 import requests
 from requests.adapters import HTTPAdapter
 from stockstats import wrap
@@ -27,9 +28,9 @@ logger = logging.getLogger(__name__)
 _session = requests.Session()
 _session.mount(
     "https://",
-    HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0),
+    HTTPAdapter(pool_connections=10, pool_maxsize=50, max_retries=0),
 )
-_session_lock = threading.Lock()
+
 
 _RETRYABLE_EXCEPTIONS = (
     requests.exceptions.ConnectionError,
@@ -130,6 +131,99 @@ class BybitCircuitBreaker:
     def record_success(self) -> None:
         with self._lock:
             self._consecutive_failures = 0
+
+
+# ---------------------------------------------------------------------------
+# Module-level singletons — shared across all graph instances so aggregate
+# request rate stays within Bybit's API limits during parallel scanner runs.
+# ---------------------------------------------------------------------------
+
+_shared_limiter: BybitRateLimiter | None = None
+_shared_cb: BybitCircuitBreaker | None = None
+_shared_infra_lock = threading.Lock()
+
+
+def get_shared_limiter() -> BybitRateLimiter:
+    """Return process-wide rate limiter (lazy init, thread-safe)."""
+    global _shared_limiter
+    with _shared_infra_lock:
+        if _shared_limiter is None:
+            _shared_limiter = BybitRateLimiter()
+        return _shared_limiter
+
+
+def get_shared_circuit_breaker() -> BybitCircuitBreaker:
+    """Return process-wide circuit breaker (lazy init, thread-safe)."""
+    global _shared_cb
+    with _shared_infra_lock:
+        if _shared_cb is None:
+            _shared_cb = BybitCircuitBreaker()
+        return _shared_cb
+
+
+class TTLCache:
+    """Thread-safe cache with per-entry TTL expiry.
+
+    Uses composition (not dict inheritance) so only the explicitly
+    implemented methods are exposed — no inherited dict methods can
+    bypass TTL checks.  Periodic sweeps on write keep memory bounded.
+    """
+
+    _SWEEP_INTERVAL = 64  # purge expired entries every N writes
+
+    def __init__(self, ttl_seconds: float = 300.0):
+        self._ttl = ttl_seconds
+        self._data: dict = {}
+        self._timestamps: dict = {}
+        self._lock = threading.Lock()
+        self._write_count = 0
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return self._is_alive(key)
+
+    def __getitem__(self, key):
+        with self._lock:
+            if self._is_alive(key):
+                return self._data[key]
+            raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            self._data[key] = value
+            self._timestamps[key] = time.monotonic()
+            self._write_count += 1
+            if self._write_count >= self._SWEEP_INTERVAL:
+                self._sweep()
+                self._write_count = 0
+
+    def get(self, key, default=None):
+        with self._lock:
+            if self._is_alive(key):
+                return self._data[key]
+            return default
+
+    def _is_alive(self, key) -> bool:
+        """Check if key exists and is not expired. Evicts if expired. Caller must hold _lock."""
+        ts = self._timestamps.get(key)
+        if ts is None:
+            return False
+        if time.monotonic() - ts <= self._ttl:
+            return True
+        del self._data[key]
+        del self._timestamps[key]
+        return False
+
+    def _sweep(self) -> None:
+        """Remove all expired entries. Caller must hold _lock."""
+        now = time.monotonic()
+        expired = [k for k, ts in self._timestamps.items() if now - ts > self._ttl]
+        for k in expired:
+            self._data.pop(k, None)
+            self._timestamps.pop(k, None)
+
+
+_CACHE_MISS = object()
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +372,10 @@ def _bybit_request(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> dict:
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     if circuit_breaker:
         circuit_breaker.check()
@@ -311,12 +407,6 @@ def _bybit_request(
                 circuit_breaker.record_failure()
             last_exc = exc
             if attempt < _MAX_RETRIES - 1:
-                with _session_lock:
-                    _session.close()
-                    _session.mount(
-                        "https://",
-                        HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0),
-                    )
                 backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
                 logger.warning(
                     "Bybit %s connection error retry %d/%d (backoff=%.1fs): %s",
@@ -412,8 +502,10 @@ def get_bybit_klines(
 ) -> str:
     symbol = normalize_bybit_symbol(symbol)
     cache_key = ("klines", symbol, interval, start_time, end_time)
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     deadline = time.monotonic() + _DEFAULT_TOOL_DEADLINE
     all_rows: list[list] = []
@@ -612,8 +704,10 @@ def get_bybit_indicators(
 ) -> str:
     symbol = normalize_bybit_symbol(symbol)
     cache_key = ("indicators", symbol, interval, start_time, end_time)
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     kline_csv = get_bybit_klines(
         symbol, interval, start_time, end_time,
@@ -621,7 +715,10 @@ def get_bybit_indicators(
         api_key=api_key, api_secret=api_secret,
     )
 
-    df = pd.read_csv(io.StringIO(kline_csv))
+    # Strip any warning prefix lines (e.g., from truncated data) before CSV parsing
+    csv_lines = kline_csv.split("\n")
+    csv_clean = "\n".join(line for line in csv_lines if not line.startswith("["))
+    df = pd.read_csv(io.StringIO(csv_clean))
     df.columns = [c.lower() for c in df.columns]
 
     required = ["open", "high", "low", "close", "volume"]
@@ -689,96 +786,67 @@ def build_current_price_context(
     This gives all agents awareness of the CURRENT price and recent
     price action across multiple timeframes (5m, 15m, 1h, 4h, daily).
 
+    All 6 API calls (ticker + 5 kline intervals) run concurrently for
+    ~3x speedup vs sequential fetching.
+
     Pass ``as_of_ms`` to pin the time window so parallel analyses that
     start seconds apart use the same candle boundaries.
 
     Pass ``primary_interval`` to tag the section matching the user's
     selected kline interval with ``(PRIMARY TIMEFRAME)``.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
 
     symbol = normalize_bybit_symbol(symbol)
-    parts: list[str] = []
     now_ms = as_of_ms if as_of_ms is not None else int(_time.time() * 1000)
 
-    # 1) Live ticker
-    try:
-        ticker_str = get_bybit_ticker(
-            symbol, cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append("## LIVE PRICE SNAPSHOT (real-time)")
-        parts.append(ticker_str)
-    except Exception as exc:
-        parts.append(f"## LIVE PRICE SNAPSHOT\nUnavailable: {exc}")
+    shared = dict(cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+                  api_key=api_key, api_secret=api_secret)
 
     def _ptag(interval: str) -> str:
         return " (PRIMARY TIMEFRAME)" if primary_interval == interval else ""
 
-    # 2) Recent 5-min klines (last 2 hours = 24 candles)
-    try:
-        two_hours_ago = now_ms - (2 * 60 * 60 * 1000)
-        recent_klines = get_bybit_klines(
-            symbol, "5", two_hours_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## RECENT 5-MIN CANDLES (last ~2 hours){_ptag('5')}")
-        parts.append(recent_klines)
-    except Exception as exc:
-        parts.append(f"\n## RECENT 5-MIN CANDLES\nUnavailable: {exc}")
+    def _fetch_ticker():
+        return get_bybit_ticker(symbol, **shared)
 
-    # 3) Recent 15-min klines (last 6 hours = 24 candles)
-    try:
-        six_hours_ago = now_ms - (6 * 60 * 60 * 1000)
-        recent_15m = get_bybit_klines(
-            symbol, "15", six_hours_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## RECENT 15-MIN CANDLES (last ~6 hours){_ptag('15')}")
-        parts.append(recent_15m)
-    except Exception as exc:
-        parts.append(f"\n## RECENT 15-MIN CANDLES\nUnavailable: {exc}")
+    def _fetch_kline(interval, start):
+        return get_bybit_klines(symbol, interval, start, now_ms, **shared)
 
-    # 4) 1-hour klines (last 24 hours = 24 candles)
-    try:
-        one_day_ago = now_ms - (24 * 60 * 60 * 1000)
-        recent_1h = get_bybit_klines(
-            symbol, "60", one_day_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## 1-HOUR CANDLES (last ~24 hours){_ptag('60')}")
-        parts.append(recent_1h)
-    except Exception as exc:
-        parts.append(f"\n## 1-HOUR CANDLES\nUnavailable: {exc}")
+    # (heading, callable) — heading is the single source of truth for both
+    # success output and error fallback.
+    tasks = [
+        ("## LIVE PRICE SNAPSHOT (real-time)",
+         _fetch_ticker),
+        (f"\n## RECENT 5-MIN CANDLES (last ~2 hours){_ptag('5')}",
+         lambda: _fetch_kline("5", now_ms - 2 * 3600_000)),
+        (f"\n## RECENT 15-MIN CANDLES (last ~6 hours){_ptag('15')}",
+         lambda: _fetch_kline("15", now_ms - 6 * 3600_000)),
+        (f"\n## 1-HOUR CANDLES (last ~24 hours){_ptag('60')}",
+         lambda: _fetch_kline("60", now_ms - 24 * 3600_000)),
+        (f"\n## 4-HOUR CANDLES (last ~48 hours){_ptag('240')}",
+         lambda: _fetch_kline("240", now_ms - 48 * 3600_000)),
+        (f"\n## DAILY CANDLES (last ~30 days){_ptag('D')}",
+         lambda: _fetch_kline("D", now_ms - 30 * 24 * 3600_000)),
+    ]
 
-    # 5) 4-hour klines (last 48 hours = 12 candles) — medium-term trend
-    try:
-        two_days_ago = now_ms - (48 * 60 * 60 * 1000)
-        recent_4h = get_bybit_klines(
-            symbol, "240", two_days_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## 4-HOUR CANDLES (last ~48 hours){_ptag('240')}")
-        parts.append(recent_4h)
-    except Exception as exc:
-        parts.append(f"\n## 4-HOUR CANDLES\nUnavailable: {exc}")
+    results: list[tuple[str, str]] = [("", "")] * len(tasks)
 
-    # 6) Daily klines (last 30 days) — higher-timeframe trend context
-    try:
-        thirty_days_ago = now_ms - (30 * 24 * 60 * 60 * 1000)
-        recent_1d = get_bybit_klines(
-            symbol, "D", thirty_days_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## DAILY CANDLES (last ~30 days){_ptag('D')}")
-        parts.append(recent_1d)
-    except Exception as exc:
-        parts.append(f"\n## DAILY CANDLES\nUnavailable: {exc}")
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="price_ctx") as pool:
+        future_to_idx = {pool.submit(fn): i for i, (_heading, fn) in enumerate(tasks)}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            heading = tasks[idx][0]
+            try:
+                data = future.result()
+                results[idx] = (heading, data)
+            except Exception as exc:
+                results[idx] = (heading, f"Unavailable: {exc}")
+
+    parts: list[str] = []
+    for heading, data in results:
+        parts.append(heading)
+        parts.append(data)
 
     return "\n".join(parts)
 
@@ -808,8 +876,10 @@ def get_bybit_price_changes(
 
     # Check combined cache first
     combined_cache_key = ("price_changes_combined", symbol, cache_hour)
-    if cache is not None and combined_cache_key in cache:
-        return cache[combined_cache_key]
+    if cache is not None:
+        _cached = cache.get(combined_cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     all_rows: list[list] = []
 
@@ -1015,3 +1085,348 @@ def get_bybit_derivatives_summary(
         parts.append(f"\n## Price Changes\nUnavailable: {exc}")
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Multi-Timeframe Analysis (F4)
+# ---------------------------------------------------------------------------
+
+_HIGHER_TF_MAP: dict[str, str | None] = {
+    "1": "60",
+    "3": "60",
+    "5": "60",
+    "15": "240",
+    "30": "240",
+    "60": "240",
+    "240": "D",
+    "D": "W",
+    "W": None,
+}
+
+
+def get_higher_timeframe(interval: str) -> str | None:
+    return _HIGHER_TF_MAP.get(str(interval))
+
+
+def _parse_kline_csv(csv_text: str) -> pd.DataFrame:
+    lines = csv_text.strip().split("\n")
+    data_lines = [l for l in lines if not l.startswith("[")]
+    csv_str = "\n".join(data_lines)
+    df = pd.read_csv(io.StringIO(csv_str))
+    for col in ("open", "high", "low", "close", "volume"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.sort_values("timestamp").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Order Book Depth (F7)
+# ---------------------------------------------------------------------------
+
+def get_bybit_orderbook(
+    symbol: str,
+    depth: int = 25,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict:
+    symbol = normalize_bybit_symbol(symbol)
+    cache_key = ("orderbook", symbol, depth)
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
+
+    result = _bybit_request(
+        "/v5/market/orderbook",
+        {"category": "linear", "symbol": symbol, "limit": min(depth, 200)},
+        cache_key=cache_key,
+        cache=None,
+        limiter=limiter,
+        circuit_breaker=circuit_breaker,
+        deadline=time.monotonic() + 10,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
+
+    bids = [(float(p), float(q)) for p, q in result.get("b", [])]
+    asks = [(float(p), float(q)) for p, q in result.get("a", [])]
+
+    best_bid = bids[0][0] if bids else 0
+    best_ask = asks[0][0] if asks else 0
+    mid = (best_bid + best_ask) / 2 if best_bid and best_ask else 0
+    spread_bps = ((best_ask - best_bid) / mid * 10000) if mid else 0
+
+    bid_vol = sum(q for _, q in bids)
+    ask_vol = sum(q for _, q in asks)
+    total_vol = bid_vol + ask_vol
+    imbalance_ratio = (bid_vol - ask_vol) / total_vol if total_vol else 0
+
+    wall_levels = []
+    if bids:
+        avg_bid_size = bid_vol / len(bids)
+        wall_levels += [{"side": "bid", "price": p, "size": q}
+                        for p, q in bids if q > avg_bid_size * 3]
+    if asks:
+        avg_ask_size = ask_vol / len(asks)
+        wall_levels += [{"side": "ask", "price": p, "size": q}
+                        for p, q in asks if q > avg_ask_size * 3]
+
+    out = {
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "spread_bps": round(spread_bps, 2),
+        "imbalance_ratio": round(imbalance_ratio, 4),
+        "bid_depth": round(bid_vol, 4),
+        "ask_depth": round(ask_vol, 4),
+        "wall_levels": wall_levels[:5],
+    }
+    if cache is not None:
+        cache[cache_key] = out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Volatility Metrics (F7)
+# ---------------------------------------------------------------------------
+
+
+
+def get_volatility_metrics(kline_csv: str, lookback: int = 90) -> dict:
+    df = _parse_kline_csv(kline_csv)
+    if len(df) < 14:
+        return {"atr_14": None, "rv_24h": None, "rv_7d": None,
+                "bb_width": None, "volatility_regime": "Normal"}
+
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr_14 = tr.rolling(14).mean().iloc[-1]
+
+    log_ret = np.log(close / close.shift(1)).dropna()
+    rv_24h = float(log_ret.tail(24).std() * np.sqrt(365 * 24)) if len(log_ret) >= 24 else None
+    rv_7d = float(log_ret.tail(168).std() * np.sqrt(365 * 24)) if len(log_ret) >= 168 else None
+
+    sma_20 = close.rolling(20).mean()
+    std_20 = close.rolling(20).std()
+    bb_upper = sma_20 + 2 * std_20
+    bb_lower = sma_20 - 2 * std_20
+    bb_width = float((bb_upper.iloc[-1] - bb_lower.iloc[-1]) / sma_20.iloc[-1]) if sma_20.iloc[-1] else None
+
+    lb = min(lookback, len(tr) - 14)
+    if lb >= 14:
+        atr_history = tr.rolling(14).mean().dropna().tail(lb)
+        pctl = atr_history.rank(pct=True).iloc[-1] if len(atr_history) > 0 else 0.5
+    else:
+        pctl = 0.5
+
+    if pctl < 0.25:
+        regime = "Low"
+    elif pctl > 0.75:
+        regime = "High"
+    else:
+        regime = "Normal"
+
+    return {
+        "atr_14": round(float(atr_14), 4) if pd.notna(atr_14) else None,
+        "rv_24h": round(rv_24h, 4) if rv_24h else None,
+        "rv_7d": round(rv_7d, 4) if rv_7d else None,
+        "bb_width": round(bb_width, 4) if bb_width else None,
+        "volatility_regime": regime,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Market Regime (F7)
+# ---------------------------------------------------------------------------
+
+def get_market_regime(kline_csv: str) -> dict:
+    df = _parse_kline_csv(kline_csv)
+    if len(df) < 200:
+        return {"regime": "Unknown", "trend_direction": "Unknown",
+                "trend_strength": 0, "adx": None,
+                "ema_20": None, "ema_50": None, "ema_200": None}
+
+    close = df["close"]
+    ema_20 = close.ewm(span=20).mean().iloc[-1]
+    ema_50 = close.ewm(span=50).mean().iloc[-1]
+    ema_200 = close.ewm(span=200).mean().iloc[-1]
+
+    high, low = df["high"], df["low"]
+    plus_dm = (high - high.shift(1)).clip(lower=0)
+    minus_dm = (low.shift(1) - low).clip(lower=0)
+    mask = plus_dm > minus_dm
+    plus_dm = plus_dm.where(mask, 0)
+    minus_dm = minus_dm.where(~mask, 0)
+
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+
+    atr_14 = tr.ewm(span=14).mean()
+    plus_di = 100 * (plus_dm.ewm(span=14).mean() / atr_14)
+    minus_di = 100 * (minus_dm.ewm(span=14).mean() / atr_14)
+    dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1))
+    adx = dx.ewm(span=14).mean().iloc[-1]
+
+    if adx > 25:
+        regime = "Trending"
+    elif adx < 20:
+        regime = "Ranging"
+    else:
+        regime = "Transitional"
+
+    if ema_20 > ema_50 > ema_200:
+        direction = "Bullish"
+        strength = min(10, int((ema_20 / ema_200 - 1) * 500))
+    elif ema_20 < ema_50 < ema_200:
+        direction = "Bearish"
+        strength = min(10, int((1 - ema_20 / ema_200) * 500))
+    else:
+        direction = "Mixed"
+        strength = 3
+
+    return {
+        "regime": regime,
+        "trend_direction": direction,
+        "trend_strength": max(1, strength),
+        "adx": round(float(adx), 2) if pd.notna(adx) else None,
+        "ema_20": round(float(ema_20), 2),
+        "ema_50": round(float(ema_50), 2),
+        "ema_200": round(float(ema_200), 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Liquidation Price Estimation (F7)
+# ---------------------------------------------------------------------------
+
+def estimate_liquidation_price(
+    entry: float, leverage: int, side: str,
+    maint_margin_rate: float = 0.005,
+) -> dict:
+    if leverage <= 0 or entry <= 0:
+        return {"liq_price": None, "distance_pct": None}
+
+    if side.lower() in ("long", "buy"):
+        liq = entry * (1 - 1 / leverage + maint_margin_rate)
+        distance_pct = (entry - liq) / entry * 100
+    else:
+        liq = entry * (1 + 1 / leverage - maint_margin_rate)
+        distance_pct = (liq - entry) / entry * 100
+
+    return {
+        "liq_price": round(liq, 4),
+        "distance_pct": round(distance_pct, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Funding Rate Cost Projection (F7)
+# ---------------------------------------------------------------------------
+
+def project_funding_cost(
+    funding_csv: str,
+    hold_intervals: int = 21,
+) -> dict:
+    lines = funding_csv.strip().split("\n")
+    rates: list[float] = []
+    for line in lines[1:]:
+        parts = line.split(",")
+        if len(parts) >= 2:
+            try:
+                rates.append(float(parts[1]))
+            except (ValueError, IndexError):
+                continue
+
+    if not rates:
+        return {"total_rate": None, "annualized_pct": None,
+                "break_even_move_pct": None, "severity": "unknown"}
+
+    recent_24h = rates[-3:] if len(rates) >= 3 else rates
+    older = rates[:-3] if len(rates) > 3 else []
+    if older:
+        weighted_avg = (sum(recent_24h) * 2 + sum(older)) / (len(recent_24h) * 2 + len(older))
+    else:
+        weighted_avg = sum(recent_24h) / len(recent_24h)
+
+    total_rate = weighted_avg * hold_intervals
+    annualized_pct = weighted_avg * 3 * 365 * 100
+
+    if abs(weighted_avg * 100) > 0.1:
+        severity = "extreme"
+    elif abs(weighted_avg * 100) > 0.03:
+        severity = "elevated"
+    else:
+        severity = "normal"
+
+    return {
+        "total_rate": round(total_rate, 6),
+        "annualized_pct": round(annualized_pct, 2),
+        "break_even_move_pct": round(abs(total_rate) * 100, 4),
+        "severity": severity,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Market Microstructure Aggregation (F7)
+# ---------------------------------------------------------------------------
+
+def get_market_microstructure(
+    symbol: str,
+    kline_csv: str | None = None,
+    funding_csv: str | None = None,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict:
+    micro: dict = {}
+
+    try:
+        ob = get_bybit_orderbook(
+            symbol, cache=cache, limiter=limiter,
+            circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        micro["orderbook"] = ob
+    except Exception as exc:
+        logger.warning("Microstructure: orderbook fetch failed: %s", exc)
+        micro["orderbook"] = None
+
+    if kline_csv:
+        try:
+            micro["volatility"] = get_volatility_metrics(kline_csv)
+        except Exception as exc:
+            logger.warning("Microstructure: volatility calc failed: %s", exc)
+            micro["volatility"] = None
+
+        try:
+            micro["regime"] = get_market_regime(kline_csv)
+        except Exception as exc:
+            logger.warning("Microstructure: regime calc failed: %s", exc)
+            micro["regime"] = None
+    else:
+        micro["volatility"] = None
+        micro["regime"] = None
+
+    if funding_csv:
+        try:
+            micro["funding_projection"] = project_funding_cost(funding_csv)
+        except Exception as exc:
+            logger.warning("Microstructure: funding projection failed: %s", exc)
+            micro["funding_projection"] = None
+    else:
+        micro["funding_projection"] = None
+
+    return micro

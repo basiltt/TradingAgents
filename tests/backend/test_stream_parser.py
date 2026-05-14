@@ -257,7 +257,7 @@ def test_deep_analysis_emits_compliance_on_trader_complete():
 
 
 def test_quick_trade_skips_pm_and_exec_monitor_on_final_decision():
-    """In quick_trade mode, final_trade_decision should NOT emit PM/Execution Monitor events."""
+    """In quick_trade mode, final_trade_decision should NOT emit PM/Execution Monitor events but SHOULD emit report."""
     from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent, ReportChunkEvent
 
     state = StreamParserState(workflow_mode="quick_trade")
@@ -267,3 +267,85 @@ def test_quick_trade_skips_pm_and_exec_monitor_on_final_decision():
     assert not any(isinstance(e, AgentStatusEvent) and e.agent == "Portfolio Manager" for e in events)
     assert not any(isinstance(e, AgentStatusEvent) and e.agent == "Execution Monitor" for e in events)
     assert not any(isinstance(e, ReportChunkEvent) and e.section == "portfolio_manager" for e in events)
+    assert any(isinstance(e, ReportChunkEvent) and e.section == "final_decision" for e in events)
+
+
+def test_quick_trade_trader_emits_risk_manager_in_progress():
+    """In quick_trade mode, Trader completion should emit Risk Manager in_progress."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState(workflow_mode="quick_trade")
+    chunk = {"trader_investment_plan": "Buy BTC at 100k"}
+    events = parse_stream_chunk(chunk, state=state)
+
+    assert any(
+        isinstance(e, AgentStatusEvent) and e.agent == "Risk Manager" and e.status == "in_progress"
+        for e in events
+    )
+    assert not any(
+        isinstance(e, AgentStatusEvent) and e.agent == "Compliance Officer"
+        for e in events
+    )
+
+
+def test_risk_manager_result_emits_events():
+    """Risk Manager result should emit completed status and report chunk."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent, ReportChunkEvent
+
+    state = StreamParserState(workflow_mode="quick_trade")
+    chunk = {"risk_manager_result": "Approved. Risk score: 25/100."}
+    events = parse_stream_chunk(chunk, state=state)
+
+    assert any(
+        isinstance(e, AgentStatusEvent) and e.agent == "Risk Manager" and e.status == "completed"
+        for e in events
+    )
+    assert any(
+        isinstance(e, ReportChunkEvent) and e.section == "risk_manager"
+        for e in events
+    )
+
+
+def test_risk_manager_result_dedup():
+    """Duplicate risk_manager_result should not emit events twice."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState(workflow_mode="quick_trade")
+    chunk = {"risk_manager_result": "Approved."}
+    parse_stream_chunk(chunk, state=state)
+
+    events2 = parse_stream_chunk(chunk, state=state)
+    assert not any(
+        isinstance(e, AgentStatusEvent) and e.agent == "Risk Manager"
+        for e in events2
+    )
+
+
+def test_quick_trade_skips_risk_debate_events():
+    """In quick_trade mode, risk_debate_state changes should NOT emit risk debate agent events."""
+    from backend.stream_parser import parse_stream_chunk, StreamParserState, AgentStatusEvent
+
+    state = StreamParserState(workflow_mode="quick_trade")
+    chunk = {
+        "risk_debate_state": {
+            "current_aggressive_response": "Go big!",
+            "current_conservative_response": "Be careful",
+            "current_neutral_response": "Balanced view",
+            "judge_decision": "",
+            "aggressive_history": "",
+            "conservative_history": "",
+            "neutral_history": "",
+            "history": "",
+            "latest_speaker": "",
+            "count": 0,
+        }
+    }
+    events = parse_stream_chunk(chunk, state=state)
+
+    assert not any(
+        isinstance(e, AgentStatusEvent) and e.agent in (
+            "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst",
+            "Bull Analyst", "Bear Analyst", "Portfolio Manager",
+        )
+        for e in events
+    )

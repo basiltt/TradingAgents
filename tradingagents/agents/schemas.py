@@ -406,3 +406,60 @@ def render_compliance_check(check: ComplianceCheck) -> str:
         parts.append(f"- **{f.check}** [{f.verdict.value}]: {f.detail}")
     parts.extend(["", f"**Summary**: {check.summary}"])
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Risk Manager schemas
+# ---------------------------------------------------------------------------
+
+class RiskVerdict(str, Enum):
+    APPROVE = "Approve"
+    MODIFY = "Modify"
+    REJECT = "Reject"
+
+
+class RiskFinding(BaseModel):
+    check: str = Field(description="Name of the risk check performed.")
+    verdict: RiskVerdict = Field(description="Approve, Modify, or Reject for this check.")
+    detail: str = Field(description="Explanation of the finding.")
+
+
+class RiskAssessment(BaseModel):
+    overall_verdict: RiskVerdict = Field(
+        description="Overall risk verdict. Reject if ANY finding is Reject.",
+    )
+    risk_score: int = Field(
+        description="Risk score 0-100 (0 = no risk, 100 = maximum risk).",
+        ge=0, le=100,
+    )
+    findings: list[RiskFinding] = Field(
+        description="Individual risk check results.",
+    )
+    adjusted_position_size: Optional[str] = Field(
+        default=None,
+        description="Recommended position size adjustment, if any.",
+    )
+    adjusted_leverage: Optional[int] = Field(
+        default=None,
+        description="Recommended leverage adjustment (clamped to max_leverage).",
+        ge=1,
+    )
+    summary: str = Field(
+        description="One-paragraph risk assessment summary.",
+    )
+
+
+def render_risk_assessment(assessment: RiskAssessment) -> str:
+    parts = [
+        f"**Overall Risk Verdict**: {assessment.overall_verdict.value}",
+        f"**Risk Score**: {assessment.risk_score}/100",
+        "",
+    ]
+    for f in assessment.findings:
+        parts.append(f"- **{f.check}** [{f.verdict.value}]: {f.detail}")
+    if assessment.adjusted_position_size:
+        parts.append(f"\n**Adjusted Position Size**: {assessment.adjusted_position_size}")
+    if assessment.adjusted_leverage is not None:
+        parts.append(f"**Adjusted Leverage**: {assessment.adjusted_leverage}x")
+    parts.extend(["", f"**Summary**: {assessment.summary}"])
+    return "\n".join(parts)
