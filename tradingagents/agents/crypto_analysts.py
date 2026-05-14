@@ -844,6 +844,7 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             prompt,
             render_pm_decision,
             "Crypto PM",
+            schema=PortfolioDecision,
         )
 
         new_risk_debate_state = {

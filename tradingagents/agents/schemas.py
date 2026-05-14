@@ -24,6 +24,27 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+def _coerce_enum(v: Any, enum_cls: type[Enum]) -> Any:
+    """Extract an enum value from free-text LLM output.
+
+    Prefers exact match, then longest-value substring match to avoid
+    'Buy' matching inside 'Underweight/Buy-side' ambiguities.
+    """
+    if isinstance(v, str):
+        stripped = v.strip()
+        low = stripped.lower()
+        # Exact match (case-insensitive)
+        for member in enum_cls:
+            if low == member.value.lower():
+                return member.value
+        # Longest-first substring match to avoid short values matching inside longer text
+        members_by_length = sorted(enum_cls, key=lambda m: len(m.value), reverse=True)
+        for member in members_by_length:
+            if member.value.lower() in low:
+                return member.value
+    return v
+
+
 # ---------------------------------------------------------------------------
 # Shared rating types
 # ---------------------------------------------------------------------------
@@ -92,6 +113,11 @@ class TraderDirection(BaseModel):
         ),
     )
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def _coerce_action(cls, v: Any) -> Any:
+        return _coerce_enum(v, TraderAction)
+
 
 # ---------------------------------------------------------------------------
 # Research Manager
@@ -128,6 +154,11 @@ class ResearchPlan(BaseModel):
             "including position sizing guidance consistent with the rating."
         ),
     )
+
+    @field_validator("recommendation", mode="before")
+    @classmethod
+    def _coerce_recommendation(cls, v: Any) -> Any:
+        return _coerce_enum(v, PortfolioRating)
 
 
 def render_research_plan(plan: ResearchPlan) -> str:
@@ -238,6 +269,18 @@ class TraderProposal(BaseModel):
         ),
     )
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def _coerce_action(cls, v: Any) -> Any:
+        return _coerce_enum(v, TraderAction)
+
+    @field_validator("order_type", mode="before")
+    @classmethod
+    def _coerce_order_type(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        return _coerce_enum(v, OrderType)
+
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
     """Render a TraderProposal to markdown.
@@ -334,6 +377,11 @@ class PortfolioDecision(BaseModel):
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
 
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _coerce_rating(cls, v: Any) -> Any:
+        return _coerce_enum(v, PortfolioRating)
+
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
     """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
@@ -379,7 +427,12 @@ class ComplianceFinding(BaseModel):
 
     check: str = Field(description="Name of the check (e.g. 'Position Size', 'Leverage Cap').")
     verdict: ComplianceVerdict = Field(description="Pass, Flag, or Block.")
-    detail: str = Field(description="Explanation of the finding.")
+    detail: str = Field(default="", description="Explanation of the finding.")
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def _coerce_verdict(cls, v: Any) -> Any:
+        return _coerce_enum(v, ComplianceVerdict)
 
 
 class ComplianceCheck(BaseModel):
@@ -397,6 +450,11 @@ class ComplianceCheck(BaseModel):
     summary: str = Field(
         description="One-paragraph summary of the compliance review.",
     )
+
+    @field_validator("overall_verdict", mode="before")
+    @classmethod
+    def _coerce_overall_verdict(cls, v: Any) -> Any:
+        return _coerce_enum(v, ComplianceVerdict)
 
 
 def render_compliance_check(check: ComplianceCheck) -> str:
@@ -425,13 +483,8 @@ class RiskFinding(BaseModel):
 
     @field_validator("verdict", mode="before")
     @classmethod
-    def _coerce_verdict(cls, v: Any) -> str:
-        if isinstance(v, str):
-            low = v.lower().strip()
-            for member in RiskVerdict:
-                if member.value.lower() in low:
-                    return member.value
-        return v
+    def _coerce_verdict(cls, v: Any) -> Any:
+        return _coerce_enum(v, RiskVerdict)
 
 
 class RiskAssessment(BaseModel):
@@ -454,6 +507,11 @@ class RiskAssessment(BaseModel):
         description="Recommended leverage adjustment (clamped to max_leverage).",
         ge=1,
     )
+
+    @field_validator("overall_verdict", mode="before")
+    @classmethod
+    def _coerce_overall_verdict(cls, v: Any) -> Any:
+        return _coerce_enum(v, RiskVerdict)
     summary: str = Field(
         description="One-paragraph risk assessment summary.",
     )

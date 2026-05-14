@@ -97,6 +97,7 @@ def create_risk_manager(llm, max_leverage: int = 20):
             prompt,
             render_risk_assessment,
             "Risk Manager",
+            schema=RiskAssessment,
         )
 
         if obj is not None:

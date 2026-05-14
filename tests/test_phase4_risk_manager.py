@@ -142,7 +142,7 @@ class TestBindStructured:
         llm = MagicMock()
         result = bind_structured(llm, RiskAssessment, "Test")
         assert result is not None
-        llm.with_structured_output.assert_called_once()
+        assert llm.with_structured_output.call_count == 2
 
     def test_returns_none_on_not_implemented(self):
         llm = MagicMock()

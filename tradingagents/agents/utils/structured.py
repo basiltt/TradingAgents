@@ -72,9 +72,10 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Optional[Any]
 
     Tries ``method="json_schema"`` first (prevents tool-call hallucination by
     forcing direct JSON output), then falls back to the provider default.
-    Requires langchain-anthropic >= 1.1.0 for Anthropic json_schema support.
+    Both bindings are returned so invoke can fall back at runtime.
     """
     methods = ("json_schema", None)
+    bindings: list[Any] = []
 
     for method in methods:
         try:
@@ -82,13 +83,11 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Optional[Any]
             if method:
                 kwargs["method"] = method
             bound = llm.with_structured_output(schema, **kwargs)
-            if method:
-                logger.debug("%s: using method=%s for structured output", agent_name, method)
-            return bound
+            bindings.append((method, bound))
         except (NotImplementedError, AttributeError, TypeError, ValueError) as exc:
             if method:
                 logger.debug(
-                    "%s: method=%s not supported (%s), trying default",
+                    "%s: method=%s not supported at bind time (%s), trying default",
                     agent_name, method, exc,
                 )
                 continue
@@ -97,8 +96,53 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Optional[Any]
                 "falling back to free-text generation",
                 agent_name, exc,
             )
-            return None
-    return None
+
+    if not bindings:
+        return None
+    if len(bindings) == 1:
+        return bindings[0][1]
+    return _FallbackStructured(bindings, agent_name)
+
+
+class _FallbackStructured:
+    """Wraps multiple structured bindings; tries each at invoke time.
+
+    After the first successful invoke, remembers which method worked and
+    skips failing methods on subsequent calls to avoid repeated 400 errors.
+    """
+
+    def __init__(self, bindings: list[tuple], agent_name: str):
+        self._bindings = bindings
+        self._agent_name = agent_name
+        self._skip_methods: set[str | None] = set()
+
+    def invoke(self, prompt: Any) -> Any:
+        last_exc = None
+        for method, bound in self._bindings:
+            if method in self._skip_methods:
+                continue
+            try:
+                result = bound.invoke(prompt)
+                if result is None:
+                    logger.debug(
+                        "%s: method=%s returned None, trying next",
+                        self._agent_name, method,
+                    )
+                    last_exc = ValueError("structured call returned None")
+                    continue
+                return result
+            except Exception as exc:
+                exc_str = str(exc)
+                if "400" in exc_str or "invalid_request" in exc_str.lower():
+                    logger.debug(
+                        "%s: method=%s rejected at invoke time (%s), trying next",
+                        self._agent_name, method, exc,
+                    )
+                    self._skip_methods.add(method)
+                    last_exc = exc
+                    continue
+                raise
+        raise last_exc or RuntimeError("All structured methods failed")
 
 
 def invoke_structured_or_freetext(
