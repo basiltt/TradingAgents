@@ -72,7 +72,7 @@ def create_risk_manager(llm, max_leverage: int = 20):
         trader_plan = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         microstructure = filtered.get("market_microstructure", "")
-        cfg_max_leverage = filtered.get("max_leverage", max_leverage)
+        cfg_max_leverage = filtered.get("max_leverage") or max_leverage
 
         micro_str = wrap_external_data(str(microstructure) if microstructure else "Not available", "market_microstructure")
 

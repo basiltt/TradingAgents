@@ -19,9 +19,9 @@ so that:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -420,8 +420,18 @@ class RiskVerdict(str, Enum):
 
 class RiskFinding(BaseModel):
     check: str = Field(description="Name of the risk check performed.")
-    verdict: RiskVerdict = Field(description="Approve, Modify, or Reject for this check.")
-    detail: str = Field(description="Explanation of the finding.")
+    verdict: RiskVerdict = Field(description="One of: Approve, Modify, Reject")
+    detail: str = Field(default="", description="Explanation of the finding.")
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def _coerce_verdict(cls, v: Any) -> str:
+        if isinstance(v, str):
+            low = v.lower().strip()
+            for member in RiskVerdict:
+                if member.value.lower() in low:
+                    return member.value
+        return v
 
 
 class RiskAssessment(BaseModel):
