@@ -15,6 +15,10 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.state_filter import (
+    filter_state_for_read,
+    validate_state_write,
+)
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
@@ -25,17 +29,26 @@ def create_portfolio_manager(llm):
     structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
 
     def portfolio_manager_node(state) -> dict:
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        filtered = filter_state_for_read(state, "portfolio_manager")
+        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(company, crypto_interval)
 
-        history = state["risk_debate_state"]["history"]
-        risk_debate_state = state["risk_debate_state"]
-        research_plan = state["investment_plan"]
-        trader_plan = state["trader_investment_plan"]
+        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
+        history = risk_debate_state.get("history", "")
+        research_plan = filtered.get("investment_plan", "")
+        trader_plan = filtered.get("trader_investment_plan", "")
+        risk_manager_result = filtered.get("risk_manager_result", "")
 
-        past_context = state.get("past_context", "")
+        past_context = filtered.get("past_context", "")
         lessons_line = (
             f"- Lessons from prior decisions and outcomes:\n{past_context}\n"
             if past_context
+            else ""
+        )
+        risk_manager_line = (
+            f"- Risk Manager assessment:\n{risk_manager_result}\n"
+            if risk_manager_result
             else ""
         )
 
@@ -55,7 +68,7 @@ def create_portfolio_manager(llm):
 **Context:**
 - Research Manager's investment plan: **{research_plan}**
 - Trader's transaction proposal: **{trader_plan}**
-{lessons_line}
+{lessons_line}{risk_manager_line}
 **Risk Analysts Debate History:**
 {history}
 
@@ -84,10 +97,11 @@ Be decisive and ground every conclusion in specific evidence from the analysts. 
             "count": risk_debate_state["count"],
         }
 
-        return {
+        updates = {
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_trade_decision,
             "_pm_signal_data": decision_obj,
         }
+        return validate_state_write(updates, "portfolio_manager")
 
     return portfolio_manager_node

@@ -25,14 +25,17 @@ def filter_state_for_read(state: dict, role: str) -> dict:
     }
 
 
+_FRAMEWORK_KEYS = frozenset({"messages", "sender"})
+
+
 def validate_state_write(updates: dict, role: str) -> dict:
     if not is_enabled("use_information_barriers"):
         return updates
     if role not in WRITABLE_KEYS:
         logger.error("Unknown role '%s' — dropping all writes (fail-closed)", role)
         return {}
-    allowed = WRITABLE_KEYS[role]
-    violations = set(updates.keys()) - set(allowed)
+    allowed = set(WRITABLE_KEYS[role]) | _FRAMEWORK_KEYS
+    violations = set(updates.keys()) - allowed
     if violations:
         sanitized = {repr(k)[:64] for k in list(violations)[:10]}
         logger.error("Role %s attempted to write disallowed keys: %s", role, sanitized)

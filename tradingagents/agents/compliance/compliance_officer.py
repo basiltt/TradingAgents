@@ -46,7 +46,6 @@ _COMPLIANCE_USER = (
     "{instrument_context}\n\n"
     "## Trader's Proposal\n{trader_plan}\n\n"
     "## Current Price Data\n{price_context}\n\n"
-    "## Past Trade Context\n{past_context}\n\n"
     "Perform all compliance checks and provide your structured assessment."
 )
 
@@ -55,12 +54,14 @@ def create_compliance_officer(llm, max_leverage: int = 20):
     structured_llm = bind_structured(llm, ComplianceCheck, "Compliance Officer")
 
     def node(state):
-        company = state["company_of_interest"]
-        crypto_interval = state.get("crypto_interval")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "compliance_officer")
+        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
-        trader_plan = state.get("trader_investment_plan", "")
-        price_context = state.get("current_price_context", "")
-        past_context = state.get("past_context", "")
+        trader_plan = filtered.get("trader_investment_plan", "")
+        price_context = filtered.get("current_price_context", "")
 
         prompt = [
             {"role": "system", "content": _COMPLIANCE_SYSTEM},
@@ -71,7 +72,6 @@ def create_compliance_officer(llm, max_leverage: int = 20):
                     instrument_context=instrument_context,
                     trader_plan=trader_plan,
                     price_context=price_context or "Not available",
-                    past_context=past_context or "No prior trade history available",
                 ),
             },
         ]
@@ -109,11 +109,12 @@ def create_compliance_officer(llm, max_leverage: int = 20):
                     "defaulting to BLOCK (fail-closed)."
                 )
 
-        return {
+        updates = {
             "messages": [AIMessage(content=text)],
             "compliance_result": text,
             "sender": "Compliance Officer",
             "_compliance_verdict": overall.value,
         }
+        return validate_state_write(updates, "compliance_officer")
 
     return node

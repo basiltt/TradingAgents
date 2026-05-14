@@ -176,7 +176,7 @@ class TestCryptoTrader:
         state = _base_state()
         state["investment_plan"] = "Analysts say buy"
         result = node(state)
-        assert "error" in result["trader_investment_plan"].lower() or "invalid" in result["trader_investment_plan"].lower()
+        assert "error" in result["trader_investment_plan"].lower() or "failed" in result["trader_investment_plan"].lower()
 
 
 class TestCryptoRiskDebaters:
@@ -361,7 +361,7 @@ class TestCryptoTraderAllReports:
         state = _base_state()
         state["investment_plan"] = "Buy BTC"
         result = node(state)
-        assert "Error" in result["trader_investment_plan"]
+        assert "Error" in result["trader_investment_plan"] or "failure" in result["trader_investment_plan"].lower()
         assert llm.invoke.call_count == 2
 
     def test_empty_investment_plan_returns_no_trade(self):

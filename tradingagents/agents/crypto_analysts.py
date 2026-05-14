@@ -81,7 +81,8 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         result = chain.invoke(state["messages"])
 
         report = result.content or ""
-        return {"messages": [result], "market_report": report}
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        return validate_state_write({"messages": [result], "market_report": report}, "technical_analyst")
 
     return node
 
@@ -131,7 +132,8 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         result = chain.invoke(state["messages"])
 
         report = result.content or ""
-        return {"messages": [result], "derivatives_report": report}
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        return validate_state_write({"messages": [result], "derivatives_report": report}, "derivatives_analyst")
 
     return node
 
@@ -172,7 +174,8 @@ def create_crypto_news_analyst(llm):
         result = chain.invoke(state["messages"])
 
         report = result.content or ""
-        return {"messages": [result], "news_report": report}
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        return validate_state_write({"messages": [result], "news_report": report}, "news_analyst")
 
     return node
 
@@ -219,7 +222,8 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
         result = chain.invoke(state["messages"])
 
         report = result.content or ""
-        return {"messages": [result], "crypto_fundamentals_report": report}
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        return validate_state_write({"messages": [result], "crypto_fundamentals_report": report}, "fundamentals_analyst")
 
     return node
 
@@ -266,7 +270,8 @@ def create_crypto_social_analyst(llm, coingecko_tools: list):
         result = chain.invoke(state["messages"])
 
         report = result.content or ""
-        return {"messages": [result], "sentiment_report": report}
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        return validate_state_write({"messages": [result], "sentiment_report": report}, "social_analyst")
 
     return node
 
@@ -320,11 +325,12 @@ def create_confluence_checker(llm):
             "Be concise. Focus on actionable information for a trader."
         )
 
+        from tradingagents.agents.utils.state_filter import validate_state_write
         result = llm.invoke(prompt)
-        return {
+        return validate_state_write({
             "confluence_summary": result.content,
             "sender": "ConfluenceChecker",
-        }
+        }, "confluence_checker")
 
     return node
 
@@ -336,18 +342,20 @@ def create_confluence_checker(llm):
 
 def create_crypto_bull_researcher(llm):
     def node(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "bull_researcher")
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
         bull_history = investment_debate_state.get("bull_history", "")
         current_response = investment_debate_state.get("current_response", "")
 
-        market_report = state.get("market_report", "")
-        news_report = state.get("news_report", "")
-        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
-        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
-        sentiment_report = state.get("sentiment_report", "")
-        confluence_summary = state.get("confluence_summary", "")
-        price_context = state.get("current_price_context", "")
+        market_report = filtered.get("market_report", "")
+        news_report = filtered.get("news_report", "")
+        derivatives_report = filtered.get("derivatives_report", state.get("fundamentals_report", ""))
+        crypto_fundamentals_report = filtered.get("crypto_fundamentals_report", "")
+        sentiment_report = filtered.get("sentiment_report", "")
+        price_context = filtered.get("current_price_context", "")
 
         prompt = f"""You are a Bull Researcher advocating for a long position in this crypto asset. Build an evidence-based case emphasizing upside potential, favorable market structure, and positive catalysts.
 
@@ -364,7 +372,6 @@ Social sentiment report: {sentiment_report}
 News report: {news_report}
 Derivatives report: {derivatives_report}
 Crypto fundamentals report: {crypto_fundamentals_report}
-Confluence summary: {confluence_summary}
 Current price data: {price_context}
 Debate history: {history}
 Last bear argument: {current_response}
@@ -382,25 +389,27 @@ Present the evidence-based bull case for this asset."""
             "count": investment_debate_state["count"] + 1,
         }
 
-        return {"investment_debate_state": new_state}
+        return validate_state_write({"investment_debate_state": new_state}, "bull_researcher")
 
     return node
 
 
 def create_crypto_bear_researcher(llm):
     def node(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "bear_researcher")
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
         bear_history = investment_debate_state.get("bear_history", "")
         current_response = investment_debate_state.get("current_response", "")
 
-        market_report = state.get("market_report", "")
-        news_report = state.get("news_report", "")
-        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
-        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
-        sentiment_report = state.get("sentiment_report", "")
-        confluence_summary = state.get("confluence_summary", "")
-        price_context = state.get("current_price_context", "")
+        market_report = filtered.get("market_report", "")
+        news_report = filtered.get("news_report", "")
+        derivatives_report = filtered.get("derivatives_report", state.get("fundamentals_report", ""))
+        crypto_fundamentals_report = filtered.get("crypto_fundamentals_report", "")
+        sentiment_report = filtered.get("sentiment_report", "")
+        price_context = filtered.get("current_price_context", "")
 
         prompt = f"""You are a Bear Researcher making the case against a long position in this crypto asset. Present an evidence-based argument emphasizing downside risks, structural weaknesses, and negative indicators.
 
@@ -417,7 +426,6 @@ Social sentiment report: {sentiment_report}
 News report: {news_report}
 Derivatives report: {derivatives_report}
 Crypto fundamentals report: {crypto_fundamentals_report}
-Confluence summary: {confluence_summary}
 Current price data: {price_context}
 Debate history: {history}
 Last bull argument: {current_response}
@@ -435,7 +443,7 @@ Present the evidence-based bear case for this asset."""
             "count": investment_debate_state["count"] + 1,
         }
 
-        return {"investment_debate_state": new_state}
+        return validate_state_write({"investment_debate_state": new_state}, "bear_researcher")
 
     return node
 
@@ -498,10 +506,11 @@ Commit to a clear stance based on the weight of evidence. Hold is a fully valid 
             "count": investment_debate_state["count"],
         }
 
-        return {
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        return validate_state_write({
             "investment_debate_state": new_investment_debate_state,
             "investment_plan": investment_plan,
-        }
+        }, "research_manager")
 
     return node
 
@@ -510,12 +519,15 @@ def create_crypto_trader(llm, max_leverage: int = 20):
     signal_schema_str = json.dumps(SIGNAL_SCHEMA, indent=2)
 
     def node(state):
-        company = state["company_of_interest"]
-        crypto_interval = state.get("crypto_interval")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "trader")
+        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
-        price_context = state.get("current_price_context", "")
-        investment_plan = state.get("investment_plan", "")
-        confluence_summary = state.get("confluence_summary", "")
+        price_context = filtered.get("current_price_context", "")
+        investment_plan = filtered.get("investment_plan", "")
+        technical_levels = filtered.get("technical_levels_summary", "Not available")
 
         if not investment_plan or not investment_plan.strip():
             logger.warning(
@@ -528,22 +540,18 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                 "confidence": 1,
                 "reasoning": "No investment plan received from Research Manager. Cannot determine direction.",
             }
-            return {
+            return validate_state_write({
                 "messages": [AIMessage(content=json.dumps(no_trade_signal, indent=2))],
                 "trader_investment_plan": json.dumps(no_trade_signal, indent=2),
                 "sender": "CryptoTrader",
-            }
-
-        market_report = state.get("market_report", "")
+            }, "trader")
 
         base_prompt = (
             f"You are a crypto futures execution trader for {company}. {instrument_context}\n\n"
             f"The directional decision has ALREADY been made by the Research Manager. "
             f"Your job is to translate their investment plan into precise execution levels.\n\n"
             f"## Research Manager's Investment Plan\n{investment_plan}\n\n"
-            f"## Confluence Summary\n{confluence_summary}\n\n"
-            f"## Technical Analysis (use for support/resistance levels when setting SL/TP)\n"
-            f"{market_report if market_report else 'Not available'}\n\n"
+            f"## Technical Levels Summary\n{technical_levels}\n\n"
             f"IMPORTANT — CURRENT PRICE DATA (base your entry/SL/TP on this):\n{price_context}\n\n"
             f"EXECUTION RULES:\n"
             f"- If the RM recommends Buy or Overweight, output a Long signal\n"
@@ -590,19 +598,19 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                     "confidence": 1,
                     "reasoning": "Signal parse failure after retries. Cannot produce a valid execution plan.",
                 }
-                return {
+                return validate_state_write({
                     "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
                     "trader_investment_plan": json.dumps(no_trade, indent=2),
                     "sender": "CryptoTrader",
-                }
+                }, "trader")
 
             ok, errors = validate_signal(parsed, max_leverage=max_leverage, current_price=current_price)
             if ok:
-                return {
+                return validate_state_write({
                     "messages": [AIMessage(content=result.content)],
                     "trader_investment_plan": json.dumps(parsed, indent=2),
                     "sender": "CryptoTrader",
-                }
+                }, "trader")
 
             if attempt < max_attempts - 1:
                 messages.append({"role": "assistant", "content": result.content})
@@ -618,23 +626,25 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             "confidence": 1,
             "reasoning": f"Signal validation failed after {max_attempts} attempts: {'; '.join(errors)}",
         }
-        return {
+        return validate_state_write({
             "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
             "trader_investment_plan": json.dumps(no_trade, indent=2),
             "sender": "CryptoTrader",
-        }
+        }, "trader")
 
     return node
 
 
 def create_crypto_risk_bull_debater(llm):
     def node(state):
-        risk_debate_state = state["risk_debate_state"]
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "risk_bull_debater")
+        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
         history = risk_debate_state.get("history", "")
-        trader_decision = state.get("trader_investment_plan", "")
-        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
-        price_context = state.get("current_price_context", "")
-        market_microstructure = state.get("market_microstructure", "")
+        trader_decision = filtered.get("trader_investment_plan", "")
+        price_context = filtered.get("current_price_context", "")
+        market_microstructure = filtered.get("market_microstructure", "")
         bear_response = risk_debate_state.get("current_conservative_response", "")
 
         micro_context = ""
@@ -651,7 +661,6 @@ def create_crypto_risk_bull_debater(llm):
             f"- Your job is to stress-test the bear's concerns, not to force a trade.\n\n"
             f"CURRENT PRICE DATA:\n{price_context}\n\n"
             f"Trader's decision: {trader_decision}\n"
-            f"Derivatives report: {derivatives_report}\n"
             f"{micro_context}"
             f"Debate history: {history}\n"
             f"Bear analyst's last response: {bear_response}\n\n"
@@ -674,19 +683,21 @@ def create_crypto_risk_bull_debater(llm):
             "count": risk_debate_state["count"] + 1,
         }
 
-        return {"risk_debate_state": new_state}
+        return validate_state_write({"risk_debate_state": new_state}, "risk_bull_debater")
 
     return node
 
 
 def create_crypto_risk_bear_debater(llm):
     def node(state):
-        risk_debate_state = state["risk_debate_state"]
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+
+        filtered = filter_state_for_read(state, "risk_bear_debater")
+        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
         history = risk_debate_state.get("history", "")
-        trader_decision = state.get("trader_investment_plan", "")
-        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
-        price_context = state.get("current_price_context", "")
-        market_microstructure = state.get("market_microstructure", "")
+        trader_decision = filtered.get("trader_investment_plan", "")
+        price_context = filtered.get("current_price_context", "")
+        market_microstructure = filtered.get("market_microstructure", "")
         bull_response = risk_debate_state.get("current_aggressive_response", "")
 
         micro_context = ""
@@ -709,7 +720,6 @@ def create_crypto_risk_bear_debater(llm):
             f"a trade, acknowledge strengths before presenting risks.\n\n"
             f"CURRENT PRICE DATA:\n{price_context}\n\n"
             f"Trader's decision: {trader_decision}\n"
-            f"Derivatives report: {derivatives_report}\n"
             f"{micro_context}"
             f"Debate history: {history}\n"
             f"Bull analyst's last response: {bull_response}\n\n"
@@ -732,24 +742,32 @@ def create_crypto_risk_bear_debater(llm):
             "count": risk_debate_state["count"] + 1,
         }
 
-        return {"risk_debate_state": new_state}
+        return validate_state_write({"risk_debate_state": new_state}, "risk_bear_debater")
 
     return node
 
 
 def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
     def node(state):
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "")
-        history = state["risk_debate_state"]["history"]
-        research_plan = state.get("investment_plan", "")
-        trader_plan = state.get("trader_investment_plan", "")
-        risk_debate_state = state["risk_debate_state"]
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
-        past_context = state.get("past_context", "")
+        filtered = filter_state_for_read(state, "portfolio_manager")
+        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(company, crypto_interval)
+        price_context = filtered.get("current_price_context", "")
+        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
+        history = risk_debate_state.get("history", "")
+        research_plan = filtered.get("investment_plan", "")
+        trader_plan = filtered.get("trader_investment_plan", "")
+        risk_manager_result = filtered.get("risk_manager_result", "")
+
+        past_context = filtered.get("past_context", "")
         lessons_line = (
             f"- Lessons from prior decisions:\n{past_context}\n" if past_context else ""
+        )
+        risk_manager_line = (
+            f"- Risk Manager assessment:\n{risk_manager_result}\n" if risk_manager_result else ""
         )
 
         prompt = (
@@ -765,8 +783,8 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             f"- APPROVE if the data and debate support the trade with acceptable risk.\n"
             f"- Past trade results are context, not predictive — treat each trade independently.\n\n"
             f"Research plan: {research_plan}\n"
-            f"Trader's proposed direction: {trader_plan.split(chr(10))[0] if trader_plan else 'None'}\n"
-            f"{lessons_line}"
+            f"Trader's proposal:\n{trader_plan}\n"
+            f"{lessons_line}{risk_manager_line}"
             f"Risk debate history:\n{history}\n\n"
             f"Provide your final decision: REJECT (no trade) / MODIFY (with changes) / APPROVE (as-is). "
             f"Include specific position sizing and leverage recommendation if approving/modifying."
@@ -789,9 +807,9 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             "count": risk_debate_state["count"],
         }
 
-        return {
+        return validate_state_write({
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_decision,
-        }
+        }, "portfolio_manager")
 
     return node

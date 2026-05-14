@@ -116,6 +116,12 @@ class TestStateFilter:
     def test_write_filter_unknown_role_drops_all(self):
         assert validate_state_write({"x": 1}, "hacker") == {}
 
+    def test_write_filter_passes_framework_keys(self):
+        updates = {"market_report": "report", "messages": ["msg"], "sender": "X"}
+        result = validate_state_write(updates, "technical_analyst")
+        assert "messages" in result
+        assert "sender" in result
+
 
 class TestReadableWritableConsistency:
     def test_all_roles_have_both_allowlists(self):
