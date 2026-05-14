@@ -72,8 +72,14 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Optional[Any]
 
     Tries ``method="json_schema"`` first (prevents tool-call hallucination by
     forcing direct JSON output), then falls back to the provider default.
+    Skips json_schema for Anthropic models (they use tool-calling natively
+    and reject json_schema at invoke time with 400 invalid params).
     """
-    for method in ("json_schema", None):
+    llm_class = type(llm).__name__
+    is_anthropic = "anthropic" in llm_class.lower() or "claude" in llm_class.lower()
+    methods = (None,) if is_anthropic else ("json_schema", None)
+
+    for method in methods:
         try:
             kwargs: dict[str, Any] = {}
             if method:
