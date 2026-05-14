@@ -522,6 +522,10 @@ class TradingAgentsGraph:
             crypto_interval=self.config.get("crypto_interval"),
         )
 
+        # Migration shim: fundamentals_report → derivatives_report
+        if "fundamentals_report" in init_agent_state and "derivatives_report" not in init_agent_state:
+            init_agent_state["derivatives_report"] = init_agent_state.pop("fundamentals_report")
+
         # For crypto: fetch live price + lower-timeframe candles BEFORE agents run
         if self.config.get("asset_type") == "crypto" and hasattr(self, "_crypto_shared"):
             from tradingagents.dataflows.bybit_data import build_current_price_context
@@ -590,6 +594,7 @@ class TradingAgentsGraph:
             "sentiment_report": final_state.get("sentiment_report", ""),
             "news_report": final_state.get("news_report", ""),
             "fundamentals_report": final_state.get("fundamentals_report", ""),
+            "derivatives_report": final_state.get("derivatives_report", ""),
             "crypto_fundamentals_report": final_state.get("crypto_fundamentals_report", ""),
             "investment_debate_state": {
                 "bull_history": debate.get("bull_history", ""),

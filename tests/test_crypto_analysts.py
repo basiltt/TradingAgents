@@ -29,6 +29,7 @@ def _base_state():
         "sentiment_report": "",
         "news_report": "",
         "fundamentals_report": "",
+        "derivatives_report": "",
         "investment_plan": "",
         "current_price_context": "Last Traded Price: $100000.00",
         "trader_investment_plan": "",
@@ -98,7 +99,7 @@ class TestCryptoDerivativesAnalyst:
         node = create_crypto_derivatives_analyst(llm, tools)
         state = _base_state()
         result = node(state)
-        assert "fundamentals_report" in result
+        assert "derivatives_report" in result
 
 
 class TestCryptoTrader:

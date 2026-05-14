@@ -100,7 +100,8 @@ _ANALYST_REPORT_MAP_STOCK = {
 
 _ANALYST_REPORT_MAP_CRYPTO = {
     "market_report": ("analyst_crypto_technical", "Technical Analyst"),
-    "fundamentals_report": ("analyst_crypto_derivatives", "Derivatives Analyst"),
+    "derivatives_report": ("analyst_crypto_derivatives", "Derivatives Analyst"),
+    "fundamentals_report": ("analyst_crypto_derivatives", "Derivatives Analyst"),  # migration compat
     "news_report": ("analyst_crypto_news", "News Analyst"),
     "crypto_fundamentals_report": ("analyst_crypto_fundamentals", "Fundamentals Analyst"),
     "sentiment_report": ("analyst_crypto_social", "Social Analyst"),

@@ -46,7 +46,7 @@ _WALL_TIMEOUT = 30 * 60  # 30 minutes
 _HARD_TIMEOUT = 35 * 60  # 35 minutes
 _REPORT_KEYS = [
     "crypto_fundamentals_report", "sentiment_report", "market_report",
-    "news_report", "fundamentals_report",
+    "news_report", "fundamentals_report", "derivatives_report",
 ]
 _WARNING_MARKERS = ("[ERROR]", "Data Quality Warning")
 

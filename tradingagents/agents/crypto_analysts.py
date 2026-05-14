@@ -131,7 +131,7 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         result = chain.invoke(state["messages"])
 
         report = result.content or ""
-        return {"messages": [result], "fundamentals_report": report}
+        return {"messages": [result], "derivatives_report": report}
 
     return node
 
@@ -139,7 +139,8 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
 def create_crypto_news_analyst(llm):
     def node(state):
         current_date = state["trade_date"]
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "")
         tools = [get_news, get_global_news]
 
@@ -179,7 +180,8 @@ def create_crypto_news_analyst(llm):
 def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
     def node(state):
         current_date = state["trade_date"]
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "")
         tools = [t for t in coingecko_tools if t.name == "get_crypto_market_data"]
         if not tools:
@@ -225,7 +227,8 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
 def create_crypto_social_analyst(llm, coingecko_tools: list):
     def node(state):
         current_date = state["trade_date"]
-        instrument_context = build_instrument_context(state["company_of_interest"])
+        crypto_interval = state.get("crypto_interval")
+        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
         price_context = state.get("current_price_context", "")
         community_tools = [t for t in coingecko_tools if t.name == "get_crypto_community_data"]
         tools = community_tools + [get_news]
@@ -274,7 +277,7 @@ def create_confluence_checker(llm):
     def node(state):
         market_report = state.get("market_report", "")
         news_report = state.get("news_report", "")
-        fundamentals_report = state.get("fundamentals_report", "")
+        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
         crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
         sentiment_report = state.get("sentiment_report", "")
         price_context = state.get("current_price_context", "")
@@ -284,8 +287,8 @@ def create_confluence_checker(llm):
             reports += f"\n## Technical/Market Report\n{market_report}"
         if news_report:
             reports += f"\n## News Report\n{news_report}"
-        if fundamentals_report:
-            reports += f"\n## Derivatives Report\n{fundamentals_report}"
+        if derivatives_report:
+            reports += f"\n## Derivatives Report\n{derivatives_report}"
         if crypto_fundamentals_report:
             reports += f"\n## Crypto Fundamentals Report\n{crypto_fundamentals_report}"
         if sentiment_report:
@@ -340,7 +343,7 @@ def create_crypto_bull_researcher(llm):
 
         market_report = state.get("market_report", "")
         news_report = state.get("news_report", "")
-        fundamentals_report = state.get("fundamentals_report", "")
+        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
         crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
         sentiment_report = state.get("sentiment_report", "")
         confluence_summary = state.get("confluence_summary", "")
@@ -359,7 +362,7 @@ Resources available:
 Market/Technical report: {market_report}
 Social sentiment report: {sentiment_report}
 News report: {news_report}
-Derivatives report: {fundamentals_report}
+Derivatives report: {derivatives_report}
 Crypto fundamentals report: {crypto_fundamentals_report}
 Confluence summary: {confluence_summary}
 Current price data: {price_context}
@@ -393,7 +396,7 @@ def create_crypto_bear_researcher(llm):
 
         market_report = state.get("market_report", "")
         news_report = state.get("news_report", "")
-        fundamentals_report = state.get("fundamentals_report", "")
+        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
         crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
         sentiment_report = state.get("sentiment_report", "")
         confluence_summary = state.get("confluence_summary", "")
@@ -412,7 +415,7 @@ Resources available:
 Market/Technical report: {market_report}
 Social sentiment report: {sentiment_report}
 News report: {news_report}
-Derivatives report: {fundamentals_report}
+Derivatives report: {derivatives_report}
 Crypto fundamentals report: {crypto_fundamentals_report}
 Confluence summary: {confluence_summary}
 Current price data: {price_context}
@@ -629,19 +632,14 @@ def create_crypto_risk_bull_debater(llm):
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         trader_decision = state.get("trader_investment_plan", "")
-        market_report = state["market_report"]
-        news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
-        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
-        sentiment_report = state.get("sentiment_report", "")
+        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
         price_context = state.get("current_price_context", "")
+        market_microstructure = state.get("market_microstructure", "")
         bear_response = risk_debate_state.get("current_conservative_response", "")
 
-        extra_context = ""
-        if crypto_fundamentals_report:
-            extra_context += f"\nCrypto fundamentals report: {crypto_fundamentals_report}\n"
-        if sentiment_report:
-            extra_context += f"\nSocial sentiment report: {sentiment_report}\n"
+        micro_context = ""
+        if market_microstructure:
+            micro_context = f"\nMarket microstructure data: {market_microstructure}\n"
 
         prompt = (
             f"As the Bullish Risk Analyst for crypto futures, your role is to identify "
@@ -653,10 +651,8 @@ def create_crypto_risk_bull_debater(llm):
             f"- Your job is to stress-test the bear's concerns, not to force a trade.\n\n"
             f"CURRENT PRICE DATA:\n{price_context}\n\n"
             f"Trader's decision: {trader_decision}\n"
-            f"Market report: {market_report}\n"
-            f"News report: {news_report}\n"
-            f"Derivatives report: {fundamentals_report}\n"
-            f"{extra_context}"
+            f"Derivatives report: {derivatives_report}\n"
+            f"{micro_context}"
             f"Debate history: {history}\n"
             f"Bear analyst's last response: {bear_response}\n\n"
             f"Present the evidence-based bull case."
@@ -688,19 +684,14 @@ def create_crypto_risk_bear_debater(llm):
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         trader_decision = state.get("trader_investment_plan", "")
-        market_report = state["market_report"]
-        news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
-        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
-        sentiment_report = state.get("sentiment_report", "")
+        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
         price_context = state.get("current_price_context", "")
+        market_microstructure = state.get("market_microstructure", "")
         bull_response = risk_debate_state.get("current_aggressive_response", "")
 
-        extra_context = ""
-        if crypto_fundamentals_report:
-            extra_context += f"\nCrypto fundamentals report: {crypto_fundamentals_report}\n"
-        if sentiment_report:
-            extra_context += f"\nSocial sentiment report: {sentiment_report}\n"
+        micro_context = ""
+        if market_microstructure:
+            micro_context = f"\nMarket microstructure data: {market_microstructure}\n"
 
         prompt = (
             f"As the Bearish Risk Analyst for crypto futures, identify specific downside "
@@ -718,10 +709,8 @@ def create_crypto_risk_bear_debater(llm):
             f"a trade, acknowledge strengths before presenting risks.\n\n"
             f"CURRENT PRICE DATA:\n{price_context}\n\n"
             f"Trader's decision: {trader_decision}\n"
-            f"Market report: {market_report}\n"
-            f"News report: {news_report}\n"
-            f"Derivatives report: {fundamentals_report}\n"
-            f"{extra_context}"
+            f"Derivatives report: {derivatives_report}\n"
+            f"{micro_context}"
             f"Debate history: {history}\n"
             f"Bull analyst's last response: {bull_response}\n\n"
             f"Present the evidence-based bear case."
