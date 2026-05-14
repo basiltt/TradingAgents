@@ -64,9 +64,26 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
+
+        from tradingagents.dataflows.bybit_data import get_higher_timeframe
         tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
         if not tools:
             raise ValueError("No technical analysis tools found in crypto_tools")
+
+        higher_tf = get_higher_timeframe(str(crypto_interval)) if crypto_interval else None
+        htf_instruction = ""
+        if higher_tf:
+            htf_instruction = (
+                f"\n\n**Multi-Timeframe Analysis (MANDATORY):**\n"
+                f"1. PRIMARY: Fetch klines and indicators for the {crypto_interval} interval — "
+                f"this is the user's selected timeframe and takes priority.\n"
+                f"2. HIGHER TF: Also fetch klines for the {higher_tf} interval to identify "
+                f"the dominant trend direction and major support/resistance.\n"
+                f"3. In your report, include a **Higher Timeframe Context** section that states "
+                f"whether the {higher_tf} trend CONFIRMS or CONTRADICTS the {crypto_interval} setup.\n"
+                f"4. If the higher timeframe trend contradicts, explicitly flag this as a "
+                f"risk factor and recommend reduced confidence."
+            )
 
         system_message = (
             "You are a crypto futures technical analyst. Analyze OHLCV price data and "
@@ -77,7 +94,7 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             "If any tool returns an [ERROR], include a **Data Quality Warning** section "
             "at the end of your report listing which data sources were unavailable."
             " Write a detailed report with a Markdown summary table at the end."
-
+            + htf_instruction
             + get_language_instruction()
         )
 
@@ -511,6 +528,8 @@ def create_crypto_research_manager(llm):
 
         prompt = f"""As the Crypto Research Manager and debate facilitator, critically evaluate the bull/bear debate and deliver a clear, actionable investment plan for the crypto trader.
 
+You do NOT have access to any market data tools. Do NOT attempt to call get_klines, get_crypto_klines, get_crypto_indicators, or any other data-fetching function. Base your analysis solely on the debate history provided below.
+
 {instrument_context}
 
 ---
@@ -820,6 +839,9 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
         prompt = (
             f"As the Crypto Futures Portfolio Manager, synthesize the risk debate and "
             f"deliver the final trading decision.\n\n"
+            f"You do NOT have access to any market data tools. Do NOT attempt to call "
+            f"get_klines, get_crypto_klines, get_crypto_indicators, or any other "
+            f"data-fetching function. Base your decision solely on the data provided below.\n\n"
             f"{instrument_context}\n\n"
             f"CURRENT PRICE DATA (use as reference for entry/SL/TP levels):\n{price_context}\n\n"
             f"Max allowed leverage: {max_leverage}x\n\n"

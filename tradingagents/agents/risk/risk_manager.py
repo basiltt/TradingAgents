@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 _RISK_SYSTEM = (
     "You are an institutional Risk Manager performing quantitative risk checks "
     "on a proposed trade. You have independent veto power.\n\n"
+    "You do NOT have access to any market data tools. Do NOT attempt to call "
+    "get_klines, get_crypto_klines, get_crypto_indicators, or any other "
+    "data-fetching function. Base your assessment solely on the data provided below.\n\n"
     "For each check, assign a verdict:\n"
     "- **Approve**: Risk is acceptable\n"
     "- **Modify**: Risk can be managed by adjusting parameters\n"
