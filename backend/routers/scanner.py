@@ -47,8 +47,10 @@ async def start_scan(request: Request, body: ScanRequest):
             detail=f"API key not set: {env_key} environment variable required for provider '{provider}'",
         )
 
+    scan_config = body.model_dump()
+    logger.info("New scan request config: %s", scan_config)
     try:
-        scan_id = await request.app.state.scanner_service.start_scan(body.model_dump())
+        scan_id = await request.app.state.scanner_service.start_scan(scan_config)
     except ScannerBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"scan_id": scan_id, "status": "running"}
