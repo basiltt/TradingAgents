@@ -24,8 +24,18 @@ from tradingagents.agents.utils.signal_validation import (
     validate_signal,
     extract_current_price,
 )
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
 
 logger = logging.getLogger(__name__)
+
+_MAX_DEBATE_HISTORY_CHARS = 12000
+
+
+def _truncate_history(text: str, max_chars: int = _MAX_DEBATE_HISTORY_CHARS) -> str:
+    """Keep only the most recent portion of debate history to prevent token blowup."""
+    if len(text) <= max_chars:
+        return text
+    return "[earlier rounds truncated]\n" + text[-max_chars:]
 
 
 _ANALYST_SYSTEM_PREFIX = (
@@ -44,10 +54,12 @@ _ANALYST_SYSTEM_PREFIX = (
 
 def create_crypto_technical_analyst(llm, crypto_tools: list):
     def node(state):
-        current_date = state["trade_date"]
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+        filtered = filter_state_for_read(state, "technical_analyst")
+        current_date = filtered.get("trade_date", "")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
         if not tools:
             raise ValueError("No technical analysis tools found in crypto_tools")
@@ -78,10 +90,9 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(filtered.get("messages", []))
 
         report = result.content or ""
-        from tradingagents.agents.utils.state_filter import validate_state_write
         return validate_state_write({"messages": [result], "market_report": report}, "technical_analyst")
 
     return node
@@ -89,10 +100,12 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
 
 def create_crypto_derivatives_analyst(llm, crypto_tools: list):
     def node(state):
-        current_date = state["trade_date"]
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+        filtered = filter_state_for_read(state, "derivatives_analyst")
+        current_date = filtered.get("trade_date", "")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         # Prefer the combined derivatives tool; fall back to individual tools
         combined = [t for t in crypto_tools if t.name == "get_crypto_derivatives_data"]
         if combined:
@@ -129,10 +142,9 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(filtered.get("messages", []))
 
         report = result.content or ""
-        from tradingagents.agents.utils.state_filter import validate_state_write
         return validate_state_write({"messages": [result], "derivatives_report": report}, "derivatives_analyst")
 
     return node
@@ -140,10 +152,12 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
 
 def create_crypto_news_analyst(llm):
     def node(state):
-        current_date = state["trade_date"]
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+        filtered = filter_state_for_read(state, "news_analyst")
+        current_date = filtered.get("trade_date", "")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         tools = [get_news, get_global_news]
 
         system_message = (
@@ -171,10 +185,9 @@ def create_crypto_news_analyst(llm):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(filtered.get("messages", []))
 
         report = result.content or ""
-        from tradingagents.agents.utils.state_filter import validate_state_write
         return validate_state_write({"messages": [result], "news_report": report}, "news_analyst")
 
     return node
@@ -182,10 +195,12 @@ def create_crypto_news_analyst(llm):
 
 def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
     def node(state):
-        current_date = state["trade_date"]
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+        filtered = filter_state_for_read(state, "fundamentals_analyst")
+        current_date = filtered.get("trade_date", "")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         tools = [t for t in coingecko_tools if t.name == "get_crypto_market_data"]
         if not tools:
             raise ValueError("No market data tool found in coingecko_tools")
@@ -219,10 +234,9 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(filtered.get("messages", []))
 
         report = result.content or ""
-        from tradingagents.agents.utils.state_filter import validate_state_write
         return validate_state_write({"messages": [result], "crypto_fundamentals_report": report}, "fundamentals_analyst")
 
     return node
@@ -230,10 +244,12 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
 
 def create_crypto_social_analyst(llm, coingecko_tools: list):
     def node(state):
-        current_date = state["trade_date"]
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        price_context = state.get("current_price_context", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+        filtered = filter_state_for_read(state, "social_analyst")
+        current_date = filtered.get("trade_date", "")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         community_tools = [t for t in coingecko_tools if t.name == "get_crypto_community_data"]
         tools = community_tools + [get_news]
 
@@ -267,10 +283,9 @@ def create_crypto_social_analyst(llm, coingecko_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(filtered.get("messages", []))
 
         report = result.content or ""
-        from tradingagents.agents.utils.state_filter import validate_state_write
         return validate_state_write({"messages": [result], "sentiment_report": report}, "social_analyst")
 
     return node
@@ -280,12 +295,15 @@ def create_confluence_checker(llm):
     """Agent that cross-checks all analyst reports for contradictions and consensus."""
 
     def node(state):
-        market_report = state.get("market_report", "")
-        news_report = state.get("news_report", "")
-        derivatives_report = state.get("derivatives_report", "")
-        crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
-        sentiment_report = state.get("sentiment_report", "")
-        price_context = state.get("current_price_context", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+        filtered = filter_state_for_read(state, "confluence_checker")
+        crypto_interval = filtered.get("crypto_interval")
+        market_report = wrap_external_data(filtered.get("market_report", ""), "technical_analyst")
+        news_report = wrap_external_data(filtered.get("news_report", ""), "news_analyst")
+        derivatives_report = wrap_external_data(filtered.get("derivatives_report", ""), "derivatives_analyst")
+        crypto_fundamentals_report = wrap_external_data(filtered.get("crypto_fundamentals_report", ""), "fundamentals_analyst")
+        sentiment_report = wrap_external_data(filtered.get("sentiment_report", ""), "social_analyst")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
 
         reports = ""
         if market_report:
@@ -299,12 +317,21 @@ def create_confluence_checker(llm):
         if sentiment_report:
             reports += f"\n## Social Sentiment Report\n{sentiment_report}"
 
+        tf_note = ""
+        if crypto_interval:
+            tf_note = (
+                f"\n\nTimeframe context: The user is trading on a **{crypto_interval}** chart. "
+                "Weight signals accordingly — sentiment and news matter more for short-term trades, "
+                "fundamentals and on-chain metrics matter more for longer timeframes.\n"
+            )
+
         prompt = (
             "You are a Confluence Checker. Your job is to cross-validate the analyst reports below "
             "and produce a structured consensus summary.\n\n"
             "Read each analyst report carefully and identify the directional lean from the "
             "evidence presented (bullish, bearish, or neutral).\n\n"
-            f"Current price context:\n{price_context}\n\n"
+            f"Current price context:\n{price_context}\n"
+            f"{tf_note}\n"
             f"Analyst Reports:{reports}\n\n"
             "Produce a structured summary with these sections:\n"
             "1. **ANALYST LEANS**: For each analyst, state the directional lean you inferred from their report\n"
@@ -345,17 +372,18 @@ def create_crypto_bull_researcher(llm):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "bull_researcher")
-        investment_debate_state = state["investment_debate_state"]
-        history = investment_debate_state.get("history", "")
+        investment_debate_state = filtered.get("investment_debate_state", {})
+        history = _truncate_history(investment_debate_state.get("history", ""))
         bull_history = investment_debate_state.get("bull_history", "")
         current_response = investment_debate_state.get("current_response", "")
 
-        market_report = filtered.get("market_report", "")
-        news_report = filtered.get("news_report", "")
-        derivatives_report = filtered.get("derivatives_report", "")
-        crypto_fundamentals_report = filtered.get("crypto_fundamentals_report", "")
-        sentiment_report = filtered.get("sentiment_report", "")
-        price_context = filtered.get("current_price_context", "")
+
+        market_report = wrap_external_data(filtered.get("market_report", ""), "technical_analyst")
+        news_report = wrap_external_data(filtered.get("news_report", ""), "news_analyst")
+        derivatives_report = wrap_external_data(filtered.get("derivatives_report", ""), "derivatives_analyst")
+        crypto_fundamentals_report = wrap_external_data(filtered.get("crypto_fundamentals_report", ""), "fundamentals_analyst")
+        sentiment_report = wrap_external_data(filtered.get("sentiment_report", ""), "social_analyst")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
 
         prompt = f"""You are a Bull Researcher advocating for a long position in this crypto asset. Build an evidence-based case emphasizing upside potential, favorable market structure, and positive catalysts.
 
@@ -399,17 +427,18 @@ def create_crypto_bear_researcher(llm):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "bear_researcher")
-        investment_debate_state = state["investment_debate_state"]
-        history = investment_debate_state.get("history", "")
+        investment_debate_state = filtered.get("investment_debate_state", {})
+        history = _truncate_history(investment_debate_state.get("history", ""))
         bear_history = investment_debate_state.get("bear_history", "")
         current_response = investment_debate_state.get("current_response", "")
 
-        market_report = filtered.get("market_report", "")
-        news_report = filtered.get("news_report", "")
-        derivatives_report = filtered.get("derivatives_report", "")
-        crypto_fundamentals_report = filtered.get("crypto_fundamentals_report", "")
-        sentiment_report = filtered.get("sentiment_report", "")
-        price_context = filtered.get("current_price_context", "")
+
+        market_report = wrap_external_data(filtered.get("market_report", ""), "technical_analyst")
+        news_report = wrap_external_data(filtered.get("news_report", ""), "news_analyst")
+        derivatives_report = wrap_external_data(filtered.get("derivatives_report", ""), "derivatives_analyst")
+        crypto_fundamentals_report = wrap_external_data(filtered.get("crypto_fundamentals_report", ""), "fundamentals_analyst")
+        sentiment_report = wrap_external_data(filtered.get("sentiment_report", ""), "social_analyst")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
 
         prompt = f"""You are a Bear Researcher making the case against a long position in this crypto asset. Present an evidence-based argument emphasizing downside risks, structural weaknesses, and negative indicators.
 
@@ -464,10 +493,12 @@ def create_crypto_research_manager(llm):
     structured_llm = bind_structured(llm, ResearchPlan, "Crypto Research Manager")
 
     def node(state):
-        crypto_interval = state.get("crypto_interval")
-        instrument_context = build_instrument_context(state["company_of_interest"], crypto_interval)
-        investment_debate_state = state["investment_debate_state"]
-        history = investment_debate_state.get("history", "")
+        from tradingagents.agents.utils.state_filter import filter_state_for_read
+        filtered = filter_state_for_read(state, "research_manager")
+        crypto_interval = filtered.get("crypto_interval")
+        instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
+        investment_debate_state = filtered.get("investment_debate_state", {})
+        history = _truncate_history(investment_debate_state.get("history", ""))
 
         prompt = f"""As the Crypto Research Manager and debate facilitator, critically evaluate the bull/bear debate and deliver a clear, actionable investment plan for the crypto trader.
 
@@ -522,14 +553,15 @@ def create_crypto_trader(llm, max_leverage: int = 20):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "trader")
-        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
-        price_context = filtered.get("current_price_context", "")
-        investment_plan = filtered.get("investment_plan", "")
-        technical_levels = filtered.get("technical_levels_summary", "Not available")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
+        raw_investment_plan = filtered.get("investment_plan", "")
+        investment_plan = wrap_external_data(raw_investment_plan, "research_manager")
+        technical_levels = wrap_external_data(filtered.get("technical_levels_summary", "Not available"), "technical_analyst")
 
-        if not investment_plan or not investment_plan.strip():
+        if not raw_investment_plan or not raw_investment_plan.strip():
             logger.warning(
                 "CryptoTrader: no investment_plan received for %s; "
                 "defaulting to No Trade.",
@@ -640,16 +672,16 @@ def create_crypto_risk_bull_debater(llm):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "risk_bull_debater")
-        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
-        history = risk_debate_state.get("history", "")
-        trader_decision = filtered.get("trader_investment_plan", "")
-        price_context = filtered.get("current_price_context", "")
+        risk_debate_state = filtered.get("risk_debate_state", {})
+        history = _truncate_history(risk_debate_state.get("history", ""))
+        trader_decision = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         market_microstructure = filtered.get("market_microstructure", "")
         bear_response = risk_debate_state.get("current_conservative_response", "")
 
         micro_context = ""
         if market_microstructure:
-            micro_context = f"\nMarket microstructure data: {market_microstructure}\n"
+            micro_context = f"\nMarket microstructure data: {wrap_external_data(str(market_microstructure), 'market_microstructure')}\n"
 
         prompt = (
             f"As the Bullish Risk Analyst for crypto futures, your role is to identify "
@@ -693,16 +725,16 @@ def create_crypto_risk_bear_debater(llm):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "risk_bear_debater")
-        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
-        history = risk_debate_state.get("history", "")
-        trader_decision = filtered.get("trader_investment_plan", "")
-        price_context = filtered.get("current_price_context", "")
+        risk_debate_state = filtered.get("risk_debate_state", {})
+        history = _truncate_history(risk_debate_state.get("history", ""))
+        trader_decision = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         market_microstructure = filtered.get("market_microstructure", "")
         bull_response = risk_debate_state.get("current_aggressive_response", "")
 
         micro_context = ""
         if market_microstructure:
-            micro_context = f"\nMarket microstructure data: {market_microstructure}\n"
+            micro_context = f"\nMarket microstructure data: {wrap_external_data(str(market_microstructure), 'market_microstructure')}\n"
 
         prompt = (
             f"As the Bearish Risk Analyst for crypto futures, identify specific downside "
@@ -757,17 +789,17 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "portfolio_manager")
-        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
-        price_context = filtered.get("current_price_context", "")
-        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
-        history = risk_debate_state.get("history", "")
-        research_plan = filtered.get("investment_plan", "")
-        trader_plan = filtered.get("trader_investment_plan", "")
-        risk_manager_result = filtered.get("risk_manager_result", "")
+        price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
+        risk_debate_state = filtered.get("risk_debate_state", {})
+        history = _truncate_history(risk_debate_state.get("history", ""))
+        research_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
+        trader_plan = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        risk_manager_result = wrap_external_data(filtered.get("risk_manager_result", ""), "risk_manager")
 
-        past_context = filtered.get("past_context", "")
+        past_context = wrap_external_data(filtered.get("past_context", ""), "past_context")
         lessons_line = (
             f"- Lessons from prior decisions:\n{past_context}\n" if past_context else ""
         )
