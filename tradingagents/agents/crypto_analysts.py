@@ -748,6 +748,11 @@ def create_crypto_risk_bear_debater(llm):
 
 
 def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
+    from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
+    from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
+
+    structured_llm = bind_structured(llm, PortfolioDecision, "Crypto PM")
+
     def node(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
@@ -791,25 +796,31 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             f"{get_language_instruction()}"
         )
 
-        response = llm.invoke(prompt)
-        final_decision = response.content
+        final_decision, decision_obj = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_pm_decision,
+            "Crypto PM",
+        )
 
         new_risk_debate_state = {
             "judge_decision": final_decision,
-            "history": risk_debate_state["history"],
-            "aggressive_history": risk_debate_state["aggressive_history"],
-            "conservative_history": risk_debate_state["conservative_history"],
-            "neutral_history": risk_debate_state["neutral_history"],
+            "history": risk_debate_state.get("history", ""),
+            "aggressive_history": risk_debate_state.get("aggressive_history", ""),
+            "conservative_history": risk_debate_state.get("conservative_history", ""),
+            "neutral_history": risk_debate_state.get("neutral_history", ""),
             "latest_speaker": "Judge",
-            "current_aggressive_response": risk_debate_state["current_aggressive_response"],
-            "current_conservative_response": risk_debate_state["current_conservative_response"],
-            "current_neutral_response": risk_debate_state["current_neutral_response"],
-            "count": risk_debate_state["count"],
+            "current_aggressive_response": risk_debate_state.get("current_aggressive_response", ""),
+            "current_conservative_response": risk_debate_state.get("current_conservative_response", ""),
+            "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
+            "count": risk_debate_state.get("count", 0),
         }
 
         return validate_state_write({
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_decision,
+            "_pm_signal_data": decision_obj,
         }, "portfolio_manager")
 
     return node

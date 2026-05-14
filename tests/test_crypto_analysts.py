@@ -208,6 +208,9 @@ class TestCryptoPortfolioManager:
         from tradingagents.agents.crypto_analysts import create_crypto_portfolio_manager
         llm = MagicMock()
         llm.invoke.return_value = AIMessage(content="Final: Buy BTC with 3x leverage")
+        structured = MagicMock()
+        structured.invoke.return_value = AIMessage(content="Final: Buy BTC with 3x leverage")
+        llm.with_structured_output.return_value = structured
         node = create_crypto_portfolio_manager(llm)
         state = _base_state()
         state["investment_plan"] = "Buy BTC"
@@ -215,17 +218,21 @@ class TestCryptoPortfolioManager:
         state["risk_debate_state"]["history"] = "Bull: good. Bear: risky."
         result = node(state)
         assert "final_trade_decision" in result
+        assert "_pm_signal_data" in result
 
     def test_with_past_context(self):
         from tradingagents.agents.crypto_analysts import create_crypto_portfolio_manager
         llm = MagicMock()
         llm.invoke.return_value = AIMessage(content="Decision with lessons")
+        structured = MagicMock()
+        structured.invoke.return_value = AIMessage(content="Decision with lessons")
+        llm.with_structured_output.return_value = structured
         node = create_crypto_portfolio_manager(llm)
         state = _base_state()
         state["past_context"] = "lost money last time"
         state["risk_debate_state"]["history"] = "debate"
         result = node(state)
-        assert result["final_trade_decision"] == "Decision with lessons"
+        assert "Decision with lessons" in result["final_trade_decision"]
 
 
 class TestCryptoTechnicalAnalystNoTools:
