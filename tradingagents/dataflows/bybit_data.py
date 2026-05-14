@@ -1007,3 +1007,347 @@ def get_bybit_derivatives_summary(
         parts.append(f"\n## Price Changes\nUnavailable: {exc}")
 
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Multi-Timeframe Analysis (F4)
+# ---------------------------------------------------------------------------
+
+_HIGHER_TF_MAP: dict[str, str | None] = {
+    "1": "60",
+    "3": "60",
+    "5": "60",
+    "15": "240",
+    "30": "240",
+    "60": "240",
+    "240": "D",
+    "D": "W",
+    "W": None,
+}
+
+
+def get_higher_timeframe(interval: str) -> str | None:
+    return _HIGHER_TF_MAP.get(str(interval))
+
+
+def _parse_kline_csv(csv_text: str) -> pd.DataFrame:
+    lines = csv_text.strip().split("\n")
+    data_lines = [l for l in lines if not l.startswith("[")]
+    csv_str = "\n".join(data_lines)
+    df = pd.read_csv(io.StringIO(csv_str))
+    for col in ("open", "high", "low", "close", "volume"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.sort_values("timestamp").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Order Book Depth (F7)
+# ---------------------------------------------------------------------------
+
+def get_bybit_orderbook(
+    symbol: str,
+    depth: int = 25,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict:
+    symbol = normalize_bybit_symbol(symbol)
+    cache_key = ("orderbook", symbol, depth)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    result = _bybit_request(
+        "/v5/market/orderbook",
+        {"category": "linear", "symbol": symbol, "limit": min(depth, 200)},
+        cache_key=cache_key,
+        cache=None,
+        limiter=limiter,
+        circuit_breaker=circuit_breaker,
+        deadline=time.monotonic() + 10,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
+
+    bids = [(float(p), float(q)) for p, q in result.get("b", [])]
+    asks = [(float(p), float(q)) for p, q in result.get("a", [])]
+
+    best_bid = bids[0][0] if bids else 0
+    best_ask = asks[0][0] if asks else 0
+    mid = (best_bid + best_ask) / 2 if best_bid and best_ask else 0
+    spread_bps = ((best_ask - best_bid) / mid * 10000) if mid else 0
+
+    bid_vol = sum(q for _, q in bids)
+    ask_vol = sum(q for _, q in asks)
+    total_vol = bid_vol + ask_vol
+    imbalance_ratio = (bid_vol - ask_vol) / total_vol if total_vol else 0
+
+    wall_levels = []
+    if bids:
+        avg_bid_size = bid_vol / len(bids)
+        wall_levels += [{"side": "bid", "price": p, "size": q}
+                        for p, q in bids if q > avg_bid_size * 3]
+    if asks:
+        avg_ask_size = ask_vol / len(asks)
+        wall_levels += [{"side": "ask", "price": p, "size": q}
+                        for p, q in asks if q > avg_ask_size * 3]
+
+    out = {
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "spread_bps": round(spread_bps, 2),
+        "imbalance_ratio": round(imbalance_ratio, 4),
+        "bid_depth": round(bid_vol, 4),
+        "ask_depth": round(ask_vol, 4),
+        "wall_levels": wall_levels[:5],
+    }
+    if cache is not None:
+        cache[cache_key] = out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Volatility Metrics (F7)
+# ---------------------------------------------------------------------------
+
+import numpy as np
+
+
+def get_volatility_metrics(kline_csv: str, lookback: int = 90) -> dict:
+    df = _parse_kline_csv(kline_csv)
+    if len(df) < 14:
+        return {"atr_14": None, "rv_24h": None, "rv_7d": None,
+                "bb_width": None, "volatility_regime": "Normal"}
+
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr_14 = tr.rolling(14).mean().iloc[-1]
+
+    log_ret = np.log(close / close.shift(1)).dropna()
+    rv_24h = float(log_ret.tail(24).std() * np.sqrt(365 * 24)) if len(log_ret) >= 24 else None
+    rv_7d = float(log_ret.tail(168).std() * np.sqrt(365 * 24)) if len(log_ret) >= 168 else None
+
+    sma_20 = close.rolling(20).mean()
+    std_20 = close.rolling(20).std()
+    bb_upper = sma_20 + 2 * std_20
+    bb_lower = sma_20 - 2 * std_20
+    bb_width = float((bb_upper.iloc[-1] - bb_lower.iloc[-1]) / sma_20.iloc[-1]) if sma_20.iloc[-1] else None
+
+    lb = min(lookback, len(tr) - 14)
+    if lb >= 14:
+        atr_history = tr.rolling(14).mean().dropna().tail(lb)
+        pctl = atr_history.rank(pct=True).iloc[-1] if len(atr_history) > 0 else 0.5
+    else:
+        pctl = 0.5
+
+    if pctl < 0.25:
+        regime = "Low"
+    elif pctl > 0.75:
+        regime = "High"
+    else:
+        regime = "Normal"
+
+    return {
+        "atr_14": round(float(atr_14), 4) if pd.notna(atr_14) else None,
+        "rv_24h": round(rv_24h, 4) if rv_24h else None,
+        "rv_7d": round(rv_7d, 4) if rv_7d else None,
+        "bb_width": round(bb_width, 4) if bb_width else None,
+        "volatility_regime": regime,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Market Regime (F7)
+# ---------------------------------------------------------------------------
+
+def get_market_regime(kline_csv: str) -> dict:
+    df = _parse_kline_csv(kline_csv)
+    if len(df) < 200:
+        return {"regime": "Unknown", "trend_direction": "Unknown",
+                "trend_strength": 0, "adx": None,
+                "ema_20": None, "ema_50": None, "ema_200": None}
+
+    close = df["close"]
+    ema_20 = close.ewm(span=20).mean().iloc[-1]
+    ema_50 = close.ewm(span=50).mean().iloc[-1]
+    ema_200 = close.ewm(span=200).mean().iloc[-1]
+
+    high, low = df["high"], df["low"]
+    plus_dm = (high - high.shift(1)).clip(lower=0)
+    minus_dm = (low.shift(1) - low).clip(lower=0)
+    mask = plus_dm > minus_dm
+    plus_dm = plus_dm.where(mask, 0)
+    minus_dm = minus_dm.where(~mask, 0)
+
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+
+    atr_14 = tr.ewm(span=14).mean()
+    plus_di = 100 * (plus_dm.ewm(span=14).mean() / atr_14)
+    minus_di = 100 * (minus_dm.ewm(span=14).mean() / atr_14)
+    dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1))
+    adx = dx.ewm(span=14).mean().iloc[-1]
+
+    if adx > 25:
+        regime = "Trending"
+    elif adx < 20:
+        regime = "Ranging"
+    else:
+        regime = "Transitional"
+
+    if ema_20 > ema_50 > ema_200:
+        direction = "Bullish"
+        strength = min(10, int((ema_20 / ema_200 - 1) * 500))
+    elif ema_20 < ema_50 < ema_200:
+        direction = "Bearish"
+        strength = min(10, int((1 - ema_20 / ema_200) * 500))
+    else:
+        direction = "Mixed"
+        strength = 3
+
+    return {
+        "regime": regime,
+        "trend_direction": direction,
+        "trend_strength": max(1, strength),
+        "adx": round(float(adx), 2) if pd.notna(adx) else None,
+        "ema_20": round(float(ema_20), 2),
+        "ema_50": round(float(ema_50), 2),
+        "ema_200": round(float(ema_200), 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Liquidation Price Estimation (F7)
+# ---------------------------------------------------------------------------
+
+def estimate_liquidation_price(
+    entry: float, leverage: int, side: str,
+    maint_margin_rate: float = 0.005,
+) -> dict:
+    if leverage <= 0 or entry <= 0:
+        return {"liq_price": None, "distance_pct": None}
+
+    if side.lower() in ("long", "buy"):
+        liq = entry * (1 - 1 / leverage + maint_margin_rate)
+        distance_pct = (entry - liq) / entry * 100
+    else:
+        liq = entry * (1 + 1 / leverage - maint_margin_rate)
+        distance_pct = (liq - entry) / entry * 100
+
+    return {
+        "liq_price": round(liq, 4),
+        "distance_pct": round(distance_pct, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Funding Rate Cost Projection (F7)
+# ---------------------------------------------------------------------------
+
+def project_funding_cost(
+    funding_csv: str,
+    hold_intervals: int = 21,
+) -> dict:
+    lines = funding_csv.strip().split("\n")
+    rates: list[float] = []
+    for line in lines[1:]:
+        parts = line.split(",")
+        if len(parts) >= 2:
+            try:
+                rates.append(float(parts[1]))
+            except (ValueError, IndexError):
+                continue
+
+    if not rates:
+        return {"total_rate": None, "annualized_pct": None,
+                "break_even_move_pct": None, "severity": "unknown"}
+
+    recent_24h = rates[-3:] if len(rates) >= 3 else rates
+    older = rates[:-3] if len(rates) > 3 else []
+    if older:
+        weighted_avg = (sum(recent_24h) * 2 + sum(older)) / (len(recent_24h) * 2 + len(older))
+    else:
+        weighted_avg = sum(recent_24h) / len(recent_24h)
+
+    total_rate = weighted_avg * hold_intervals
+    annualized_pct = weighted_avg * 3 * 365 * 100
+
+    if abs(weighted_avg * 100) > 0.1:
+        severity = "extreme"
+    elif abs(weighted_avg * 100) > 0.03:
+        severity = "elevated"
+    else:
+        severity = "normal"
+
+    return {
+        "total_rate": round(total_rate, 6),
+        "annualized_pct": round(annualized_pct, 2),
+        "break_even_move_pct": round(abs(total_rate) * 100, 4),
+        "severity": severity,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Market Microstructure Aggregation (F7)
+# ---------------------------------------------------------------------------
+
+def get_market_microstructure(
+    symbol: str,
+    kline_csv: str | None = None,
+    funding_csv: str | None = None,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict:
+    micro: dict = {}
+
+    try:
+        ob = get_bybit_orderbook(
+            symbol, cache=cache, limiter=limiter,
+            circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        micro["orderbook"] = ob
+    except Exception as exc:
+        logger.warning("Microstructure: orderbook fetch failed: %s", exc)
+        micro["orderbook"] = None
+
+    if kline_csv:
+        try:
+            micro["volatility"] = get_volatility_metrics(kline_csv)
+        except Exception as exc:
+            logger.warning("Microstructure: volatility calc failed: %s", exc)
+            micro["volatility"] = None
+
+        try:
+            micro["regime"] = get_market_regime(kline_csv)
+        except Exception as exc:
+            logger.warning("Microstructure: regime calc failed: %s", exc)
+            micro["regime"] = None
+    else:
+        micro["volatility"] = None
+        micro["regime"] = None
+
+    if funding_csv:
+        try:
+            micro["funding_projection"] = project_funding_cost(funding_csv)
+        except Exception as exc:
+            logger.warning("Microstructure: funding projection failed: %s", exc)
+            micro["funding_projection"] = None
+    else:
+        micro["funding_projection"] = None
+
+    return micro
