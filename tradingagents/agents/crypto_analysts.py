@@ -282,7 +282,7 @@ def create_confluence_checker(llm):
     def node(state):
         market_report = state.get("market_report", "")
         news_report = state.get("news_report", "")
-        derivatives_report = state.get("derivatives_report", state.get("fundamentals_report", ""))
+        derivatives_report = state.get("derivatives_report", "")
         crypto_fundamentals_report = state.get("crypto_fundamentals_report", "")
         sentiment_report = state.get("sentiment_report", "")
         price_context = state.get("current_price_context", "")
@@ -352,7 +352,7 @@ def create_crypto_bull_researcher(llm):
 
         market_report = filtered.get("market_report", "")
         news_report = filtered.get("news_report", "")
-        derivatives_report = filtered.get("derivatives_report", state.get("fundamentals_report", ""))
+        derivatives_report = filtered.get("derivatives_report", "")
         crypto_fundamentals_report = filtered.get("crypto_fundamentals_report", "")
         sentiment_report = filtered.get("sentiment_report", "")
         price_context = filtered.get("current_price_context", "")
@@ -406,7 +406,7 @@ def create_crypto_bear_researcher(llm):
 
         market_report = filtered.get("market_report", "")
         news_report = filtered.get("news_report", "")
-        derivatives_report = filtered.get("derivatives_report", state.get("fundamentals_report", ""))
+        derivatives_report = filtered.get("derivatives_report", "")
         crypto_fundamentals_report = filtered.get("crypto_fundamentals_report", "")
         sentiment_report = filtered.get("sentiment_report", "")
         price_context = filtered.get("current_price_context", "")

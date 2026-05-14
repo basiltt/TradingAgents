@@ -1,18 +1,17 @@
+import logging
 import types
 
-_FEATURE_FLAGS = {
+logger = logging.getLogger(__name__)
+
+FEATURE_FLAGS = types.MappingProxyType({
     "use_information_barriers": True,
     "use_risk_manager": True,
     "use_multi_timeframe": True,
     "use_structured_pm_output": True,
-}
-FEATURE_FLAGS = types.MappingProxyType(_FEATURE_FLAGS)
+})
 
 
 def is_enabled(flag_name: str) -> bool:
-    import logging
-
-    logger = logging.getLogger(__name__)
     if flag_name not in FEATURE_FLAGS:
         logger.warning("Unknown feature flag: %s", flag_name)
         return False

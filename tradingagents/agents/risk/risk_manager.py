@@ -65,7 +65,7 @@ def create_risk_manager(llm, max_leverage: int = 20):
 
     def node(state):
         filtered = filter_state_for_read(state, "risk_manager")
-        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
         trader_plan = filtered.get("trader_investment_plan", "")
@@ -111,18 +111,11 @@ def create_risk_manager(llm, max_leverage: int = 20):
                     update={"adjusted_leverage": min(obj.adjusted_leverage, cfg_max_leverage)}
                 )
         else:
-            if "approve" in text.lower() and "reject" not in text.lower():
-                overall = RiskVerdict.MODIFY
-                logger.warning(
-                    "Risk Manager: structured parsing failed; "
-                    "freetext mentions 'approve' but defaulting to MODIFY for safety."
-                )
-            else:
-                overall = RiskVerdict.REJECT
-                logger.warning(
-                    "Risk Manager: structured parsing failed; "
-                    "defaulting to REJECT (fail-closed)."
-                )
+            overall = RiskVerdict.REJECT
+            logger.warning(
+                "Risk Manager: structured parsing failed; "
+                "defaulting to REJECT (fail-closed)."
+            )
 
         updates = {
             "messages": [AIMessage(content=text)],

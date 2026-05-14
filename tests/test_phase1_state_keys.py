@@ -143,3 +143,32 @@ class TestReadableWritableConsistency:
     def test_trader_no_confluence(self):
         assert "confluence_summary" not in READABLE_KEYS["trader"]
         assert "market_report" not in READABLE_KEYS["trader"]
+
+
+class TestStateFilterFlagDisabled:
+    def test_read_returns_full_state_when_disabled(self, monkeypatch):
+        from tradingagents.agents.utils import state_filter
+        monkeypatch.setattr(state_filter, "is_enabled", lambda flag: False)
+        state = {"company_of_interest": "BTCUSDT", "secret_key": "hidden"}
+        result = state_filter.filter_state_for_read(state, "trader")
+        assert result is state
+
+    def test_write_returns_all_keys_when_disabled(self, monkeypatch):
+        from tradingagents.agents.utils import state_filter
+        monkeypatch.setattr(state_filter, "is_enabled", lambda flag: False)
+        updates = {"trader_investment_plan": "x", "forbidden": "y"}
+        result = state_filter.validate_state_write(updates, "trader")
+        assert result is updates
+
+
+class TestStateFilterViolationLogging:
+    def test_write_violation_logged(self, caplog):
+        import logging
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        with caplog.at_level(logging.ERROR):
+            result = validate_state_write(
+                {"trader_investment_plan": "ok", "hack": "bad"},
+                "trader",
+            )
+        assert "hack" not in result
+        assert any("hack" in record.message for record in caplog.records)

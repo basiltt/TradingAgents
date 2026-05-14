@@ -19,6 +19,14 @@ def _compliance_router(state) -> str:
     return "blocked"
 
 
+def _stock_compliance_router(state) -> str:
+    """Stock workflow compliance router — routes to risk_debate (no Risk Manager)."""
+    verdict = state.get("_compliance_verdict")
+    if verdict in ("Pass", "Flag"):
+        return "risk_debate"
+    return "blocked"
+
+
 def _risk_manager_router(state) -> str:
     """Route based on risk manager verdict: fail-closed — only Approve/Modify proceed."""
     verdict = state.get("_risk_manager_verdict")
@@ -222,7 +230,7 @@ class GraphSetup:
             workflow.add_edge("Trader", "Compliance Officer")
             workflow.add_conditional_edges(
                 "Compliance Officer",
-                _compliance_router,
+                _stock_compliance_router,
                 {
                     "risk_debate": "Parallel Risk R1",
                     "blocked": "Blocked Trade",
