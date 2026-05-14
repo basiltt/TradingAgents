@@ -70,4 +70,4 @@ def invoke_structured_or_freetext(
             )
 
     response = plain_llm.invoke(prompt)
-    return response.content, None
+    return response.content or "", None

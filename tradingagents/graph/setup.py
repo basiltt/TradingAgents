@@ -76,8 +76,30 @@ def _build_microstructure_enrichment_node():
         if not symbol:
             return {}
         try:
-            from tradingagents.dataflows.bybit_data import get_market_microstructure
-            micro = get_market_microstructure(symbol)
+            from tradingagents.dataflows.bybit_data import (
+                get_market_microstructure,
+                get_bybit_klines,
+                get_bybit_funding_rates,
+            )
+            import time as _time
+            now_ms = int(_time.time() * 1000)
+            day_ago = now_ms - 24 * 60 * 60 * 1000
+
+            kline_csv = None
+            try:
+                kline_csv = get_bybit_klines(symbol, "60", day_ago, now_ms)
+            except Exception:
+                pass
+
+            funding_csv = None
+            try:
+                funding_csv = get_bybit_funding_rates(symbol)
+            except Exception:
+                pass
+
+            micro = get_market_microstructure(
+                symbol, kline_csv=kline_csv, funding_csv=funding_csv,
+            )
             if micro:
                 return {"market_microstructure": micro}
         except Exception as exc:

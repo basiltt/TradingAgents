@@ -98,6 +98,7 @@ READABLE_KEYS: dict[str, list[str]] = {
     "execution_monitor": [
         "company_of_interest", "crypto_interval",
         "final_trade_decision", "current_price_context",
+        "trader_investment_plan", "compliance_result",
     ],
 }
 

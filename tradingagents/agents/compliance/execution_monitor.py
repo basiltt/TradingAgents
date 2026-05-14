@@ -61,7 +61,7 @@ def create_execution_monitor(llm):
         )
 
         response = llm.invoke(prompt)
-        notes = response.content
+        notes = response.content or ""
 
         updated_decision = (
             final_decision
