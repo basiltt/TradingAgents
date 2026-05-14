@@ -624,7 +624,15 @@ def get_bybit_indicators(
     df = pd.read_csv(io.StringIO(kline_csv))
     df.columns = [c.lower() for c in df.columns]
 
-    for col in ["open", "high", "low", "close", "volume"]:
+    required = ["open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in df.columns]
+    if missing or len(df) == 0:
+        result = f"No kline data available for {symbol} (missing columns: {missing}, rows: {len(df)})."
+        if cache is not None:
+            cache[cache_key] = result
+        return result
+
+    for col in required:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["close"])
 

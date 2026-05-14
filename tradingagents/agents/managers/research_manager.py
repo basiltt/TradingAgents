@@ -45,6 +45,7 @@ Commit to a clear stance based on the weight of evidence. Hold is a fully valid 
             prompt,
             render_research_plan,
             "Research Manager",
+            schema=ResearchPlan,
         )
 
         new_investment_debate_state = {

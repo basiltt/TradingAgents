@@ -82,6 +82,7 @@ def create_compliance_officer(llm, max_leverage: int = 20):
             prompt,
             render_compliance_check,
             "Compliance Officer",
+            schema=ComplianceCheck,
         )
 
         if obj is not None:

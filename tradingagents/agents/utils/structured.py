@@ -1,23 +1,24 @@
 """Shared helpers for invoking an agent with structured output and a graceful fallback.
 
-The Portfolio Manager, Trader, and Research Manager all follow the same
-canonical pattern:
+The framework's primary artifact is still prose: each agent's natural-language
+reasoning is what users read in the saved markdown reports and what the
+downstream agents read as context.  Structured output is layered onto the
+three decision-making agents (Research Manager, Trader, Portfolio Manager)
+so that:
 
-1. At agent creation, wrap the LLM with ``with_structured_output(Schema)``
-   so the model returns a typed Pydantic instance. If the provider does
-   not support structured output (rare; mostly older Ollama models), the
-   wrap is skipped and the agent uses free-text generation instead.
-2. At invocation, run the structured call and render the result back to
-   markdown. If the structured call itself fails for any reason
-   (malformed JSON from a weak model, transient provider issue), fall
-   back to a plain ``llm.invoke`` so the pipeline never blocks.
-
-Centralising the pattern here keeps the agent factories small and ensures
-all three agents log the same warnings when fallback fires.
+- Their outputs follow consistent section headers across runs and providers
+- Each provider's native structured-output mode is used (json_schema for
+  OpenAI/xAI/Anthropic, function-calling as fallback, tool-use for others)
+- Schema field descriptions become the model's output instructions, freeing
+  the prompt body to focus on context and the rating-scale guidance
+- A render helper turns the parsed Pydantic instance back into the same
+  markdown shape the rest of the system already consumes, so display,
+  memory log, and saved reports keep working unchanged
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Optional, TypeVar
 
@@ -28,21 +29,73 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+def _schema_instruction(schema: type[T]) -> str:
+    """Build a short JSON-schema reminder for the free-text fallback path.
+
+    Only used when structured output has already failed and we're falling
+    back to plain LLM invocation — gives the model a hint of the expected
+    output shape so the free-text response is at least semi-structured.
+    Not used on the structured path (the provider already handles schema
+    enforcement there).
+    """
+    try:
+        s = schema.model_json_schema()
+        fields = {}
+        for name, prop in s.get("properties", {}).items():
+            t = prop.get("type", prop.get("anyOf", "unknown"))
+            fields[name] = t
+        return (
+            "\n\nRespond with a structured analysis covering these fields:\n"
+            f"{json.dumps(fields, indent=2)}\n"
+        )
+    except Exception:
+        return ""
+
+
+def _augment_prompt(prompt: Any, hint: str) -> Any:
+    """Append a schema hint to the prompt, handling both str and message-list formats."""
+    if not hint:
+        return prompt
+    if isinstance(prompt, str):
+        return prompt + hint
+    if isinstance(prompt, list) and prompt:
+        last = prompt[-1]
+        if isinstance(last, dict) and "content" in last:
+            patched = list(prompt)
+            patched[-1] = {**last, "content": last["content"] + hint}
+            return patched
+    return prompt
+
+
 def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Optional[Any]:
     """Return ``llm.with_structured_output(schema)`` or ``None`` if unsupported.
 
-    Logs a warning when the binding fails so the user understands the agent
-    will use free-text generation for every call instead of one-shot fallback.
+    Tries ``method="json_schema"`` first (prevents tool-call hallucination by
+    forcing direct JSON output), then falls back to the provider default.
     """
-    try:
-        return llm.with_structured_output(schema)
-    except (NotImplementedError, AttributeError) as exc:
-        logger.warning(
-            "%s: provider does not support with_structured_output (%s); "
-            "falling back to free-text generation",
-            agent_name, exc,
-        )
-        return None
+    for method in ("json_schema", None):
+        try:
+            kwargs: dict[str, Any] = {}
+            if method:
+                kwargs["method"] = method
+            bound = llm.with_structured_output(schema, **kwargs)
+            if method:
+                logger.debug("%s: using method=%s for structured output", agent_name, method)
+            return bound
+        except (NotImplementedError, AttributeError, TypeError, ValueError) as exc:
+            if method:
+                logger.debug(
+                    "%s: method=%s not supported (%s), trying default",
+                    agent_name, method, exc,
+                )
+                continue
+            logger.warning(
+                "%s: provider does not support with_structured_output (%s); "
+                "falling back to free-text generation",
+                agent_name, exc,
+            )
+            return None
+    return None
 
 
 def invoke_structured_or_freetext(
@@ -51,6 +104,7 @@ def invoke_structured_or_freetext(
     prompt: Any,
     render: Callable[[T], str],
     agent_name: str,
+    schema: Optional[type[T]] = None,
 ) -> tuple[str, Optional[BaseModel]]:
     """Run the structured call and render to markdown; fall back to free-text on any failure.
 
@@ -69,5 +123,6 @@ def invoke_structured_or_freetext(
                 agent_name, exc,
             )
 
-    response = plain_llm.invoke(prompt)
+    schema_hint = _schema_instruction(schema) if schema else ""
+    response = plain_llm.invoke(_augment_prompt(prompt, schema_hint))
     return response.content, None

@@ -155,6 +155,7 @@ def create_trader(llm):
                 f"**Reasoning**: {d.reasoning}"
             ),
             "Trader-Direction",
+            schema=TraderDirection,
         )
 
         if direction_obj is not None:
@@ -195,6 +196,7 @@ def create_trader(llm):
             levels_messages,
             render_trader_proposal,
             "Trader-Levels",
+            schema=TraderProposal,
         )
 
         from tradingagents.agents.schemas import TraderAction

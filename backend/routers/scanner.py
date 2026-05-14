@@ -48,7 +48,8 @@ async def start_scan(request: Request, body: ScanRequest):
         )
 
     scan_config = body.model_dump()
-    logger.info("New scan request config: %s", scan_config)
+    import json as _json
+    print(f"[SCAN] New scan request config: {_json.dumps(scan_config, indent=2, default=str)}")
     try:
         scan_id = await request.app.state.scanner_service.start_scan(scan_config)
     except ScannerBusyError as e:
