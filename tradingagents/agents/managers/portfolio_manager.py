@@ -15,6 +15,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
 from tradingagents.agents.utils.state_filter import (
     filter_state_for_read,
     validate_state_write,
@@ -30,15 +31,15 @@ def create_portfolio_manager(llm):
 
     def portfolio_manager_node(state) -> dict:
         filtered = filter_state_for_read(state, "portfolio_manager")
-        company = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company, crypto_interval)
 
-        risk_debate_state = filtered.get("risk_debate_state", state.get("risk_debate_state", {}))
+        risk_debate_state = filtered.get("risk_debate_state", {})
         history = risk_debate_state.get("history", "")
-        research_plan = filtered.get("investment_plan", "")
-        trader_plan = filtered.get("trader_investment_plan", "")
-        risk_manager_result = filtered.get("risk_manager_result", "")
+        research_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
+        trader_plan = wrap_external_data(filtered.get("trader_investment_plan", ""), "trader")
+        risk_manager_result = wrap_external_data(filtered.get("risk_manager_result", ""), "risk_manager")
 
         past_context = filtered.get("past_context", "")
         lessons_line = (
@@ -86,15 +87,15 @@ Be decisive and ground every conclusion in specific evidence from the analysts. 
 
         new_risk_debate_state = {
             "judge_decision": final_trade_decision,
-            "history": risk_debate_state["history"],
-            "aggressive_history": risk_debate_state["aggressive_history"],
-            "conservative_history": risk_debate_state["conservative_history"],
-            "neutral_history": risk_debate_state["neutral_history"],
+            "history": risk_debate_state.get("history", ""),
+            "aggressive_history": risk_debate_state.get("aggressive_history", ""),
+            "conservative_history": risk_debate_state.get("conservative_history", ""),
+            "neutral_history": risk_debate_state.get("neutral_history", ""),
             "latest_speaker": "Judge",
-            "current_aggressive_response": risk_debate_state["current_aggressive_response"],
-            "current_conservative_response": risk_debate_state["current_conservative_response"],
-            "current_neutral_response": risk_debate_state["current_neutral_response"],
-            "count": risk_debate_state["count"],
+            "current_aggressive_response": risk_debate_state.get("current_aggressive_response", ""),
+            "current_conservative_response": risk_debate_state.get("current_conservative_response", ""),
+            "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
+            "count": risk_debate_state.get("count", 0),
         }
 
         updates = {

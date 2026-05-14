@@ -306,24 +306,25 @@ def create_confluence_checker(llm):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "confluence_checker")
         crypto_interval = filtered.get("crypto_interval")
-        market_report = wrap_external_data(filtered.get("market_report", ""), "technical_analyst")
-        news_report = wrap_external_data(filtered.get("news_report", ""), "news_analyst")
-        derivatives_report = wrap_external_data(filtered.get("derivatives_report", ""), "derivatives_analyst")
-        crypto_fundamentals_report = wrap_external_data(filtered.get("crypto_fundamentals_report", ""), "fundamentals_analyst")
-        sentiment_report = wrap_external_data(filtered.get("sentiment_report", ""), "social_analyst")
+
+        raw_market = filtered.get("market_report", "")
+        raw_news = filtered.get("news_report", "")
+        raw_derivatives = filtered.get("derivatives_report", "")
+        raw_fundamentals = filtered.get("crypto_fundamentals_report", "")
+        raw_sentiment = filtered.get("sentiment_report", "")
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
 
         reports = ""
-        if market_report:
-            reports += f"\n## Technical/Market Report\n{market_report}"
-        if news_report:
-            reports += f"\n## News Report\n{news_report}"
-        if derivatives_report:
-            reports += f"\n## Derivatives Report\n{derivatives_report}"
-        if crypto_fundamentals_report:
-            reports += f"\n## Crypto Fundamentals Report\n{crypto_fundamentals_report}"
-        if sentiment_report:
-            reports += f"\n## Social Sentiment Report\n{sentiment_report}"
+        if raw_market:
+            reports += f"\n## Technical/Market Report\n{wrap_external_data(raw_market, 'technical_analyst')}"
+        if raw_news:
+            reports += f"\n## News Report\n{wrap_external_data(raw_news, 'news_analyst')}"
+        if raw_derivatives:
+            reports += f"\n## Derivatives Report\n{wrap_external_data(raw_derivatives, 'derivatives_analyst')}"
+        if raw_fundamentals:
+            reports += f"\n## Crypto Fundamentals Report\n{wrap_external_data(raw_fundamentals, 'fundamentals_analyst')}"
+        if raw_sentiment:
+            reports += f"\n## Social Sentiment Report\n{wrap_external_data(raw_sentiment, 'social_analyst')}"
 
         tf_note = ""
         if crypto_interval:
@@ -422,7 +423,7 @@ Present the evidence-based bull case for this asset."""
             "bull_history": bull_history + "\n" + argument,
             "bear_history": investment_debate_state.get("bear_history", ""),
             "current_response": argument,
-            "count": investment_debate_state["count"] + 1,
+            "count": investment_debate_state.get("count", 0) + 1,
         }
 
         return validate_state_write({"investment_debate_state": new_state}, "bull_researcher")
@@ -477,7 +478,7 @@ Present the evidence-based bear case for this asset."""
             "bear_history": bear_history + "\n" + argument,
             "bull_history": investment_debate_state.get("bull_history", ""),
             "current_response": argument,
-            "count": investment_debate_state["count"] + 1,
+            "count": investment_debate_state.get("count", 0) + 1,
         }
 
         return validate_state_write({"investment_debate_state": new_state}, "bear_researcher")
@@ -542,7 +543,7 @@ Commit to a clear stance based on the weight of evidence. Hold is a fully valid 
             "bear_history": investment_debate_state.get("bear_history", ""),
             "bull_history": investment_debate_state.get("bull_history", ""),
             "current_response": investment_plan,
-            "count": investment_debate_state["count"],
+            "count": investment_debate_state.get("count", 0),
         }
 
         from tradingagents.agents.utils.state_filter import validate_state_write
@@ -720,7 +721,7 @@ def create_crypto_risk_bull_debater(llm):
             "current_conservative_response": risk_debate_state.get("current_conservative_response", ""),
             "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
             "judge_decision": risk_debate_state.get("judge_decision", ""),
-            "count": risk_debate_state["count"] + 1,
+            "count": risk_debate_state.get("count", 0) + 1,
         }
 
         return validate_state_write({"risk_debate_state": new_state}, "risk_bull_debater")
@@ -779,7 +780,7 @@ def create_crypto_risk_bear_debater(llm):
             "current_conservative_response": argument,
             "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
             "judge_decision": risk_debate_state.get("judge_decision", ""),
-            "count": risk_debate_state["count"] + 1,
+            "count": risk_debate_state.get("count", 0) + 1,
         }
 
         return validate_state_write({"risk_debate_state": new_state}, "risk_bear_debater")

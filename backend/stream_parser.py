@@ -126,6 +126,7 @@ class StreamParserState:
         self.prev_final: Optional[str] = None
         self.prev_analyst_reports: Dict[str, str] = {}
         self.prev_compliance: Optional[str] = None
+        self.prev_risk_manager: Optional[str] = None
         self.prev_execution_notes: Optional[str] = None
         self.prev_confluence: Optional[str] = None
         self.seen_in_progress: set = set()
@@ -227,7 +228,10 @@ def parse_stream_chunk(
         events.append(ReportChunkEvent(section="trader", content=trader_str, append=False))
         state._ensure_in_progress(events, "Trader")
         events.append(AgentStatusEvent(agent="Trader", status="completed"))
-        if state.workflow_mode != "quick_trade":
+        if state.workflow_mode == "quick_trade":
+            events.append(AgentStatusEvent(agent="Risk Manager", status="in_progress"))
+            state.mark_in_progress("Risk Manager")
+        else:
             events.append(AgentStatusEvent(agent="Compliance Officer", status="in_progress"))
             state.mark_in_progress("Compliance Officer")
         state.prev_trader = trader_str
@@ -240,6 +244,15 @@ def parse_stream_chunk(
             events.append(AgentStatusEvent(agent="Compliance Officer", status="completed"))
             events.append(ReportChunkEvent(section="compliance", content=compliance_val.strip(), append=False))
             state.prev_compliance = compliance_val.strip()
+
+    # Risk Manager result
+    risk_mgr_val = chunk.get("risk_manager_result")
+    if isinstance(risk_mgr_val, str) and risk_mgr_val.strip():
+        if risk_mgr_val.strip() != state.prev_risk_manager:
+            state._ensure_in_progress(events, "Risk Manager")
+            events.append(AgentStatusEvent(agent="Risk Manager", status="completed"))
+            events.append(ReportChunkEvent(section="risk_manager", content=risk_mgr_val.strip(), append=False))
+            state.prev_risk_manager = risk_mgr_val.strip()
 
     # Confluence summary
     confluence_val = chunk.get("confluence_summary")
@@ -255,7 +268,7 @@ def parse_stream_chunk(
             state.prev_confluence = confluence_val.strip()
 
     risk = chunk.get("risk_debate_state")
-    if risk and risk != state.prev_risk:
+    if risk and risk != state.prev_risk and state.workflow_mode != "quick_trade":
         for field_name, (section, agent) in _RISK_FIELD_MAP.items():
             val = risk.get(field_name, "").strip()
             prev_val = (state.prev_risk or {}).get(field_name, "").strip() if state.prev_risk else ""
@@ -287,12 +300,15 @@ def parse_stream_chunk(
             final_str = final.strip()
     else:
         final_str = None
-    if final_str and final_str != state.prev_final and not risk and state.workflow_mode != "quick_trade":
-        events.append(ReportChunkEvent(section="portfolio_manager", content=final_str, append=False))
-        state._ensure_in_progress(events, "Portfolio Manager")
-        events.append(AgentStatusEvent(agent="Portfolio Manager", status="completed"))
-        events.append(AgentStatusEvent(agent="Execution Monitor", status="in_progress"))
-        state.mark_in_progress("Execution Monitor")
+    if final_str and final_str != state.prev_final and not risk:
+        if state.workflow_mode != "quick_trade":
+            events.append(ReportChunkEvent(section="portfolio_manager", content=final_str, append=False))
+            state._ensure_in_progress(events, "Portfolio Manager")
+            events.append(AgentStatusEvent(agent="Portfolio Manager", status="completed"))
+            events.append(AgentStatusEvent(agent="Execution Monitor", status="in_progress"))
+            state.mark_in_progress("Execution Monitor")
+        else:
+            events.append(ReportChunkEvent(section="final_decision", content=final_str, append=False))
         state.prev_final = final_str
 
     # Execution Monitor notes

@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 _session = requests.Session()
 _session.mount(
     "https://",
-    HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0),
+    HTTPAdapter(pool_connections=10, pool_maxsize=50, max_retries=0),
 )
-_session_lock = threading.Lock()
+
 
 _RETRYABLE_EXCEPTIONS = (
     requests.exceptions.ConnectionError,
@@ -131,6 +131,99 @@ class BybitCircuitBreaker:
     def record_success(self) -> None:
         with self._lock:
             self._consecutive_failures = 0
+
+
+# ---------------------------------------------------------------------------
+# Module-level singletons — shared across all graph instances so aggregate
+# request rate stays within Bybit's API limits during parallel scanner runs.
+# ---------------------------------------------------------------------------
+
+_shared_limiter: BybitRateLimiter | None = None
+_shared_cb: BybitCircuitBreaker | None = None
+_shared_infra_lock = threading.Lock()
+
+
+def get_shared_limiter() -> BybitRateLimiter:
+    """Return process-wide rate limiter (lazy init, thread-safe)."""
+    global _shared_limiter
+    with _shared_infra_lock:
+        if _shared_limiter is None:
+            _shared_limiter = BybitRateLimiter()
+        return _shared_limiter
+
+
+def get_shared_circuit_breaker() -> BybitCircuitBreaker:
+    """Return process-wide circuit breaker (lazy init, thread-safe)."""
+    global _shared_cb
+    with _shared_infra_lock:
+        if _shared_cb is None:
+            _shared_cb = BybitCircuitBreaker()
+        return _shared_cb
+
+
+class TTLCache:
+    """Thread-safe cache with per-entry TTL expiry.
+
+    Uses composition (not dict inheritance) so only the explicitly
+    implemented methods are exposed — no inherited dict methods can
+    bypass TTL checks.  Periodic sweeps on write keep memory bounded.
+    """
+
+    _SWEEP_INTERVAL = 64  # purge expired entries every N writes
+
+    def __init__(self, ttl_seconds: float = 300.0):
+        self._ttl = ttl_seconds
+        self._data: dict = {}
+        self._timestamps: dict = {}
+        self._lock = threading.Lock()
+        self._write_count = 0
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return self._is_alive(key)
+
+    def __getitem__(self, key):
+        with self._lock:
+            if self._is_alive(key):
+                return self._data[key]
+            raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            self._data[key] = value
+            self._timestamps[key] = time.monotonic()
+            self._write_count += 1
+            if self._write_count >= self._SWEEP_INTERVAL:
+                self._sweep()
+                self._write_count = 0
+
+    def get(self, key, default=None):
+        with self._lock:
+            if self._is_alive(key):
+                return self._data[key]
+            return default
+
+    def _is_alive(self, key) -> bool:
+        """Check if key exists and is not expired. Evicts if expired. Caller must hold _lock."""
+        ts = self._timestamps.get(key)
+        if ts is None:
+            return False
+        if time.monotonic() - ts <= self._ttl:
+            return True
+        del self._data[key]
+        del self._timestamps[key]
+        return False
+
+    def _sweep(self) -> None:
+        """Remove all expired entries. Caller must hold _lock."""
+        now = time.monotonic()
+        expired = [k for k, ts in self._timestamps.items() if now - ts > self._ttl]
+        for k in expired:
+            self._data.pop(k, None)
+            self._timestamps.pop(k, None)
+
+
+_CACHE_MISS = object()
 
 
 # ---------------------------------------------------------------------------
@@ -279,8 +372,10 @@ def _bybit_request(
     api_key: str | None = None,
     api_secret: str | None = None,
 ) -> dict:
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     if circuit_breaker:
         circuit_breaker.check()
@@ -312,12 +407,6 @@ def _bybit_request(
                 circuit_breaker.record_failure()
             last_exc = exc
             if attempt < _MAX_RETRIES - 1:
-                with _session_lock:
-                    _session.close()
-                    _session.mount(
-                        "https://",
-                        HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0),
-                    )
                 backoff = _RETRY_BACKOFF_BASE * (2 ** attempt)
                 logger.warning(
                     "Bybit %s connection error retry %d/%d (backoff=%.1fs): %s",
@@ -413,8 +502,10 @@ def get_bybit_klines(
 ) -> str:
     symbol = normalize_bybit_symbol(symbol)
     cache_key = ("klines", symbol, interval, start_time, end_time)
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     deadline = time.monotonic() + _DEFAULT_TOOL_DEADLINE
     all_rows: list[list] = []
@@ -613,8 +704,10 @@ def get_bybit_indicators(
 ) -> str:
     symbol = normalize_bybit_symbol(symbol)
     cache_key = ("indicators", symbol, interval, start_time, end_time)
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     kline_csv = get_bybit_klines(
         symbol, interval, start_time, end_time,
@@ -685,96 +778,67 @@ def build_current_price_context(
     This gives all agents awareness of the CURRENT price and recent
     price action across multiple timeframes (5m, 15m, 1h, 4h, daily).
 
+    All 6 API calls (ticker + 5 kline intervals) run concurrently for
+    ~3x speedup vs sequential fetching.
+
     Pass ``as_of_ms`` to pin the time window so parallel analyses that
     start seconds apart use the same candle boundaries.
 
     Pass ``primary_interval`` to tag the section matching the user's
     selected kline interval with ``(PRIMARY TIMEFRAME)``.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
 
     symbol = normalize_bybit_symbol(symbol)
-    parts: list[str] = []
     now_ms = as_of_ms if as_of_ms is not None else int(_time.time() * 1000)
 
-    # 1) Live ticker
-    try:
-        ticker_str = get_bybit_ticker(
-            symbol, cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append("## LIVE PRICE SNAPSHOT (real-time)")
-        parts.append(ticker_str)
-    except Exception as exc:
-        parts.append(f"## LIVE PRICE SNAPSHOT\nUnavailable: {exc}")
+    shared = dict(cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+                  api_key=api_key, api_secret=api_secret)
 
     def _ptag(interval: str) -> str:
         return " (PRIMARY TIMEFRAME)" if primary_interval == interval else ""
 
-    # 2) Recent 5-min klines (last 2 hours = 24 candles)
-    try:
-        two_hours_ago = now_ms - (2 * 60 * 60 * 1000)
-        recent_klines = get_bybit_klines(
-            symbol, "5", two_hours_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## RECENT 5-MIN CANDLES (last ~2 hours){_ptag('5')}")
-        parts.append(recent_klines)
-    except Exception as exc:
-        parts.append(f"\n## RECENT 5-MIN CANDLES\nUnavailable: {exc}")
+    def _fetch_ticker():
+        return get_bybit_ticker(symbol, **shared)
 
-    # 3) Recent 15-min klines (last 6 hours = 24 candles)
-    try:
-        six_hours_ago = now_ms - (6 * 60 * 60 * 1000)
-        recent_15m = get_bybit_klines(
-            symbol, "15", six_hours_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## RECENT 15-MIN CANDLES (last ~6 hours){_ptag('15')}")
-        parts.append(recent_15m)
-    except Exception as exc:
-        parts.append(f"\n## RECENT 15-MIN CANDLES\nUnavailable: {exc}")
+    def _fetch_kline(interval, start):
+        return get_bybit_klines(symbol, interval, start, now_ms, **shared)
 
-    # 4) 1-hour klines (last 24 hours = 24 candles)
-    try:
-        one_day_ago = now_ms - (24 * 60 * 60 * 1000)
-        recent_1h = get_bybit_klines(
-            symbol, "60", one_day_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## 1-HOUR CANDLES (last ~24 hours){_ptag('60')}")
-        parts.append(recent_1h)
-    except Exception as exc:
-        parts.append(f"\n## 1-HOUR CANDLES\nUnavailable: {exc}")
+    # (heading, callable) — heading is the single source of truth for both
+    # success output and error fallback.
+    tasks = [
+        ("## LIVE PRICE SNAPSHOT (real-time)",
+         _fetch_ticker),
+        (f"\n## RECENT 5-MIN CANDLES (last ~2 hours){_ptag('5')}",
+         lambda: _fetch_kline("5", now_ms - 2 * 3600_000)),
+        (f"\n## RECENT 15-MIN CANDLES (last ~6 hours){_ptag('15')}",
+         lambda: _fetch_kline("15", now_ms - 6 * 3600_000)),
+        (f"\n## 1-HOUR CANDLES (last ~24 hours){_ptag('60')}",
+         lambda: _fetch_kline("60", now_ms - 24 * 3600_000)),
+        (f"\n## 4-HOUR CANDLES (last ~48 hours){_ptag('240')}",
+         lambda: _fetch_kline("240", now_ms - 48 * 3600_000)),
+        (f"\n## DAILY CANDLES (last ~30 days){_ptag('D')}",
+         lambda: _fetch_kline("D", now_ms - 30 * 24 * 3600_000)),
+    ]
 
-    # 5) 4-hour klines (last 48 hours = 12 candles) — medium-term trend
-    try:
-        two_days_ago = now_ms - (48 * 60 * 60 * 1000)
-        recent_4h = get_bybit_klines(
-            symbol, "240", two_days_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## 4-HOUR CANDLES (last ~48 hours){_ptag('240')}")
-        parts.append(recent_4h)
-    except Exception as exc:
-        parts.append(f"\n## 4-HOUR CANDLES\nUnavailable: {exc}")
+    results: list[tuple[str, str]] = [("", "")] * len(tasks)
 
-    # 6) Daily klines (last 30 days) — higher-timeframe trend context
-    try:
-        thirty_days_ago = now_ms - (30 * 24 * 60 * 60 * 1000)
-        recent_1d = get_bybit_klines(
-            symbol, "D", thirty_days_ago, now_ms,
-            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
-            api_key=api_key, api_secret=api_secret,
-        )
-        parts.append(f"\n## DAILY CANDLES (last ~30 days){_ptag('D')}")
-        parts.append(recent_1d)
-    except Exception as exc:
-        parts.append(f"\n## DAILY CANDLES\nUnavailable: {exc}")
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="price_ctx") as pool:
+        future_to_idx = {pool.submit(fn): i for i, (_heading, fn) in enumerate(tasks)}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            heading = tasks[idx][0]
+            try:
+                data = future.result()
+                results[idx] = (heading, data)
+            except Exception as exc:
+                results[idx] = (heading, f"Unavailable: {exc}")
+
+    parts: list[str] = []
+    for heading, data in results:
+        parts.append(heading)
+        parts.append(data)
 
     return "\n".join(parts)
 
@@ -804,8 +868,10 @@ def get_bybit_price_changes(
 
     # Check combined cache first
     combined_cache_key = ("price_changes_combined", symbol, cache_hour)
-    if cache is not None and combined_cache_key in cache:
-        return cache[combined_cache_key]
+    if cache is not None:
+        _cached = cache.get(combined_cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     all_rows: list[list] = []
 
@@ -1060,8 +1126,10 @@ def get_bybit_orderbook(
 ) -> dict:
     symbol = normalize_bybit_symbol(symbol)
     cache_key = ("orderbook", symbol, depth)
-    if cache is not None and cache_key in cache:
-        return cache[cache_key]
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
 
     result = _bybit_request(
         "/v5/market/orderbook",

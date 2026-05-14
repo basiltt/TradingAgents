@@ -155,7 +155,9 @@ class TradingAgentsGraph:
         if workflow_mode == "quick_trade":
             compliance_node = None
             monitor_node = None
-            risk_manager_node = None
+            # Keep Risk Manager in quick_trade — catches dangerous trades
+            from tradingagents.agents.risk.risk_manager import create_risk_manager
+            risk_manager_node = create_risk_manager(self._get_agent_llm("risk_manager", self.quick_thinking_llm))
         else:
             from tradingagents.agents.compliance import (
                 create_compliance_officer,
@@ -176,6 +178,7 @@ class TradingAgentsGraph:
                 selected_analysts,
                 compliance_officer_node=compliance_node,
                 execution_monitor_node=monitor_node,
+                risk_manager_node=risk_manager_node,
                 workflow_mode=workflow_mode,
             )
         self.graph = self.workflow.compile()
@@ -199,15 +202,17 @@ class TradingAgentsGraph:
             create_crypto_research_manager,
             create_confluence_checker,
         )
-        from tradingagents.dataflows.bybit_data import BybitRateLimiter, BybitCircuitBreaker
+        from tradingagents.dataflows.bybit_data import (
+            TTLCache, get_shared_limiter, get_shared_circuit_breaker,
+        )
 
         creds = self.config.get("exchange_credentials", {}).get("bybit", {})
         api_key = creds.get("api_key")
         api_secret = creds.get("api_secret")
 
-        cache: dict = {}
-        limiter = BybitRateLimiter()
-        cb = BybitCircuitBreaker()
+        cache = TTLCache(ttl_seconds=300.0)
+        limiter = get_shared_limiter()
+        cb = get_shared_circuit_breaker()
 
         # Store shared resources so _run_graph can fetch live price context
         self._crypto_shared = {
@@ -271,9 +276,18 @@ class TradingAgentsGraph:
             )
 
         trader_node = create_crypto_trader(self._get_agent_llm("trader", self.quick_thinking_llm), max_leverage=max_leverage)
-        bull_debater = create_crypto_risk_bull_debater(self._get_agent_llm("bull_analyst", self.quick_thinking_llm))
-        bear_debater = create_crypto_risk_bear_debater(self._get_agent_llm("bear_analyst", self.quick_thinking_llm))
-        pm_node = create_crypto_portfolio_manager(self._get_agent_llm("portfolio_manager", self.deep_thinking_llm), max_leverage=max_leverage)
+
+        # In quick_trade mode, skip creating agents that won't be in the graph
+        # (risk debaters, PM) to avoid wasted LLM binding overhead.
+        if workflow_mode == "quick_trade":
+            bull_debater = None
+            bear_debater = None
+            pm_node = None
+        else:
+            bull_debater = create_crypto_risk_bull_debater(self._get_agent_llm("bull_analyst", self.quick_thinking_llm))
+            bear_debater = create_crypto_risk_bear_debater(self._get_agent_llm("bear_analyst", self.quick_thinking_llm))
+            pm_node = create_crypto_portfolio_manager(self._get_agent_llm("portfolio_manager", self.deep_thinking_llm), max_leverage=max_leverage)
+
         confluence_node = create_confluence_checker(self._get_agent_llm("confluence_checker", self.quick_thinking_llm))
 
         bull_researcher = create_crypto_bull_researcher(self._get_agent_llm("bull_researcher", self.quick_thinking_llm))
@@ -296,6 +310,7 @@ class TradingAgentsGraph:
             risk_manager_node=risk_manager_node,
             execution_monitor_node=monitor_node,
             workflow_mode=workflow_mode,
+            max_debate_rounds=self.config.get("max_debate_rounds", 2),
         )
 
     def _get_agent_llm(self, agent_key: str, default_llm):
@@ -519,7 +534,35 @@ class TradingAgentsGraph:
 
     def _run_graph(self, company_name, trade_date):
         """Execute the graph and write the resulting state to disk and memory log."""
-        # Initialize state — inject memory log context for PM.
+        import time as _time
+        import threading as _threading
+
+        # Pin timestamp so pre-fetch and analyst tool calls share cache entries.
+        as_of_ms = int(_time.time() * 1000)
+
+        # Start crypto pre-fetch in background while we build the initial state.
+        prefetch_result: dict = {}
+        is_crypto = self.config.get("asset_type") == "crypto" and hasattr(self, "_crypto_shared")
+        if is_crypto:
+            from tradingagents.dataflows.bybit_data import build_current_price_context
+
+            def _prefetch():
+                try:
+                    prefetch_result["data"] = build_current_price_context(
+                        company_name,
+                        **self._crypto_shared,
+                        as_of_ms=as_of_ms,
+                        primary_interval=self.config.get("crypto_interval"),
+                    )
+                except Exception as exc:
+                    prefetch_result["error"] = exc
+
+            prefetch_thread = _threading.Thread(target=_prefetch, name="prefetch", daemon=True)
+            prefetch_thread.start()
+        else:
+            prefetch_thread = None
+
+        # Initialize state — runs concurrently with pre-fetch above.
         past_context = self.memory_log.get_past_context(company_name)
         init_agent_state = self.propagator.create_initial_state(
             company_name, trade_date, past_context=past_context,
@@ -527,23 +570,23 @@ class TradingAgentsGraph:
             crypto_interval=self.config.get("crypto_interval"),
         )
 
-        # Migration shim: fundamentals_report → derivatives_report
+        # Migration shim: fundamentals_report → derivatives_report (keep both for compat)
         if "fundamentals_report" in init_agent_state and "derivatives_report" not in init_agent_state:
-            init_agent_state["derivatives_report"] = init_agent_state.pop("fundamentals_report")
+            init_agent_state["derivatives_report"] = init_agent_state["fundamentals_report"]
 
-        # For crypto: fetch live price + lower-timeframe candles BEFORE agents run
-        if self.config.get("asset_type") == "crypto" and hasattr(self, "_crypto_shared"):
-            from tradingagents.dataflows.bybit_data import build_current_price_context
-            try:
-                price_ctx = build_current_price_context(
-                    company_name,
-                    **self._crypto_shared,
-                    primary_interval=self.config.get("crypto_interval"),
-                )
-            except Exception as exc:
-                logger.warning("Failed to fetch current price context for %s: %s", company_name, exc)
-                price_ctx = f"Current price data unavailable: {exc}"
-            init_agent_state["current_price_context"] = price_ctx
+        # Collect pre-fetch result (blocks only if still running).
+        if prefetch_thread is not None:
+            prefetch_thread.join(timeout=30)
+            if prefetch_thread.is_alive():
+                logger.warning("Price context pre-fetch timed out for %s", company_name)
+                init_agent_state["current_price_context"] = "Current price data unavailable: timeout"
+            elif "data" in prefetch_result:
+                init_agent_state["current_price_context"] = prefetch_result["data"]
+            elif "error" in prefetch_result:
+                logger.warning("Failed to fetch current price context for %s: %s", company_name, prefetch_result["error"])
+                init_agent_state["current_price_context"] = f"Current price data unavailable: {prefetch_result['error']}"
+            else:
+                init_agent_state["current_price_context"] = ""
         else:
             init_agent_state["current_price_context"] = ""
 

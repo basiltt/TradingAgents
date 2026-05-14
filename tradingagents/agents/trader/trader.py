@@ -21,6 +21,7 @@ from tradingagents.agents.schemas import (
     render_trader_proposal,
 )
 from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.prompt_guard import wrap_external_data
 from tradingagents.agents.utils.state_filter import (
     filter_state_for_read,
     validate_state_write,
@@ -100,11 +101,11 @@ def _build_price_data_section(filtered: dict) -> str:
 
     price_ctx = filtered.get("current_price_context", "")
     if price_ctx and price_ctx.strip():
-        parts.append("## LIVE PRICE DATA (real-time)\n" + price_ctx)
+        parts.append("## LIVE PRICE DATA (real-time)\n" + wrap_external_data(price_ctx, "exchange_ticker"))
 
     tech_levels = filtered.get("technical_levels_summary", "")
     if tech_levels and tech_levels.strip():
-        parts.append("## TECHNICAL LEVELS\n" + tech_levels)
+        parts.append("## TECHNICAL LEVELS\n" + wrap_external_data(tech_levels, "technical_analyst"))
 
     if not parts:
         parts.append(
@@ -122,11 +123,11 @@ def create_trader(llm):
 
     def trader_node(state, name):
         filtered = filter_state_for_read(state, "trader")
-        company_name = filtered.get("company_of_interest", state.get("company_of_interest", ""))
+        company_name = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
         instrument_context = build_instrument_context(company_name, crypto_interval)
-        investment_plan = filtered.get("investment_plan", "")
-        technical_levels = filtered.get("technical_levels_summary", "Not available")
+        investment_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
+        technical_levels = wrap_external_data(filtered.get("technical_levels_summary", "Not available"), "technical_analyst")
 
         # ---- Pass 1: Directional Decision ----
         direction_messages = [

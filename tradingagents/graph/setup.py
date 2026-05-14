@@ -172,6 +172,7 @@ class GraphSetup:
         selected_analysts=None,
         compliance_officer_node=None,
         execution_monitor_node=None,
+        risk_manager_node=None,
         workflow_mode: str = "deep_analysis",
     ):
         """Set up and compile the agent workflow graph.
@@ -221,42 +222,64 @@ class GraphSetup:
 
         # Research debate: parallel round 1, then sequential continuation
         workflow.add_node("Parallel Research R1", parallel_research_r1)
-        workflow.add_node("Bull Researcher", bull_researcher_node)
-        workflow.add_node("Bear Researcher", bear_researcher_node)
         workflow.add_node("Research Manager", research_manager_node)
         workflow.add_node("Trader", trader_node)
 
-        # After parallel round 1, check if more debate rounds needed
-        workflow.add_conditional_edges(
-            "Parallel Research R1",
-            self.conditional_logic.should_continue_debate,
-            {
-                "Bear Researcher": "Bear Researcher",
-                "Bull Researcher": "Bull Researcher",
-                "Research Manager": "Research Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Bull Researcher",
-            self.conditional_logic.should_continue_debate,
-            {
-                "Bear Researcher": "Bear Researcher",
-                "Research Manager": "Research Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Bear Researcher",
-            self.conditional_logic.should_continue_debate,
-            {
-                "Bull Researcher": "Bull Researcher",
-                "Research Manager": "Research Manager",
-            },
-        )
+        if workflow_mode == "quick_trade":
+            # 1 round only: parallel R1 → Research Manager (skip multi-round debate)
+            workflow.add_edge("Parallel Research R1", "Research Manager")
+        else:
+            workflow.add_node("Bull Researcher", bull_researcher_node)
+            workflow.add_node("Bear Researcher", bear_researcher_node)
+            # After parallel round 1, check if more debate rounds needed
+            workflow.add_conditional_edges(
+                "Parallel Research R1",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bear Researcher": "Bear Researcher",
+                    "Bull Researcher": "Bull Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Bull Researcher",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bear Researcher": "Bear Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Bear Researcher",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bull Researcher": "Bull Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
         workflow.add_edge("Research Manager", "Trader")
 
         if workflow_mode == "quick_trade":
-            logger.warning("quick_trade mode: Compliance, Risk Manager, and risk debate gates are SKIPPED.")
-            workflow.add_edge("Trader", END)
+            # Quick trade: Trader → Risk Manager → END (or Trader → END if no RM)
+            if risk_manager_node:
+                workflow.add_node("Risk Manager", risk_manager_node)
+                workflow.add_node("Risk Blocked", _risk_blocked_trade_node)
+                workflow.add_edge("Trader", "Risk Manager")
+                workflow.add_conditional_edges(
+                    "Risk Manager",
+                    _risk_manager_router,
+                    {
+                        "risk_debate": END,
+                        "risk_blocked": "Risk Blocked",
+                    },
+                )
+                workflow.add_edge("Risk Blocked", END)
+            else:
+                workflow.add_edge("Trader", END)
+            logger.info(
+                "quick_trade mode: 1-round research debate, "
+                "skipping Compliance, risk debate, PM, and Execution Monitor."
+            )
             return workflow
 
         # Risk debate: parallel round 1, then sequential continuation
@@ -355,6 +378,7 @@ class GraphSetup:
         risk_manager_node: Any = None,
         execution_monitor_node: Any = None,
         workflow_mode: str = "deep_analysis",
+        max_debate_rounds: int = 2,
     ):
         """Set up a crypto futures graph with bull/bear 2-party debate.
 
@@ -403,35 +427,39 @@ class GraphSetup:
                 crypto_bull_researcher, crypto_bear_researcher,
             )
             workflow.add_node("Parallel Research R1", parallel_research_r1)
-            workflow.add_node("Bull Researcher", crypto_bull_researcher)
-            workflow.add_node("Bear Researcher", crypto_bear_researcher)
             workflow.add_node("Research Manager", crypto_research_manager)
 
-            workflow.add_conditional_edges(
-                "Parallel Research R1",
-                self.conditional_logic.should_continue_debate,
-                {
-                    "Bear Researcher": "Bear Researcher",
-                    "Bull Researcher": "Bull Researcher",
-                    "Research Manager": "Research Manager",
-                },
-            )
-            workflow.add_conditional_edges(
-                "Bull Researcher",
-                self.conditional_logic.should_continue_debate,
-                {
-                    "Bear Researcher": "Bear Researcher",
-                    "Research Manager": "Research Manager",
-                },
-            )
-            workflow.add_conditional_edges(
-                "Bear Researcher",
-                self.conditional_logic.should_continue_debate,
-                {
-                    "Bull Researcher": "Bull Researcher",
-                    "Research Manager": "Research Manager",
-                },
-            )
+            if workflow_mode == "quick_trade":
+                # 1 round only: parallel R1 → Research Manager (skip multi-round debate)
+                workflow.add_edge("Parallel Research R1", "Research Manager")
+            else:
+                workflow.add_node("Bull Researcher", crypto_bull_researcher)
+                workflow.add_node("Bear Researcher", crypto_bear_researcher)
+                workflow.add_conditional_edges(
+                    "Parallel Research R1",
+                    self.conditional_logic.should_continue_debate,
+                    {
+                        "Bear Researcher": "Bear Researcher",
+                        "Bull Researcher": "Bull Researcher",
+                        "Research Manager": "Research Manager",
+                    },
+                )
+                workflow.add_conditional_edges(
+                    "Bull Researcher",
+                    self.conditional_logic.should_continue_debate,
+                    {
+                        "Bear Researcher": "Bear Researcher",
+                        "Research Manager": "Research Manager",
+                    },
+                )
+                workflow.add_conditional_edges(
+                    "Bear Researcher",
+                    self.conditional_logic.should_continue_debate,
+                    {
+                        "Bull Researcher": "Bull Researcher",
+                        "Research Manager": "Research Manager",
+                    },
+                )
             workflow.add_edge("Research Manager", "Microstructure Enrichment")
 
         workflow.add_node("Microstructure Enrichment", _build_microstructure_enrichment_node())
@@ -439,8 +467,26 @@ class GraphSetup:
         workflow.add_node("Trader", crypto_trader_node)
 
         if workflow_mode == "quick_trade":
-            logger.warning("quick_trade mode: Compliance, Risk Manager, and risk debate gates are SKIPPED.")
-            workflow.add_edge("Trader", END)
+            # Quick trade: Trader → Risk Manager → END (skip risk debate, PM, compliance)
+            if risk_manager_node:
+                workflow.add_node("Risk Manager", risk_manager_node)
+                workflow.add_node("Risk Blocked", _risk_blocked_trade_node)
+                workflow.add_edge("Trader", "Risk Manager")
+                workflow.add_conditional_edges(
+                    "Risk Manager",
+                    _risk_manager_router,
+                    {
+                        "risk_debate": END,
+                        "risk_blocked": "Risk Blocked",
+                    },
+                )
+                workflow.add_edge("Risk Blocked", END)
+            else:
+                workflow.add_edge("Trader", END)
+            logger.info(
+                "quick_trade mode: 1-round research debate, Risk Manager gate active, "
+                "skipping Compliance, risk debate, PM, and Execution Monitor."
+            )
             return workflow        # Parallel round-1 risk node: bull + bear run simultaneously
         parallel_risk_r1 = create_parallel_risk_round1(
             [crypto_bull_debater, crypto_bear_debater],
