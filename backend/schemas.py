@@ -323,6 +323,84 @@ class ErrorResponse(BaseModel):
     code: Optional[str] = None
 
 
+class TradeEventResponse(BaseModel):
+    id: int
+    trade_id: str
+    event_type: str
+    old_status: Optional[str] = None
+    new_status: Optional[str] = None
+    fill_qty: Optional[float] = None
+    fill_price: Optional[float] = None
+    actor: str
+    payload: dict = {}
+    created_at: datetime
+
+
+class TradeResponse(BaseModel):
+    id: str
+    account_id: str
+    symbol: str
+    side: str
+    order_type: str
+    qty: float
+    filled_qty: Optional[float] = None
+    entry_price: Optional[float] = None
+    avg_fill_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    leverage: int
+    margin_mode: str
+    status: str
+    order_id: Optional[str] = None
+    order_link_id: Optional[str] = None
+    close_reason: Optional[str] = None
+    close_rule_id: Optional[str] = None
+    parent_trade_id: Optional[str] = None
+    realized_pnl: Optional[float] = None
+    realized_pnl_pct: Optional[float] = None
+    fees: Optional[float] = None
+    net_pnl: Optional[float] = None
+    source: str
+    source_id: Optional[int] = None
+    version: int
+    metadata: dict = {}
+    opened_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TradeDetailResponse(TradeResponse):
+    events: list[TradeEventResponse] = []
+
+
+class TradeListResponse(BaseModel):
+    items: list[TradeResponse]
+    cursor: Optional[str] = None
+    has_more: bool
+    total: Optional[int] = None
+
+
+class TradeStatsResponse(BaseModel):
+    total_trades: int
+    win_rate: float
+    avg_pnl: float
+    total_pnl: float
+    avg_hold_time: Optional[float] = None
+
+
+class TradeCloseRequest(BaseModel):
+    qty: Optional[float] = None
+
+    @field_validator("qty")
+    @classmethod
+    def qty_must_be_positive(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("qty must be positive")
+        return v
+
+
 class ScanRequest(BaseModel):
     analysis_date: str
     asset_type: Optional[str] = "crypto"

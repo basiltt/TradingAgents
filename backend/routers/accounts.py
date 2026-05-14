@@ -2,18 +2,77 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import time
 import uuid as _uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from backend.schemas import CreateAccountRequest, UpdateAccountRequest, RotateCredentialsRequest, PlaceTradeRequest
+from backend.schemas import (
+    CreateAccountRequest,
+    PlaceTradeRequest,
+    RotateCredentialsRequest,
+    TradeCloseRequest,
+    TradeDetailResponse,
+    TradeListResponse,
+    TradeResponse,
+    TradeStatsResponse,
+    UpdateAccountRequest,
+)
 from backend.services.bybit_client import BybitAPIError
+from backend.services.trade_repository import (
+    ConcurrentModification,
+    InvalidStatusTransition,
+    TradeNotFound,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["accounts"])
+
+
+class _TokenBucket:
+    def __init__(self, rate: float = 10.0, capacity: float = 10.0):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_refill = time.monotonic()
+
+    def consume(self) -> bool:
+        now = time.monotonic()
+        elapsed = now - self.last_refill
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+        self.last_refill = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        return False
+
+
+_rate_limiters: dict[str, _TokenBucket] = {}
+_RATE_LIMITER_MAX_ENTRIES = 1000
+_RATE_LIMITER_STALE_SECONDS = 3600
+
+
+async def _check_rate_limit(account_id: str) -> None:
+    now = time.monotonic()
+    if len(_rate_limiters) >= _RATE_LIMITER_MAX_ENTRIES:
+        stale = [k for k, v in _rate_limiters.items() if now - v.last_refill > _RATE_LIMITER_STALE_SECONDS]
+        for k in stale:
+            del _rate_limiters[k]
+    if account_id not in _rate_limiters:
+        if len(_rate_limiters) >= _RATE_LIMITER_MAX_ENTRIES:
+            logger.warning("rate_limiter_capacity_exceeded")
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        _rate_limiters[account_id] = _TokenBucket()
+    if not _rate_limiters[account_id].consume():
+        logger.warning("rate_limit_hit", extra={"account_id": account_id})
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
 
 def _get_service(request: Request):
@@ -256,3 +315,196 @@ async def get_pnl_summary(
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+
+
+# --- Trade endpoints ---
+
+def _get_trade_repo(request: Request):
+    repo = getattr(request.app.state, "trade_repo", None)
+    if repo is None:
+        raise HTTPException(503, detail="Trading not configured")
+    return repo
+
+
+def _get_db(request: Request):
+    db = getattr(request.app.state, "db", None)
+    if db is None:
+        raise HTTPException(503, detail="Database not available")
+    return db
+
+
+def _get_trade_service(request: Request):
+    svc = getattr(request.app.state, "trade_service", None)
+    return svc
+
+
+def _serialize_trade(trade: dict) -> dict:
+    out = dict(trade)
+    for k, v in out.items():
+        if isinstance(v, _uuid.UUID):
+            out[k] = str(v)
+    if isinstance(out.get("metadata"), str):
+        try:
+            out["metadata"] = json.loads(out["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("invalid_trade_metadata", extra={"trade_id": out.get("id")})
+            out["metadata"] = {}
+    return out
+
+
+@router.get("/accounts/{account_id}/trades")
+async def list_trades(
+    request: Request,
+    account_id: str,
+    status: Optional[str] = None,
+    symbol: Optional[str] = None,
+    side: Optional[str] = None,
+    close_reason: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    sort: str = "created_at",
+    cursor: Optional[str] = Query(default=None, max_length=512),
+    limit: int = Query(default=50, ge=1, le=200),
+    include_total: bool = False,
+    parent_trade_id: Optional[str] = None,
+):
+    _validate_account_id(account_id)
+    repo = _get_trade_repo(request)
+    db = _get_db(request)
+
+    parsed_from = None
+    parsed_to = None
+    if from_date:
+        try:
+            parsed_from = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid from_date format", "code": "VALIDATION_ERROR"}, 400)
+    if to_date:
+        try:
+            parsed_to = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid to_date format", "code": "VALIDATION_ERROR"}, 400)
+
+    try:
+        async with db.pool.acquire() as conn:
+            result = await repo.list_trades(
+                conn, account_id=account_id, status=status, symbol=symbol,
+                side=side, close_reason=close_reason, from_date=parsed_from,
+                to_date=parsed_to, sort=sort, cursor=cursor, limit=limit,
+                include_total=include_total, parent_trade_id=parent_trade_id,
+            )
+    except ValueError as e:
+        return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 400)
+
+    return TradeListResponse(
+        items=[TradeResponse(**_serialize_trade(t)) for t in result["items"]],
+        cursor=result.get("cursor"),
+        has_more=result["has_more"],
+        total=result.get("total"),
+    )
+
+
+@router.get("/accounts/{account_id}/trades/open")
+async def get_open_trades(request: Request, account_id: str):
+    _validate_account_id(account_id)
+    repo = _get_trade_repo(request)
+    db = _get_db(request)
+    async with db.pool.acquire() as conn:
+        trades = await repo.get_open_trades(conn, account_id=account_id)
+    return [TradeResponse(**_serialize_trade(t)) for t in trades]
+
+
+@router.get("/accounts/{account_id}/trades/stats")
+async def get_trade_stats(request: Request, account_id: str):
+    _validate_account_id(account_id)
+    trade_service = _get_trade_service(request)
+    if trade_service is not None:
+        stats = await trade_service.get_cached_stats(account_id)
+    else:
+        repo = _get_trade_repo(request)
+        db = _get_db(request)
+        async with db.pool.acquire() as conn:
+            stats = await repo.get_trade_stats(conn, account_id=account_id)
+    return TradeStatsResponse(**stats)
+
+
+@router.get("/accounts/{account_id}/trades/{trade_id}")
+async def get_trade_detail(request: Request, account_id: str, trade_id: str):
+    _validate_account_id(account_id)
+    try:
+        _uuid.UUID(trade_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, detail="Invalid trade ID format")
+
+    repo = _get_trade_repo(request)
+    db = _get_db(request)
+    async with db.pool.acquire() as conn:
+        result = await repo.get_trade_with_events(conn, account_id=account_id, trade_id=trade_id)
+    if result is None:
+        return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
+
+    trade_data = _serialize_trade(result)
+    trade_data["events"] = [
+        {**e, "trade_id": str(e["trade_id"])} if "trade_id" in e else e
+        for e in trade_data.get("events", [])
+    ]
+    return TradeDetailResponse(**trade_data)
+
+
+@router.post("/accounts/{account_id}/trades/{trade_id}/close")
+async def close_trade(
+    request: Request, account_id: str, trade_id: str,
+    body: TradeCloseRequest = TradeCloseRequest(),
+):
+    _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
+    try:
+        _uuid.UUID(trade_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, detail="Invalid trade ID format")
+
+    trade_service = _get_trade_service(request)
+    if trade_service is None:
+        return JSONResponse({"detail": "Trading not configured", "code": "SERVICE_UNAVAILABLE"}, 503)
+
+    try:
+        result = await trade_service.close_single_trade(
+            account_id=account_id, trade_id=trade_id, qty=body.qty,
+        )
+        return TradeResponse(**_serialize_trade(result))
+    except TradeNotFound:
+        return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
+    except InvalidStatusTransition as e:
+        return JSONResponse({"detail": str(e), "code": "INVALID_STATUS_TRANSITION"}, 409)
+    except ConcurrentModification as e:
+        return JSONResponse({"detail": str(e), "code": "CONCURRENT_MODIFICATION"}, 409)
+    except BybitAPIError as e:
+        return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)
+
+
+@router.post("/accounts/{account_id}/trades/{trade_id}/cancel")
+async def cancel_trade(request: Request, account_id: str, trade_id: str):
+    _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
+    try:
+        _uuid.UUID(trade_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, detail="Invalid trade ID format")
+
+    trade_service = _get_trade_service(request)
+    if trade_service is None:
+        return JSONResponse({"detail": "Trading not configured", "code": "SERVICE_UNAVAILABLE"}, 503)
+
+    try:
+        result = await trade_service.cancel_trade(
+            account_id=account_id, trade_id=trade_id,
+        )
+        return TradeResponse(**_serialize_trade(result))
+    except TradeNotFound:
+        return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
+    except InvalidStatusTransition as e:
+        return JSONResponse({"detail": str(e), "code": "INVALID_STATUS_TRANSITION"}, 409)
+    except ConcurrentModification as e:
+        return JSONResponse({"detail": str(e), "code": "CONCURRENT_MODIFICATION"}, 409)
+    except BybitAPIError as e:
+        return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)
