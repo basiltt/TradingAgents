@@ -5,7 +5,7 @@ import { useAppSelector } from "@/store";
 
 export function TradeFilters() {
   const { filters, updateFilters, clearFilters } = useTradeFilters();
-  const accounts = useAppSelector((s) => s.accounts.cards);
+  const accounts = useAppSelector((s) => s.accounts.dashboard);
 
   const hasFilters =
     (filters.account_ids?.length ?? 0) > 0 ||

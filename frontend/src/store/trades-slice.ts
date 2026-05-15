@@ -1,6 +1,13 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { Trade, TradeFilters } from "@/components/trades/types";
 
+interface PendingAction {
+  action: "closing" | "cancelling";
+  startedAt: number;
+}
+
+const PENDING_ACTION_TTL_MS = 60_000;
+
 interface TradesState {
   activeTrades: Record<string, Trade>;
   activeTab: "active" | "history";
@@ -9,7 +16,7 @@ interface TradesState {
   sortDirection: "asc" | "desc";
   selectedTradeId: string | null;
   closeModalTradeId: string | null;
-  pendingActions: Record<string, "closing" | "cancelling">;
+  pendingActions: Record<string, PendingAction>;
   pendingCloseAll: Record<string, boolean>;
   optimisticSnapshots: Record<string, Trade>;
   isFetchingActiveTrades: boolean;
@@ -45,6 +52,14 @@ const tradesSlice = createSlice({
   initialState,
   reducers: {
     setActiveTrades(state, action: PayloadAction<Trade[]>) {
+      const now = Date.now();
+      // Expire stale pending actions
+      for (const [id, pa] of Object.entries(state.pendingActions)) {
+        if (now - pa.startedAt > PENDING_ACTION_TTL_MS) {
+          delete state.pendingActions[id];
+          delete state.optimisticSnapshots[id];
+        }
+      }
       const next: Record<string, Trade> = {};
       for (const t of action.payload) {
         if (state.pendingActions[t.id]) {
@@ -59,7 +74,7 @@ const tradesSlice = createSlice({
         }
       }
       state.activeTrades = next;
-      state.lastUpdated = Date.now();
+      state.lastUpdated = now;
     },
     addActiveTrade(state, action: PayloadAction<Trade>) {
       state.activeTrades[action.payload.id] = action.payload;
@@ -118,7 +133,7 @@ const tradesSlice = createSlice({
         state.optimisticSnapshots[trade_id] = { ...trade };
         state.activeTrades[trade_id] = { ...trade, status: act === "closing" ? "closing" : "cancelling" };
       }
-      state.pendingActions[trade_id] = act;
+      state.pendingActions[trade_id] = { action: act, startedAt: Date.now() };
     },
     clearPendingAction(state, action: PayloadAction<string>) {
       delete state.pendingActions[action.payload];

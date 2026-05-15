@@ -8,6 +8,7 @@ import re
 import uuid as _uuid
 from base64 import b64decode
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -51,6 +52,8 @@ def _serialize_trade(trade: dict) -> dict:
             out[k] = str(v)
         elif isinstance(v, datetime):
             out[k] = v.isoformat()
+        elif isinstance(v, Decimal):
+            out[k] = float(v)
     if isinstance(out.get("metadata"), str):
         try:
             out["metadata"] = json.loads(out["metadata"])

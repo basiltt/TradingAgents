@@ -13,7 +13,7 @@ import { useTradeActions } from "@/components/trades/hooks/useTradeActions";
 export const TradeRow = memo(function TradeRow({ trade }: { trade: Trade }) {
   const dispatch = useAppDispatch();
   const accountLabel = useAppSelector(
-    (s) => s.accounts.cards.find((a) => a.id === trade.account_id)?.label,
+    (s) => s.accounts.dashboard.find((a) => a.id === trade.account_id)?.label,
   );
   const pending = useAppSelector((s) => s.trades.pendingActions[trade.id]);
   const { cancelTrade } = useTradeActions();

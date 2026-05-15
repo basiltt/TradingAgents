@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +23,7 @@ export function CloseAllConfirmation({
   open: boolean;
   onClose: () => void;
 }) {
-  const accounts = useAppSelector((s) => s.accounts.cards);
+  const accounts = useAppSelector((s) => s.accounts.dashboard);
   const trades = useAppSelector(selectActiveTradesList);
   const pendingCloseAll = useAppSelector((s) => s.trades.pendingCloseAll);
   const { closeAll } = useTradeActions();
@@ -37,7 +38,10 @@ export function CloseAllConfirmation({
     if (!accountId) return;
     try {
       await closeAll(accountId);
-    } finally {
+      toast.success("All trades closed");
+      onClose();
+    } catch {
+      toast.error("Failed to close trades");
       onClose();
     }
   };
