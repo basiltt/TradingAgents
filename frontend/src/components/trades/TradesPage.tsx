@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useAppSelector, useAppDispatch } from "@/store";
 import { setActiveTab } from "@/store/trades-slice";
@@ -18,7 +18,6 @@ import { CloseTradeModal } from "@/components/trades/CloseTradeModal";
 import { CloseAllConfirmation } from "@/components/trades/CloseAllConfirmation";
 import { TradeDetailPanel } from "@/components/trades/TradeDetailPanel";
 import { WsDisconnectBanner } from "@/components/trades/WsDisconnectBanner";
-import { setPendingCloseAll } from "@/store/trades-slice";
 import { ACTIVE_STATUSES } from "@/components/trades/types";
 
 function TableSkeleton() {
@@ -60,7 +59,7 @@ function FullPageError({ resetErrorBoundary }: { resetErrorBoundary?: () => void
 function ActiveTradesView() {
   const trades = useAppSelector(selectActiveTradesList);
   const filters = useAppSelector((s) => s.trades.filters);
-  const dispatch = useAppDispatch();
+  const [closeAllOpen, setCloseAllOpen] = useState(false);
 
   const accountId = filters.account_ids?.[0];
   const activeTrades = trades.filter((t) => ACTIVE_STATUSES.includes(t.status));
@@ -73,19 +72,25 @@ function ActiveTradesView() {
           <Button
             variant="destructive"
             size="sm"
-            onClick={() => dispatch(setPendingCloseAll("confirming"))}
+            onClick={() => setCloseAllOpen(true)}
           >
             Close All ({activeTrades.filter((t) => t.account_id === accountId).length})
           </Button>
         </div>
       )}
       <TradesTable trades={trades} />
+      <CloseAllConfirmation
+        accountId={accountId}
+        open={closeAllOpen}
+        onClose={() => setCloseAllOpen(false)}
+      />
     </div>
   );
 }
 
 function HistoryTradesView() {
-  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useTradeHistory();
+  const filters = useAppSelector((s) => s.trades.filters);
+  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useTradeHistory(filters, true);
 
   const allTrades = data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -152,7 +157,6 @@ export default function TradesPage() {
           </TabsContent>
         </Tabs>
         <CloseTradeModal />
-        <CloseAllConfirmation />
         <TradeDetailPanel />
       </div>
     </ErrorBoundary>

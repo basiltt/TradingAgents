@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,38 +8,42 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { useAppSelector, useAppDispatch } from "@/store";
-import { setPendingCloseAll } from "@/store/trades-slice";
+import { useAppSelector } from "@/store";
 import { useTradeActions } from "@/components/trades/hooks/useTradeActions";
 import { selectActiveTradesList } from "@/components/trades/selectors";
 import { ACTIVE_STATUSES } from "@/components/trades/types";
 
-export function CloseAllConfirmation() {
-  const dispatch = useAppDispatch();
-  const pendingCloseAll = useAppSelector((s) => s.trades.pendingCloseAll);
-  const filters = useAppSelector((s) => s.trades.filters);
+export function CloseAllConfirmation({
+  accountId,
+  open,
+  onClose,
+}: {
+  accountId: string | undefined;
+  open: boolean;
+  onClose: () => void;
+}) {
   const accounts = useAppSelector((s) => s.accounts.cards);
   const trades = useAppSelector(selectActiveTradesList);
+  const pendingCloseAll = useAppSelector((s) => s.trades.pendingCloseAll);
   const { closeAll } = useTradeActions();
 
-  const accountId = filters.account_ids?.[0];
   const account = accountId ? accounts.find((a) => a.id === accountId) : undefined;
   const activeTrades = trades.filter(
     (t) => ACTIVE_STATUSES.includes(t.status) && (!accountId || t.account_id === accountId),
   );
+  const isClosing = accountId ? !!pendingCloseAll[accountId] : false;
 
-  const isOpen = pendingCloseAll === "confirming";
-  const isClosing = pendingCloseAll === "closing";
-
-  const handleClose = () => dispatch(setPendingCloseAll(null));
-
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!accountId) return;
-    closeAll(accountId);
+    try {
+      await closeAll(accountId);
+    } finally {
+      onClose();
+    }
   };
 
   return (
-    <Dialog open={isOpen || isClosing} onOpenChange={(open) => !open && handleClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Close All Trades</DialogTitle>
@@ -51,7 +56,7 @@ export function CloseAllConfirmation() {
           This will send close orders for all open and pending trades. This action cannot be undone.
         </p>
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isClosing}>
+          <Button variant="outline" onClick={onClose} disabled={isClosing}>
             Cancel
           </Button>
           <Button variant="destructive" onClick={handleConfirm} disabled={isClosing || !accountId}>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import { store, useAppDispatch } from "@/store";
+import { useAppDispatch } from "@/store";
 import { updateCardRealtime, handleCloseExecution } from "@/store/accounts-slice";
 import {
   addActiveTrade,
@@ -57,14 +57,11 @@ export function useAccountWebSocket() {
           dispatch(clearPendingAction(msg.trade_id));
         }
         if (msg.type === "trade.partially_closed" && msg.data) {
-          dispatch(updateActiveTrade(msg.data));
+          dispatch(updateActiveTrade({ trade_id: msg.data.id, updates: msg.data }));
           dispatch(clearPendingAction(msg.data.id));
         }
         if (msg.type === "trade.close_failed" && msg.trade_id) {
-          const pending = store.getState().trades.pendingActions[msg.trade_id];
-          if (pending?.snapshot) {
-            dispatch(revertOptimisticUpdate({ tradeId: msg.trade_id, snapshot: pending.snapshot }));
-          }
+          dispatch(revertOptimisticUpdate(msg.trade_id));
           dispatch(clearPendingAction(msg.trade_id));
           toast.error(`Close failed for trade ${msg.trade_id.slice(0, 8)}…`);
         }

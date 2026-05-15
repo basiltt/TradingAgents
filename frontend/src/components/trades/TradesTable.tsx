@@ -20,8 +20,8 @@ const COLUMNS = [
 function sortTrades(trades: Trade[], column: string, direction: "asc" | "desc"): Trade[] {
   if (!column) return trades;
   const sorted = [...trades].sort((a, b) => {
-    const aVal = (a as Record<string, unknown>)[column];
-    const bVal = (b as Record<string, unknown>)[column];
+    const aVal = (a as unknown as Record<string, unknown>)[column];
+    const bVal = (b as unknown as Record<string, unknown>)[column];
     if (aVal == null && bVal == null) return 0;
     if (aVal == null) return 1;
     if (bVal == null) return -1;

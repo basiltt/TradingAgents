@@ -42,7 +42,7 @@ export const TradeRow = memo(function TradeRow({ trade }: { trade: Trade }) {
       <td className="px-3 py-2 text-sm text-muted-foreground">
         <TooltipProvider>
           <Tooltip>
-            <TooltipTrigger asChild>
+            <TooltipTrigger>
               <span>{formatRelativeTime(trade.opened_at ?? trade.created_at)}</span>
             </TooltipTrigger>
             <TooltipContent>
@@ -60,7 +60,7 @@ export const TradeRow = memo(function TradeRow({ trade }: { trade: Trade }) {
                 size="sm"
                 className="h-7 text-xs"
                 disabled={isPending}
-                onClick={() => cancelTrade(trade)}
+                onClick={() => cancelTrade(trade.account_id, trade.id)}
               >
                 Cancel
               </Button>

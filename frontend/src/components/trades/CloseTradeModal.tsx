@@ -34,7 +34,7 @@ export function CloseTradeModal() {
   const handleConfirm = () => {
     if (!trade) return;
     const qty = mode === "partial" ? parseFloat(qtyInput) : undefined;
-    closeTrade(trade, qty);
+    closeTrade(trade.account_id, trade.id, qty);
     handleClose();
   };
 

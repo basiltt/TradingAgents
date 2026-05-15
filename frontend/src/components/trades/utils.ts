@@ -1,6 +1,5 @@
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const nf = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const qtyNf = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["second", 60],
