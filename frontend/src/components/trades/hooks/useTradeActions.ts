@@ -52,8 +52,6 @@ export function useTradeActions() {
       queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
       queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
       return result;
-    } catch (error) {
-      throw error;
     } finally {
       dispatch(setPendingCloseAll({ account_id: accountId, pending: false }));
     }

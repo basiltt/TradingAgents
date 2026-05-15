@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { tradesApi } from "@/api/client";
-import { ACTIVE_STATUSES } from "@/components/trades/types";
+import { API_ACTIVE_STATUSES } from "@/components/trades/types";
 import type { Trade } from "@/components/trades/types";
 import { store, useAppDispatch } from "@/store";
 import { setActiveTrades, setIsFetchingActiveTrades } from "@/store/trades-slice";
@@ -18,7 +18,7 @@ export async function fetchAllActiveTrades(
 
     do {
       const page = await tradesApi.list({
-        status: [...ACTIVE_STATUSES],
+        status: [...API_ACTIVE_STATUSES],
         limit: 100,
         cursor,
       });
@@ -51,7 +51,7 @@ export function useTradePolling(enabled: boolean) {
     const interval = setInterval(async () => {
       try {
         const page1 = await tradesApi.list({
-          status: [...ACTIVE_STATUSES],
+          status: [...API_ACTIVE_STATUSES],
           limit: 50,
         });
         const localTrades = Object.values(store.getState().trades.activeTrades);

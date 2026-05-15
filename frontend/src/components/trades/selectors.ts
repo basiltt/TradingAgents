@@ -19,7 +19,6 @@ export const selectActiveTradeAggregates = createSelector(
     }
     return {
       tradeCount: trades.length,
-      totalPnl: totalRealizedPnl,
       totalRealizedPnl,
     };
   },

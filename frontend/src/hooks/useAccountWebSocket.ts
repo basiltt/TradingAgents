@@ -56,9 +56,17 @@ export function useAccountWebSocket() {
           dispatch(removeActiveTrade(msg.trade_id));
           dispatch(clearPendingAction(msg.trade_id));
         }
-        if (msg.type === "trade.partially_closed" && msg.data) {
-          dispatch(updateActiveTrade({ trade_id: msg.data.id, updates: msg.data }));
-          dispatch(clearPendingAction(msg.data.id));
+        if (msg.type === "trade.partially_closed" && msg.trade_id) {
+          dispatch(updateActiveTrade({
+            trade_id: msg.trade_id,
+            updates: {
+              filled_qty: msg.filled_qty,
+              realized_pnl: msg.realized_pnl,
+              version: msg.version,
+              status: "partially_closed",
+            },
+          }));
+          dispatch(clearPendingAction(msg.trade_id));
         }
         if (msg.type === "trade.close_failed" && msg.trade_id) {
           dispatch(revertOptimisticUpdate(msg.trade_id));

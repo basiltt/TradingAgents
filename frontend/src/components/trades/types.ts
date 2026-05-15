@@ -12,6 +12,10 @@ export type TradeStatus =
 export const ACTIVE_STATUSES: TradeStatus[] = [
   "pending", "open", "partially_filled", "closing", "cancelling", "partially_closed",
 ];
+// Statuses the backend recognizes — excludes client-only optimistic statuses like "cancelling"
+export const API_ACTIVE_STATUSES: TradeStatus[] = [
+  "pending", "open", "partially_filled", "closing", "partially_closed",
+];
 export const TERMINAL_STATUSES: TradeStatus[] = ["closed", "cancelled", "failed"];
 
 export interface Trade {

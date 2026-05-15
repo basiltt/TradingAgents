@@ -11,14 +11,14 @@ from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from starlette.responses import JSONResponse
+from fastapi.responses import JSONResponse
 
 from backend.schemas import TradeStatsResponse
 from backend.services.trade_repository import SORT_COLUMNS, SYMBOL_PATTERN, VALID_SIDES, VALID_STATUSES
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["trades"])
 
 _MAX_ACCOUNT_IDS = 50
 

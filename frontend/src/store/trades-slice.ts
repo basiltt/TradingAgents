@@ -110,6 +110,7 @@ const tradesSlice = createSlice({
     },
     clearPendingAction(state, action: PayloadAction<string>) {
       delete state.pendingActions[action.payload];
+      delete state.optimisticSnapshots[action.payload];
     },
     revertOptimisticUpdate(state, action: PayloadAction<string>) {
       const snapshot = state.optimisticSnapshots[action.payload];
