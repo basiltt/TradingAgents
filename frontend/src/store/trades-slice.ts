@@ -184,6 +184,23 @@ const tradesSlice = createSlice({
       if (state.closeModalTradeId && ids.has(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
+    removeActiveTradesByAccount(state, action: PayloadAction<string>) {
+      const accountId = action.payload;
+      const idsToRemove: string[] = [];
+      for (const [id, trade] of Object.entries(state.activeTrades)) {
+        if ((trade as { account_id: string }).account_id === accountId) idsToRemove.push(id);
+      }
+      for (const id of idsToRemove) {
+        delete state.activeTrades[id];
+        delete state.optimisticSnapshots[id];
+      }
+      if (state.selectedTradeId && idsToRemove.includes(state.selectedTradeId)) {
+        state.selectedTradeId = null;
+        state.selectedTrade = null;
+      }
+      if (state.closeModalTradeId && idsToRemove.includes(state.closeModalTradeId)) state.closeModalTradeId = null;
+      state.lastUpdated = Date.now();
+    },
     setIsFetchingActiveTrades(state, action: PayloadAction<boolean>) {
       state.isFetchingActiveTrades = action.payload;
     },
@@ -213,6 +230,7 @@ export const {
   revertOptimisticUpdate,
   setPendingCloseAll,
   bulkRemoveActiveTrades,
+  removeActiveTradesByAccount,
   setIsFetchingActiveTrades,
   setWsConnected,
   setLastUpdated,

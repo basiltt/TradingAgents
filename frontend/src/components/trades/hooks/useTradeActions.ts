@@ -7,7 +7,7 @@ import {
   clearPendingAction,
   revertOptimisticUpdate,
   setPendingCloseAll,
-  bulkRemoveActiveTrades,
+  removeActiveTradesByAccount,
 } from "@/store/trades-slice";
 
 export function useTradeActions() {
@@ -46,12 +46,7 @@ export function useTradeActions() {
     dispatch(setPendingCloseAll({ account_id: accountId, pending: true }));
     try {
       const result = await accountsApi.closeAllPositions(accountId);
-      if (result.results) {
-        const closedIds = result.results
-          .filter((r: { status: string }) => r.status !== "failed")
-          .map((r: { trade_id: string }) => r.trade_id);
-        dispatch(bulkRemoveActiveTrades(closedIds));
-      }
+      dispatch(removeActiveTradesByAccount(accountId));
       queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
       queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
       return result;
