@@ -257,13 +257,22 @@ class BybitClient:
         }
 
     async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {"category": "linear", "settleCoin": "USDT"}
+        params: dict[str, Any] = {"category": "linear", "settleCoin": "USDT", "limit": "200"}
         if symbol:
             params["symbol"] = symbol
             del params["settleCoin"]
 
-        result = await self._request("GET", "/v5/position/list", params)
-        positions = result.get("list", [])
+        all_positions: list[dict[str, Any]] = []
+        cursor = ""
+        while True:
+            if cursor:
+                params["cursor"] = cursor
+            result = await self._request("GET", "/v5/position/list", params)
+            all_positions.extend(result.get("list", []))
+            cursor = result.get("nextPageCursor", "")
+            if not cursor:
+                break
+
         return [
             {
                 "symbol": p.get("symbol", ""),
@@ -280,7 +289,7 @@ class BybitClient:
                 "positionMM": p.get("positionMM", "0"),
                 "positionIdx": int(p.get("positionIdx", 0)),
             }
-            for p in positions
+            for p in all_positions
             if p.get("size", "0") != "0"
         ]
 

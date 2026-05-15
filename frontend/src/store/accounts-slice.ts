@@ -20,6 +20,7 @@ interface AccountsState {
   pollingIntervalMs: number;
   lastManualRefresh: Record<string, number>;
   directions: Record<string, Record<string, Direction>>;
+  closeExecutionSeq: number;
 }
 
 const initialState: AccountsState = {
@@ -32,6 +33,7 @@ const initialState: AccountsState = {
   pollingIntervalMs: 60000,
   lastManualRefresh: {},
   directions: {},
+  closeExecutionSeq: 0,
 };
 
 function getDirection(oldVal: string | undefined, newVal: string): Direction {
@@ -119,6 +121,7 @@ const accountsSlice = createSlice({
       const card = state.dashboard[idx];
       const closed = typeof data?.closed === "number" ? data.closed : 0;
       card.positions_count = Math.max(0, card.positions_count - closed);
+      state.closeExecutionSeq += 1;
     },
   },
 });

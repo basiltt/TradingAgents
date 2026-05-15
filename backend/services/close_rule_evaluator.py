@@ -145,11 +145,15 @@ class CloseRuleEvaluator:
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")
+                            cleared = await self._db.deactivate_rules_for_account(account_id, exclude_rule_id=rule["id"])
+                            if cleared:
+                                logger.info("Deactivated %d remaining rules for account %s after rule %s executed", cleared, account_id, rule["id"])
                             if self._cycle_callback and rule.get("cycle_id"):
                                 try:
                                     await self._cycle_callback(rule)
                                 except Exception:
                                     logger.exception("Cycle callback failed for rule %s", rule["id"])
+                            break  # all other rules deactivated, stop evaluating this account
                     except asyncio.CancelledError:
                         logger.warning("Close cancelled (timeout) for rule %s, reverting to active", rule["id"])
                         await self._db.update_close_rule(rule["id"], status="active")

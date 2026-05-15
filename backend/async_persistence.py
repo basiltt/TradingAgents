@@ -1691,6 +1691,23 @@ class AsyncAnalysisDB:
         )
         return row is not None
 
+    async def deactivate_rules_for_account(self, account_id: str, exclude_rule_id: str | None = None) -> int:
+        """Deactivate all active/paused rules for an account (e.g. after a rule triggers a close-all).
+        Returns the number of rules deactivated."""
+        if exclude_rule_id:
+            result = await self._pool.execute(
+                "UPDATE close_rules SET status = 'expired', updated_at = now() "
+                "WHERE account_id = $1 AND id != $2 AND status IN ('active', 'paused', 'triggered')",
+                account_id, exclude_rule_id,
+            )
+        else:
+            result = await self._pool.execute(
+                "UPDATE close_rules SET status = 'expired', updated_at = now() "
+                "WHERE account_id = $1 AND status IN ('active', 'paused', 'triggered')",
+                account_id,
+            )
+        return int(result.split()[-1])
+
     async def delete_close_rule(self, rule_id: str) -> bool:
         async with self._transaction() as conn:
             await conn.execute("DELETE FROM close_executions WHERE rule_id = $1", rule_id)
@@ -1754,7 +1771,7 @@ class AsyncAnalysisDB:
         cols = ["account_id", "rule_id", "trigger_source", "total_positions",
                 "closed_count", "failed_count", "results"]
         vals = {c: execution.get(c) for c in cols}
-        if vals.get("results") and not isinstance(vals["results"], str):
+        if vals.get("results") is not None and not isinstance(vals["results"], str):
             vals["results"] = json.dumps(vals["results"])
         col_names = ", ".join(vals.keys())
         placeholders = ", ".join(f"${i}" for i in range(1, len(vals) + 1))

@@ -267,7 +267,7 @@ class ClosePositionsService:
         if not rule or rule["account_id"] != account_id:
             return None
 
-        if rule["status"] in ("triggered", "executed"):
+        if rule["status"] in ("triggered", "executed", "expired"):
             raise ValueError(f"Cannot update rule in '{rule['status']}' state")
 
         fields = {}

@@ -216,7 +216,7 @@ class CycleRepository:
 
     async def expire_cycle_rules(self, cycle_id: int) -> None:
         await self._pool.execute(
-            "UPDATE close_rules SET status = 'expired' WHERE cycle_id = $1 AND status IN ('active', 'pending_activation')",
+            "UPDATE close_rules SET status = 'expired', updated_at = now() WHERE cycle_id = $1 AND status IN ('active', 'pending_activation')",
             cycle_id,
         )
 

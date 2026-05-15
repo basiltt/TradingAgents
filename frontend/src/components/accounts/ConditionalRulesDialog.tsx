@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, Plus, Trash2, X, ShieldCheck, TrendingDown, TrendingUp, DollarSign, Percent, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { accountsApi } from "@/api/client";
+import { useAppSelector } from "@/store";
 import type { CloseRule, TriggerType, UpdateCloseRuleData } from "@/api/client";
 
 interface Props {
@@ -32,6 +33,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const actionRef = useRef(false);
+  const closeExecSeq = useAppSelector((s) => s.accounts.closeExecutionSeq);
 
   useEffect(() => {
     if (!open) {
@@ -43,7 +45,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
       .catch(() => { if (!controller.signal.aborted) toast.error("Failed to load rules"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [open, accountId]);
+  }, [open, accountId, closeExecSeq]);
 
   const handleDialogClose = () => {
     setRules([]);
@@ -115,7 +117,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
     }
   };
 
-  const activeCount = rules.filter((r) => r.status !== "triggered" && r.status !== "executed").length;
+  const activeCount = rules.filter((r) => r.status === "active" || r.status === "paused").length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => !saving && handleDialogClose()}>
@@ -218,7 +220,8 @@ function RuleRow({
   const isPct = PCT_TYPES.has(rule.trigger_type);
   const isTriggered = rule.status === "triggered";
   const isExecuted = rule.status === "executed";
-  const isTerminal = isTriggered || isExecuted;
+  const isExpired = rule.status === "expired";
+  const isTerminal = isTriggered || isExecuted || isExpired;
   const isActive = rule.status === "active";
   const config = TRIGGER_CONFIG[rule.trigger_type];
   const Icon = config.icon;
@@ -240,19 +243,21 @@ function RuleRow({
 
   return (
     <div className={`group rounded-xl border transition-all ${
-      isTerminal
-        ? "border-amber-500/25 bg-amber-500/[0.04]"
-        : isActive
-          ? "border-border/40 bg-card/60 hover:border-border/60"
-          : "border-border/20 bg-muted/[0.03] opacity-50 hover:opacity-70"
+      isExpired
+        ? "border-border/20 bg-muted/[0.03] opacity-60"
+        : isTerminal
+          ? "border-amber-500/25 bg-amber-500/[0.04]"
+          : isActive
+            ? "border-border/40 bg-card/60 hover:border-border/60"
+            : "border-border/20 bg-muted/[0.03] opacity-50 hover:opacity-70"
     }`}>
       {/* Main row */}
       <div className="flex items-center gap-3 px-3.5 py-3">
         {/* Icon */}
         <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
-          isTerminal ? "bg-amber-500/10" : isActive ? "bg-muted/40" : "bg-muted/20"
+          isExpired ? "bg-muted/20" : isTerminal ? "bg-amber-500/10" : isActive ? "bg-muted/40" : "bg-muted/20"
         }`}>
-          <Icon className={`w-3.5 h-3.5 ${isTerminal ? "text-amber-400" : isActive ? config.color : "text-muted-foreground/50"}`} />
+          <Icon className={`w-3.5 h-3.5 ${isExpired ? "text-muted-foreground/40" : isTerminal ? "text-amber-400" : isActive ? config.color : "text-muted-foreground/50"}`} />
         </div>
 
         {/* Trigger select */}
@@ -302,9 +307,11 @@ function RuleRow({
             <span className={`text-[10px] px-2 py-1 rounded-md font-semibold tracking-wide uppercase ${
               isExecuted
                 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                : isExpired
+                  ? "bg-muted/20 text-muted-foreground/60 border border-border/30"
+                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
             }`}>
-              {isExecuted ? "Executed" : "Triggered"}
+              {isExecuted ? "Executed" : isExpired ? "Expired" : "Triggered"}
             </span>
           ) : (
             <button

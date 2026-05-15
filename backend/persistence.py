@@ -2044,6 +2044,31 @@ class AnalysisDB:
                 raise
         return row is not None
 
+    def deactivate_rules_for_account(self, account_id: str, exclude_rule_id: str | None = None) -> int:
+        """Deactivate all active/paused rules for an account (e.g. after a rule triggers a close-all).
+        Returns the number of rules deactivated."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                if exclude_rule_id:
+                    cur.execute(
+                        "UPDATE close_rules SET status = 'expired', updated_at = now() "
+                        "WHERE account_id = %s AND id != %s AND status IN ('active', 'paused', 'triggered')",
+                        (account_id, exclude_rule_id),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE close_rules SET status = 'expired', updated_at = now() "
+                        "WHERE account_id = %s AND status IN ('active', 'paused', 'triggered')",
+                        (account_id,),
+                    )
+                affected = cur.rowcount
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return affected
+
     def delete_close_rule(self, rule_id: str) -> bool:
         with self._get_conn() as conn:
             cur = conn.cursor()
