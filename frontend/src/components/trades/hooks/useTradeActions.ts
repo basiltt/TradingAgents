@@ -19,6 +19,7 @@ export function useTradeActions() {
     try {
       await tradesApi.close(accountId, tradeId, qty ? { qty } : undefined);
       dispatch(clearPendingAction(tradeId));
+      dispatch(removeActiveTrade(tradeId));
       queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
       queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
     } catch (error) {
@@ -47,7 +48,7 @@ export function useTradeActions() {
       const result = await accountsApi.closeAllPositions(accountId);
       if (result.results) {
         const closedIds = result.results
-          .filter((r: { status: string }) => r.status === "closed")
+          .filter((r: { status: string }) => r.status !== "failed")
           .map((r: { trade_id: string }) => r.trade_id);
         dispatch(bulkRemoveActiveTrades(closedIds));
       }

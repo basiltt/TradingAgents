@@ -78,7 +78,7 @@ function ActiveTradesView() {
           </Button>
         </div>
       )}
-      <TradesTable trades={trades} />
+      <TradesTable trades={activeTrades} />
       <CloseAllConfirmation
         accountId={accountId}
         open={closeAllOpen}
@@ -128,6 +128,7 @@ export default function TradesPage() {
   const isFetching = useAppSelector((s) => s.trades.isFetchingActiveTrades);
   const lastUpdated = useAppSelector((s) => s.trades.lastUpdated);
   const accounts = useAppSelector((s) => s.accounts.dashboard);
+  const accountsStatus = useAppSelector((s) => s.accounts.status);
   const isMobile = useMediaQuery("(max-width: 767px)");
 
   useTradePolling(wsConnected);
@@ -146,7 +147,7 @@ export default function TradesPage() {
     );
   }
 
-  if (accounts.length === 0) {
+  if (accounts.length === 0 && accountsStatus !== "idle" && accountsStatus !== "loading") {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
         <p className="text-lg font-medium">No accounts connected</p>

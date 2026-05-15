@@ -23,7 +23,9 @@ export function AccountsDashboard() {
 
   useEffect(() => {
     fetchDashboard();
-    const interval = setInterval(() => fetchDashboard(true), 3_000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") fetchDashboard(true);
+    }, 3_000);
     return () => clearInterval(interval);
   }, [fetchDashboard]);
 
