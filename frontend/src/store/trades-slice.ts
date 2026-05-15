@@ -104,7 +104,7 @@ const tradesSlice = createSlice({
       const trade = state.activeTrades[trade_id];
       if (trade) {
         state.optimisticSnapshots[trade_id] = { ...trade };
-        state.activeTrades[trade_id] = { ...trade, status: act === "closing" ? "closing" : "cancelled" };
+        state.activeTrades[trade_id] = { ...trade, status: act === "closing" ? "closing" : "cancelling" };
       }
       state.pendingActions[trade_id] = act;
     },

@@ -3,13 +3,14 @@ export type TradeStatus =
   | "open"
   | "partially_filled"
   | "closing"
+  | "cancelling"
   | "partially_closed"
   | "closed"
   | "cancelled"
   | "failed";
 
 export const ACTIVE_STATUSES: TradeStatus[] = [
-  "pending", "open", "partially_filled", "closing", "partially_closed",
+  "pending", "open", "partially_filled", "closing", "cancelling", "partially_closed",
 ];
 export const TERMINAL_STATUSES: TradeStatus[] = ["closed", "cancelled", "failed"];
 
