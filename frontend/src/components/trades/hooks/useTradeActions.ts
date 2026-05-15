@@ -19,6 +19,8 @@ export function useTradeActions() {
     try {
       await tradesApi.close(accountId, tradeId, qty ? { qty } : undefined);
       dispatch(clearPendingAction(tradeId));
+      queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
+      queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
     } catch (error) {
       dispatch(revertOptimisticUpdate(tradeId));
       throw error;

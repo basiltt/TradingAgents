@@ -127,6 +127,7 @@ export default function TradesPage() {
   const wsConnected = useAppSelector((s) => s.trades.wsConnected);
   const isFetching = useAppSelector((s) => s.trades.isFetchingActiveTrades);
   const lastUpdated = useAppSelector((s) => s.trades.lastUpdated);
+  const accounts = useAppSelector((s) => s.accounts.dashboard);
   const isMobile = useMediaQuery("(max-width: 767px)");
 
   useTradePolling(wsConnected);
@@ -141,6 +142,18 @@ export default function TradesPage() {
       <div className="p-4 text-center text-gray-400">
         <p className="text-lg font-medium">Trades dashboard is optimized for desktop.</p>
         <p className="text-sm mt-2">Please use a wider screen for the full experience.</p>
+      </div>
+    );
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
+        <p className="text-lg font-medium">No accounts connected</p>
+        <p className="text-sm mt-2">Add a trading account to start viewing trades.</p>
+        <Button variant="outline" className="mt-4" onClick={() => window.location.href = "/accounts"}>
+          Go to Accounts
+        </Button>
       </div>
     );
   }

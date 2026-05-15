@@ -42,12 +42,12 @@ def _validated_int(name: str, default: int, min_val: int, max_val: int) -> int:
 
 _CSP_CONNECT = os.environ.get(
     "WEB_CSP_CONNECT_SRC",
-    "'self' ws: wss:",
+    "'self'",
 )
 _CSP_CONNECT = _re.sub(r"[^\x20-\x7E]|[;\n\r]", "", _CSP_CONNECT)
 _CSP_CONNECT = " ".join(
     t for t in _CSP_CONNECT.split()
-    if _re.match(r"^('[\w-]+'|[\w]+:|[\w:+.\-]+://[\w:.\-/?#@%=&+,*!]+)$", t)
+    if _re.match(r"^('[\w-]+'|[\w:+.\-]+://[\w:.\-/?#@%=&+,*!]+)$", t)
 ) or "'self'"
 _CSP_HEADER = (
     f"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "

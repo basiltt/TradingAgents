@@ -3,6 +3,7 @@ import { Outlet, Link } from "@tanstack/react-router";
 import { useAppSelector, useAppDispatch } from "@/store";
 import { toggleSidebar, setSidebarOpen, setTheme } from "@/store/ui-slice";
 import { useThemeEffect } from "@/hooks/useThemeEffect";
+import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
 
 function NavLink({
   to,
@@ -102,6 +103,7 @@ export function RootLayout() {
   const dispatch = useAppDispatch();
 
   useThemeEffect();
+  useAccountWebSocket();
 
   useEffect(() => {
     if (!sidebarOpen) return;

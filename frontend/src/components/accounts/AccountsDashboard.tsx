@@ -4,14 +4,12 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
 import { AccountCard } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
-import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function AccountsDashboard() {
   const dispatch = useAppDispatch();
   const { dashboard, filterType, status, error } = useAppSelector((s) => s.accounts);
   const [addOpen, setAddOpen] = useState(false);
-  useAccountWebSocket();
 
   const fetchDashboard = useCallback(async (silent = false) => {
     if (!silent) dispatch(setLoading());
