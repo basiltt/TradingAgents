@@ -28,23 +28,13 @@ export function TradeDetailPanel() {
     return () => document.removeEventListener("keydown", handler);
   }, [selectedId, dispatch]);
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        dispatch(setSelectedTradeId(null));
-      }
-    };
-    if (selectedId) {
-      setTimeout(() => document.addEventListener("mousedown", handler), 0);
-    }
-    return () => document.removeEventListener("mousedown", handler);
-  }, [selectedId, dispatch]);
-
   if (!selectedId) return null;
+
+  const handleBackdropClick = () => dispatch(setSelectedTradeId(null));
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/20" />
+      <div className="fixed inset-0 z-40 bg-black/20" onClick={handleBackdropClick} />
       <div
         ref={panelRef}
         className="fixed right-0 top-0 z-50 h-full w-full max-w-md overflow-y-auto border-l border-border bg-background p-6 shadow-xl animate-in slide-in-from-right duration-200"

@@ -3,7 +3,6 @@ import { useAppDispatch } from "@/store";
 import { tradesApi, accountsApi } from "@/api/client";
 import {
   startPendingAction,
-  updateActiveTrade,
   removeActiveTrade,
   clearPendingAction,
   revertOptimisticUpdate,
@@ -17,7 +16,6 @@ export function useTradeActions() {
 
   const closeTrade = async (accountId: string, tradeId: string, qty?: number) => {
     dispatch(startPendingAction({ trade_id: tradeId, action: "closing" }));
-    dispatch(updateActiveTrade({ trade_id: tradeId, updates: { status: "closing" } }));
     try {
       await tradesApi.close(accountId, tradeId, qty ? { qty } : undefined);
     } catch (error) {

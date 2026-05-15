@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -33,12 +34,17 @@ export function CloseTradeModal() {
     setSubmitting(false);
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!trade || submitting) return;
     setSubmitting(true);
     const qty = mode === "partial" ? parseFloat(qtyInput) : undefined;
-    closeTrade(trade.account_id, trade.id, qty);
-    handleClose();
+    try {
+      await closeTrade(trade.account_id, trade.id, qty);
+      handleClose();
+    } catch {
+      toast.error("Failed to close trade");
+      setSubmitting(false);
+    }
   };
 
   const partialQty = parseFloat(qtyInput);
