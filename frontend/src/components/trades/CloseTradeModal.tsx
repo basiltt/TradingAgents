@@ -21,6 +21,7 @@ export function CloseTradeModal() {
   const { closeTrade } = useTradeActions();
   const [qtyInput, setQtyInput] = useState("");
   const [mode, setMode] = useState<"full" | "partial">("full");
+  const [submitting, setSubmitting] = useState(false);
 
   const trade = tradeId ? activeTrades[tradeId] : undefined;
   const isOpen = !!tradeId;
@@ -29,10 +30,12 @@ export function CloseTradeModal() {
     dispatch(setCloseModalTradeId(null));
     setQtyInput("");
     setMode("full");
+    setSubmitting(false);
   };
 
   const handleConfirm = () => {
-    if (!trade) return;
+    if (!trade || submitting) return;
+    setSubmitting(true);
     const qty = mode === "partial" ? parseFloat(qtyInput) : undefined;
     closeTrade(trade.account_id, trade.id, qty);
     handleClose();
@@ -40,7 +43,7 @@ export function CloseTradeModal() {
 
   const partialQty = parseFloat(qtyInput);
   const isValidPartial =
-    mode === "full" || (!isNaN(partialQty) && partialQty > 0 && partialQty < trade?.filled_qty!);
+    mode === "full" || (!isNaN(partialQty) && isFinite(partialQty) && partialQty > 0 && partialQty < (trade?.filled_qty ?? 0));
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
@@ -94,7 +97,7 @@ export function CloseTradeModal() {
           </Button>
           <Button
             variant="destructive"
-            disabled={!!pending || !isValidPartial}
+            disabled={submitting || !!pending || !isValidPartial}
             onClick={handleConfirm}
           >
             {pending ? "Closing..." : "Confirm Close"}

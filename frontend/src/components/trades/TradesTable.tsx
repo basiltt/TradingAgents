@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Trade } from "@/components/trades/types";
 import { TradeRow } from "@/components/trades/TradeRow";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAppSelector, useAppDispatch } from "@/store";
 import { setSortColumn, setSortDirection } from "@/store/trades-slice";
 
@@ -19,17 +20,17 @@ const COLUMNS = [
 
 function sortTrades(trades: Trade[], column: string, direction: "asc" | "desc"): Trade[] {
   if (!column) return trades;
-  const sorted = [...trades].sort((a, b) => {
+  const dir = direction === "asc" ? 1 : -1;
+  return [...trades].sort((a, b) => {
     const aVal = (a as unknown as Record<string, unknown>)[column];
     const bVal = (b as unknown as Record<string, unknown>)[column];
     if (aVal == null && bVal == null) return 0;
     if (aVal == null) return 1;
     if (bVal == null) return -1;
-    if (typeof aVal === "string" && typeof bVal === "string") return aVal.localeCompare(bVal);
-    if (typeof aVal === "number" && typeof bVal === "number") return aVal - bVal;
+    if (typeof aVal === "string" && typeof bVal === "string") return aVal.localeCompare(bVal) * dir;
+    if (typeof aVal === "number" && typeof bVal === "number") return (aVal - bVal) * dir;
     return 0;
   });
-  return direction === "desc" ? sorted.reverse() : sorted;
 }
 
 function filterTrades(trades: Trade[], filters: { account_ids?: string[]; symbol?: string; side?: string }): Trade[] {
@@ -70,6 +71,7 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
   }
 
   return (
+    <TooltipProvider>
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-left">
         <thead>
@@ -95,5 +97,6 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
         </tbody>
       </table>
     </div>
+    </TooltipProvider>
   );
 }

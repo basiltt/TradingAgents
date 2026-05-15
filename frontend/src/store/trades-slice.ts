@@ -62,6 +62,7 @@ const tradesSlice = createSlice({
       const { trade_id, updates } = action.payload;
       const existing = state.activeTrades[trade_id];
       if (!existing) return;
+      if (state.pendingActions[trade_id]) return;
       if (
         updates.version !== undefined &&
         existing.version !== undefined &&

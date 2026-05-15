@@ -9,22 +9,17 @@ export const selectActiveTradesList = createSelector(
 );
 
 export const selectActiveTradeAggregates = createSelector(
-  [selectActiveTrades],
-  (activeTrades) => {
-    const trades = Object.values(activeTrades);
+  [selectActiveTradesList],
+  (trades) => {
     let totalRealizedPnl = 0;
-    const tradeCount = trades.length;
-
     for (const trade of trades) {
       if (trade.realized_pnl != null) {
         totalRealizedPnl += trade.realized_pnl;
       }
     }
-
     return {
-      tradeCount,
+      tradeCount: trades.length,
       totalPnl: totalRealizedPnl,
-      totalUnrealizedPnl: 0,
       totalRealizedPnl,
     };
   },
