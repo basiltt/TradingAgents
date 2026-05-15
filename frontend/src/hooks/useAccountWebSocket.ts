@@ -1,6 +1,15 @@
 import { useEffect, useRef, useCallback } from "react";
-import { useAppDispatch } from "@/store";
+import { toast } from "sonner";
+import { store, useAppDispatch } from "@/store";
 import { updateCardRealtime, handleCloseExecution } from "@/store/accounts-slice";
+import {
+  addActiveTrade,
+  removeActiveTrade,
+  updateActiveTrade,
+  clearPendingAction,
+  revertOptimisticUpdate,
+  setWsConnected,
+} from "@/store/trades-slice";
 
 const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
@@ -23,6 +32,7 @@ export function useAccountWebSocket() {
 
     ws.onopen = () => {
       reconnectDelay.current = RECONNECT_BASE;
+      dispatch(setWsConnected(true));
     };
 
     ws.onmessage = (event) => {
@@ -38,12 +48,33 @@ export function useAccountWebSocket() {
         if (msg.account_id && msg.type === "close_execution") {
           dispatch(handleCloseExecution(msg));
         }
+
+        if (msg.type === "trade.opened" && msg.data) {
+          dispatch(addActiveTrade(msg.data));
+        }
+        if (msg.type === "trade.closed" && msg.trade_id) {
+          dispatch(removeActiveTrade(msg.trade_id));
+          dispatch(clearPendingAction(msg.trade_id));
+        }
+        if (msg.type === "trade.partially_closed" && msg.data) {
+          dispatch(updateActiveTrade(msg.data));
+          dispatch(clearPendingAction(msg.data.id));
+        }
+        if (msg.type === "trade.close_failed" && msg.trade_id) {
+          const pending = store.getState().trades.pendingActions[msg.trade_id];
+          if (pending?.snapshot) {
+            dispatch(revertOptimisticUpdate({ tradeId: msg.trade_id, snapshot: pending.snapshot }));
+          }
+          dispatch(clearPendingAction(msg.trade_id));
+          toast.error(`Close failed for trade ${msg.trade_id.slice(0, 8)}…`);
+        }
       } catch {
         // ignore parse errors
       }
     };
 
     ws.onclose = () => {
+      dispatch(setWsConnected(false));
       if (!mounted.current) return;
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX);

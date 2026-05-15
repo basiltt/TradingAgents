@@ -4,6 +4,7 @@ import { analysisSlice } from "./analysis-slice";
 import { uiSlice } from "./ui-slice";
 import accountsReducer from "./accounts-slice";
 import strategiesReducer from "./strategies-slice";
+import tradesReducer from "./trades-slice";
 
 export const store = configureStore({
   reducer: {
@@ -11,6 +12,7 @@ export const store = configureStore({
     ui: uiSlice.reducer,
     accounts: accountsReducer,
     strategies: strategiesReducer,
+    trades: tradesReducer,
   },
 });
 
