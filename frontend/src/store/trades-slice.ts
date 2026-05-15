@@ -45,10 +45,20 @@ const tradesSlice = createSlice({
   initialState,
   reducers: {
     setActiveTrades(state, action: PayloadAction<Trade[]>) {
-      state.activeTrades = {};
+      const next: Record<string, Trade> = {};
       for (const t of action.payload) {
-        state.activeTrades[t.id] = t;
+        if (state.pendingActions[t.id]) {
+          next[t.id] = state.activeTrades[t.id] ?? t;
+        } else {
+          next[t.id] = t;
+        }
       }
+      for (const id of Object.keys(state.pendingActions)) {
+        if (!next[id] && state.activeTrades[id]) {
+          next[id] = state.activeTrades[id];
+        }
+      }
+      state.activeTrades = next;
       state.lastUpdated = Date.now();
     },
     addActiveTrade(state, action: PayloadAction<Trade>) {
@@ -76,6 +86,8 @@ const tradesSlice = createSlice({
     removeActiveTrade(state, action: PayloadAction<string>) {
       delete state.activeTrades[action.payload];
       delete state.optimisticSnapshots[action.payload];
+      if (state.selectedTradeId === action.payload) state.selectedTradeId = null;
+      if (state.closeModalTradeId === action.payload) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
     setActiveTab(state, action: PayloadAction<"active" | "history">) {
@@ -131,10 +143,13 @@ const tradesSlice = createSlice({
       }
     },
     bulkRemoveActiveTrades(state, action: PayloadAction<string[]>) {
-      for (const id of action.payload) {
+      const ids = new Set(action.payload);
+      for (const id of ids) {
         delete state.activeTrades[id];
         delete state.optimisticSnapshots[id];
       }
+      if (state.selectedTradeId && ids.has(state.selectedTradeId)) state.selectedTradeId = null;
+      if (state.closeModalTradeId && ids.has(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
     setIsFetchingActiveTrades(state, action: PayloadAction<boolean>) {

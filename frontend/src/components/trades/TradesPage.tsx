@@ -90,11 +90,22 @@ function ActiveTradesView() {
 
 function HistoryTradesView() {
   const filters = useAppSelector((s) => s.trades.filters);
-  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useTradeHistory(filters, true);
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } = useTradeHistory(filters, true);
 
   const allTrades = data?.pages.flatMap((p) => p.items) ?? [];
 
   if (isLoading) return <TableSkeleton />;
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground">
+        <p>Failed to load trade history.</p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">

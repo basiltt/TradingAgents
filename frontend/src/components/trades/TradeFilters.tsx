@@ -15,6 +15,7 @@ export function TradeFilters() {
   return (
     <div className="flex flex-wrap items-center gap-3 py-3">
       <select
+        aria-label="Filter by account"
         className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         value={filters.account_ids?.[0] ?? ""}
         onChange={(e) =>
@@ -37,6 +38,7 @@ export function TradeFilters() {
       />
 
       <select
+        aria-label="Filter by side"
         className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         value={filters.side ?? ""}
         onChange={(e) => updateFilters({ side: e.target.value })}

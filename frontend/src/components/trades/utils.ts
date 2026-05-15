@@ -31,7 +31,8 @@ export function formatPrice(value: number | null, decimals = 2): string {
   }).format(value);
 }
 
-export function formatQty(value: number, decimals = 4): string {
+export function formatQty(value: number | null | undefined, decimals = 4): string {
+  if (value == null) return "—";
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: decimals,

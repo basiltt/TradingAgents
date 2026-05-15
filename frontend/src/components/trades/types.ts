@@ -25,7 +25,7 @@ export interface Trade {
   side: string;
   order_type: string;
   qty: number;
-  filled_qty: number;
+  filled_qty: number | null;
   entry_price: number | null;
   avg_fill_price: number | null;
   exit_price: number | null;
@@ -38,7 +38,7 @@ export interface Trade {
   fees: number | null;
   net_pnl: number | null;
   source: "manual" | "cycle";
-  source_id: string | null;
+  source_id: number | null;
   close_reason: string | null;
   version: number;
   opened_at: string | null;

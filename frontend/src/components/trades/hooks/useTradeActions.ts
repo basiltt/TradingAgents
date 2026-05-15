@@ -29,8 +29,8 @@ export function useTradeActions() {
     dispatch(startPendingAction({ trade_id: tradeId, action: "cancelling" }));
     try {
       await tradesApi.cancel(accountId, tradeId);
-      dispatch(removeActiveTrade(tradeId));
       dispatch(clearPendingAction(tradeId));
+      dispatch(removeActiveTrade(tradeId));
       queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
       queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
     } catch (error) {
