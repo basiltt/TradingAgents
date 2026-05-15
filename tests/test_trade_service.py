@@ -361,6 +361,11 @@ class TestExtractPnl:
         full_result = service._extract_pnl({"avgPrice": "51000", "cumExecFee": "0.1"}, trade, 1.0)
         assert abs(result["realized_pnl"]) < abs(full_result["realized_pnl"])
 
+    def test_none_cumexecfee_defaults_to_zero(self, service):
+        trade = _make_trade(side="Buy", entry_price=50000.0, qty=0.01)
+        result = service._extract_pnl({"avgPrice": "51000", "cumExecFee": None}, trade, 0.01)
+        assert result["fees"] == 0.0
+
     def test_buy_side_loss(self, service):
         trade = _make_trade(side="Buy", entry_price=50000.0, qty=0.01)
         result = service._extract_pnl({"avgPrice": "49000", "cumExecFee": "0"}, trade, 0.01)
@@ -404,6 +409,15 @@ class TestQtyValidation:
     async def test_close_qty_negative_raises(self, service):
         with pytest.raises(ValueError, match="qty must be positive"):
             await service.close_single_trade("acc-1", str(uuid.uuid4()), qty=-1)
+
+    @pytest.mark.asyncio
+    async def test_close_qty_exceeds_remaining_raises(self, service, mock_repo, mock_accounts):
+        trade = _make_trade(qty=1.0, filled_qty=0.8)
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        mock_accounts.get_client.return_value = client
+        with pytest.raises(ValueError, match="exceeds remaining"):
+            await service.close_single_trade("acc-1", str(trade["id"]), qty=0.5)
 
 
 class TestRuleTriggeredClose:

@@ -55,7 +55,7 @@ VALID_CLOSE_REASONS = {
 }
 
 VALID_EVENT_TYPES = {
-    "placed", "filled", "partially_filled", "closing",
+    "placed", "filled", "partially_filled", "close_requested",
     "closed", "cancelled", "failed", "reconciled",
 }
 
@@ -483,7 +483,8 @@ class TradeRepository:
             FROM trades
             WHERE account_id = $1
               AND status = 'closed'
-              AND parent_trade_id IS NULL""",
+              AND parent_trade_id IS NULL
+              AND exit_price > 0""",
             account_id,
         )
         return {

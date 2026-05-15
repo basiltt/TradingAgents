@@ -77,6 +77,10 @@ class TradeService:
 
         client = await self._accounts.get_client(account_id)
         remaining = float(trade["qty"]) - float(trade.get("filled_qty") or 0)
+
+        if qty is not None and qty > remaining:
+            raise ValueError(f"qty ({qty}) exceeds remaining position size ({remaining})")
+
         is_partial = qty is not None and qty < remaining
 
         if is_partial:
@@ -103,7 +107,7 @@ class TradeService:
                 await self._repo.update_trade_status(
                     conn, trade_id=str(trade["id"]), account_id=account_id,
                     expected_version=version, new_status="closing",
-                    event_type="closing", actor="system",
+                    event_type="close_requested", actor="system",
                 )
                 closed = await self._repo.close_trade(
                     conn, trade_id=str(trade["id"]), account_id=account_id,
@@ -129,7 +133,7 @@ class TradeService:
                 await self._repo.update_trade_status(
                     conn, trade_id=trade_id, account_id=account_id,
                     expected_version=version, new_status="closing",
-                    event_type="closing", actor="system",
+                    event_type="close_requested", actor="system",
                 )
         version += 1
 
@@ -170,7 +174,7 @@ class TradeService:
                 await self._repo.update_trade_status(
                     conn, trade_id=trade_id, account_id=account_id,
                     expected_version=version, new_status="closing",
-                    event_type="closing", actor="system",
+                    event_type="close_requested", actor="system",
                 )
         version += 1
 
@@ -303,7 +307,7 @@ class TradeService:
         side_mult = 1 if trade["side"] == "Buy" else -1
         realized_pnl = (exit_price - entry) * qty * side_mult if entry else 0.0
         realized_pnl_pct = (realized_pnl / (entry * qty) * 100) if entry and qty else 0.0
-        fees = float(bybit_result.get("cumExecFee", 0))
+        fees = float(bybit_result.get("cumExecFee") or 0)
         net_pnl = realized_pnl - fees
         return {
             "exit_price": exit_price,

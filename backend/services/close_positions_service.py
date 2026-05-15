@@ -100,6 +100,8 @@ class ClosePositionsService:
             )
 
             self._accounts_service.invalidate_cache(account_id)
+            if self._trade_service:
+                self._trade_service._invalidate_stats_cache(account_id)
 
             await self._broadcast_close_event(account_id, "manual", closed, failed, len(positions))
 
