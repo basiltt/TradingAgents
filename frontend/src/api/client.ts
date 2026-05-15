@@ -1,5 +1,12 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
+import type {
+  Trade,
+  TradeListResponse,
+  TradeStatsResponse,
+  TradeEventsResponse,
+} from "@/components/trades/types";
+
 export class ApiError extends Error {
   status: number;
   detail: string;
@@ -1090,4 +1097,66 @@ export const cyclesApi = {
     const qs = sp.toString();
     return request<FilterPreviewResponse>(`/api/v1/scans/${encodeURIComponent(scanId)}/filter-preview${qs ? `?${qs}` : ""}`, undefined, signal);
   },
+};
+
+export const tradesApi = {
+  list: (
+    params?: {
+      account_id?: string[];
+      status?: string[];
+      symbol?: string;
+      side?: string;
+      from_date?: string;
+      to_date?: string;
+      sort_by?: string;
+      sort_dir?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    signal?: AbortSignal,
+  ) => {
+    const sp = new URLSearchParams();
+    if (params?.account_id?.length) sp.set("account_id", params.account_id.join(","));
+    if (params?.status?.length) sp.set("status", params.status.join(","));
+    if (params?.symbol) sp.set("symbol", params.symbol);
+    if (params?.side) sp.set("side", params.side);
+    if (params?.from_date) sp.set("from_date", params.from_date);
+    if (params?.to_date) sp.set("to_date", params.to_date);
+    if (params?.sort_by) sp.set("sort_by", params.sort_by);
+    if (params?.sort_dir) sp.set("sort_dir", params.sort_dir);
+    if (params?.cursor) sp.set("cursor", params.cursor);
+    if (params?.limit) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request<TradeListResponse>(`/api/v1/trades${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+
+  getStats: (accountIds?: string[], signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (accountIds?.length) sp.set("account_id", accountIds.join(","));
+    const qs = sp.toString();
+    return request<TradeStatsResponse>(`/api/v1/trades/stats${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+
+  getEvents: (accountId: string, tradeId: string, signal?: AbortSignal) =>
+    request<TradeEventsResponse>(
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/trades/${encodeURIComponent(tradeId)}/events`,
+      undefined,
+      signal,
+    ),
+
+  close: (accountId: string, tradeId: string, data?: { qty?: number; close_reason?: string }, signal?: AbortSignal) =>
+    mutate<Trade>(
+      "POST",
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/trades/${encodeURIComponent(tradeId)}/close`,
+      data ?? {},
+      signal,
+    ),
+
+  cancel: (accountId: string, tradeId: string, signal?: AbortSignal) =>
+    mutate<void>(
+      "POST",
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/trades/${encodeURIComponent(tradeId)}/cancel`,
+      {},
+      signal,
+    ),
 };
