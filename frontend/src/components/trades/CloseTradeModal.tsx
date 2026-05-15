@@ -1,0 +1,106 @@
+import { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useAppSelector, useAppDispatch } from "@/store";
+import { setCloseModalTradeId } from "@/store/trades-slice";
+import { useTradeActions } from "@/components/trades/hooks/useTradeActions";
+
+export function CloseTradeModal() {
+  const dispatch = useAppDispatch();
+  const tradeId = useAppSelector((s) => s.trades.closeModalTradeId);
+  const activeTrades = useAppSelector((s) => s.trades.activeTrades);
+  const pending = useAppSelector((s) => tradeId ? s.trades.pendingActions[tradeId] : undefined);
+  const { closeTrade } = useTradeActions();
+  const [qtyInput, setQtyInput] = useState("");
+  const [mode, setMode] = useState<"full" | "partial">("full");
+
+  const trade = tradeId ? activeTrades[tradeId] : undefined;
+  const isOpen = !!tradeId;
+
+  const handleClose = () => {
+    dispatch(setCloseModalTradeId(null));
+    setQtyInput("");
+    setMode("full");
+  };
+
+  const handleConfirm = () => {
+    if (!trade) return;
+    const qty = mode === "partial" ? parseFloat(qtyInput) : undefined;
+    closeTrade(trade, qty);
+    handleClose();
+  };
+
+  const partialQty = parseFloat(qtyInput);
+  const isValidPartial =
+    mode === "full" || (!isNaN(partialQty) && partialQty > 0 && partialQty < trade?.filled_qty!);
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Close Trade</DialogTitle>
+          <DialogDescription>
+            {trade ? `${trade.symbol} ${trade.side.toUpperCase()} — ${trade.filled_qty} qty` : ""}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Button
+              variant={mode === "full" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("full")}
+            >
+              Full Close
+            </Button>
+            <Button
+              variant={mode === "partial" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("partial")}
+            >
+              Partial Close
+            </Button>
+          </div>
+
+          {mode === "partial" && (
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Quantity (max {trade?.filled_qty})
+              </label>
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                max={trade?.filled_qty}
+                value={qtyInput}
+                onChange={(e) => setQtyInput(e.target.value)}
+                placeholder="Enter quantity..."
+              />
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!!pending || !isValidPartial}
+            onClick={handleConfirm}
+          >
+            {pending ? "Closing..." : "Confirm Close"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
