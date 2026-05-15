@@ -88,7 +88,7 @@ export function CloseTradeModal() {
                 type="number"
                 step="any"
                 min="0"
-                max={trade?.filled_qty}
+                max={trade?.filled_qty ?? undefined}
                 value={qtyInput}
                 onChange={(e) => setQtyInput(e.target.value)}
                 placeholder="Enter quantity..."

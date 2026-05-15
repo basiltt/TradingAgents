@@ -48,7 +48,7 @@ function ConfigSummary({ config }: { config: Record<string, unknown> }) {
         {provider && (
           <span className="text-xs font-medium text-muted-foreground capitalize">{provider}</span>
         )}
-        {config.workflow_mode && (
+        {!!config.workflow_mode && (
           <span className={cn(
             "px-1.5 py-0.5 rounded font-semibold text-[10px] uppercase tracking-wide",
             config.workflow_mode === "quick_trade"

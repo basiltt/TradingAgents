@@ -44,14 +44,15 @@ export function DailyPnlChart({ snapshots }: Props) {
             borderRadius: "12px",
             fontSize: 12,
           }}
-          formatter={(value: number) => [value < 0 ? `-$${Math.abs(value).toFixed(2)}` : `$${value.toFixed(2)}`, "Realized P&L"]}
-          labelFormatter={(label: string) => {
-            if (label.includes(" ")) {
-              const [datePart, time] = label.split(" ");
+          formatter={(value: unknown) => [Number(value) < 0 ? `-$${Math.abs(Number(value)).toFixed(2)}` : `$${Number(value).toFixed(2)}`, "Realized P&L"]}
+          labelFormatter={(label: unknown) => {
+            const s = String(label);
+            if (s.includes(" ")) {
+              const [datePart, time] = s.split(" ");
               const [y, m, d] = datePart.split("-");
               return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
             }
-            const [y, m, d] = label.split("-");
+            const [y, m, d] = s.split("-");
             return `${parseInt(m)}/${parseInt(d)}/${y}`;
           }}
         />

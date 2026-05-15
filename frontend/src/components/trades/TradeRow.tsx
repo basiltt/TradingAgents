@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import type { Trade } from "@/components/trades/types";
 import { ACTIVE_STATUSES } from "@/components/trades/types";
 import { TradeStatusBadge } from "@/components/trades/TradeStatusBadge";

@@ -227,7 +227,7 @@ function RuleRow({
   const Icon = config.icon;
 
   const [localThreshold, setLocalThreshold] = useState(rule.threshold_value);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const handleThresholdChange = useCallback((value: string) => {
     setLocalThreshold(value);

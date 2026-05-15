@@ -55,14 +55,15 @@ export function DrawdownChart({ snapshots }: Props) {
             borderRadius: "12px",
             fontSize: 12,
           }}
-          formatter={(value: number) => [`${value.toFixed(2)}%`, "Drawdown"]}
-          labelFormatter={(label: string) => {
-            if (label.includes(" ")) {
-              const [datePart, time] = label.split(" ");
+          formatter={(value: unknown) => [`${Number(value).toFixed(2)}%`, "Drawdown"]}
+          labelFormatter={(label: unknown) => {
+            const s = String(label);
+            if (s.includes(" ")) {
+              const [datePart, time] = s.split(" ");
               const [y, m, d] = datePart.split("-");
               return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
             }
-            const [y, m, d] = label.split("-");
+            const [y, m, d] = s.split("-");
             return `${parseInt(m)}/${parseInt(d)}/${y}`;
           }}
         />

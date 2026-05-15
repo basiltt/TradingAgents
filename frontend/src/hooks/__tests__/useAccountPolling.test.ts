@@ -21,7 +21,7 @@ function createWrapper() {
     reducer: { accounts: accountsReducer, ui: uiSlice.reducer, analysis: analysisSlice.reducer },
   });
   return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(Provider, { store }, children);
+    React.createElement(Provider, { store, children });
 }
 
 describe("useAccountPolling", () => {

@@ -55,7 +55,7 @@ export function useAnalysisWebSocket(runId: string) {
   });
 
   const [attempt, setAttempt] = useState(0);
-  const connectRef = useRef<() => void>();
+  const connectRef = useRef<() => void>(undefined);
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return;

@@ -1008,7 +1008,7 @@ function ScheduleFormDialog({
           {scheduleType === "weekly" && (
             <div>
               <Label className="text-xs font-medium">Day of Week</Label>
-              <Select value={day} onValueChange={setDay}>
+              <Select value={day} onValueChange={(v) => v != null && setDay(v)}>
                 <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {DAYS_OF_WEEK.map((d) => (<SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>))}
@@ -1034,7 +1034,7 @@ function ScheduleFormDialog({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-medium">LLM Provider</Label>
-                <Select value={provider} onValueChange={setProvider}>
+                <Select value={provider} onValueChange={(v) => v != null && setProvider(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{PROVIDERS.map((p) => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent>
                 </Select>
@@ -1048,7 +1048,7 @@ function ScheduleFormDialog({
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-medium">Output Language</Label>
-                <Select value={outputLanguage} onValueChange={setOutputLanguage}>
+                <Select value={outputLanguage} onValueChange={(v) => v != null && setOutputLanguage(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{LANGUAGES.map((l) => (<SelectItem key={l} value={l}>{l}</SelectItem>))}</SelectContent>
                 </Select>

@@ -23,10 +23,10 @@ export function useAccountWebSocket() {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const mounted = useRef(true);
   const queryClientRef = useRef(queryClient);
-  const connectRef = useRef<() => void>();
+  const connectRef = useRef<() => void>(undefined);
 
   useEffect(() => { queryClientRef.current = queryClient; });
 
@@ -56,10 +56,10 @@ export function useAccountWebSocket() {
         return;
       }
       if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
-        dispatch(updateCardRealtime(msg));
+        dispatch(updateCardRealtime(msg as unknown as { account_id: string; type: string; data: Record<string, string> }));
       }
       if (msg.account_id && msg.type === "close_execution") {
-        dispatch(handleCloseExecution(msg));
+        dispatch(handleCloseExecution(msg as unknown as { account_id: string; data: { closed: number } }));
       }
 
       if (msg.type === "trade.opened" && msg.data) {

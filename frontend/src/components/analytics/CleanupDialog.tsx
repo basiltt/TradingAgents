@@ -67,7 +67,7 @@ export function CleanupDialog({ accountId, onComplete, onClose }: Props) {
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") return;
-      setError(e.detail || e.message || "Failed to count snapshots");
+      setError(e instanceof Error ? e.message : "Failed to count snapshots");
     } finally {
       setLoading(false);
     }
@@ -88,7 +88,7 @@ export function CleanupDialog({ accountId, onComplete, onClose }: Props) {
       setStep("done");
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") return;
-      setError(e.detail || e.message || "Failed to cleanup snapshots");
+      setError(e instanceof Error ? e.message : "Failed to cleanup snapshots");
     } finally {
       setLoading(false);
     }

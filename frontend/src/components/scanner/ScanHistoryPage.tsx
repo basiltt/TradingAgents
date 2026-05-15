@@ -45,7 +45,7 @@ export function ScanHistoryPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["scans"],
     queryFn: ({ signal }) => apiClient.listScans(signal),
     refetchInterval: (query) => {

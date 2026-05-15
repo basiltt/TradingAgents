@@ -45,12 +45,13 @@ export function useTradeFilters() {
 
   const updateFilters = useDebouncedCallback((newFilters: Partial<TradeFilters>) => {
     dispatch(setFilters(newFilters));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     navigate({
       search: {
         ...search,
         ...filtersToSearchParams(newFilters),
       },
-    });
+    } as any);
   }, 300);
 
   const clearFilters = useCallback(() => {
@@ -64,7 +65,8 @@ export function useTradeFilters() {
         to_date: "",
       }),
     );
-    navigate({ search: { tab: activeTab } });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    navigate({ search: { tab: activeTab } } as any);
   }, [dispatch, navigate, activeTab]);
 
   return { filters, activeTab, updateFilters, clearFilters };

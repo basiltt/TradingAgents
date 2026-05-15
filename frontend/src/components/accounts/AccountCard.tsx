@@ -26,7 +26,7 @@ const TARGET_TYPES = new Set(["BALANCE_ABOVE", "PNL_ABOVE", "EQUITY_RISE_PCT"]);
 function resolveRule(
   t: { trigger_type: string; threshold_value: string | null; reference_value: string | null },
   equity: number,
-  balance: number,
+  _balance: number,
   pnl: number,
 ): ResolvedRule | null {
   if (!t.threshold_value) return null;

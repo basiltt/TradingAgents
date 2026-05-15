@@ -63,17 +63,18 @@ export function EquityCurveChart({ snapshots }: Props) {
             borderRadius: "12px",
             fontSize: 12,
           }}
-          formatter={(value: number, name: string) => [
-            value < 0 ? `-$${Math.abs(value).toFixed(2)}` : `$${value.toFixed(2)}`,
+          formatter={(value: unknown, name: unknown) => [
+            Number(value) < 0 ? `-$${Math.abs(Number(value)).toFixed(2)}` : `$${Number(value).toFixed(2)}`,
             name === "equity" ? "Equity" : "Peak",
           ]}
-          labelFormatter={(label: string) => {
-            if (label.includes(" ")) {
-              const [datePart, time] = label.split(" ");
+          labelFormatter={(label: unknown) => {
+            const s = String(label);
+            if (s.includes(" ")) {
+              const [datePart, time] = s.split(" ");
               const [y, m, d] = datePart.split("-");
               return `${parseInt(m)}/${parseInt(d)}/${y} ${time}`;
             }
-            const [y, m, d] = label.split("-");
+            const [y, m, d] = s.split("-");
             return `${parseInt(m)}/${parseInt(d)}/${y}`;
           }}
         />

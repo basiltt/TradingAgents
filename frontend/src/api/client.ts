@@ -97,6 +97,7 @@ export interface AnalysisListItem {
   completed_at?: string;
   asset_type?: AssetType;
   config?: Record<string, unknown>;
+  error?: string;
 }
 
 export interface AnalysisListResponse {
