@@ -49,10 +49,9 @@ UPDATABLE_COLUMNS = {
 VALID_SIDES = {"Buy", "Sell"}
 
 VALID_CLOSE_REASONS = {
-    "manual", "stop_loss", "take_profit", "liquidation",
-    "reconciliation", "signal", "partial_close", "close_rule",
-    "balance_below", "balance_above", "equity_drop", "equity_rise",
-    "pnl_loss", "pnl_profit",
+    "take_profit", "stop_loss", "manual_single", "manual_close_all",
+    "rule_triggered", "cycle_target", "cycle_drawdown", "external",
+    "liquidation", "adl",
 }
 
 VALID_EVENT_TYPES = {
@@ -500,6 +499,7 @@ class TradeRepository:
         closed_qty: float, exit_price: float,
         realized_pnl: float, realized_pnl_pct: float,
         fees: float, net_pnl: float, close_reason: str,
+        close_rule_id: str | None = None,
     ) -> dict:
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
@@ -509,11 +509,11 @@ class TradeRepository:
                 position_idx, entry_price, avg_fill_price, exit_price,
                 stop_loss_price, take_profit_price,
                 status, parent_trade_id, realized_pnl, realized_pnl_pct,
-                fees, net_pnl, close_reason, closed_at, opened_at,
+                fees, net_pnl, close_reason, close_rule_id, closed_at, opened_at,
                 source, source_id, order_link_id
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                'closed', $14, $15, $16, $17, $18, $19, NOW(), $20, $21, $22, $23
+                'closed', $14, $15, $16, $17, $18, $19, $20, NOW(), $21, $22, $23, $24
             ) RETURNING *""",
             parent_trade["account_id"], parent_trade["symbol"],
             parent_trade["side"], parent_trade["order_type"],
@@ -523,7 +523,7 @@ class TradeRepository:
             exit_price,
             parent_trade.get("stop_loss_price"), parent_trade.get("take_profit_price"),
             parent_trade["id"], realized_pnl, realized_pnl_pct,
-            fees, net_pnl, close_reason,
+            fees, net_pnl, close_reason, close_rule_id,
             parent_trade.get("opened_at"),
             parent_trade["source"], parent_trade.get("source_id"),
             str(uuid.uuid4()),

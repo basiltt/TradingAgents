@@ -391,6 +391,8 @@ class TradingCycleEngine:
                         stop_loss_pct=float(sl_pct) if sl_pct else 0,
                         capital_pct=float(cfg.get("capital_pct", 5)),
                         base_capital=initial_equity,
+                        source="cycle",
+                        source_id=cycle_id,
                     )
                 order_id = result.get("orderId") or result.get("order_id")
                 await self._repo.update_trade(

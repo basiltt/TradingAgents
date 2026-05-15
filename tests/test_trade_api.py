@@ -284,15 +284,15 @@ class TestCloseTrade:
         req_none = TradeCloseRequest()
         assert req_none.qty is None
 
-    @pytest.mark.skip(reason="Phase 4 — TradeService not yet implemented")
+    @pytest.mark.skip(reason="Requires full TradeService integration test setup")
     def test_close_trade_success(self, client, account_id):
         pass
 
-    @pytest.mark.skip(reason="Phase 4 — TradeService not yet implemented")
+    @pytest.mark.skip(reason="Requires full TradeService integration test setup")
     def test_close_trade_already_closed_409(self, client, account_id):
         pass
 
-    @pytest.mark.skip(reason="Phase 4 — TradeService not yet implemented")
+    @pytest.mark.skip(reason="Requires full TradeService integration test setup")
     def test_close_trade_partial(self, client, account_id):
         pass
 
@@ -308,11 +308,11 @@ class TestCancelTrade:
         resp = client.post(f"/accounts/{account_id}/trades/not-a-uuid/cancel")
         assert resp.status_code == 400
 
-    @pytest.mark.skip(reason="Phase 4 — TradeService not yet implemented")
+    @pytest.mark.skip(reason="Requires full TradeService integration test setup")
     def test_cancel_pending_trade(self, client, account_id):
         pass
 
-    @pytest.mark.skip(reason="Phase 4 — TradeService not yet implemented")
+    @pytest.mark.skip(reason="Requires full TradeService integration test setup")
     def test_cancel_partially_filled(self, client, account_id):
         pass
 

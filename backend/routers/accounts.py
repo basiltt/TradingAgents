@@ -173,7 +173,15 @@ async def rotate_credentials(request: Request, account_id: str):
 async def delete_account(request: Request, account_id: str):
     _validate_account_id(account_id)
     svc = _get_service(request)
-    deleted = await svc.delete_account(account_id)
+    try:
+        deleted = await svc.delete_account(account_id)
+    except Exception as e:
+        if "ForeignKeyViolation" in type(e).__name__ or "foreign key" in str(e).lower():
+            return JSONResponse(
+                {"detail": "Cannot delete account with existing trades", "code": "ACCOUNT_HAS_TRADES"},
+                409,
+            )
+        raise
     if not deleted:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return {"status": "deleted"}
@@ -207,6 +215,7 @@ async def test_connection(request: Request, account_id: str):
 @router.post("/accounts/{account_id}/trade")
 async def place_trade(request: Request, account_id: str):
     _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
     body = await request.json()
     try:
         req = PlaceTradeRequest(**body)
@@ -470,6 +479,7 @@ async def close_trade(
     try:
         result = await trade_service.close_single_trade(
             account_id=account_id, trade_id=trade_id, qty=body.qty,
+            close_reason=body.close_reason or "manual_single",
         )
         return TradeResponse(**_serialize_trade(result))
     except TradeNotFound:

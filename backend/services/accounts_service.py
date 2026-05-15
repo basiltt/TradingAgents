@@ -36,12 +36,14 @@ def _sanitize_error(msg: str) -> str:
 
 
 class AccountsService:
-    def __init__(self, db: AsyncAnalysisDB, ws_manager=None):
+    def __init__(self, db: AsyncAnalysisDB, ws_manager=None, trade_repo=None, trade_service=None):
         self._db = db
         self._cache: Dict[str, tuple[float, Any]] = {}
         self._refresh_locks: Dict[str, float] = {}
         self._clients: Dict[str, BybitClient] = {}
         self._ws_manager = ws_manager
+        self._trade_repo = trade_repo
+        self._trade_service = trade_service
 
     async def shutdown(self) -> None:
         for client in self._clients.values():
@@ -59,6 +61,9 @@ class AccountsService:
         self._cache[key] = (time.time() + ttl, data)
 
     def _invalidate_cache(self, account_id: str) -> None:
+        self.invalidate_cache(account_id)
+
+    def invalidate_cache(self, account_id: str) -> None:
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
@@ -94,6 +99,13 @@ class AccountsService:
         self._clients[account_id] = client
         return client
 
+    async def get_client(self, account_id: str) -> BybitClient:
+        return await self._build_client(account_id)
+
+    def set_trade_dependencies(self, trade_repo, trade_service) -> None:
+        self._trade_repo = trade_repo
+        self._trade_service = trade_service
+
     # ── Trade Execution ──────────────────────────────────────────────────
 
     async def place_trade(
@@ -107,6 +119,8 @@ class AccountsService:
         stop_loss_pct: float,
         capital_pct: float,
         base_capital: float,
+        source: str = "manual",
+        source_id: int | None = None,
     ) -> Dict[str, Any]:
         """Place a market trade with leverage, TP, and SL.
 
@@ -114,6 +128,10 @@ class AccountsService:
         Qty is calculated from base_capital * capital_pct, leveraged, divided by mark price.
         """
         from decimal import Decimal, ROUND_DOWN
+
+        _VALID_PLACEMENT_SOURCES = {"manual", "cycle"}
+        if source not in _VALID_PLACEMENT_SOURCES:
+            raise ValueError(f"Invalid source: {source}. Allowed: {_VALID_PLACEMENT_SOURCES}")
 
         client = await self._build_client(account_id)
 
@@ -219,6 +237,41 @@ class AccountsService:
 
         self._invalidate_cache(account_id)
 
+        trade_record = None
+        if self._trade_repo:
+            try:
+                async with self._db.pool.acquire() as conn:
+                    async with conn.transaction():
+                        trade_record = await self._trade_repo.create_trade(
+                            conn, account_id=account_id, symbol=symbol,
+                            side=side, qty=float(qty_rounded), leverage=leverage,
+                            margin_mode="isolated", order_type="market",
+                            source=source, source_id=source_id, stop_loss_price=float(sl_price_str) if sl_price_str else None,
+                            take_profit_price=float(tp_price_str) if tp_price_str else None,
+                            mark_price_at_open=float(mark_price),
+                            capital_pct=capital_pct, base_capital=base_capital,
+                            signal_direction=signal_direction, trade_direction=trade_direction,
+                            take_profit_pct=take_profit_pct, stop_loss_pct=stop_loss_pct,
+                            actor="user",
+                        )
+                        await self._trade_repo.update_trade_status(
+                            conn, trade_id=str(trade_record["id"]),
+                            account_id=account_id,
+                            expected_version=trade_record["version"],
+                            new_status="open",
+                            event_type="filled", actor="system",
+                            updates={
+                                "order_id": result.get("orderId", ""),
+                                "entry_price": float(mark_price),
+                                "avg_fill_price": float(mark_price),
+                                "opened_at": datetime.now(timezone.utc),
+                            },
+                        )
+                if self._trade_service:
+                    self._trade_service._invalidate_stats_cache(account_id)
+            except Exception:
+                logger.exception("trade_record_creation_failed")
+
         return {
             "orderId": result.get("orderId", ""),
             "symbol": symbol,
@@ -230,6 +283,7 @@ class AccountsService:
             "stop_loss_price": sl_price_str,
             "qty": str(qty_rounded),
             "usdt_amount": str(usdt_amount),
+            "trade_id": str(trade_record["id"]) if trade_record else None,
         }
 
     # ── CRUD ────────────────────────────────────────────────────────────

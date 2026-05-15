@@ -16,11 +16,15 @@ CLOSE_RATE_LIMIT = 10  # max concurrent close orders
 
 
 class ClosePositionsService:
-    def __init__(self, db: Any, accounts_service: Any, ws_manager: Any = None):
+    def __init__(self, db: Any, accounts_service: Any, ws_manager: Any = None, trade_service: Any = None):
         self._db = db
         self._accounts_service = accounts_service
         self._ws_manager = ws_manager
+        self._trade_service = trade_service
         self._closing_accounts: set[str] = set()
+
+    def set_trade_service(self, trade_service: Any) -> None:
+        self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
         if account_id in self._closing_accounts:
@@ -28,7 +32,7 @@ class ClosePositionsService:
         self._closing_accounts.add(account_id)
 
         try:
-            client = await self._accounts_service._build_client(account_id)
+            client = await self._accounts_service.get_client(account_id)
             positions = await client.get_positions()
             if not positions:
                 execution = await self._db.insert_close_execution(
@@ -56,6 +60,7 @@ class ClosePositionsService:
                         )
                         return {
                             "symbol": pos["symbol"],
+                            "side": pos["side"],
                             "status": "closed",
                             "orderId": result.get("orderId", ""),
                         }
@@ -63,6 +68,7 @@ class ClosePositionsService:
                         logger.warning("Failed to close %s: %s", pos["symbol"], e.ret_msg)
                         return {
                             "symbol": pos["symbol"],
+                            "side": pos["side"],
                             "status": "failed",
                             "error": f"Order rejected (code {e.ret_code})",
                         }
@@ -70,6 +76,7 @@ class ClosePositionsService:
                         logger.warning("Failed to close %s: %s", pos["symbol"], e)
                         return {
                             "symbol": pos["symbol"],
+                            "side": pos["side"],
                             "status": "failed",
                             "error": "Connection error",
                         }
@@ -78,6 +85,8 @@ class ClosePositionsService:
 
             closed = sum(1 for r in results if r["status"] == "closed")
             failed = sum(1 for r in results if r["status"] == "failed")
+
+            await self._close_matching_trades(account_id, positions, results, "manual_close_all")
 
             execution = await self._db.insert_close_execution(
                 {
@@ -90,7 +99,7 @@ class ClosePositionsService:
                 },
             )
 
-            self._accounts_service._invalidate_cache(account_id)
+            self._accounts_service.invalidate_cache(account_id)
 
             await self._broadcast_close_event(account_id, "manual", closed, failed, len(positions))
 
@@ -112,7 +121,7 @@ class ClosePositionsService:
         self._closing_accounts.add(account_id)
 
         try:
-            client = await self._accounts_service._build_client(account_id)
+            client = await self._accounts_service.get_client(account_id)
             positions = await client.get_positions()
 
             if symbols:
@@ -144,15 +153,17 @@ class ClosePositionsService:
                             qty=pos["size"],
                             position_idx=pos.get("positionIdx", 0),
                         )
-                        return {"symbol": pos["symbol"], "status": "closed", "orderId": result.get("orderId", "")}
+                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "closed", "orderId": result.get("orderId", "")}
                     except BybitAPIError as e:
-                        return {"symbol": pos["symbol"], "status": "failed", "error": f"Order rejected (code {e.ret_code})"}
+                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "failed", "error": f"Order rejected (code {e.ret_code})"}
                     except Exception:
-                        return {"symbol": pos["symbol"], "status": "failed", "error": "Connection error"}
+                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "failed", "error": "Connection error"}
 
             results = await asyncio.gather(*[close_one(p) for p in positions])
             closed = sum(1 for r in results if r["status"] == "closed")
             failed = sum(1 for r in results if r["status"] == "failed")
+
+            await self._close_matching_trades(account_id, positions, results, "rule_triggered", rule_id=rule_id)
 
             await self._db.insert_close_execution(
                 {
@@ -166,7 +177,7 @@ class ClosePositionsService:
                 },
             )
 
-            self._accounts_service._invalidate_cache(account_id)
+            self._accounts_service.invalidate_cache(account_id)
 
             await self._broadcast_close_event(account_id, "rule", closed, failed, len(positions))
 
@@ -174,15 +185,44 @@ class ClosePositionsService:
         finally:
             self._closing_accounts.discard(account_id)
 
+    # ── Trade record integration ────────────────────────────────
+
+    async def _close_matching_trades(
+        self, account_id: str, positions: list[dict], results: list[dict],
+        close_reason: str, rule_id: str | None = None,
+    ) -> None:
+        if not self._trade_service:
+            return
+        closed_pairs = {
+            (r["symbol"], r.get("side", "")) for r in results if r["status"] == "closed"
+        }
+        if not closed_pairs:
+            return
+        try:
+            open_trades = await self._trade_service.get_open_trades(account_id, limit=500)
+            for trade in open_trades:
+                if (trade["symbol"], trade["side"]) in closed_pairs or (trade["symbol"], "") in closed_pairs:
+                    try:
+                        await self._trade_service.close_trade_record_only(
+                            account_id=account_id,
+                            trade_id=str(trade["id"]),
+                            close_reason=close_reason,
+                            close_rule_id=rule_id,
+                        )
+                    except Exception:
+                        logger.warning("failed_to_close_trade_record", extra={
+                            "trade_id": str(trade["id"]), "symbol": trade["symbol"],
+                        })
+        except Exception:
+            logger.exception("close_matching_trades_failed", extra={"account_id": account_id})
+
     # ── WebSocket broadcast ────────────────────────────────────
 
     async def _broadcast_close_event(self, account_id: str, source: str, closed: int, failed: int, total: int) -> None:
         if not self._ws_manager:
             return
-        await self._ws_manager.broadcast_event({
-            "type": "close_execution",
-            "account_id": account_id,
-            "data": {"trigger_source": source, "closed": closed, "failed": failed, "total": total},
+        await self._ws_manager.broadcast_to_account(account_id, "close_execution", {
+            "trigger_source": source, "closed": closed, "failed": failed, "total": total,
         })
 
     # ── Rule CRUD ────────────────────────────────────────────────

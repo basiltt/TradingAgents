@@ -392,12 +392,21 @@ class TradeStatsResponse(BaseModel):
 
 class TradeCloseRequest(BaseModel):
     qty: Optional[float] = None
+    close_reason: Optional[str] = "manual_single"
 
     @field_validator("qty")
     @classmethod
     def qty_must_be_positive(cls, v):
         if v is not None and v <= 0:
             raise ValueError("qty must be positive")
+        return v
+
+    @field_validator("close_reason")
+    @classmethod
+    def validate_close_reason(cls, v):
+        allowed = {"manual_single", "stop_loss", "take_profit", "rule_triggered", "liquidation", "external"}
+        if v is not None and v not in allowed:
+            raise ValueError(f"close_reason must be one of {allowed}")
         return v
 
 

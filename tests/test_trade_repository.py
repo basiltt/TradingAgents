@@ -642,7 +642,7 @@ class TestCreateChildTrade:
             conn, parent_trade=parent, closed_qty=0.005,
             exit_price=50000.0, realized_pnl=50.0,
             realized_pnl_pct=1.25, fees=0.75, net_pnl=49.25,
-            close_reason="partial_close",
+            close_reason="manual_single",
         )
         assert result["status"] == "closed"
         assert result["parent_trade_id"] == parent["id"]
@@ -779,7 +779,7 @@ class TestAdditionalEdgeCases:
             conn, trade_id=str(current["id"]), account_id="acc-1",
             expected_version=1, exit_price=50000.0, realized_pnl=100.0,
             realized_pnl_pct=2.5, fees=1.5, net_pnl=98.5,
-            close_reason="close_rule", close_rule_id=rule_id,
+            close_reason="rule_triggered", close_rule_id=rule_id,
         )
         assert result is not None
         update_query = conn.fetchrow.call_args_list[1][0][0]

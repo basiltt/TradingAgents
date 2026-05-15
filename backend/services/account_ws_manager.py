@@ -90,3 +90,6 @@ class AccountWSManager:
 
     async def broadcast_event(self, event: dict[str, Any]) -> None:
         await self._broadcast(event)
+
+    async def broadcast_to_account(self, account_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        await self._broadcast({"type": event_type, "account_id": account_id, **payload})

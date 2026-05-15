@@ -225,6 +225,20 @@ def create_app() -> FastAPI:
             app.state.cycle_engine = cycle_engine
             rule_evaluator.set_cycle_callback(cycle_engine.on_rule_triggered)
             rule_evaluator.set_cycle_repo(cycle_repo)
+
+            from backend.services.trade_repository import TradeRepository
+            from backend.services.trade_service import TradeService
+            trade_repo = TradeRepository(db=db)
+            trade_service = TradeService(
+                db=db,
+                trade_repo=trade_repo,
+                accounts_service=app.state.accounts_service,
+                ws_manager=account_ws_mgr,
+            )
+            app.state.trade_repo = trade_repo
+            app.state.trade_service = trade_service
+            app.state.accounts_service.set_trade_dependencies(trade_repo, trade_service)
+            app.state.close_positions_service.set_trade_service(trade_service)
         else:
             app.state.accounts_service = None
             app.state.account_ws_manager = None
@@ -232,6 +246,8 @@ def create_app() -> FastAPI:
             app.state.close_positions_service = None
             app.state.rule_evaluator = None
             app.state.cycle_engine = None
+            app.state.trade_repo = None
+            app.state.trade_service = None
 
         yield
         _watchdog_task.cancel()
