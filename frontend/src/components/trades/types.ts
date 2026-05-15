@@ -70,6 +70,7 @@ export interface TradeEvent {
   fill_qty: number | null;
   fill_price: number | null;
   actor: string;
+  error_message: string | null;
   payload: Record<string, unknown> | null;
   created_at: string;
 }

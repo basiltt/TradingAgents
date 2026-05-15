@@ -15,6 +15,7 @@ interface TradesState {
   sortColumn: string;
   sortDirection: "asc" | "desc";
   selectedTradeId: string | null;
+  selectedTrade: Trade | null;
   closeModalTradeId: string | null;
   pendingActions: Record<string, PendingAction>;
   pendingCloseAll: Record<string, boolean>;
@@ -38,6 +39,7 @@ const initialState: TradesState = {
   sortColumn: "created_at",
   sortDirection: "desc",
   selectedTradeId: null,
+  selectedTrade: null,
   closeModalTradeId: null,
   pendingActions: {},
   pendingCloseAll: {},
@@ -101,7 +103,10 @@ const tradesSlice = createSlice({
     removeActiveTrade(state, action: PayloadAction<string>) {
       delete state.activeTrades[action.payload];
       delete state.optimisticSnapshots[action.payload];
-      if (state.selectedTradeId === action.payload) state.selectedTradeId = null;
+      if (state.selectedTradeId === action.payload) {
+        state.selectedTradeId = null;
+        state.selectedTrade = null;
+      }
       if (state.closeModalTradeId === action.payload) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
@@ -119,6 +124,11 @@ const tradesSlice = createSlice({
     },
     setSelectedTradeId(state, action: PayloadAction<string | null>) {
       state.selectedTradeId = action.payload;
+      if (!action.payload) state.selectedTrade = null;
+    },
+    setSelectedTrade(state, action: PayloadAction<Trade | null>) {
+      state.selectedTrade = action.payload;
+      state.selectedTradeId = action.payload?.id ?? null;
     },
     setCloseModalTradeId(state, action: PayloadAction<string | null>) {
       state.closeModalTradeId = action.payload;
@@ -163,7 +173,10 @@ const tradesSlice = createSlice({
         delete state.activeTrades[id];
         delete state.optimisticSnapshots[id];
       }
-      if (state.selectedTradeId && ids.has(state.selectedTradeId)) state.selectedTradeId = null;
+      if (state.selectedTradeId && ids.has(state.selectedTradeId)) {
+        state.selectedTradeId = null;
+        state.selectedTrade = null;
+      }
       if (state.closeModalTradeId && ids.has(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
@@ -189,6 +202,7 @@ export const {
   setSortColumn,
   setSortDirection,
   setSelectedTradeId,
+  setSelectedTrade,
   setCloseModalTradeId,
   startPendingAction,
   clearPendingAction,

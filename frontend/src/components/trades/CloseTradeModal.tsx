@@ -57,7 +57,7 @@ export function CloseTradeModal() {
         <DialogHeader>
           <DialogTitle>Close Trade</DialogTitle>
           <DialogDescription>
-            {trade ? `${trade.symbol} ${trade.side.toUpperCase()} — ${trade.filled_qty} qty` : ""}
+            {trade ? `${trade.symbol} ${trade.side === "Buy" ? "LONG" : "SHORT"} — ${trade.filled_qty ?? 0} qty` : ""}
           </DialogDescription>
         </DialogHeader>
 

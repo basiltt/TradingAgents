@@ -44,8 +44,8 @@ export function TradeFilters() {
         onChange={(e) => updateFilters({ side: e.target.value })}
       >
         <option value="">All Sides</option>
-        <option value="long">Long</option>
-        <option value="short">Short</option>
+        <option value="Buy">Long</option>
+        <option value="Sell">Short</option>
       </select>
 
       {hasFilters && (

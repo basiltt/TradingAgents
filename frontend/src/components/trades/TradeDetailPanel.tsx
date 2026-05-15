@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAppSelector, useAppDispatch } from "@/store";
-import { setSelectedTradeId } from "@/store/trades-slice";
+import { setSelectedTrade } from "@/store/trades-slice";
 import { useTradeEvents } from "@/components/trades/hooks/useTradeEvents";
 import { TradeStatusBadge } from "@/components/trades/TradeStatusBadge";
 import { PnLDisplay } from "@/components/trades/PnLDisplay";
@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 export function TradeDetailPanel() {
   const dispatch = useAppDispatch();
   const selectedId = useAppSelector((s) => s.trades.selectedTradeId);
-  const trade = useAppSelector((s) => (selectedId ? s.trades.activeTrades[selectedId] : undefined));
+  const selectedTrade = useAppSelector((s) => s.trades.selectedTrade);
+  const activeTrade = useAppSelector((s) => (selectedId ? s.trades.activeTrades[selectedId] : undefined));
+  const trade = activeTrade ?? selectedTrade ?? undefined;
   const panelRef = useRef<HTMLDivElement>(null);
 
   const { data: eventsData, isLoading: eventsLoading, error: eventsError, refetch } = useTradeEvents(
@@ -22,7 +24,7 @@ export function TradeDetailPanel() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") dispatch(setSelectedTradeId(null));
+      if (e.key === "Escape") dispatch(setSelectedTrade(null));
     };
     if (selectedId) document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -30,7 +32,7 @@ export function TradeDetailPanel() {
 
   if (!selectedId) return null;
 
-  const handleBackdropClick = () => dispatch(setSelectedTradeId(null));
+  const handleBackdropClick = () => dispatch(setSelectedTrade(null));
 
   return (
     <>
@@ -41,7 +43,7 @@ export function TradeDetailPanel() {
       >
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">Trade Details</h2>
-          <Button variant="ghost" size="sm" onClick={() => dispatch(setSelectedTradeId(null))}>
+          <Button variant="ghost" size="sm" onClick={() => dispatch(setSelectedTrade(null))}>
             ✕
           </Button>
         </div>
@@ -56,7 +58,7 @@ export function TradeDetailPanel() {
                 <TradeStatusBadge status={trade.status} />
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <Field label="Side" value={trade.side.toUpperCase()} />
+                <Field label="Side" value={trade.side === "Buy" ? "LONG" : "SHORT"} />
                 <Field label="Leverage" value={`${trade.leverage}x`} />
                 <Field label="Quantity" value={`${formatQty(trade.filled_qty)} / ${formatQty(trade.qty)}`} />
                 <Field label="Entry Price" value={formatPrice(trade.entry_price)} />
@@ -86,7 +88,7 @@ export function TradeDetailPanel() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {(eventsData?.events ?? []).map((event) => (
+                  {(eventsData?.items ?? []).map((event) => (
                     <div key={event.id} className="flex items-start gap-3 text-xs border-l-2 border-border pl-3 py-1">
                       <div className="flex-1">
                         <span className="font-medium">{event.event_type}</span>
@@ -109,7 +111,7 @@ export function TradeDetailPanel() {
                       </span>
                     </div>
                   ))}
-                  {(eventsData?.events ?? []).length === 0 && (
+                  {(eventsData?.items ?? []).length === 0 && (
                     <p className="text-muted-foreground text-xs">No events recorded.</p>
                   )}
                 </div>

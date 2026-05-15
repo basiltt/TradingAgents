@@ -7,7 +7,7 @@ import { formatPrice, formatQty, formatRelativeTime } from "@/components/trades/
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { setSelectedTradeId, setCloseModalTradeId } from "@/store/trades-slice";
+import { setSelectedTrade, setCloseModalTradeId } from "@/store/trades-slice";
 import { useTradeActions } from "@/components/trades/hooks/useTradeActions";
 
 export const TradeRow = memo(function TradeRow({ trade }: { trade: Trade }) {
@@ -24,12 +24,12 @@ export const TradeRow = memo(function TradeRow({ trade }: { trade: Trade }) {
   return (
     <tr
       className="border-b border-border/50 hover:bg-muted/30 cursor-pointer transition-colors"
-      onClick={() => dispatch(setSelectedTradeId(trade.id))}
+      onClick={() => dispatch(setSelectedTrade(trade))}
     >
       <td className="px-3 py-2 text-sm">{trade.symbol}</td>
       <td className="px-3 py-2 text-sm">
-        <span className={trade.side === "long" ? "text-green-400" : "text-red-400"}>
-          {trade.side.toUpperCase()}
+        <span className={trade.side === "Buy" ? "text-green-400" : "text-red-400"}>
+          {trade.side === "Buy" ? "LONG" : "SHORT"}
         </span>
       </td>
       <td className="px-3 py-2 text-sm text-muted-foreground">

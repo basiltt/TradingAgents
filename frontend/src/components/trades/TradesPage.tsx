@@ -147,7 +147,7 @@ export default function TradesPage() {
 
   return (
     <ErrorBoundary FallbackComponent={FullPageError}>
-      <div className="p-6 space-y-6">
+      <div className="space-y-6">
         {!wsConnected && <WsDisconnectBanner lastUpdated={lastUpdated} />}
         <TradeStats />
         <Tabs value={activeTab} onValueChange={(tab) => dispatch(setActiveTab(tab as "active" | "history"))}>
