@@ -12,6 +12,7 @@ import {
   revertOptimisticUpdate,
   setWsConnected,
 } from "@/store/trades-slice";
+import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
 
 const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
@@ -39,6 +40,8 @@ export function useAccountWebSocket() {
     ws.onopen = () => {
       reconnectDelay.current = RECONNECT_BASE;
       dispatch(setWsConnected(true));
+      fetchAllActiveTrades(dispatch);
+      queryClientRef.current.invalidateQueries({ queryKey: ["trades"] });
     };
 
     ws.onmessage = (event) => {
@@ -70,6 +73,7 @@ export function useAccountWebSocket() {
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
       }
       if (msg.type === "trade.partially_closed" && msg.trade_id) {
+        dispatch(clearPendingAction(msg.trade_id as string));
         dispatch(updateActiveTrade({
           trade_id: msg.trade_id as string,
           updates: {
@@ -79,12 +83,11 @@ export function useAccountWebSocket() {
             status: "partially_closed",
           },
         }));
-        dispatch(clearPendingAction(msg.trade_id as string));
       }
       if (msg.type === "trade.close_failed" && msg.trade_id) {
         dispatch(revertOptimisticUpdate(msg.trade_id as string));
         dispatch(clearPendingAction(msg.trade_id as string));
-        toast.error(`Close failed for trade ${(msg.trade_id as string).slice(0, 8)}…`);
+        toast.error(`Close failed: ${(msg.error_message as string) || "unknown error"}`);
       }
     };
 

@@ -18,6 +18,7 @@ export function useTradeActions() {
     dispatch(startPendingAction({ trade_id: tradeId, action: "closing" }));
     try {
       await tradesApi.close(accountId, tradeId, qty ? { qty } : undefined);
+      dispatch(clearPendingAction(tradeId));
     } catch (error) {
       dispatch(revertOptimisticUpdate(tradeId));
       throw error;

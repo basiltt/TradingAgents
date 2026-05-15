@@ -79,6 +79,10 @@ const tradesSlice = createSlice({
       state.lastUpdated = now;
     },
     addActiveTrade(state, action: PayloadAction<Trade>) {
+      const existing = state.activeTrades[action.payload.id];
+      if (existing && existing.version !== undefined && action.payload.version !== undefined && action.payload.version <= existing.version) {
+        return;
+      }
       state.activeTrades[action.payload.id] = action.payload;
       state.lastUpdated = Date.now();
     },

@@ -11,7 +11,10 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
 ];
 
 export function formatRelativeTime(dateStr: string): string {
-  const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+  if (!dateStr) return "--";
+  const ts = new Date(dateStr).getTime();
+  if (isNaN(ts)) return "--";
+  const diff = (Date.now() - ts) / 1000;
   if (diff < 5) return "just now";
   let remaining = diff;
   for (const [unit, threshold] of UNITS) {

@@ -103,7 +103,7 @@ export function CloseTradeModal() {
           </Button>
           <Button
             variant="destructive"
-            disabled={submitting || !!pending || !isValidPartial}
+            disabled={submitting || !!pending || !isValidPartial || !trade}
             onClick={handleConfirm}
           >
             {pending ? "Closing..." : "Confirm Close"}
