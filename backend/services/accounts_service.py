@@ -252,7 +252,7 @@ class AccountsService:
                             capital_pct=capital_pct, base_capital=base_capital,
                             signal_direction=signal_direction, trade_direction=trade_direction,
                             take_profit_pct=take_profit_pct, stop_loss_pct=stop_loss_pct,
-                            actor="user",
+                            actor="system" if source == "cycle" else "user",
                         )
                         await self._trade_repo.update_trade_status(
                             conn, trade_id=str(trade_record["id"]),

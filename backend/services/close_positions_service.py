@@ -194,14 +194,14 @@ class ClosePositionsService:
         if not self._trade_service:
             return
         closed_pairs = {
-            (r["symbol"], r.get("side", "")) for r in results if r["status"] == "closed"
+            (r["symbol"], r["side"]) for r in results if r["status"] == "closed"
         }
         if not closed_pairs:
             return
         try:
             open_trades = await self._trade_service.get_open_trades(account_id, limit=500)
             for trade in open_trades:
-                if (trade["symbol"], trade["side"]) in closed_pairs or (trade["symbol"], "") in closed_pairs:
+                if (trade["symbol"], trade["side"]) in closed_pairs:
                     try:
                         await self._trade_service.close_trade_record_only(
                             account_id=account_id,
