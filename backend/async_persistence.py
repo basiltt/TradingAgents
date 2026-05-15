@@ -449,6 +449,14 @@ class AsyncAnalysisDB:
         self._closed = False
         self._sync_sem: threading.Semaphore | None = None
 
+    @property
+    def pool(self) -> "asyncpg.Pool":
+        if self._closed:
+            raise RuntimeError("Database connection is closed")
+        if self._pool is None:
+            raise RuntimeError("Database not connected; call connect() first")
+        return self._pool
+
     async def connect(self):
         self._pool = await asyncpg.create_pool(
             dsn=self._dsn,
