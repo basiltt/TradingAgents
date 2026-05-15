@@ -15,7 +15,7 @@ export function TradeStats() {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatCard title="Active Trades" value={String(aggregates.tradeCount)} />
         <StatCard title="Total PnL">
-          <PnLDisplay value={aggregates.totalRealizedPnl} />
+          <PnLDisplay value={aggregates.totalPnl} />
         </StatCard>
       </div>
     );

@@ -69,6 +69,7 @@ export function TradeDetailPanel() {
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm border-t border-border pt-3">
                 <Field label="Realized PnL"><PnLDisplay value={trade.realized_pnl} /></Field>
+                <Field label="Unrealized PnL"><PnLDisplay value={trade.unrealized_pnl} /></Field>
                 <Field label="Net PnL"><PnLDisplay value={trade.net_pnl} /></Field>
                 <Field label="Fees" value={formatPrice(trade.fees)} />
                 <Field label="Source" value={trade.source} />

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -172,8 +173,39 @@ async def list_trades_cross_account(
             limit=limit,
         )
 
+    items = result["items"]
+
+    pnl_lookup: dict[tuple[str, str, str, int], float] = {}
+    active_statuses = {"open", "partially_filled", "closing", "partially_closed"}
+    active_account_ids = {
+        str(t["account_id"]) for t in items if t.get("status") in active_statuses
+    }
+    if active_account_ids:
+        accounts_svc = _get_accounts_service(request)
+        positions_by_account = await asyncio.gather(
+            *(accounts_svc.get_positions(aid) for aid in active_account_ids),
+            return_exceptions=True,
+        )
+        for aid, positions in zip(active_account_ids, positions_by_account):
+            if isinstance(positions, Exception):
+                continue
+            for pos in positions:
+                if float(pos.get("size", 0)) == 0:
+                    continue
+                key = (aid, pos["symbol"], pos["side"], int(pos.get("positionIdx", 0)))
+                pnl_lookup[key] = float(pos.get("unrealisedPnl", 0))
+
+    def enrich(trade: dict) -> dict:
+        out = _serialize_trade(trade)
+        if out.get("status") in active_statuses:
+            key = (str(out["account_id"]), out["symbol"], out["side"], out.get("position_idx", 0))
+            out["unrealized_pnl"] = pnl_lookup.get(key)
+        else:
+            out["unrealized_pnl"] = None
+        return out
+
     return {
-        "items": [_serialize_trade(t) for t in result["items"]],
+        "items": [enrich(t) for t in items],
         "cursor": result["cursor"],
         "has_more": result["has_more"],
     }

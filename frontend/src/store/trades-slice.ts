@@ -188,7 +188,7 @@ const tradesSlice = createSlice({
       const accountId = action.payload;
       const idsToRemove: string[] = [];
       for (const [id, trade] of Object.entries(state.activeTrades)) {
-        if ((trade as { account_id: string }).account_id === accountId) idsToRemove.push(id);
+        if (trade.account_id === accountId) idsToRemove.push(id);
       }
       for (const id of idsToRemove) {
         delete state.activeTrades[id];
@@ -200,6 +200,14 @@ const tradesSlice = createSlice({
       }
       if (state.closeModalTradeId && idsToRemove.includes(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
+    },
+    updateUnrealizedPnl(state, action: PayloadAction<{ account_id: string; symbol: string; side: string; unrealized_pnl: number }>) {
+      const { account_id, symbol, side, unrealized_pnl } = action.payload;
+      for (const trade of Object.values(state.activeTrades)) {
+        if (trade.account_id === account_id && trade.symbol === symbol && trade.side === side) {
+          trade.unrealized_pnl = unrealized_pnl;
+        }
+      }
     },
     setIsFetchingActiveTrades(state, action: PayloadAction<boolean>) {
       state.isFetchingActiveTrades = action.payload;
@@ -231,6 +239,7 @@ export const {
   setPendingCloseAll,
   bulkRemoveActiveTrades,
   removeActiveTradesByAccount,
+  updateUnrealizedPnl,
   setIsFetchingActiveTrades,
   setWsConnected,
   setLastUpdated,

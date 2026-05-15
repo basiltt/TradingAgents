@@ -11,6 +11,7 @@ import {
   clearPendingAction,
   revertOptimisticUpdate,
   setWsConnected,
+  updateUnrealizedPnl,
 } from "@/store/trades-slice";
 import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
 
@@ -57,6 +58,17 @@ export function useAccountWebSocket() {
       }
       if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
         dispatch(updateCardRealtime(msg as unknown as { account_id: string; type: string; data: Record<string, string> }));
+      }
+      if (msg.type === "position_update" && msg.account_id && msg.data) {
+        const d = msg.data as Record<string, string>;
+        if (d.symbol && d.side && d.unrealisedPnl !== undefined) {
+          dispatch(updateUnrealizedPnl({
+            account_id: msg.account_id as string,
+            symbol: d.symbol,
+            side: d.side,
+            unrealized_pnl: parseFloat(d.unrealisedPnl),
+          }));
+        }
       }
       if (msg.account_id && msg.type === "close_execution") {
         dispatch(handleCloseExecution(msg as unknown as { account_id: string; data: { closed: number } }));

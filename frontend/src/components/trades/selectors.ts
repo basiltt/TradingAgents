@@ -12,14 +12,20 @@ export const selectActiveTradeAggregates = createSelector(
   [selectActiveTradesList],
   (trades) => {
     let totalRealizedPnl = 0;
+    let totalUnrealizedPnl = 0;
     for (const trade of trades) {
       if (trade.realized_pnl != null) {
         totalRealizedPnl += trade.realized_pnl;
+      }
+      if (trade.unrealized_pnl != null) {
+        totalUnrealizedPnl += trade.unrealized_pnl;
       }
     }
     return {
       tradeCount: trades.length,
       totalRealizedPnl,
+      totalUnrealizedPnl,
+      totalPnl: totalRealizedPnl + totalUnrealizedPnl,
     };
   },
 );

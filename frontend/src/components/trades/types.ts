@@ -35,6 +35,7 @@ export interface Trade {
   status: TradeStatus;
   realized_pnl: number | null;
   realized_pnl_pct: number | null;
+  unrealized_pnl: number | null;
   fees: number | null;
   net_pnl: number | null;
   source: "manual" | "cycle";
