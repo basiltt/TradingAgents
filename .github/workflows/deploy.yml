@@ -22,6 +22,7 @@ jobs:
             pip install -e . --quiet
             cd frontend
             npm install --silent
+            npm run build
             cd ..
             systemctl restart tradingagents-backend
             systemctl restart tradingagents-frontend
