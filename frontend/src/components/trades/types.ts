@@ -126,6 +126,7 @@ export const STATUS_COLORS: Record<TradeStatus | "unknown", string> = {
   pending: "amber",
   partially_filled: "amber",
   closing: "blue",
+  cancelling: "amber",
   partially_closed: "blue",
   closed: "gray",
   failed: "red",
