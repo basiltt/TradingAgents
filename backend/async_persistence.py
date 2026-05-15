@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS trades (
     fees NUMERIC(20,8) DEFAULT 0,
     net_pnl NUMERIC(20,8),
     source VARCHAR(10) NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'cycle')),
-    source_id INTEGER REFERENCES trading_cycles(id) ON DELETE SET NULL,
+    source_id INTEGER REFERENCES trading_cycles(id) ON DELETE RESTRICT,
     version INTEGER NOT NULL DEFAULT 0,
     metadata JSONB DEFAULT '{}' CHECK (octet_length(metadata::text) < 8192),
     opened_at TIMESTAMPTZ,

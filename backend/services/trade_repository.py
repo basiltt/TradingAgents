@@ -57,6 +57,7 @@ VALID_CLOSE_REASONS = {
 VALID_EVENT_TYPES = {
     "placed", "filled", "partially_filled", "close_requested",
     "closed", "cancelled", "failed", "reconciled",
+    "tp_triggered", "sl_triggered", "amended",
 }
 
 

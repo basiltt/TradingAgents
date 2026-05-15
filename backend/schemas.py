@@ -351,6 +351,14 @@ class TradeResponse(BaseModel):
     take_profit_price: Optional[float] = None
     leverage: int
     margin_mode: str
+    position_idx: int = 0
+    mark_price_at_open: Optional[float] = None
+    capital_pct: Optional[float] = None
+    base_capital: Optional[float] = None
+    signal_direction: Optional[str] = None
+    trade_direction: Optional[str] = None
+    take_profit_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
     status: str
     order_id: Optional[str] = None
     order_link_id: Optional[str] = None
@@ -367,6 +375,7 @@ class TradeResponse(BaseModel):
     metadata: dict = {}
     opened_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
+    archived_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
