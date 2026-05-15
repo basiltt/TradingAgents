@@ -22,6 +22,7 @@ import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 import { StrategiesPage as StrategiesPageComponent } from "@/components/strategies/StrategiesPage";
 import { CycleListPage } from "@/components/cycles/CycleListPage";
 import { CycleDetailPage } from "@/components/cycles/CycleDetailPage";
+import TradesPage from "@/components/trades/TradesPage";
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -197,6 +198,12 @@ const cycleDetailRoute = createRoute({
   component: CyclesDetailPage,
 });
 
+const tradesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/trades",
+  component: TradesPage,
+});
+
 
 export const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -215,6 +222,7 @@ export const routeTree = rootRoute.addChildren([
   strategiesRoute,
   cyclesRoute,
   cycleDetailRoute,
+  tradesRoute,
 ]);
 
 export function createAppRouter() {

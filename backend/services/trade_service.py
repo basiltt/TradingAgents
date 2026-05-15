@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid as _uuid
+from decimal import Decimal
 from typing import Any
 
 from backend.async_persistence import AsyncAnalysisDB
@@ -213,11 +215,29 @@ class TradeService:
 
         self._invalidate_stats_cache(account_id)
         await self._broadcast_trade_event("trade.closed", child)
+
+        new_filled = previously_filled + qty
+        remaining = float(trade["qty"]) - new_filled
+        if self._ws:
+            try:
+                pc_payload = {
+                    "trade_id": trade_id,
+                    "account_id": account_id,
+                    "version": trade["version"] + 2,
+                    "filled_qty": new_filled,
+                    "remaining_qty": remaining,
+                    "realized_pnl": float(child.get("net_pnl") or 0) if child else None,
+                }
+                await self._ws.broadcast_to_account(account_id, "trade.partially_closed", pc_payload)
+            except Exception:
+                logger.warning("ws_partially_closed_broadcast_failed", extra={"trade_id": trade_id})
+
         return child
 
     async def _handle_close_failure(self, client: Any, trade: dict, version: int) -> None:
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
+        previous_status = trade.get("status")
         try:
             positions = await client.get_positions()
             position_gone = not any(
@@ -241,20 +261,26 @@ class TradeService:
             except Exception:
                 logger.exception("reconcile_after_failure_failed", extra={"trade_id": trade_id})
 
+        reverted_version = None
         try:
             async with self._db.pool.acquire() as conn:
                 async with conn.transaction():
-                    await self._repo.update_trade_status(
+                    updated = await self._repo.update_trade_status(
                         conn, trade_id=trade_id, account_id=account_id,
                         expected_version=version, new_status="open",
                         event_type="failed", actor="system",
                     )
+                    reverted_version = updated.get("version") if updated else version + 1
         except ConcurrentModification:
             logger.warning("revert_concurrent_modification", extra={"trade_id": trade_id})
+            return
         except Exception:
             logger.exception("revert_to_open_failed", extra={"trade_id": trade_id})
 
-        await self._broadcast_trade_event("trade.close_failed", trade)
+        trade["_previous_status"] = previous_status
+        await self._broadcast_trade_event(
+            "trade.close_failed", trade, version_override=reverted_version,
+        )
 
     async def cancel_trade(self, account_id: str, trade_id: str) -> dict:
         async with self._db.pool.acquire() as conn:
@@ -317,7 +343,23 @@ class TradeService:
             "net_pnl": round(net_pnl, 8),
         }
 
-    async def _broadcast_trade_event(self, event_type: str, trade: dict) -> None:
+    @staticmethod
+    def _serialize_trade_for_ws(trade: dict) -> dict:
+        out = {}
+        for k, v in trade.items():
+            if isinstance(v, _uuid.UUID):
+                out[k] = str(v)
+            elif isinstance(v, Decimal):
+                out[k] = float(v)
+            elif hasattr(v, "isoformat"):
+                out[k] = v.isoformat()
+            else:
+                out[k] = v
+        return out
+
+    async def _broadcast_trade_event(
+        self, event_type: str, trade: dict, *, version_override: int | None = None,
+    ) -> None:
         if not self._ws:
             return
         try:
@@ -334,12 +376,7 @@ class TradeService:
                 payload = {
                     "trade_id": str(trade["id"]),
                     "account_id": trade["account_id"],
-                    "symbol": trade["symbol"],
-                    "side": trade["side"],
-                    "qty": float(trade["qty"]),
-                    "entry_price": float(trade["entry_price"]) if trade.get("entry_price") else None,
-                    "leverage": trade.get("leverage"),
-                    "status": trade["status"],
+                    "data": self._serialize_trade_for_ws(trade),
                 }
             elif event_type == "trade.close_failed":
                 meta = trade.get("metadata") or {}
@@ -353,9 +390,12 @@ class TradeService:
                     "account_id": trade["account_id"],
                     "symbol": trade["symbol"],
                     "error_code": meta.get("error_code", "UNKNOWN"),
+                    "error_message": meta.get("error_message", meta.get("error_code", "UNKNOWN")),
+                    "previous_status": trade.get("_previous_status"),
                 }
             else:
                 return
+            payload["version"] = version_override if version_override is not None else trade.get("version")
             await self._ws.broadcast_to_account(trade["account_id"], event_type, payload)
         except Exception:
             logger.warning("ws_broadcast_failed", extra={"event_type": event_type, "trade_id": str(trade["id"])})

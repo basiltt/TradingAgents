@@ -496,6 +496,121 @@ class TradeRepository:
             "avg_hold_time": float(row["avg_hold_time"]) if row["avg_hold_time"] else None,
         }
 
+    async def list_trades_cross_account(
+        self, conn, *,
+        account_ids: list[str],
+        status: list[str] | None = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        from_date=None,
+        to_date=None,
+        sort_by: str = "created_at",
+        sort_dir: str = "desc",
+        cursor_last_id: str | None = None,
+        cursor_last_sort_value: str | None = None,
+        limit: int = 50,
+    ) -> dict:
+        if sort_by not in SORT_COLUMNS:
+            raise ValueError(f"Invalid sort column: {sort_by}")
+        sort_col = SORT_COLUMNS[sort_by]
+        limit = min(limit, 200)
+
+        conditions = ["t.account_id = ANY($1::text[])"]
+        params: list[Any] = [account_ids]
+
+        if status:
+            for s in status:
+                if s not in VALID_STATUSES:
+                    raise ValueError(f"Invalid status: {s}")
+            params.append(status)
+            conditions.append(f"t.status = ANY(${len(params)}::text[])")
+        if symbol:
+            if not re.match(SYMBOL_PATTERN, symbol):
+                raise ValueError(f"Invalid symbol: {symbol}")
+            params.append(symbol)
+            conditions.append(f"t.symbol = ${len(params)}")
+        if side:
+            if side not in VALID_SIDES:
+                raise ValueError(f"Invalid side: {side}")
+            params.append(side)
+            conditions.append(f"t.side = ${len(params)}")
+        if from_date:
+            params.append(from_date)
+            conditions.append(f"t.created_at >= ${len(params)}::timestamptz")
+        if to_date:
+            params.append(to_date)
+            conditions.append(f"t.created_at <= ${len(params)}::timestamptz")
+
+        if cursor_last_id:
+            cursor_uuid = uuid.UUID(cursor_last_id)
+            op = ">" if sort_dir == "asc" else "<"
+            if cursor_last_sort_value is not None:
+                params.append(cursor_last_sort_value)
+                params.append(cursor_uuid)
+                cast = "::timestamptz" if sort_by in ("created_at", "opened_at", "closed_at") else "::numeric"
+                conditions.append(
+                    f"({sort_col}, t.id) {op} (${len(params) - 1}{cast}, ${len(params)})"
+                )
+            else:
+                params.append(cursor_uuid)
+                id_op = ">" if sort_dir == "asc" else "<"
+                conditions.append(
+                    f"({sort_col} IS NULL AND t.id {id_op} ${len(params)})"
+                )
+
+        where = " AND ".join(conditions)
+        params.append(limit + 1)
+
+        asc = sort_dir == "asc"
+        order_dir = "ASC" if asc else "DESC"
+        nulls = "NULLS FIRST" if asc else "NULLS LAST"
+        query = (
+            f"SELECT t.* FROM trades t WHERE {where} "
+            f"ORDER BY {sort_col} {order_dir} {nulls}, t.id {order_dir} "
+            f"LIMIT ${len(params)}"
+        )
+        rows = await conn.fetch(query, *params)
+        items = [dict(r) for r in rows]
+
+        has_more = len(items) > limit
+        if has_more:
+            items = items[:limit]
+
+        next_cursor = None
+        if has_more and items:
+            last = items[-1]
+            sort_val = last.get(sort_by)
+            val_str = str(sort_val) if sort_val is not None else "NULL"
+            raw = f"{val_str}|{last['id']}"
+            next_cursor = b64encode(raw.encode("utf-8")).decode("utf-8")
+
+        return {"items": items, "cursor": next_cursor, "has_more": has_more}
+
+    async def get_stats_cross_account(
+        self, conn, *, account_ids: list[str],
+    ) -> dict:
+        row = await conn.fetchrow(
+            """SELECT
+                COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) as total_trades,
+                COUNT(*) FILTER (WHERE status IN ('open', 'pending', 'partially_filled', 'closing', 'partially_closed') AND parent_trade_id IS NULL) as open_count,
+                COALESCE(AVG(net_pnl) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL), 0) as avg_pnl,
+                COALESCE(SUM(net_pnl) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL), 0) as total_pnl,
+                CASE WHEN COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) > 0
+                    THEN COUNT(*) FILTER (WHERE status = 'closed' AND net_pnl > 0 AND exit_price > 0 AND parent_trade_id IS NULL)::float
+                         / COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL)
+                    ELSE 0 END as win_rate
+            FROM trades
+            WHERE account_id = ANY($1::text[])""",
+            account_ids,
+        )
+        return {
+            "total_trades": row["total_trades"],
+            "open_count": row["open_count"],
+            "win_rate": float(row["win_rate"] or 0),
+            "avg_pnl": float(row["avg_pnl"] or 0),
+            "total_pnl": float(row["total_pnl"] or 0),
+        }
+
     async def create_child_trade(
         self, conn, *, parent_trade: dict,
         closed_qty: float, exit_price: float,

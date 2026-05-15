@@ -460,6 +460,38 @@ async def get_trade_detail(request: Request, account_id: str, trade_id: str):
     return TradeDetailResponse(**trade_data)
 
 
+def _serialize_trade_event(event: dict) -> dict:
+    out = dict(event)
+    for k, v in out.items():
+        if isinstance(v, _uuid.UUID):
+            out[k] = str(v)
+        elif hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+    return out
+
+
+@router.get("/accounts/{account_id}/trades/{trade_id}/events")
+async def get_trade_events(request: Request, account_id: str, trade_id: str):
+    _validate_account_id(account_id)
+    try:
+        _uuid.UUID(trade_id)
+    except (ValueError, AttributeError):
+        return JSONResponse({"detail": "Invalid trade_id", "code": "VALIDATION_ERROR"}, 422)
+
+    repo = _get_trade_repo(request)
+    db = _get_db(request)
+    async with db.pool.acquire() as conn:
+        trade = await repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
+        if not trade:
+            return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
+        events = await conn.fetch(
+            "SELECT * FROM trade_events WHERE trade_id = $1 ORDER BY created_at ASC LIMIT 1000",
+            _uuid.UUID(trade_id),
+        )
+    items = [_serialize_trade_event(dict(e)) for e in events]
+    return {"items": items, "truncated": len(events) >= 1000}
+
+
 @router.post("/accounts/{account_id}/trades/{trade_id}/close")
 async def close_trade(
     request: Request, account_id: str, trade_id: str,

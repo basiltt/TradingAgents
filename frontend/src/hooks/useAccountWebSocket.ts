@@ -1,6 +1,18 @@
 import { useEffect, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAppDispatch } from "@/store";
 import { updateCardRealtime, handleCloseExecution } from "@/store/accounts-slice";
+import type { Trade } from "@/components/trades/types";
+import {
+  addActiveTrade,
+  removeActiveTrade,
+  updateActiveTrade,
+  clearPendingAction,
+  revertOptimisticUpdate,
+  setWsConnected,
+} from "@/store/trades-slice";
+import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
 
 const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
@@ -8,11 +20,15 @@ const RECONNECT_MAX = 30000;
 
 export function useAccountWebSocket() {
   const dispatch = useAppDispatch();
+  const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const mounted = useRef(true);
+  const queryClientRef = useRef(queryClient);
   const connectRef = useRef<() => void>();
+
+  useEffect(() => { queryClientRef.current = queryClient; });
 
   const connect = useCallback(() => {
     if (!mounted.current) return;
@@ -23,27 +39,60 @@ export function useAccountWebSocket() {
 
     ws.onopen = () => {
       reconnectDelay.current = RECONNECT_BASE;
+      dispatch(setWsConnected(true));
+      fetchAllActiveTrades(dispatch);
+      queryClientRef.current.invalidateQueries({ queryKey: ["trades"] });
     };
 
     ws.onmessage = (event) => {
+      let msg: Record<string, unknown>;
       try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "ping") {
-          ws.send("pong");
-          return;
-        }
-        if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
-          dispatch(updateCardRealtime(msg));
-        }
-        if (msg.account_id && msg.type === "close_execution") {
-          dispatch(handleCloseExecution(msg));
-        }
+        msg = JSON.parse(event.data);
       } catch {
-        // ignore parse errors
+        return;
+      }
+      if (msg.type === "ping") {
+        ws.send("pong");
+        return;
+      }
+      if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
+        dispatch(updateCardRealtime(msg));
+      }
+      if (msg.account_id && msg.type === "close_execution") {
+        dispatch(handleCloseExecution(msg));
+      }
+
+      if (msg.type === "trade.opened" && msg.data) {
+        dispatch(addActiveTrade(msg.data as Trade));
+        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+      }
+      if (msg.type === "trade.closed" && msg.trade_id) {
+        dispatch(removeActiveTrade(msg.trade_id as string));
+        dispatch(clearPendingAction(msg.trade_id as string));
+        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "history"] });
+        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+      }
+      if (msg.type === "trade.partially_closed" && msg.trade_id) {
+        dispatch(clearPendingAction(msg.trade_id as string));
+        dispatch(updateActiveTrade({
+          trade_id: msg.trade_id as string,
+          updates: {
+            filled_qty: msg.filled_qty as number,
+            realized_pnl: msg.realized_pnl as number | null,
+            version: msg.version as number,
+            status: "partially_closed",
+          },
+        }));
+      }
+      if (msg.type === "trade.close_failed" && msg.trade_id) {
+        dispatch(revertOptimisticUpdate(msg.trade_id as string));
+        dispatch(clearPendingAction(msg.trade_id as string));
+        toast.error(`Close failed: ${(msg.error_message as string) || "unknown error"}`);
       }
     };
 
     ws.onclose = () => {
+      dispatch(setWsConnected(false));
       if (!mounted.current) return;
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX);

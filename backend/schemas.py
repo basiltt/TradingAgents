@@ -393,6 +393,7 @@ class TradeListResponse(BaseModel):
 
 class TradeStatsResponse(BaseModel):
     total_trades: int
+    open_count: int = 0
     win_rate: float
     avg_pnl: float
     total_pnl: float
