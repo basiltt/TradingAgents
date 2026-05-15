@@ -293,6 +293,7 @@ def create_app() -> FastAPI:
     from backend.routers.scanner import router as scanner_router
     from backend.routers.ws import router as ws_router
     from backend.routers.accounts import router as accounts_router
+    from backend.routers.trades import router as trades_router
     from backend.routers.portfolio import router as portfolio_router
     from backend.routers.ws_accounts import router as ws_accounts_router
     from backend.routers.analytics import router as analytics_router
@@ -312,6 +313,7 @@ def create_app() -> FastAPI:
     app.include_router(scanner_router, prefix="/api/v1")
     app.include_router(scheduled_scans_router, prefix="/api/v1")
     app.include_router(accounts_router, prefix="/api/v1")
+    app.include_router(trades_router, prefix="/api/v1")
     app.include_router(close_positions_router, prefix="/api/v1")
     from backend.routers.trading_cycles import router as trading_cycles_router
     app.include_router(trading_cycles_router, prefix="/api/v1")

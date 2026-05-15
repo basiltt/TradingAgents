@@ -269,6 +269,8 @@ class AccountsService:
                         )
                 if self._trade_service:
                     self._trade_service._invalidate_stats_cache(account_id)
+                    if trade_record:
+                        await self._trade_service._broadcast_trade_event("trade.opened", trade_record)
             except Exception:
                 logger.exception("trade_record_creation_failed")
 
