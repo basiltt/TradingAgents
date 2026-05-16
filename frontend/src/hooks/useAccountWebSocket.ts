@@ -71,7 +71,8 @@ export function useAccountWebSocket() {
         }
       }
       if (msg.account_id && msg.type === "close_execution") {
-        dispatch(handleCloseExecution(msg as unknown as { account_id: string; data: { closed: number } }));
+        const closed = typeof msg.closed === "number" ? msg.closed : 0;
+        dispatch(handleCloseExecution({ account_id: msg.account_id as string, data: { closed } }));
       }
 
       if (msg.type === "trade.opened" && msg.data) {
