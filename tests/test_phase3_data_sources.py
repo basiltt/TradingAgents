@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from tradingagents.dataflows.bybit_data import (
     get_higher_timeframe,
     _parse_kline_csv,
@@ -61,9 +60,9 @@ def _make_kline_csv(n: int = 250, base_price: float = 100.0) -> str:
         o = price
         c = price + change
         h = max(o, c) + random.uniform(0, 1)
-        l = min(o, c) - random.uniform(0, 1)
+        low = min(o, c) - random.uniform(0, 1)
         v = random.uniform(100, 1000)
-        lines.append(f"{1000 + i * 60000},{o:.2f},{h:.2f},{l:.2f},{c:.2f},{v:.2f}")
+        lines.append(f"{1000 + i * 60000},{o:.2f},{h:.2f},{low:.2f},{c:.2f},{v:.2f}")
         price = c
     return "\n".join(lines)
 

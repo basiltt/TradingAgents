@@ -1,7 +1,6 @@
 """Tests for tradingagents.agents.analysts — Phase 1 unit tests."""
 
 from unittest.mock import MagicMock, patch
-import pytest
 
 
 def _make_mock_llm(content="analysis report", tool_calls=None):

@@ -1,7 +1,7 @@
 """Tests for ClosePositionsService."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from backend.services.close_positions_service import ClosePositionsService, MAX_RULES_PER_ACCOUNT
 

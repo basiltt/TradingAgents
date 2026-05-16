@@ -1,6 +1,6 @@
 """Tests for _get_provider_kwargs with llm_api_key passthrough."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def test_api_key_passed_to_provider_kwargs():

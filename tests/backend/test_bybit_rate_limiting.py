@@ -134,7 +134,6 @@ async def test_semaphore_limits_concurrency(client):
     max_concurrent = 0
     current = 0
 
-    original_request = client._request
 
     async def mock_request(*args, **kwargs):
         nonlocal call_count, max_concurrent, current

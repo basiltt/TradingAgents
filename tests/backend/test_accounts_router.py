@@ -1,19 +1,17 @@
 """Tests for backend.routers.accounts — API endpoints."""
 
-import os
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.routers.accounts import router as accounts_router
+from backend.routers.portfolio import router as portfolio_router
+from backend.services.bybit_client import BybitAPIError
 
 _TEST_ID = "00000000-0000-4000-8000-000000000001"
 _MISSING_ID = "00000000-0000-4000-8000-000000000099"
-from backend.routers.portfolio import router as portfolio_router
-from backend.services.bybit_client import BybitAPIError
 
 
 @pytest.fixture(autouse=True)

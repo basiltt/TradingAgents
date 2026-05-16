@@ -1,9 +1,7 @@
 """Tests for tradingagents.dataflows.yfinance_news — Phase 1 unit tests."""
 
-from datetime import datetime
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 
 class TestExtractArticleData:

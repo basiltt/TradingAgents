@@ -1,7 +1,6 @@
 """Tests for tradingagents.dataflows.alpha_vantage_news and alpha_vantage_stock — Phase 1 unit tests."""
 
-from unittest.mock import patch, MagicMock
-import pytest
+from unittest.mock import patch
 
 
 class TestGetNews:
@@ -39,7 +38,7 @@ class TestGetInsiderTransactionsAV:
     def test_happy_path(self, mock_api):
         from tradingagents.dataflows.alpha_vantage_news import get_insider_transactions
         mock_api.return_value = {"data": []}
-        result = get_insider_transactions("IBM")
+        get_insider_transactions("IBM")
         mock_api.assert_called_once_with("INSIDER_TRANSACTIONS", {"symbol": "IBM"})
 
 
@@ -63,6 +62,6 @@ class TestGetStock:
         from tradingagents.dataflows.alpha_vantage_stock import get_stock
         mock_api.return_value = "csv data"
         mock_filter.return_value = "filtered csv"
-        result = get_stock("AAPL", "2020-01-01", "2020-06-01")
+        get_stock("AAPL", "2020-01-01", "2020-06-01")
         call_params = mock_api.call_args[0][1]
         assert call_params["outputsize"] == "full"

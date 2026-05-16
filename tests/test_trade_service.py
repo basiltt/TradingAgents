@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -192,7 +191,7 @@ class TestCloseSingleTrade:
         child = _make_trade(status="closed", qty=0.5)
         mock_repo.create_child_trade.return_value = child
 
-        result = await service.close_single_trade("acc-1", str(trade["id"]), qty=0.5)
+        await service.close_single_trade("acc-1", str(trade["id"]), qty=0.5)
         mock_repo.create_child_trade.assert_awaited_once()
         assert mock_repo.update_trade_status.await_count == 2
 

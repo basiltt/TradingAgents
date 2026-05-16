@@ -1,6 +1,5 @@
 """Tests for cli.main.MessageBuffer — Phase 1 unit tests."""
 
-import pytest
 
 
 class TestMessageBuffer:

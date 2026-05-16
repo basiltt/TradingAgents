@@ -1,6 +1,5 @@
 """Tests for backend.services.bybit_client — Bybit V5 REST client."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

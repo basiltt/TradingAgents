@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage
 
 
@@ -239,7 +239,8 @@ class TestCryptoTechnicalAnalystNoTools:
     def test_no_matching_tools_raises(self):
         from tradingagents.agents.crypto_analysts import create_crypto_technical_analyst
         llm = MagicMock()
-        unrelated = MagicMock(); unrelated.name = "unrelated"
+        unrelated = MagicMock()
+        unrelated.name = "unrelated"
         node = create_crypto_technical_analyst(llm, [unrelated])
         with pytest.raises(ValueError, match="No technical analysis tools"):
             node(_base_state())
@@ -260,7 +261,8 @@ class TestCryptoFundamentalsAnalyst:
         result_msg = AIMessage(content="fundamentals", tool_calls=[])
         llm = MagicMock()
         llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
-        tool = MagicMock(); tool.name = "get_crypto_market_data"
+        tool = MagicMock()
+        tool.name = "get_crypto_market_data"
         node = create_crypto_fundamentals_analyst(llm, [tool])
         with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
             mock_chain = MagicMock()
@@ -285,7 +287,8 @@ class TestCryptoSocialAnalyst:
         result_msg = AIMessage(content="social data", tool_calls=[])
         llm = MagicMock()
         llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
-        tool = MagicMock(); tool.name = "get_crypto_community_data"
+        tool = MagicMock()
+        tool.name = "get_crypto_community_data"
         node = create_crypto_social_analyst(llm, [tool])
         with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
             mock_chain = MagicMock()
@@ -303,8 +306,10 @@ class TestCryptoToolCallsBranch:
         result_msg = AIMessage(content="Analysis report here", tool_calls=[{"name": "x", "args": {}, "id": "1"}])
         llm = MagicMock()
         llm.bind_tools.return_value = MagicMock(**{"invoke.return_value": result_msg})
-        t1 = MagicMock(); t1.name = "get_crypto_klines"
-        t2 = MagicMock(); t2.name = "get_crypto_indicators"
+        t1 = MagicMock()
+        t1.name = "get_crypto_klines"
+        t2 = MagicMock()
+        t2.name = "get_crypto_indicators"
         node = create_crypto_technical_analyst(llm, [t1, t2])
         with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
             mock_chain = MagicMock()

@@ -1,6 +1,5 @@
 """Tests for backend.crypto — Fernet encryption utilities."""
 
-import os
 
 import pytest
 

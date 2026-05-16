@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.testclient import TestClient as StarletteTestClient
 
 from backend.routers.ws import _check_origin
 
@@ -195,7 +194,6 @@ class TestConsumeFunction:
     async def test_consume_broadcasts_events_then_cancelled(self):
         """Lines 55-60: _consume drains events and handles CancelledError."""
         import asyncio
-        from backend.routers.ws import router
 
         captured_consume = []
 
@@ -238,7 +236,6 @@ class TestConsumeFunction:
     @pytest.mark.asyncio
     async def test_consume_handles_stop_async_iteration(self):
         """Line 59: StopAsyncIteration in _consume is handled gracefully."""
-        import asyncio
 
         captured_consume = []
 
@@ -267,15 +264,11 @@ class TestConsumeFunction:
 class TestWebSocketDisconnect:
     def test_websocket_disconnect_during_iter_handled_gracefully(self):
         """Lines 77-78: WebSocketDisconnect during iter_text is caught and handled."""
-        from fastapi import WebSocket
-        from starlette.websockets import WebSocketDisconnect
 
         run = {"run_id": "test-run", "status": "running"}
         app, ws_manager, _ = _make_app(run=run)
 
         # Simulate message that causes WebSocketDisconnect on next read
-        disconnect_after_one = [False]
-        original_handle = ws_manager.handle_message
 
         async def handle_then_disconnect(conn, raw):
             # Return None for first message, then the next ws.receive_text will disconnect

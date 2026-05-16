@@ -1,6 +1,5 @@
 """Tests for backend.services.scanner_service._parse_signal_from_reports — Phase 1 unit tests."""
 
-import pytest
 
 
 class TestParseSignalFromReports:

@@ -233,7 +233,6 @@ class TestRunScan:
             "started_at": "", "completed_at": None, "task": None,
         }
         call_count = 0
-        original_to_thread = asyncio.to_thread
 
         async def mock_to_thread(fn, *args, **kwargs):
             nonlocal call_count
@@ -735,7 +734,6 @@ class TestScanFinalStatus:
     async def test_scan_failed_via_gather_exception(self, scanner):
         """Covers scanner_service.py:374-375: scan_error=True via gather outer exception."""
         # Patch asyncio.gather to raise directly (outer except path)
-        original_gather = asyncio.gather
 
         async def mock_gather(*args, **kwargs):
             raise RuntimeError("forced outer error")
@@ -776,7 +774,7 @@ class TestRunScanEdgeCases:
             return ["BTC"]
 
         with patch("tradingagents.dataflows.bybit_data.get_valid_symbols", side_effect=sync_fetch_and_remove):
-            scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
+            await scanner.start_scan({"analysis_date": "2025-01-10"})
             await asyncio.sleep(0.5)
         # Scan was removed so _run_scan should have exited via the return on line 331
 
@@ -808,7 +806,6 @@ class TestProcessTickerCancelDirect:
     @pytest.mark.asyncio
     async def test_process_ticker_sees_cancel_before_semaphore(self, scanner):
         """Covers scanner_service.py:345: ticker processing returns early when cancel=True."""
-        from backend import services as svc_pkg
         import backend.services.scanner_service as svc_mod
 
         # Reduce batch size to 1 so tickers are processed one at a time
@@ -1006,7 +1003,6 @@ class TestResumeIncompleteScanIntegration:
     @pytest.mark.asyncio
     async def test_malformed_config_json_uses_empty_dict(self):
         """R8-F11: malformed config JSON falls back to empty dict without raising."""
-        from datetime import datetime, timezone
         db = await self._make_db()
         from backend.services.scanner_service import ScannerService
         analysis = AsyncMock()

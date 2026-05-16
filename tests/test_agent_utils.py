@@ -1,7 +1,6 @@
 """Tests for tradingagents.agents.utils.agent_utils — Phase 1 unit tests."""
 
 from unittest.mock import patch, MagicMock
-import pytest
 
 
 class TestGetLanguageInstruction:

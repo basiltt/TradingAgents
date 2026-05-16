@@ -1,7 +1,6 @@
 """Tests for backend.routers.ws — Phase 1 unit tests."""
 
 from unittest.mock import MagicMock, AsyncMock
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -43,7 +42,7 @@ class TestAnalysisWsEndpoint:
     def test_invalid_run_id(self):
         app = _make_ws_app()
         client = TestClient(app)
-        with client.websocket_connect("/ws/v1/analysis/not-a-uuid") as ws:
+        with client.websocket_connect("/ws/v1/analysis/not-a-uuid"):
             pass  # should close with 4400
 
     def test_origin_rejected(self):
@@ -53,7 +52,7 @@ class TestAnalysisWsEndpoint:
         with client.websocket_connect(
             "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
             headers={"origin": "http://evil.com"},
-        ) as ws:
+        ):
             pass  # should close with 4403
 
     def test_run_not_found(self):
@@ -174,7 +173,7 @@ class TestConsumerAndDisconnect:
         with client.websocket_connect(
             "/ws/v1/analysis/11111111-1111-1111-1111-111111111111",
             headers={"origin": "http://localhost:3000"},
-        ) as ws:
+        ):
             import time
             time.sleep(0.1)
 

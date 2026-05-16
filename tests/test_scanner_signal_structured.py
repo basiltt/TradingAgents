@@ -1,5 +1,8 @@
 """Unit tests for the structured signal extraction path in scanner_service."""
-import pytest
+
+import asyncio
+import json as _json
+from unittest.mock import AsyncMock, MagicMock
 
 
 def _extract(pm_data, trader_data=None):
@@ -81,12 +84,6 @@ class TestExtractSignalFromStructured:
         assert result["score"] == 1
         assert result["confidence"] == "low"
 
-
-
-
-import asyncio
-import json as _json
-from unittest.mock import AsyncMock, MagicMock
 
 
 def _make_scanner(snapshot_reports):

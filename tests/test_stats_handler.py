@@ -1,7 +1,5 @@
 """Tests for cli.stats_handler — Phase 1 unit tests."""
 
-from unittest.mock import MagicMock
-import pytest
 
 
 class TestStatsCallbackHandler:

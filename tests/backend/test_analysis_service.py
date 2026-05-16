@@ -166,7 +166,6 @@ def test_error_sanitization(service, sample_request, event_loop, db):
 def test_persist_signal_sections_saves_pm_signal(tmp_path):
     """_persist_signal_sections writes _pm_signal JSON when _pm_signal_data is present."""
     import json
-    from unittest.mock import MagicMock
     from pydantic import BaseModel
     from backend.services.analysis_service import AnalysisService
 
@@ -198,7 +197,6 @@ def test_persist_signal_sections_saves_pm_signal(tmp_path):
 
 def test_persist_signal_sections_skips_none_values(tmp_path):
     """_persist_signal_sections does nothing when both signal objects are None."""
-    from unittest.mock import MagicMock
     from backend.services.analysis_service import AnalysisService
 
     db = MagicMock()
@@ -217,7 +215,6 @@ def test_persist_signal_sections_skips_none_values(tmp_path):
 
 def test_persist_signal_sections_handles_none_chunk(tmp_path):
     """_persist_signal_sections does nothing when last_chunk is None."""
-    from unittest.mock import MagicMock
     from backend.services.analysis_service import AnalysisService
 
     db = MagicMock()
@@ -236,8 +233,6 @@ def test_persist_signal_sections_handles_none_chunk(tmp_path):
 
 def _make_service_with_sections(sections: list):
     """Return an AnalysisService whose DB returns the given sections list."""
-    import asyncio
-    from unittest.mock import MagicMock, AsyncMock
     from backend.services.analysis_service import AnalysisService
 
     db = MagicMock()
@@ -534,7 +529,6 @@ def test_safe_json_non_serializable():
 
     # _safe_json uses default=str which should handle most objects;
     # We cover the except branch with a circular reference
-    import json
     circular: dict = {}
     circular["self"] = circular
     result = _safe_json(circular)
@@ -635,7 +629,7 @@ def test_execute_graph_cancel_mid_loop(service):
 
     with patch("tradingagents.graph.trading_graph.TradingAgentsGraph", FakeGraph):
         with patch("backend.services.analysis_service.parse_stream_chunk", return_value=[]):
-            result = service._execute_graph(
+            service._execute_graph(
                 "run-cancel", {"ticker": "SPY", "analysis_date": "2025-01-10"}, {},
                 None, cancel_event,
             )
@@ -666,7 +660,6 @@ def test_lifecycle_snapshot_persisted(service, db, event_loop):
 
 def test_update_run_status_false_skips_progress_event(service, db, event_loop, bus):
     """Integration: if update_run_status returns False (already completed), no progress event is emitted."""
-    from collections import deque
     with patch("backend.services.analysis_service.AnalysisService._execute_graph",
                return_value={"final_trade_decision": "HOLD"}):
         async def _test():
@@ -684,7 +677,6 @@ def test_update_run_status_false_skips_progress_event(service, db, event_loop, b
 def test_run_analysis_cancelled_error_sets_db_cancelled(service, db, event_loop):
     """R3-F15: CancelledError inside _run_analysis sets DB status to 'cancelled'."""
     # Patch asyncio.wait_for to raise CancelledError, simulating task cancellation
-    original_wait_for = asyncio.wait_for
 
     async def raise_cancelled(*args, **kwargs):
         raise asyncio.CancelledError()
@@ -768,7 +760,7 @@ def test_service_delete_all_runs(service, db, event_loop):
     async def _test():
         with patch("backend.services.analysis_service.AnalysisService._execute_graph",
                    return_value={"final_trade_decision": "Buy"}):
-            run_id = await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
+            await service.start_analysis({"ticker": "SPY", "analysis_date": "2025-06-01"})
             await asyncio.sleep(0.3)
         count = await service.delete_all_runs()
         assert count >= 1

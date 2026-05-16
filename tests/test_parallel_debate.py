@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import threading
-import time
 import pytest
-from unittest.mock import MagicMock
 
 from tradingagents.graph.parallel_debate import (
     create_parallel_risk_round1,
     create_parallel_researcher_round1,
-    _merge_risk_debate_states,
-    _merge_invest_debate_states,
     reset_debate_executor,
 )
 

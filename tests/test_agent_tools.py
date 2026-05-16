@@ -1,6 +1,6 @@
 """Tests for agent tool wrappers — coingecko, fundamentals, news, core stock."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 ROUTE_PATCH = "tradingagents.agents.utils.{module}.route_to_vendor"

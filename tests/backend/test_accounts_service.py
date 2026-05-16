@@ -1,7 +1,5 @@
 """Tests for backend.services.accounts_service — service layer."""
 
-import os
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
