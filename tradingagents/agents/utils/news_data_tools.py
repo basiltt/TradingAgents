@@ -1,3 +1,4 @@
+"""LangChain tool wrappers for news, global market news, and insider transaction data."""
 from langchain_core.tools import tool
 from typing import Annotated
 from tradingagents.dataflows.interface import route_to_vendor

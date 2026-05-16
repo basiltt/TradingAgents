@@ -23,6 +23,11 @@ interface ResolvedRule {
 
 const TARGET_TYPES = new Set(["BALANCE_ABOVE", "PNL_ABOVE", "EQUITY_RISE_PCT"]);
 
+/**
+ * Resolve a rule trigger into display data (progress %, threshold label, reached status).
+ * AI-CONTEXT: Rules are either "target" (goal to reach) or "floor" (limit to stay above).
+ * Threshold of zero is valid — only NaN/null threshold values are rejected.
+ */
 function resolveRule(
   t: { trigger_type: string; threshold_value: string | null; reference_value: string | null },
   equity: number,
@@ -137,6 +142,11 @@ interface AccountCardProps {
   onRefresh: () => void;
 }
 
+/**
+ * Renders a single account card with equity, PnL, rule indicators, and action menu.
+ * @param card - Dashboard card data from the accounts API.
+ * @param onRefresh - Callback to trigger dashboard re-fetch after mutations.
+ */
 export function AccountCard({ card, onRefresh }: AccountCardProps) {
   const navigate = useNavigate();
   const directions = useAppSelector((s) => s.accounts.directions[card.id]);

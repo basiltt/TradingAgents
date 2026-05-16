@@ -1,3 +1,8 @@
+"""Trade repository — data access layer for trade CRUD with optimistic locking.
+
+Manages the trade state machine (pending → open → closing → closed/failed/cancelled)
+with version-checked updates to prevent concurrent modification.
+"""
 from __future__ import annotations
 
 import json
@@ -62,18 +67,27 @@ VALID_EVENT_TYPES = {
 
 
 class TradeNotFound(Exception):
+    """Raised when a trade ID does not exist in the database."""
     pass
 
 
 class InvalidStatusTransition(Exception):
+    """Raised when a status change violates the trade state machine."""
     pass
 
 
 class ConcurrentModification(Exception):
+    """Raised when the trade version has changed since it was last read."""
     pass
 
 
 class TradeRepository:
+    """Data access layer for trades with optimistic locking and state machine enforcement.
+
+    All write methods require an asyncpg connection and expected_version
+    to prevent concurrent modification. Status transitions are validated
+    against VALID_TRANSITIONS before execution.
+    """
     def __init__(self, db: AsyncAnalysisDB) -> None:
         self._db = db
 

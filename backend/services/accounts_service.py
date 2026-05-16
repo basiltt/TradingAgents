@@ -21,21 +21,30 @@ _MAX_RANGE_DAYS = 90
 
 
 def _now_iso() -> str:
+    """Return current UTC timestamp as ISO 8601 string (no microseconds)."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _date_to_ms(date_str: str) -> int:
+    """Convert YYYY-MM-DD date string to Unix timestamp in milliseconds."""
     dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
 
 
 def _sanitize_error(msg: str) -> str:
+    """Truncate error messages to 512 chars to prevent log/DB overflow."""
     if len(msg) > 512:
         msg = msg[:512]
     return msg
 
 
 class AccountsService:
+    """Manages trading accounts: CRUD, exchange client lifecycle, portfolio data, and caching.
+
+    Owns per-account Bybit client instances, an in-memory cache (bounded, TTL-based),
+    and coordinates with TradeRepository/TradeService for trade operations.
+    """
+
     _CACHE_MAX = 500
 
     def __init__(self, db: AsyncAnalysisDB, ws_manager=None, trade_repo=None, trade_service=None):
@@ -48,18 +57,21 @@ class AccountsService:
         self._trade_service = trade_service
 
     async def shutdown(self) -> None:
+        """Close all exchange clients and clear caches."""
         for client in self._clients.values():
             await client.close()
         self._clients.clear()
         self._cache.clear()
 
     def _get_cached(self, key: str, ttl: float) -> Any | None:
+        """Return cached value if within TTL, else None."""
         entry = self._cache.get(key)
         if entry and time.monotonic() < entry[0]:
             return entry[1]
         return None
 
     def _set_cached(self, key: str, data: Any, ttl: float) -> None:
+        """Store a value in the bounded cache, evicting expired/oldest if at capacity."""
         if len(self._cache) >= self._CACHE_MAX:
             now = time.monotonic()
             expired = [k for k, (exp, _) in self._cache.items() if now >= exp]
@@ -74,6 +86,7 @@ class AccountsService:
         self.invalidate_cache(account_id)
 
     def invalidate_cache(self, account_id: str) -> None:
+        """Remove all cached data and close the exchange client for an account."""
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
@@ -112,9 +125,11 @@ class AccountsService:
         return client
 
     async def get_client(self, account_id: str) -> BybitClient:
+        """Get or create a Bybit API client for the given account."""
         return await self._build_client(account_id)
 
     def set_trade_dependencies(self, trade_repo, trade_service) -> None:
+        """Wire trade repo and service after construction to break circular init."""
         self._trade_repo = trade_repo
         self._trade_service = trade_service
 
@@ -305,6 +320,7 @@ class AccountsService:
     async def create_account(
         self, label: str, account_type: str, api_key: str, api_secret: str
     ) -> Dict[str, Any]:
+        """Create a new trading account with encrypted credentials."""
         client = BybitClient(api_key, api_secret, account_type)
         try:
             test_result = await client.test_connection()
@@ -334,12 +350,15 @@ class AccountsService:
         return result  # type: ignore
 
     async def list_accounts(self) -> List[Dict[str, Any]]:
+        """Return all trading accounts with masked API keys."""
         return await self._db.list_accounts()
 
     async def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single account by ID, or None if not found."""
         return await self._db.get_account(account_id)
 
     async def update_account(self, account_id: str, label: str | None = None, is_active: bool | None = None) -> Optional[Dict[str, Any]]:
+        """Update account label and/or active status."""
         fields: Dict[str, Any] = {"updated_at": _now_iso()}
         if label is not None:
             fields["label"] = label
@@ -353,6 +372,7 @@ class AccountsService:
     async def rotate_credentials(
         self, account_id: str, api_key: str, api_secret: str
     ) -> Optional[Dict[str, Any]]:
+        """Replace and re-encrypt API credentials, then verify connectivity."""
         account = await self._db.get_account(account_id)
         if not account:
             return None
@@ -376,6 +396,7 @@ class AccountsService:
         return await self._db.get_account(account_id)
 
     async def delete_account(self, account_id: str) -> bool:
+        """Soft-delete an account and invalidate its cache/client."""
         result = await self._db.soft_delete_account(account_id, _now_iso())
         if result:
             self._invalidate_cache(account_id)
@@ -384,6 +405,7 @@ class AccountsService:
         return result
 
     async def test_connection(self, account_id: str) -> Dict[str, Any]:
+        """Verify exchange connectivity and return server time."""
         client = await self._build_client(account_id)
         result = await client.test_connection()
         now = _now_iso()
@@ -402,6 +424,7 @@ class AccountsService:
     # ── Portfolio Data ──────────────────────────────────────────────────
 
     async def get_wallet(self, account_id: str) -> Dict[str, Any]:
+        """Fetch wallet balances from exchange, cached with 30s TTL."""
         cache_key = f"{account_id}:wallet"
         cached = self._get_cached(cache_key, 2)
         if cached is not None:
@@ -425,6 +448,7 @@ class AccountsService:
             raise
 
     async def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
+        """Fetch open perpetual positions from exchange, cached with 15s TTL."""
         cache_key = f"{account_id}:positions"
         cached = self._get_cached(cache_key, 3)
         if cached is not None:
@@ -436,6 +460,7 @@ class AccountsService:
         return data
 
     async def get_orders(self, account_id: str) -> List[Dict[str, Any]]:
+        """Fetch active orders from exchange, cached with 15s TTL."""
         cache_key = f"{account_id}:orders"
         cached = self._get_cached(cache_key, 10)
         if cached is not None:
@@ -450,6 +475,7 @@ class AccountsService:
         self, account_id: str, start_date: str, end_date: str,
         page: int = 1, limit: int = 100,
     ) -> Dict[str, Any]:
+        """Fetch closed PnL records for a date range from the database."""
         start_ms = _date_to_ms(start_date)
         end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
 
@@ -466,6 +492,7 @@ class AccountsService:
     async def get_pnl_summary(
         self, account_id: str, start_date: str, end_date: str,
     ) -> Dict[str, Any]:
+        """Compute aggregated PnL summary (total, win rate, avg) for a date range."""
         start_ms = _date_to_ms(start_date)
         end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
 
@@ -535,6 +562,7 @@ class AccountsService:
             }
 
     async def get_dashboard(self) -> List[Dict[str, Any]]:
+        """Build dashboard cards for all active accounts with equity, PnL, and positions."""
         accounts = await self._db.list_accounts()
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_start_ms = _date_to_ms(today_str)
@@ -561,6 +589,7 @@ class AccountsService:
         return cards
 
     async def get_portfolio_summary(self) -> Dict[str, Any]:
+        """Aggregate wallet data across all active accounts into a portfolio summary."""
         accounts = await self._db.list_accounts()
         active_accs = [a for a in accounts if a["is_active"]]
 
@@ -595,6 +624,7 @@ class AccountsService:
     # ── Daily Snapshots ────────────────────────────────────────────────
 
     async def take_snapshot(self, account_id: str) -> Dict[str, Any]:
+        """Capture a point-in-time snapshot of account equity, positions, and wallet."""
         account = await self._db.get_account(account_id)
         if not account:
             raise ValueError("Account not found")
@@ -670,6 +700,7 @@ class AccountsService:
         return snapshot
 
     async def take_all_snapshots(self) -> List[Dict[str, Any]]:
+        """Take snapshots for all active accounts concurrently."""
         accounts = await self._db.list_accounts()
         eligible = [a for a in accounts if a["is_active"] and a.get("include_in_analytics", True)]
         sem = asyncio.Semaphore(5)
@@ -802,6 +833,7 @@ class AccountsService:
     async def compute_portfolio_hf_analytics(
         self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Compute high-frequency portfolio analytics from HF snapshots."""
         snapshots = await self.get_portfolio_hf_snapshots(since_ts, account_type=account_type)
         return self._compute_analytics_from_snapshots(snapshots, None)
 
@@ -1113,6 +1145,7 @@ class AccountsService:
     # ── High-Frequency Snapshots & Scheduler ──────────────────────────
 
     async def take_all_hf_snapshots(self) -> int:
+        """Take high-frequency snapshots for all active accounts. Returns count saved."""
         accounts = await self._db.list_accounts()
         eligible = [a for a in accounts if a["is_active"] and a.get("include_in_analytics", True)]
         sem = asyncio.Semaphore(5)
@@ -1143,6 +1176,7 @@ class AccountsService:
         return 0
 
     async def auto_cleanup_old_snapshots(self) -> int:
+        """Delete snapshots older than retention period. Returns rows deleted."""
         return await self._db.cleanup_old_hf_snapshots(max_age_days=1095)
 
     async def set_analytics_inclusion(self, account_id: str, include: bool) -> Optional[Dict[str, Any]]:

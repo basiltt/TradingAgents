@@ -1,3 +1,9 @@
+/**
+ * API client module — typed fetch wrappers for all backend endpoints.
+ *
+ * Exports namespace objects (accountsApi, tradesApi, cyclesApi, etc.)
+ * that group related endpoints. All methods throw ApiError on non-2xx responses.
+ */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 import type {
@@ -7,6 +13,7 @@ import type {
   TradeEventsResponse,
 } from "@/components/trades/types";
 
+/** Typed error for non-2xx API responses. Contains HTTP status and detail message. */
 export class ApiError extends Error {
   status: number;
   detail: string;

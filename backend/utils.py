@@ -17,6 +17,14 @@ _SECRET_SUBSTRINGS = frozenset({"api_key", "secret", "token", "password"})
 
 
 def mask_secrets(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace values of secret-bearing keys with '***'.
+
+    Args:
+        config: Dictionary of configuration key-value pairs.
+
+    Returns:
+        New dictionary with secret values masked.
+    """
     return {
         k: "***" if any(s in k.lower() for s in _SECRET_SUBSTRINGS) and isinstance(v, str) and v else v
         for k, v in config.items()

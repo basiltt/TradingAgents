@@ -1,3 +1,10 @@
+/**
+ * Redux slice for trading accounts dashboard state.
+ *
+ * Manages account list, dashboard cards, real-time WebSocket updates,
+ * and filter/loading UI state. updateCardRealtime handles live equity/PnL
+ * updates by matching account_id and merging partial data.
+ */
 import { createSlice } from "@reduxjs/toolkit";
 import type { PayloadAction } from "@reduxjs/toolkit";
 import type { DashboardCard, TradingAccount } from "@/api/client";

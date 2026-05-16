@@ -5,6 +5,11 @@ import { setDashboard } from "@/store/accounts-slice";
 
 const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 
+/**
+ * Polls the accounts dashboard API on a configurable interval.
+ * Pauses when tab is hidden. Returns `{ refresh, isRefreshDisabled }` for
+ * manual refresh with a 10s cooldown.
+ */
 export function useAccountPolling() {
   const dispatch = useAppDispatch();
   const { pollingIntervalMs } = useAppSelector((s) => s.accounts);

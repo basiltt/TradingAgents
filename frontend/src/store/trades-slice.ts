@@ -1,3 +1,13 @@
+/**
+ * Redux slice for active trade management with optimistic updates.
+ *
+ * Trades are keyed by ID in a Record for O(1) lookup. Optimistic updates
+ * (closing/cancelling) snapshot the pre-mutation state so it can be reverted
+ * on failure. Pending actions have a TTL to auto-expire stale operations.
+ *
+ * AI-CONTEXT: setActiveTrades merges server data with pending-action trades
+ * to prevent optimistic UI from being overwritten by stale server responses.
+ */
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { Trade, TradeFilters } from "@/components/trades/types";
 

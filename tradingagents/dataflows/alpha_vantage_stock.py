@@ -1,3 +1,4 @@
+"""Alpha Vantage daily adjusted stock data retrieval with CSV parsing and date filtering."""
 from datetime import datetime
 from .alpha_vantage_common import _make_api_request, _filter_csv_by_date_range
 

@@ -24,6 +24,13 @@ VALID_SOURCES = {"manual", "cycle"}
 
 
 class TradeService:
+    """Orchestrates trade lifecycle: open, close (full/partial), cancel.
+
+    Coordinates between TradeRepository (DB), AccountsService (exchange clients),
+    and WebSocket manager (real-time broadcast). Maintains a per-account stats
+    cache with bounded size and TTL eviction.
+    """
+
     def __init__(
         self,
         db: AsyncAnalysisDB,
@@ -40,6 +47,7 @@ class TradeService:
         self._STATS_CACHE_MAX = 1000
 
     async def get_cached_stats(self, account_id: str) -> dict:
+        """Return trade statistics for an account, using a TTL cache."""
         now = time.monotonic()
         cached = self._stats_cache.get(account_id)
         if cached and (now - cached[0]) < self._STATS_CACHE_TTL:
@@ -56,6 +64,7 @@ class TradeService:
         self._stats_cache.pop(account_id, None)
 
     async def get_open_trades(self, account_id: str, limit: int = 500) -> list[dict]:
+        """Fetch open trades for an account from the database."""
         async with self._db.pool.acquire() as conn:
             return await self._repo.get_open_trades(conn, account_id=account_id, limit=limit)
 
@@ -67,6 +76,23 @@ class TradeService:
         close_reason: str = "manual_single",
         close_rule_id: str | None = None,
     ) -> dict:
+        """Close a trade (full or partial) via the exchange.
+
+        Args:
+            account_id: Account owning the trade.
+            trade_id: UUID of the trade to close.
+            qty: Quantity to close; None means close entire position.
+            close_reason: Reason code for audit trail.
+            close_rule_id: Optional rule ID that triggered the close.
+
+        Returns:
+            Closed (or child) trade record dict.
+
+        Raises:
+            ValueError: If qty is non-positive or exceeds remaining size.
+            TradeNotFound: If trade doesn't exist.
+            InvalidStatusTransition: If trade is already closed/failed/cancelled.
+        """
         if qty is not None and qty <= 0:
             raise ValueError("qty must be positive")
 
@@ -97,6 +123,11 @@ class TradeService:
         close_reason: str = "manual_single",
         close_rule_id: str | None = None,
     ) -> dict:
+        """Close a trade record in the DB without placing an exchange order.
+
+        Used when the position has already been closed on the exchange
+        (e.g., by a stop-loss) and only the DB record needs updating.
+        """
         async with self._db.pool.acquire() as conn:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
@@ -127,6 +158,7 @@ class TradeService:
     async def _close_full(
         self, client: Any, trade: dict, close_reason: str, close_rule_id: str | None,
     ) -> dict:
+        """Execute a full close: transition to 'closing', place exchange order, finalize."""
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         version = trade["version"]
@@ -168,6 +200,7 @@ class TradeService:
     async def _close_partial(
         self, client: Any, trade: dict, qty: float, close_reason: str, close_rule_id: str | None,
     ) -> dict:
+        """Execute a partial close: close a child portion, keep parent open with reduced qty."""
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         version = trade["version"]
@@ -236,6 +269,7 @@ class TradeService:
         return child
 
     async def _handle_close_failure(self, client: Any, trade: dict, version: int) -> None:
+        """Revert trade status from 'closing' back to 'open' after exchange failure."""
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         previous_status = trade.get("status")
@@ -284,6 +318,7 @@ class TradeService:
         )
 
     async def cancel_trade(self, account_id: str, trade_id: str) -> dict:
+        """Cancel a pending/open trade without placing an exchange order."""
         async with self._db.pool.acquire() as conn:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
@@ -328,6 +363,7 @@ class TradeService:
         return updated
 
     def _extract_pnl(self, bybit_result: dict, trade: dict, close_qty: float | None = None) -> dict:
+        """Calculate realized PnL from exchange close result and trade entry data."""
         exit_price = Decimal(str(bybit_result.get("avgPrice") or bybit_result.get("price") or 0))
         entry = Decimal(str(trade.get("entry_price") or trade.get("avg_fill_price") or 0))
         qty = Decimal(str(close_qty)) if close_qty is not None else Decimal(str(trade["qty"]))

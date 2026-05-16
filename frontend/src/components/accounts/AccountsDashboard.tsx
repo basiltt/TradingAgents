@@ -7,6 +7,7 @@ import { AccountCard } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
+/** Top-level accounts dashboard: fetches account cards, displays stats/filters, and renders AccountCard grid. */
 export function AccountsDashboard() {
   const dispatch = useAppDispatch();
   const { dashboard, filterType, status, error } = useAppSelector((s) => s.accounts);

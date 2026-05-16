@@ -1,3 +1,8 @@
+"""Public API surface for Alpha Vantage data functions.
+
+Re-exports stock, indicator, fundamental, and news functions from
+specialized sub-modules for backward-compatible imports.
+"""
 # Import functions from specialized modules — re-exported for consumers
 from .alpha_vantage_stock import get_stock  # noqa: F401
 from .alpha_vantage_indicator import get_indicator  # noqa: F401

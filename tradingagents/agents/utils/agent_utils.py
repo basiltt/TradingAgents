@@ -1,3 +1,8 @@
+"""Agent utility functions and tool re-exports for LangGraph trading agents.
+
+Re-exports all LangChain tools (stock data, indicators, fundamentals, news)
+and provides helper functions for message management and instrument context.
+"""
 from langchain_core.messages import HumanMessage, RemoveMessage
 
 # Import tools from separate utility files — re-exported for consumers
@@ -55,6 +60,12 @@ def build_instrument_context(ticker: str, crypto_interval: str | None = None) ->
     return base
 
 def create_msg_delete():
+    """Return a LangGraph state handler that clears all messages.
+
+    Returns a closure compatible with LangGraph node functions. The closure
+    removes all existing messages and inserts a placeholder HumanMessage
+    ("Continue") required by the Anthropic API to avoid empty message lists.
+    """
     def delete_messages(state):
         """Clear messages and add placeholder for Anthropic compatibility."""
         messages = state["messages"]
