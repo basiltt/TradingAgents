@@ -1110,7 +1110,7 @@ def get_higher_timeframe(interval: str) -> str | None:
 
 def _parse_kline_csv(csv_text: str) -> pd.DataFrame:
     lines = csv_text.strip().split("\n")
-    data_lines = [l for l in lines if not l.startswith("[")]
+    data_lines = [line for line in lines if not line.startswith("[")]
     csv_str = "\n".join(data_lines)
     df = pd.read_csv(io.StringIO(csv_str))
     for col in ("open", "high", "low", "close", "volume"):

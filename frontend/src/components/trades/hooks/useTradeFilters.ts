@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import type { NavigateOptions } from "@tanstack/react-router";
 import { useDebouncedCallback } from "use-debounce";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setFilters, setActiveTab } from "@/store/trades-slice";
@@ -21,12 +22,7 @@ export function useTradeFilters() {
   const activeTab = useAppSelector((s) => s.trades.activeTab);
   const navigate = useNavigate();
 
-  let search: Record<string, string | undefined> = {};
-  try {
-    search = useSearch({ strict: false }) as Record<string, string | undefined>;
-  } catch {
-    // outside router context
-  }
+  const search = useSearch({ strict: false }) as Record<string, string | undefined>;
 
   useEffect(() => {
     const urlFilters: Partial<TradeFilters> = {};
@@ -45,13 +41,12 @@ export function useTradeFilters() {
 
   const updateFilters = useDebouncedCallback((newFilters: Partial<TradeFilters>) => {
     dispatch(setFilters(newFilters));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    navigate({
+    void navigate({
       search: {
         ...search,
         ...filtersToSearchParams(newFilters),
       },
-    } as any);
+    } as NavigateOptions);
   }, 300);
 
   const clearFilters = useCallback(() => {
@@ -65,8 +60,7 @@ export function useTradeFilters() {
         to_date: "",
       }),
     );
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    navigate({ search: { tab: activeTab } } as any);
+    void navigate({ search: { tab: activeTab } } as NavigateOptions);
   }, [dispatch, navigate, activeTab]);
 
   return { filters, activeTab, updateFilters, clearFilters };

@@ -5,13 +5,27 @@ import logging
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from tradingagents.agents import *
+from tradingagents.agents import (
+    create_aggressive_debator,
+    create_bear_researcher,
+    create_bull_researcher,
+    create_conservative_debator,
+    create_fundamentals_analyst,
+    create_market_analyst,
+    create_msg_delete,
+    create_neutral_debator,
+    create_news_analyst,
+    create_portfolio_manager,
+    create_research_manager,
+    create_social_media_analyst,
+    create_trader,
+)
 from tradingagents.agents.utils.agent_states import AgentState
-
-logger = logging.getLogger(__name__)
 
 from .conditional_logic import ConditionalLogic
 from .parallel_debate import create_parallel_risk_round1, create_parallel_researcher_round1
+
+logger = logging.getLogger(__name__)
 
 
 def _compliance_router(state) -> str:
