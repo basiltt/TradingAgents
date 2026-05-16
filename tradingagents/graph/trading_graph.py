@@ -36,6 +36,13 @@ from .signal_processing import SignalProcessor
 
 logger = logging.getLogger(__name__)
 
+_REASONING_PREFIXES: Tuple[str, ...] = ("o1", "o3", "o4")
+
+
+def _is_reasoning_model(model_name: str) -> bool:
+    """Return True if the model is a reasoning model that rejects temperature."""
+    return any(model_name.lower().startswith(p) for p in _REASONING_PREFIXES)
+
 
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
@@ -79,15 +86,10 @@ class TradingAgentsGraph:
         # Reasoning models (o1/o3/o4-mini etc.) reject temperature — skip for those.
         deep_model = self.config["deep_think_llm"].lower()
         quick_model = self.config["quick_think_llm"].lower()
-        _reasoning_prefixes = ("o1", "o3", "o4")
-
-        def _is_reasoning(model: str) -> bool:
-            return any(model.startswith(p) for p in _reasoning_prefixes)
-
         llm_kwargs.pop("temperature", None)
 
-        deep_temp = {} if _is_reasoning(deep_model) else {"temperature": 0}
-        quick_temp = {} if _is_reasoning(quick_model) else {"temperature": 0}
+        deep_temp = {} if _is_reasoning_model(deep_model) else {"temperature": 0}
+        quick_temp = {} if _is_reasoning_model(quick_model) else {"temperature": 0}
 
         deep_client = create_llm_client(
             provider=self.config["llm_provider"],
@@ -319,8 +321,7 @@ class TradingAgentsGraph:
             return self._agent_llm_cache[model_id]
 
         try:
-            _reasoning_prefixes = ("o1", "o3", "o4")
-            is_reasoning = any(model_id.lower().startswith(p) for p in _reasoning_prefixes)
+            is_reasoning = _is_reasoning_model(model_id)
             temp = {} if is_reasoning else {"temperature": 0}
 
             # Only pass provider-agnostic kwargs to override clients.
@@ -343,8 +344,7 @@ class TradingAgentsGraph:
             self._agent_llm_cache[model_id] = llm
             return llm
         except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "Failed to create override LLM for agent '%s' (model=%s), "
                 "falling back to default",
                 agent_key, model_id, exc_info=True,

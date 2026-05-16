@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatDurationBetween } from "@/lib/format";
 import { Link } from "@tanstack/react-router";
 import { apiClient, type ScanStatus } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,16 +24,6 @@ function formatDate(iso: string | null | undefined): string {
   }
 }
 
-function formatDuration(startedAt: string, completedAt: string | null): string {
-  if (!startedAt) return "";
-  const diff = Math.max(0, (completedAt ? new Date(completedAt).getTime() : Date.now()) - new Date(startedAt).getTime());
-  const h = Math.floor(diff / 3600000);
-  const m = Math.floor((diff % 3600000) / 60000);
-  const s = Math.floor((diff % 60000) / 1000);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
 
 interface DeleteConfirmState {
   scanId: string;
@@ -233,7 +224,7 @@ export function ScanHistoryPage() {
             const buy = dc.buy ?? 0;
             const sell = dc.sell ?? 0;
             const total = Object.values(dc).reduce((a, b) => a + b, 0);
-            const dur = formatDuration(scan.started_at, scan.completed_at);
+            const dur = formatDurationBetween(scan.started_at, scan.completed_at, "");
             const progress = scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0;
 
             return (

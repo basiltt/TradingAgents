@@ -102,14 +102,14 @@ def _build_microstructure_enrichment_node():
             kline_csv = None
             try:
                 kline_csv = get_bybit_klines(symbol, "60", day_ago, now_ms)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to fetch kline data for %s: %s", symbol, exc)
 
             funding_csv = None
             try:
                 funding_csv = get_bybit_funding_rates(symbol)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to fetch funding data for %s: %s", symbol, exc)
 
             micro = get_market_microstructure(
                 symbol, kline_csv=kline_csv, funding_csv=funding_csv,

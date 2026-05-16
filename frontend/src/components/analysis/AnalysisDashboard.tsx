@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
+import { formatDuration } from "@/lib/format";
 import { apiClient, type AnalysisSnapshot } from "@/api/client";
 import { useAnalysisWebSocket, emptyWsState, type WsState } from "@/hooks/useAnalysisWebSocket";
 import { AgentStatusTable } from "./AgentStatusTable";
@@ -98,15 +99,6 @@ const EMPTY_AGENTS: Record<string, string> = {};
 const EMPTY_MESSAGES: Array<{ sender: string; content: string; seq: number }> = [];
 const EMPTY_REPORTS: Record<string, string> = {};
 
-function formatDuration(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
 
 function DurationBadge({ startedAt, completedAt, isTerminal }: { startedAt?: string; completedAt?: string; isTerminal: boolean }) {
   const [now, setNow] = useState(() => Date.now());

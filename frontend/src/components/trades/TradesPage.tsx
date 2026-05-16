@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { ErrorBoundary } from "react-error-boundary";
 import { useAppSelector, useAppDispatch } from "@/store";
 import { setActiveTab } from "@/store/trades-slice";
@@ -123,6 +124,7 @@ function HistoryTradesView() {
 
 export default function TradesPage() {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const activeTab = useAppSelector((s) => s.trades.activeTab);
   const wsConnected = useAppSelector((s) => s.trades.wsConnected);
   const isFetching = useAppSelector((s) => s.trades.isFetchingActiveTrades);
@@ -152,7 +154,7 @@ export default function TradesPage() {
       <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
         <p className="text-lg font-medium">No accounts connected</p>
         <p className="text-sm mt-2">Add a trading account to start viewing trades.</p>
-        <Button variant="outline" className="mt-4" onClick={() => window.location.href = "/accounts"}>
+        <Button variant="outline" className="mt-4" onClick={() => navigate({ to: "/accounts" })}>
           Go to Accounts
         </Button>
       </div>

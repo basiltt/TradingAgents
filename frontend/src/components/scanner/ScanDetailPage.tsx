@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { formatDurationBetween } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type ScanResultItem } from "@/api/client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,13 +11,7 @@ import { cn } from "@/lib/utils";
 import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { TradingCycleDialog } from "@/components/cycles/TradingCycleDialog";
-
-const DIRECTION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  buy: { label: "BUY", color: "text-emerald-400", bg: "bg-emerald-500/10" },
-  sell: { label: "SELL", color: "text-red-400", bg: "bg-red-500/10" },
-  hold: { label: "HOLD", color: "text-amber-400", bg: "bg-amber-500/10" },
-  unknown: { label: "—", color: "text-muted-foreground", bg: "bg-muted" },
-};
+import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 
 function ScoreBar({ score }: { score: number }) {
   const abs = Math.min(Math.abs(score), 10);
@@ -46,16 +41,6 @@ function formatDate(iso: string | null | undefined): string {
   } catch { return iso; }
 }
 
-function formatDuration(startedAt: string, completedAt: string | null): string {
-  if (!startedAt) return "—";
-  const diff = Math.max(0, (completedAt ? new Date(completedAt).getTime() : Date.now()) - new Date(startedAt).getTime());
-  const h = Math.floor(diff / 3600000);
-  const m = Math.floor((diff % 3600000) / 60000);
-  const s = Math.floor((diff % 60000) / 1000);
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
 
 function CollapsibleSection({
   title,
@@ -386,7 +371,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             <span className="font-semibold capitalize">{scan.status === "completed" ? "Scan Complete" : scan.status}</span>
             {scan.completed_at && (
               <span className="text-sm text-muted-foreground">
-                {formatDuration(scan.started_at, scan.completed_at)}
+                {formatDurationBetween(scan.started_at, scan.completed_at)}
               </span>
             )}
           </div>
