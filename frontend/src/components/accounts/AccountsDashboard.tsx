@@ -21,7 +21,9 @@ export function AccountsDashboard() {
       const cards = await accountsApi.getDashboard();
       dispatch(setDashboard(cards));
     } catch (e: unknown) {
-      if (!silent) dispatch(setError((e as { message?: string }).message || "Failed to load accounts"));
+      const msg = (e as { message?: string }).message || "Failed to load accounts";
+      if (!silent) dispatch(setError(msg));
+      else console.warn("[AccountsDashboard] silent fetch failed:", msg);
     }
   }, [dispatch]);
 

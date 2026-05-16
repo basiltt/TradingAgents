@@ -276,6 +276,7 @@ async def get_wallet(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
+        logger.error("get_wallet_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -289,6 +290,7 @@ async def get_positions(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
+        logger.error("get_positions_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -302,6 +304,7 @@ async def get_orders(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
+        logger.error("get_orders_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -328,6 +331,7 @@ async def get_closed_pnl(
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
+        logger.error("get_closed_pnl_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -352,6 +356,7 @@ async def get_pnl_summary(
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
+        logger.error("get_pnl_summary_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -543,6 +548,7 @@ async def close_trade(
     except ConcurrentModification as e:
         return JSONResponse({"detail": str(e), "code": "CONCURRENT_MODIFICATION"}, 409)
     except BybitAPIError as e:
+        logger.error("close_trade_bybit_error", extra={"account_id": account_id, "trade_id": trade_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)
 
 
@@ -570,4 +576,5 @@ async def cancel_trade(request: Request, account_id: str, trade_id: str):
     except ConcurrentModification as e:
         return JSONResponse({"detail": str(e), "code": "CONCURRENT_MODIFICATION"}, 409)
     except BybitAPIError as e:
+        logger.error("cancel_trade_bybit_error", extra={"account_id": account_id, "trade_id": trade_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)
