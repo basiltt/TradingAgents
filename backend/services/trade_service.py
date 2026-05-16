@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid as _uuid
 from decimal import Decimal
 from typing import Any
 

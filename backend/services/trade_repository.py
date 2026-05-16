@@ -549,6 +549,7 @@ class TradeRepository:
         sort_dir: str = "desc",
         cursor_last_id: str | None = None,
         cursor_last_sort_value: str | None = None,
+        limit: int = 50,
     ) -> dict:
         """List trades across multiple accounts with filters and cursor pagination."""
         if sort_by not in SORT_COLUMNS:
