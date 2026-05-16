@@ -93,6 +93,7 @@ def _validate_account_id(account_id: str) -> str:
 
 @router.post("/accounts")
 async def create_account(request: Request):
+    """Create a new trading account with encrypted API credentials."""
     body = await request.json()
     try:
         req = CreateAccountRequest(**body)
@@ -114,6 +115,7 @@ async def list_accounts(
     request: Request,
     account_type: Optional[str] = Query(None, description="Filter by account type: demo or live"),
 ):
+    """List all trading accounts, optionally filtered by type."""
     svc = _get_service(request)
     accounts = await svc.list_accounts()
     if account_type:
@@ -125,6 +127,7 @@ async def list_accounts(
 
 @router.get("/accounts/{account_id}")
 async def get_account(request: Request, account_id: str):
+    """Fetch a single account by ID."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     account = await svc.get_account(account_id)
@@ -135,6 +138,7 @@ async def get_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}")
 async def update_account(request: Request, account_id: str):
+    """Update account label or active status."""
     _validate_account_id(account_id)
     body = await request.json()
     try:
@@ -151,6 +155,7 @@ async def update_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}/credentials")
 async def rotate_credentials(request: Request, account_id: str):
+    """Replace API credentials and verify connectivity."""
     _validate_account_id(account_id)
     body = await request.json()
     try:
@@ -172,6 +177,7 @@ async def rotate_credentials(request: Request, account_id: str):
 
 @router.delete("/accounts/{account_id}")
 async def delete_account(request: Request, account_id: str):
+    """Soft-delete an account and invalidate cached data."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -190,6 +196,7 @@ async def delete_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}/analytics-inclusion")
 async def toggle_analytics_inclusion(request: Request, account_id: str):
+    """Toggle whether this account is included in portfolio analytics."""
     _validate_account_id(account_id)
     body = await request.json()
     include = body.get("include")
@@ -204,6 +211,7 @@ async def toggle_analytics_inclusion(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/test")
 async def test_connection(request: Request, account_id: str):
+    """Test exchange API connectivity for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -215,6 +223,7 @@ async def test_connection(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/trade")
 async def place_trade(request: Request, account_id: str):
+    """Place a market trade with leverage, TP, and SL on the exchange."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     body = await request.json()
@@ -245,6 +254,7 @@ async def place_trade(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/wallet")
 async def get_wallet(request: Request, account_id: str):
+    """Fetch wallet balances for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -257,6 +267,7 @@ async def get_wallet(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/positions")
 async def get_positions(request: Request, account_id: str):
+    """Fetch open perpetual positions for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -269,6 +280,7 @@ async def get_positions(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/orders")
 async def get_orders(request: Request, account_id: str):
+    """Fetch active orders for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -288,6 +300,7 @@ async def get_closed_pnl(
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=1000),
 ):
+    """Fetch closed PnL records for an account within a date range."""
     _validate_account_id(account_id)
     try:
         date.fromisoformat(start_date)
@@ -311,6 +324,7 @@ async def get_pnl_summary(
     start_date: str = Query(..., description="Start date YYYY-MM-DD"),
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
 ):
+    """Compute aggregated PnL summary (total, win rate, avg) for a date range."""
     _validate_account_id(account_id)
     try:
         date.fromisoformat(start_date)
@@ -366,6 +380,7 @@ async def list_trades(
     include_total: bool = False,
     parent_trade_id: Optional[str] = None,
 ):
+    """List trades for an account with filtering, sorting, and cursor pagination."""
     _validate_account_id(account_id)
     repo = _get_trade_repo(request)
     db = _get_db(request)
@@ -404,6 +419,7 @@ async def list_trades(
 
 @router.get("/accounts/{account_id}/trades/open")
 async def get_open_trades(request: Request, account_id: str):
+    """Fetch all currently open trades for an account."""
     _validate_account_id(account_id)
     repo = _get_trade_repo(request)
     db = _get_db(request)
@@ -414,6 +430,7 @@ async def get_open_trades(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/trades/stats")
 async def get_trade_stats(request: Request, account_id: str):
+    """Fetch aggregated trade statistics for an account."""
     _validate_account_id(account_id)
     trade_service = _get_trade_service(request)
     if trade_service is not None:
@@ -428,6 +445,7 @@ async def get_trade_stats(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/trades/{trade_id}")
 async def get_trade_detail(request: Request, account_id: str, trade_id: str):
+    """Fetch a single trade with its event history."""
     _validate_account_id(account_id)
     _validate_trade_id(trade_id)
 
@@ -458,6 +476,7 @@ def _serialize_trade_event(event: dict) -> dict:
 
 @router.get("/accounts/{account_id}/trades/{trade_id}/events")
 async def get_trade_events(request: Request, account_id: str, trade_id: str):
+    """Fetch audit trail events for a specific trade."""
     _validate_account_id(account_id)
     try:
         _uuid.UUID(trade_id)
@@ -483,6 +502,7 @@ async def close_trade(
     request: Request, account_id: str, trade_id: str,
     body: TradeCloseRequest = TradeCloseRequest(),
 ):
+    """Close a trade (full or partial) via the exchange."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     _validate_trade_id(trade_id)
@@ -509,6 +529,7 @@ async def close_trade(
 
 @router.post("/accounts/{account_id}/trades/{trade_id}/cancel")
 async def cancel_trade(request: Request, account_id: str, trade_id: str):
+    """Cancel a pending or open trade."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     _validate_trade_id(trade_id)

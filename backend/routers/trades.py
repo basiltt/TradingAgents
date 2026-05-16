@@ -96,6 +96,7 @@ async def list_trades_cross_account(
     cursor: Optional[str] = Query(default=None, max_length=512),
     limit: int = Query(default=50, ge=1, le=100),
 ):
+    """List trades across all accounts with filtering, sorting, and cursor pagination."""
     try:
         requested_ids = _validate_account_ids(account_id)
         validated_statuses = _validate_statuses(status)
@@ -202,6 +203,12 @@ async def get_trades_stats_cross_account(
     request: Request,
     account_id: Optional[str] = Query(default=None),
 ):
+    """Aggregate trade statistics across all (or selected) accounts.
+
+    Returns total trade count, open count, win rate, average PnL, and total PnL.
+    Accepts an optional comma-separated ``account_id`` filter; unrecognised IDs
+    are silently ignored.  When no accounts match, zeroed-out stats are returned.
+    """
     try:
         requested_ids = _validate_account_ids(account_id)
     except ValueError as e:
