@@ -234,7 +234,7 @@ class ClosePositionsService:
                     except Exception:
                         logger.warning("failed_to_close_trade_record", extra={
                             "trade_id": str(trade["id"]), "symbol": trade["symbol"],
-                        })
+                        }, exc_info=True)
         except Exception:
             logger.exception("close_matching_trades_failed", extra={"account_id": account_id})
 
