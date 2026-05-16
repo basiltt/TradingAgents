@@ -59,7 +59,8 @@ def sample_request():
     }
 
 
-def test_start_analysis_returns_run_id(service, sample_request, event_loop):
+def test_start_analysis_returns_run_id(service, sample_request, event_loop, monkeypatch):
+    monkeypatch.delenv("TRADINGAGENTS_BACKEND_URL", raising=False)
     with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value={"final_trade_decision": "BUY"}):
         async def _test():
             run_id = await service.start_analysis(sample_request)

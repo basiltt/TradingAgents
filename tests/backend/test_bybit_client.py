@@ -46,36 +46,46 @@ def test_headers_structure(client):
 
 @pytest.mark.asyncio
 async def test_request_success(client):
+    client._time_synced = True
+
     mock_resp = AsyncMock()
     mock_resp.json = AsyncMock(return_value={"retCode": 0, "result": {"data": "ok"}})
+    mock_resp.headers = {"X-Bapi-Limit": "10", "X-Bapi-Limit-Status": "5"}
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.request = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        result = await client._request("GET", "/v5/test", {"key": "val"})
+    mock_session = MagicMock()
+    mock_session.closed = False
+    mock_session.request = MagicMock(return_value=mock_ctx)
+    client._session = mock_session
+
+    result = await client._request("GET", "/v5/test", {"key": "val"})
     assert result == {"data": "ok"}
 
 
 @pytest.mark.asyncio
 async def test_request_api_error(client):
+    client._time_synced = True
+
     mock_resp = AsyncMock()
     mock_resp.json = AsyncMock(return_value={"retCode": 10001, "retMsg": "Invalid key"})
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_resp.headers = {"X-Bapi-Limit": "10", "X-Bapi-Limit-Status": "5"}
 
-    mock_session = AsyncMock()
-    mock_session.request = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with pytest.raises(BybitAPIError) as exc_info:
-            await client._request("GET", "/v5/test", {})
+    mock_session = MagicMock()
+    mock_session.closed = False
+    mock_session.request = MagicMock(return_value=mock_ctx)
+    client._session = mock_session
+
+    with pytest.raises(BybitAPIError) as exc_info:
+        await client._request("GET", "/v5/test", {})
     assert exc_info.value.ret_code == 10001
     assert "Invalid key" in exc_info.value.ret_msg
 

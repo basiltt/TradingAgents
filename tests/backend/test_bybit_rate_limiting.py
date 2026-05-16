@@ -23,18 +23,45 @@ async def test_rate_limit_window_tracks_requests(client):
 
 @pytest.mark.asyncio
 async def test_rate_limit_prunes_old_timestamps(client):
-    old = time.monotonic() - 61
+    old = time.monotonic() - 10
     client._request_timestamps.append(old)
     client._request_timestamps.append(old - 1)
     await client._wait_for_rate_limit()
-    assert all(t > time.monotonic() - 60 for t in client._request_timestamps)
+    assert all(t > time.monotonic() - 6 for t in client._request_timestamps)
+
+
+def _make_mock_resp(return_value):
+    """Create a properly structured mock response for BybitClient tests."""
+    resp = AsyncMock()
+    resp.json = AsyncMock(return_value=return_value)
+    resp.headers = {"X-Bapi-Limit": "10", "X-Bapi-Limit-Status": "5"}
+    return resp
+
+
+def _make_mock_ctx(mock_resp):
+    """Wrap a mock response as an async context manager (for session.request)."""
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    return ctx
+
+
+def _make_mock_session(request_side_effect=None, request_return_value=None):
+    """Create a mock aiohttp session with closed=False."""
+    session = MagicMock()
+    session.closed = False
+    if request_side_effect is not None:
+        session.request = MagicMock(side_effect=request_side_effect)
+    elif request_return_value is not None:
+        session.request = MagicMock(return_value=request_return_value)
+    return session
 
 
 @pytest.mark.asyncio
 async def test_rate_limit_sleeps_when_at_max(client):
     now = time.monotonic()
-    for i in range(110):
-        client._request_timestamps.append(now - 30 + i * 0.1)
+    for i in range(560):
+        client._request_timestamps.append(now - 2 + i * 0.003)
 
     async def fake_sleep(duration):
         client._request_timestamps.clear()
@@ -47,82 +74,68 @@ async def test_rate_limit_sleeps_when_at_max(client):
 
 @pytest.mark.asyncio
 async def test_retry_on_rate_limit_error(client):
-    rate_limited_resp = AsyncMock()
-    rate_limited_resp.json = AsyncMock(return_value={"retCode": 10006, "retMsg": "Rate limit"})
-    rate_limited_resp.__aenter__ = AsyncMock(return_value=rate_limited_resp)
-    rate_limited_resp.__aexit__ = AsyncMock(return_value=False)
+    client._time_synced = True
 
-    success_resp = AsyncMock()
-    success_resp.json = AsyncMock(return_value={"retCode": 0, "result": {"ok": True}})
-    success_resp.__aenter__ = AsyncMock(return_value=success_resp)
-    success_resp.__aexit__ = AsyncMock(return_value=False)
+    rate_resp = _make_mock_resp({"retCode": 10006, "retMsg": "Rate limit"})
+    success_resp = _make_mock_resp({"retCode": 0, "result": {"ok": True}})
 
-    mock_session = AsyncMock()
-    mock_session.request = MagicMock(side_effect=[rate_limited_resp, success_resp])
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    rate_ctx = _make_mock_ctx(rate_resp)
+    success_ctx = _make_mock_ctx(success_resp)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await client._request("GET", "/v5/test", {})
+    mock_session = _make_mock_session(request_side_effect=[rate_ctx, success_ctx])
+    client._session = mock_session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await client._request("GET", "/v5/test", {})
     assert result == {"ok": True}
 
 
 @pytest.mark.asyncio
 async def test_retry_exhaustion_raises(client):
-    rate_limited_resp = AsyncMock()
-    rate_limited_resp.json = AsyncMock(return_value={"retCode": 10006, "retMsg": "Rate limit"})
-    rate_limited_resp.__aenter__ = AsyncMock(return_value=rate_limited_resp)
-    rate_limited_resp.__aexit__ = AsyncMock(return_value=False)
+    client._time_synced = True
 
-    mock_session = AsyncMock()
-    mock_session.request = MagicMock(return_value=rate_limited_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    rate_resp = _make_mock_resp({"retCode": 10006, "retMsg": "Rate limit"})
+    rate_ctx = _make_mock_ctx(rate_resp)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            with pytest.raises(BybitAPIError) as exc_info:
-                await client._request("GET", "/v5/test", {})
+    mock_session = _make_mock_session(request_return_value=rate_ctx)
+    client._session = mock_session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(BybitAPIError) as exc_info:
+            await client._request("GET", "/v5/test", {})
     assert exc_info.value.ret_code == 10006
 
 
 @pytest.mark.asyncio
 async def test_retry_uses_exponential_backoff(client):
-    rate_limited_resp = AsyncMock()
-    rate_limited_resp.json = AsyncMock(return_value={"retCode": 10006, "retMsg": "Rate limit"})
-    rate_limited_resp.__aenter__ = AsyncMock(return_value=rate_limited_resp)
-    rate_limited_resp.__aexit__ = AsyncMock(return_value=False)
+    client._time_synced = True
 
-    mock_session = AsyncMock()
-    mock_session.request = MagicMock(return_value=rate_limited_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    rate_resp = _make_mock_resp({"retCode": 10006, "retMsg": "Rate limit"})
+    rate_ctx = _make_mock_ctx(rate_resp)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-            with pytest.raises(BybitAPIError):
-                await client._request("GET", "/v5/test", {})
-            delays = [call[0][0] for call in mock_sleep.call_args_list if call[0][0] >= 0.5]
-            assert len(delays) >= 2
-            assert delays[1] > delays[0]
+    mock_session = _make_mock_session(request_return_value=rate_ctx)
+    client._session = mock_session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with pytest.raises(BybitAPIError):
+            await client._request("GET", "/v5/test", {})
+        delays = [call[0][0] for call in mock_sleep.call_args_list if call[0][0] >= 0.5]
+        assert len(delays) >= 2
+        assert delays[1] > delays[0]
 
 
 @pytest.mark.asyncio
 async def test_non_rate_limit_error_not_retried(client):
-    error_resp = AsyncMock()
-    error_resp.json = AsyncMock(return_value={"retCode": 10001, "retMsg": "Invalid key"})
-    error_resp.__aenter__ = AsyncMock(return_value=error_resp)
-    error_resp.__aexit__ = AsyncMock(return_value=False)
+    client._time_synced = True
 
-    mock_session = AsyncMock()
-    mock_session.request = MagicMock(return_value=error_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    error_resp = _make_mock_resp({"retCode": 10001, "retMsg": "Invalid key"})
+    error_ctx = _make_mock_ctx(error_resp)
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with pytest.raises(BybitAPIError) as exc_info:
-            await client._request("GET", "/v5/test", {})
+    mock_session = _make_mock_session(request_return_value=error_ctx)
+    client._session = mock_session
+
+    with pytest.raises(BybitAPIError) as exc_info:
+        await client._request("GET", "/v5/test", {})
     assert exc_info.value.ret_code == 10001
     assert mock_session.request.call_count == 1
 

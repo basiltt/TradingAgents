@@ -1163,7 +1163,9 @@ class TestRemainingLines2:
             sys.modules.pop("tradingagents.dataflows.bybit_data", None)
 
         assert svc._scans[sid]["status"] == "failed"
-        db.update_scan.assert_called_with(sid, status="failed")
+        call_args = db.update_scan.call_args
+        assert call_args[0][0] == sid
+        assert call_args[1]["status"] == "failed"
 
     @pytest.mark.asyncio
     async def test_run_scan_scan_removed_before_second_lock(self):

@@ -244,7 +244,8 @@ class TestRunScan:
         with patch("backend.services.scanner_service.asyncio.to_thread", side_effect=mock_to_thread):
             await scanner._run_scan("s1")
         assert scanner._scans["s1"]["status"] == "failed"
-        scanner._db.update_scan.assert_any_call("s1", status="failed")
+        update_calls = scanner._db.update_scan.call_args_list
+        assert any(c[0][0] == "s1" and c[1].get("status") == "failed" for c in update_calls)
 
 
 class TestResumeIncompleteScansWithDB:
@@ -843,7 +844,8 @@ class TestCancelScanDBUpdate:
             scan_id = await scanner.start_scan({"analysis_date": "2025-01-10"})
         result = await scanner.cancel_scan(scan_id)
         assert result is True
-        scanner._db.update_scan.assert_any_call(scan_id, status="cancelled")
+        update_calls = scanner._db.update_scan.call_args_list
+        assert any(c[0][0] == scan_id and c[1].get("status") == "cancelled" for c in update_calls)
 
 
 class TestInsertScanDuplicate:
