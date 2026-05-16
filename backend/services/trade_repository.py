@@ -89,6 +89,7 @@ class TradeRepository:
     against VALID_TRANSITIONS before execution.
     """
     def __init__(self, db: AsyncAnalysisDB) -> None:
+        """Initialize with database adapter for trade persistence."""
         self._db = db
 
     def _validate_metadata(self, metadata: dict) -> None:

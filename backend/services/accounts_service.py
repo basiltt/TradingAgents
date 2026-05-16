@@ -48,6 +48,14 @@ class AccountsService:
     _CACHE_MAX = 500
 
     def __init__(self, db: AsyncAnalysisDB, ws_manager=None, trade_repo=None, trade_service=None):
+        """Initialize with database, optional WebSocket manager, and trade dependencies.
+
+        Args:
+            db: Async database adapter for account/snapshot persistence.
+            ws_manager: WebSocket connection manager for real-time pushes.
+            trade_repo: TradeRepository instance (can be wired later via set_trade_dependencies).
+            trade_service: TradeService instance (can be wired later via set_trade_dependencies).
+        """
         self._db = db
         self._cache: Dict[str, tuple[float, Any]] = {}
         self._refresh_locks: Dict[str, float] = {}
@@ -120,6 +128,7 @@ class AccountsService:
             raise ValueError(f"Account {account_id} not found")
 
         def _decrypt_and_create() -> BybitClient:
+            """Decrypt stored credentials and construct a BybitClient (runs in thread)."""
             api_key = decrypt_value(creds["api_key_encrypted"])
             api_secret = decrypt_value(creds["api_secret_encrypted"])
             return BybitClient(api_key, api_secret, creds["account_type"])
@@ -231,6 +240,7 @@ class AccountsService:
 
         # Calculate TP/SL prices (skip when pct is 0 or not provided)
         def round_price(p: Decimal) -> str:
+            """Round a price down to the instrument's tick size and return as string."""
             rounded = (p / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
             if rounded <= 0:
                 raise ValueError(f"Price rounded to {rounded} after tick alignment — adjust parameters")
@@ -511,6 +521,7 @@ class AccountsService:
         return await self._db.get_closed_pnl_summary(account_id, start_ms, end_ms)
 
     async def _fetch_and_store_closed_pnl(self, account_id: str, start_ms: int, end_ms: int) -> None:
+        """Page through Bybit closed-PnL API in 7-day windows and persist records."""
         client = await self._build_client(account_id)
         current_start = start_ms
         max_pages = 50
@@ -532,6 +543,7 @@ class AccountsService:
     # ── Aggregation ─────────────────────────────────────────────────────
 
     async def _fetch_card(self, acc: Dict[str, Any], today_start_ms: int, today_end_ms: int) -> Dict[str, Any]:
+        """Build a single dashboard card by fetching wallet, positions, and today's PnL."""
         if not acc["is_active"]:
             return {**acc, "total_equity": None, "total_perp_upl": None, "total_wallet_balance": None, "positions_count": 0, "today_pnl": None, "status": "disabled"}
 
@@ -598,6 +610,7 @@ class AccountsService:
         active_accs = [a for a in accounts if a["is_active"]]
 
         async def _fetch_wallet(acc_id: str) -> Optional[Dict[str, Any]]:
+            """Fetch wallet for one account, returning None on failure."""
             try:
                 return await self.get_wallet(acc_id)
             except Exception:
@@ -710,6 +723,7 @@ class AccountsService:
         sem = asyncio.Semaphore(5)
 
         async def _snap_one(acc: Dict[str, Any]) -> Dict[str, Any]:
+            """Take a daily snapshot for one account under semaphore, returning error dict on failure."""
             async with sem:
                 try:
                     return await self.take_snapshot(acc["id"])
@@ -722,6 +736,7 @@ class AccountsService:
     async def get_snapshots(
         self, account_id: str, start_date: str, end_date: str,
     ) -> List[Dict[str, Any]]:
+        """Retrieve daily snapshots for an account within a date range."""
         rows = await self._db.get_daily_snapshots(account_id, start_date, end_date)
         for r in rows:
             if "snapshot_date" in r:
@@ -731,6 +746,7 @@ class AccountsService:
     async def get_portfolio_snapshots(
         self, start_date: str, end_date: str, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Aggregate daily snapshots across all accounts into portfolio-level time series."""
         rows = await self._db.get_all_account_snapshots(start_date, end_date, account_type=account_type)
         aggregated: Dict[str, Dict[str, Any]] = {}
         for r in rows:
@@ -769,6 +785,7 @@ class AccountsService:
 
     @staticmethod
     def _hf_to_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert a high-frequency DB row into the standardized snapshot dict shape."""
         ts = row["ts"]
         ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else str(ts)
         return {
@@ -787,6 +804,7 @@ class AccountsService:
         }
 
     def _enrich_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compute running peak equity, drawdown %, and daily return % across snapshot series."""
         if not snapshots:
             return []
         running_peak = snapshots[0]["equity"]
@@ -802,6 +820,7 @@ class AccountsService:
         return snapshots
 
     async def get_hf_snapshots(self, account_id: str, since_ts: datetime) -> List[Dict[str, Any]]:
+        """Retrieve and enrich high-frequency snapshots for one account since a timestamp."""
         rows = await self._db.get_hf_snapshots(account_id, since_ts)
         snapshots = [self._hf_to_snapshot(r) for r in rows]
         return self._enrich_hf_snapshots(snapshots)
@@ -809,6 +828,7 @@ class AccountsService:
     async def get_portfolio_hf_snapshots(
         self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Aggregate high-frequency snapshots across accounts into portfolio-level time series."""
         rows = await self._db.get_all_hf_snapshots(since_ts, account_type=account_type)
         by_ts: Dict[str, Dict[str, Any]] = {}
         for r in rows:
@@ -831,6 +851,7 @@ class AccountsService:
         return self._enrich_hf_snapshots(result)
 
     async def compute_hf_analytics(self, account_id: str, since_ts: datetime) -> Dict[str, Any]:
+        """Compute performance analytics from high-frequency snapshots for one account."""
         snapshots = await self.get_hf_snapshots(account_id, since_ts)
         return self._compute_analytics_from_snapshots(snapshots, account_id)
 
@@ -846,6 +867,7 @@ class AccountsService:
     async def compute_analytics(
         self, account_id: str, start_date: str, end_date: str,
     ) -> Dict[str, Any]:
+        """Compute full performance analytics (Sharpe, Sortino, drawdown, etc.) for one account."""
         snapshots = await self._db.get_daily_snapshots(account_id, start_date, end_date)
         if not snapshots:
             return self._empty_analytics()
@@ -935,6 +957,7 @@ class AccountsService:
     async def compute_portfolio_analytics(
         self, start_date: str, end_date: str, account_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Compute aggregated performance analytics across all accounts in a date range."""
         portfolio_snaps = await self.get_portfolio_snapshots(start_date, end_date, account_type=account_type)
         if not portfolio_snaps:
             return self._empty_analytics()
@@ -1009,6 +1032,7 @@ class AccountsService:
     def _compute_analytics_from_snapshots(
         self, snapshots: List[Dict[str, Any]], account_id: Optional[str],
     ) -> Dict[str, Any]:
+        """Derive analytics dict from pre-built snapshot series (shared by daily and HF paths)."""
         if not snapshots:
             return self._empty_analytics()
 
@@ -1065,6 +1089,7 @@ class AccountsService:
 
     @staticmethod
     def _empty_analytics() -> Dict[str, Any]:
+        """Return a zeroed-out analytics dict as the default when no data is available."""
         return {
             "total_return_pct": 0, "max_drawdown_pct": 0,
             "sharpe_ratio": 0, "sortino_ratio": 0, "calmar_ratio": 0,
@@ -1079,12 +1104,14 @@ class AccountsService:
 
     @staticmethod
     def _clamp(value: float, lo: float = -999.99, hi: float = 999.99) -> float:
+        """Clamp a float to [lo, hi], returning 0.0 for NaN/Inf."""
         if math.isnan(value) or math.isinf(value):
             return 0.0
         return max(lo, min(hi, value))
 
     @staticmethod
     def _calc_sharpe(daily_returns: List[float], risk_free_rate: float = 0.0) -> float:
+        """Annualized Sharpe ratio from daily return percentages."""
         if len(daily_returns) < 2:
             return 0.0
         mean_r = sum(daily_returns) / len(daily_returns) - risk_free_rate / 365
@@ -1095,6 +1122,7 @@ class AccountsService:
 
     @staticmethod
     def _calc_sortino(daily_returns: List[float], risk_free_rate: float = 0.0) -> float:
+        """Annualized Sortino ratio (downside deviation only) from daily return percentages."""
         if len(daily_returns) < 2:
             return 0.0
         mean_r = sum(daily_returns) / len(daily_returns) - risk_free_rate / 365
@@ -1106,6 +1134,7 @@ class AccountsService:
 
     @staticmethod
     def _calc_calmar(daily_returns: List[float], max_drawdown: float) -> float:
+        """Calmar ratio: annualized mean return divided by max drawdown percentage."""
         if not daily_returns or max_drawdown == 0:
             return 0.0
         annual_return = sum(daily_returns) / len(daily_returns) * 365
@@ -1113,6 +1142,7 @@ class AccountsService:
 
     @staticmethod
     def _max_consecutive(daily_returns: List[float], negative: bool) -> int:
+        """Count the longest consecutive streak of positive (or negative) returns."""
         max_count = 0
         count = 0
         for r in daily_returns:
@@ -1125,6 +1155,7 @@ class AccountsService:
 
     @staticmethod
     def _calc_drawdown_duration(snapshots: List[Dict[str, Any]]) -> tuple[int, int]:
+        """Return (max_drawdown_duration, max_recovery_time) in snapshot periods."""
         if not snapshots:
             return 0, 0
         max_duration = 0
@@ -1155,6 +1186,7 @@ class AccountsService:
         sem = asyncio.Semaphore(5)
 
         async def _snap_one(acc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            """Fetch wallet + positions for one HF snapshot under semaphore, returning None on failure."""
             async with sem:
                 try:
                     wallet = await self.get_wallet(acc["id"])

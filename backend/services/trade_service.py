@@ -38,6 +38,7 @@ class TradeService:
         accounts_service: Any,
         ws_manager: Any = None,
     ) -> None:
+        """Initialize with database, repository, accounts service, and optional WS manager."""
         self._db = db
         self._repo = trade_repo
         self._accounts = accounts_service
