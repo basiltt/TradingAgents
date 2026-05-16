@@ -370,6 +370,17 @@ class TestExtractPnl:
         result = service._extract_pnl({"avgPrice": "49000", "cumExecFee": "0"}, trade, 0.01)
         assert result["realized_pnl"] < 0
 
+    def test_price_fallback_when_no_avg_price(self, service):
+        trade = _make_trade(side="Buy", entry_price=50000.0, qty=0.01)
+        result = service._extract_pnl({"price": "51000", "cumExecFee": "0"}, trade, 0.01)
+        assert result["exit_price"] == 51000.0
+        assert result["realized_pnl"] > 0
+
+    def test_avg_fill_price_fallback(self, service):
+        trade = _make_trade(entry_price=None, avg_fill_price=50000.0, side="Buy", qty=0.01)
+        result = service._extract_pnl({"avgPrice": "51000"}, trade, 0.01)
+        assert result["realized_pnl"] > 0
+
 
 class TestCloseTradeRecordOnly:
     @pytest.mark.asyncio
