@@ -23,4 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 EXPOSE 5177 8877
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8877/api/v1/health')" || exit 1
+
 CMD ["/app/scripts/start-web.sh"]
