@@ -58,7 +58,7 @@ class AccountWSManager:
                 return decrypt_value(creds["api_key_encrypted"]), decrypt_value(creds["api_secret_encrypted"])
             api_key, api_secret = await asyncio.to_thread(_decrypt)
         except Exception as e:
-            logger.error("Cannot decrypt credentials for account %s: %s", account_id, e)
+            logger.error("Cannot decrypt credentials for account %s: %s", account_id, type(e).__name__)
             return
 
         async def on_event(event: dict[str, Any]) -> None:

@@ -488,4 +488,4 @@ class TradeService:
             payload["version"] = version_override if version_override is not None else trade.get("version")
             await self._ws.broadcast_to_account(trade["account_id"], event_type, payload)
         except Exception:
-            logger.warning("ws_broadcast_failed", extra={"event_type": event_type, "trade_id": str(trade["id"])})
+            logger.warning("ws_broadcast_failed", extra={"event_type": event_type, "trade_id": str(trade["id"])}, exc_info=True)
