@@ -35,7 +35,10 @@ export function AccountsDashboard() {
     return card.account_type === filterType;
   });
 
-  /** Sum a numeric field across filtered dashboard cards. */
+  /** Sum a numeric field across filtered dashboard cards.
+   * @param field - Key of DashboardCard to sum.
+   * @returns Numeric total of the field across all filtered cards.
+   */
   const sumField = (field: keyof typeof filtered[number]) =>
     filtered.reduce((sum, c) => {
       const v = parseFloat(String(c[field] ?? "0"));
