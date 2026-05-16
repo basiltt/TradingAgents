@@ -31,6 +31,8 @@ export function useAccountWebSocket() {
 
   useEffect(() => { queryClientRef.current = queryClient; });
 
+  const lastFetchRef = useRef(0);
+
   const connect = useCallback(() => {
     if (!mounted.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
@@ -41,8 +43,12 @@ export function useAccountWebSocket() {
     ws.onopen = () => {
       reconnectDelay.current = RECONNECT_BASE;
       dispatch(setWsConnected(true));
-      fetchAllActiveTrades(dispatch);
-      queryClientRef.current.invalidateQueries({ queryKey: ["trades"] });
+      const now = Date.now();
+      if (now - lastFetchRef.current > 5000) {
+        lastFetchRef.current = now;
+        fetchAllActiveTrades(dispatch);
+        queryClientRef.current.invalidateQueries({ queryKey: ["trades"] });
+      }
     };
 
     ws.onmessage = (event) => {
