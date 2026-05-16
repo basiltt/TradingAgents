@@ -116,6 +116,9 @@ class TradeService:
         client = await self._accounts.get_client(account_id)
         remaining = float(trade["qty"]) - float(trade.get("filled_qty") or 0)
 
+        if remaining <= 0:
+            raise InvalidStatusTransition("No remaining quantity to close")
+
         if qty is not None and qty > remaining:
             raise ValueError(f"qty ({qty}) exceeds remaining position size ({remaining})")
 
