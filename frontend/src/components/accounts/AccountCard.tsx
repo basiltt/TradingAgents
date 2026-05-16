@@ -30,8 +30,9 @@ function resolveRule(
   pnl: number,
 ): ResolvedRule | null {
   if (!t.threshold_value) return null;
+  if (!t.threshold_value) return null;
   const th = parseFloat(t.threshold_value);
-  if (!th || th <= 0) return null;
+  if (isNaN(th)) return null;
   const ref = t.reference_value ? parseFloat(t.reference_value) : null;
   const kind: RuleKind = TARGET_TYPES.has(t.trigger_type) ? "target" : "floor";
 

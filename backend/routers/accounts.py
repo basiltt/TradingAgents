@@ -30,6 +30,7 @@ from backend.services.trade_repository import (
     InvalidStatusTransition,
     TradeNotFound,
 )
+from backend.utils import serialize_trade as _serialize_trade, validate_trade_id as _validate_trade_id
 
 logger = logging.getLogger(__name__)
 
@@ -347,18 +348,6 @@ def _get_trade_service(request: Request):
     return svc
 
 
-def _serialize_trade(trade: dict) -> dict:
-    out = dict(trade)
-    for k, v in out.items():
-        if isinstance(v, _uuid.UUID):
-            out[k] = str(v)
-    if isinstance(out.get("metadata"), str):
-        try:
-            out["metadata"] = json.loads(out["metadata"])
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("invalid_trade_metadata", extra={"trade_id": out.get("id")})
-            out["metadata"] = {}
-    return out
 
 
 @router.get("/accounts/{account_id}/trades")
@@ -440,10 +429,7 @@ async def get_trade_stats(request: Request, account_id: str):
 @router.get("/accounts/{account_id}/trades/{trade_id}")
 async def get_trade_detail(request: Request, account_id: str, trade_id: str):
     _validate_account_id(account_id)
-    try:
-        _uuid.UUID(trade_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+    _validate_trade_id(trade_id)
 
     repo = _get_trade_repo(request)
     db = _get_db(request)
@@ -499,10 +485,7 @@ async def close_trade(
 ):
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
-    try:
-        _uuid.UUID(trade_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+    _validate_trade_id(trade_id)
 
     trade_service = _get_trade_service(request)
     if trade_service is None:
@@ -528,10 +511,7 @@ async def close_trade(
 async def cancel_trade(request: Request, account_id: str, trade_id: str):
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
-    try:
-        _uuid.UUID(trade_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+    _validate_trade_id(trade_id)
 
     trade_service = _get_trade_service(request)
     if trade_service is None:

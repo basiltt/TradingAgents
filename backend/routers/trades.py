@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from backend.schemas import TradeStatsResponse
 from backend.services.trade_repository import SORT_COLUMNS, SYMBOL_PATTERN, VALID_SIDES, VALID_STATUSES
+from backend.utils import serialize_trade as _serialize_trade
 
 logger = logging.getLogger(__name__)
 
@@ -46,21 +47,6 @@ def _get_accounts_service(request: Request):
     return svc
 
 
-def _serialize_trade(trade: dict) -> dict:
-    out = dict(trade)
-    for k, v in out.items():
-        if isinstance(v, _uuid.UUID):
-            out[k] = str(v)
-        elif isinstance(v, datetime):
-            out[k] = v.isoformat()
-        elif isinstance(v, Decimal):
-            out[k] = float(v)
-    if isinstance(out.get("metadata"), str):
-        try:
-            out["metadata"] = json.loads(out["metadata"])
-        except (json.JSONDecodeError, TypeError):
-            out["metadata"] = {}
-    return out
 
 
 def _validate_account_ids(raw: str | None) -> list[str] | None:

@@ -33,18 +33,15 @@ export function AccountsDashboard() {
     return card.account_type === filterType;
   });
 
-  const totalEquity = filtered.reduce((sum, c) => {
-    const v = parseFloat(c.total_equity || "0");
-    return sum + (isNaN(v) ? 0 : v);
-  }, 0);
-  const totalPnl = filtered.reduce((sum, c) => {
-    const v = parseFloat(c.total_perp_upl || "0");
-    return sum + (isNaN(v) ? 0 : v);
-  }, 0);
-  const totalTodayPnl = filtered.reduce((sum, c) => {
-    const v = parseFloat(c.today_pnl || "0");
-    return sum + (isNaN(v) ? 0 : v);
-  }, 0);
+  const sumField = (field: keyof typeof filtered[number]) =>
+    filtered.reduce((sum, c) => {
+      const v = parseFloat(String(c[field] ?? "0"));
+      return sum + (isNaN(v) ? 0 : v);
+    }, 0);
+
+  const totalEquity = sumField("total_equity");
+  const totalPnl = sumField("total_perp_upl");
+  const totalTodayPnl = sumField("today_pnl");
   const activeCount = filtered.filter((c) => c.status === "active").length;
   const totalPositions = filtered.reduce((sum, c) => sum + (c.positions_count || 0), 0);
 

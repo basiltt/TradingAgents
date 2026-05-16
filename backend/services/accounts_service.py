@@ -53,12 +53,12 @@ class AccountsService:
 
     def _get_cached(self, key: str, ttl: float) -> Any | None:
         entry = self._cache.get(key)
-        if entry and time.time() < entry[0]:
+        if entry and time.monotonic() < entry[0]:
             return entry[1]
         return None
 
     def _set_cached(self, key: str, data: Any, ttl: float) -> None:
-        self._cache[key] = (time.time() + ttl, data)
+        self._cache[key] = (time.monotonic() + ttl, data)
 
     def _invalidate_cache(self, account_id: str) -> None:
         self.invalidate_cache(account_id)
@@ -78,10 +78,10 @@ class AccountsService:
 
     def _can_refresh(self, account_id: str, cooldown: float = 10.0) -> bool:
         last = self._refresh_locks.get(account_id, 0)
-        return time.time() - last >= cooldown
+        return time.monotonic() - last >= cooldown
 
     def _mark_refreshed(self, account_id: str) -> None:
-        self._refresh_locks[account_id] = time.time()
+        self._refresh_locks[account_id] = time.monotonic()
 
     async def _build_client(self, account_id: str) -> BybitClient:
         if account_id in self._clients:
