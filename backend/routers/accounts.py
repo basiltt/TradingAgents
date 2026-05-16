@@ -117,6 +117,9 @@ async def create_account(request: Request):
     except BybitAPIError as e:
         logger.error("create_account_bybit_error", extra={"ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+
+
+@router.get("/accounts")
 async def list_accounts(
     request: Request,
     account_type: Optional[str] = Query(None, description="Filter by account type: demo or live"),
@@ -181,7 +184,10 @@ async def rotate_credentials(request: Request, account_id: str):
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
         logger.error("rotate_credentials_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)("/accounts/{account_id}")
+        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+
+
+@router.delete("/accounts/{account_id}")
 async def delete_account(request: Request, account_id: str):
     """Soft-delete an account and invalidate cached data."""
     _validate_account_id(account_id)

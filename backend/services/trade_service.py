@@ -317,7 +317,8 @@ class TradeService:
                 p["symbol"] == trade["symbol"] and p["side"] == trade["side"]
                 for p in positions
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("position_check_failed", extra={"trade_id": trade_id, "error": str(exc)[:200]})
             position_gone = False
 
         if position_gone:

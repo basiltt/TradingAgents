@@ -1305,6 +1305,9 @@ class AccountsService:
         for table in tables:
             count = await self._db.cleanup_snapshots(account_id, before_ts, after_ts, table)
             result[table] = count
+        logger.info("cleanup_snapshot_data_done", extra={
+            "account_id": account_id, "preset": preset, "tables": tables, "deleted": result,
+        })
         return result
 
     async def count_snapshot_data(
