@@ -238,11 +238,22 @@ const tradesSlice = createSlice({
       if (state.closeModalTradeId && idsToRemove.includes(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
-    /** Update unrealized PnL for all trades matching account/symbol/side from position data. */
+    /** Update unrealized PnL for all trades matching account/symbol/side from position data, distributed pro-rata by qty. */
     updateUnrealizedPnl(state, action: PayloadAction<{ account_id: string; symbol: string; side: string; unrealized_pnl: number }>) {
       const { account_id, symbol, side, unrealized_pnl } = action.payload;
+      const matching: Trade[] = [];
+      let totalQty = 0;
       for (const trade of Object.values(state.activeTrades)) {
         if (trade.account_id === account_id && trade.symbol === symbol && trade.side === side) {
+          matching.push(trade);
+          totalQty += parseFloat(String(trade.qty ?? 0));
+        }
+      }
+      for (const trade of matching) {
+        if (totalQty > 0) {
+          const share = parseFloat(String(trade.qty ?? 0)) / totalQty;
+          trade.unrealized_pnl = unrealized_pnl * share;
+        } else {
           trade.unrealized_pnl = unrealized_pnl;
         }
       }
