@@ -196,6 +196,7 @@ class TradeService:
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         version = trade["version"]
+        close_qty = float(trade["qty"]) - float(trade.get("filled_qty") or 0)
 
         async with self._db.pool.acquire() as conn:
             async with conn.transaction():
@@ -210,7 +211,7 @@ class TradeService:
             result = await client.place_market_close_order(
                 symbol=trade["symbol"],
                 side=trade["side"],
-                qty=str(trade["qty"]),
+                qty=str(close_qty),
                 position_idx=trade.get("position_idx", 0),
             )
         except Exception as e:
@@ -220,7 +221,7 @@ class TradeService:
             await self._handle_close_failure(client, trade, version)
             raise
 
-        pnl_data = self._extract_pnl(result, trade, float(trade["qty"]))
+        pnl_data = self._extract_pnl(result, trade, close_qty)
         async with self._db.pool.acquire() as conn:
             async with conn.transaction():
                 closed = await self._repo.close_trade(

@@ -161,7 +161,13 @@ class ClosePositionsService:
                             qty=pos["size"],
                             position_idx=pos.get("positionIdx", 0),
                         )
-                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "closed", "orderId": result.get("orderId", "")}
+                        return {
+                            "symbol": pos["symbol"], "side": pos["side"], "status": "closed",
+                            "orderId": result.get("orderId", ""),
+                            "avgPrice": result.get("avgPrice"),
+                            "cumExecFee": result.get("cumExecFee"),
+                            "cumExecQty": result.get("cumExecQty"),
+                        }
                     except BybitAPIError as e:
                         return {"symbol": pos["symbol"], "side": pos["side"], "status": "failed", "error": f"Order rejected (code {e.ret_code})"}
                     except Exception:
