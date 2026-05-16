@@ -77,6 +77,7 @@ def mock_accounts_svc():
     svc.list_accounts = AsyncMock(return_value=[
         {"id": _ACCT_A}, {"id": _ACCT_B},
     ])
+    svc.get_positions = AsyncMock(return_value=[])
     return svc
 
 

@@ -247,6 +247,7 @@ class TradeRepository:
         expected_version: int, exit_price: float,
         realized_pnl: float, realized_pnl_pct: float,
         fees: float, net_pnl: float, close_reason: str,
+        close_rule_id: str | None = None,
     ) -> dict | None:
         """Finalize a trade as 'closed' with PnL data and version check."""
         tid = uuid.UUID(trade_id)
@@ -310,6 +311,7 @@ class TradeRepository:
         self, conn, *, trade_id: str, account_id: str,
         exit_price: float, realized_pnl: float,
         realized_pnl_pct: float, fees: float,
+        net_pnl: float, close_reason: str,
     ) -> dict:
         """Close a trade without version check, used for external/reconciliation closes."""
         tid = uuid.UUID(trade_id)
@@ -342,6 +344,7 @@ class TradeRepository:
         if not result:
             logger.warning("concurrent_modification", extra={"trade_id": trade_id, "context": "reconcile"})
             raise ConcurrentModification(
+                f"Trade {trade_id} was modified concurrently during reconciliation"
             )
         trade = dict(result)
 

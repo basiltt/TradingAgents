@@ -444,9 +444,9 @@ class TestBroadcastOpened:
         await service._broadcast_trade_event("trade.opened", trade)
         mock_ws.broadcast_to_account.assert_awaited_once()
         payload = mock_ws.broadcast_to_account.call_args[0][2]
-        assert payload["side"] == "Buy"
-        assert payload["qty"] == 0.01
-        assert payload["status"] == "open"
+        assert payload["data"]["side"] == "Buy"
+        assert payload["data"]["qty"] == 0.01
+        assert payload["data"]["status"] == "open"
 
     @pytest.mark.asyncio
     async def test_ws_broadcast_unknown_event_ignored(self, service, mock_ws):
