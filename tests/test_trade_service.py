@@ -613,3 +613,61 @@ class TestBroadcastMetadataString:
         await service._broadcast_trade_event("trade.close_failed", trade)
         payload = mock_ws.broadcast_to_account.call_args[0][2]
         assert payload["error_code"] == "UNKNOWN"
+
+
+class TestCancelPartialFilledExchangeFailure:
+    @pytest.mark.asyncio
+    async def test_cancel_partial_filled_bybit_fails_still_updates(self, service, mock_repo, mock_accounts):
+        trade = _make_trade(status="partially_filled", order_id="ord-1", filled_qty=0.005)
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.cancel_order = AsyncMock(side_effect=Exception("exchange timeout"))
+        mock_accounts.get_client.return_value = client
+        updated = _make_trade(status="open", filled_qty=0.005, version=2)
+        mock_repo.update_trade_status.return_value = updated
+
+        result = await service.cancel_trade("acc-1", str(trade["id"]))
+        assert result["status"] == "open"
+        assert result["filled_qty"] == 0.005
+        mock_repo.update_trade_status.assert_awaited_once()
+        call_kw = mock_repo.update_trade_status.call_args.kwargs
+        assert call_kw["new_status"] == "open"
+        assert call_kw["updates"]["filled_qty"] == 0.005
+
+
+class TestCloseTradeCloseRaiseConcurrentMod:
+    @pytest.mark.asyncio
+    async def test_close_trade_concurrent_mod_propagates(self, service, mock_repo, mock_accounts):
+        trade = _make_trade()
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.place_market_close_order = AsyncMock(return_value={
+            "avgPrice": "51000", "cumExecFee": "0.5",
+        })
+        mock_accounts.get_client.return_value = client
+        mock_repo.update_trade_status.return_value = _make_trade(status="closing", version=2)
+        mock_repo.close_trade.side_effect = ConcurrentModification("version mismatch")
+
+        with pytest.raises(ConcurrentModification):
+            await service.close_single_trade("acc-1", str(trade["id"]))
+
+
+class TestFullCloseAssertsPnlArgs:
+    @pytest.mark.asyncio
+    async def test_full_close_forwards_correct_pnl(self, service, mock_repo, mock_accounts, mock_ws):
+        trade = _make_trade(side="Buy", entry_price=50000.0, qty=0.01)
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.place_market_close_order = AsyncMock(return_value={
+            "avgPrice": "51000", "cumExecFee": "0.5",
+        })
+        mock_accounts.get_client.return_value = client
+        mock_repo.close_trade.return_value = _make_trade(status="closed")
+
+        await service.close_single_trade("acc-1", str(trade["id"]))
+
+        call_kw = mock_repo.close_trade.call_args.kwargs
+        assert call_kw["exit_price"] == 51000.0
+        assert call_kw["realized_pnl"] > 0
+        assert call_kw["fees"] == 0.5
+        assert call_kw["net_pnl"] == call_kw["realized_pnl"] - call_kw["fees"]
