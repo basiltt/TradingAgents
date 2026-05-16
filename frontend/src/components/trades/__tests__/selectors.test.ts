@@ -16,6 +16,13 @@ describe("selectActiveTradesList", () => {
   it("returns empty array for no trades", () => {
     expect(selectActiveTradesList(makeState({}))).toEqual([]);
   });
+
+  it("returns same reference for same state (memoized)", () => {
+    const state = makeState({ a: { id: "a" } });
+    const first = selectActiveTradesList(state);
+    const second = selectActiveTradesList(state);
+    expect(second).toBe(first);
+  });
 });
 
 describe("selectActiveTradeAggregates", () => {

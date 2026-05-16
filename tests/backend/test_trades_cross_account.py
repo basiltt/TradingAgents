@@ -124,7 +124,8 @@ class TestListTradesCrossAccount:
         resp = client.get(f"/trades?account_id={_ACCT_A}")
         assert resp.status_code == 200
         call_kw = mock_repo.list_trades_cross_account.call_args
-        assert _ACCT_A in call_kw.kwargs.get("account_ids", call_kw[1].get("account_ids", []))
+        account_ids = call_kw.kwargs.get("account_ids", [])
+        assert _ACCT_A in account_ids
 
     def test_filter_by_status(self, client, mock_repo, conn):
         mock_repo.list_trades_cross_account = AsyncMock(return_value={

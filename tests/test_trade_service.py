@@ -394,6 +394,9 @@ class TestCloseTradeRecordOnly:
         mock_repo.update_trade_status.assert_awaited_once()
         mock_repo.close_trade.assert_awaited_once()
         mock_ws.broadcast_to_account.assert_awaited_once()
+        ws_args = mock_ws.broadcast_to_account.call_args[0]
+        assert ws_args[1] == "trade.closed"
+        assert "trade_id" in ws_args[2]
 
     @pytest.mark.asyncio
     async def test_close_record_only_not_found(self, service, mock_repo):
