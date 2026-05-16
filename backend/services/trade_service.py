@@ -427,7 +427,7 @@ class TradeService:
             logger.warning("exchange_returned_zero_exit_price", extra={"trade_id": str(trade.get("id"))})
         realized_pnl = (exit_price - entry) * qty * side_mult if entry and exit_price else Decimal(0)
         realized_pnl_pct = (realized_pnl / abs(entry * qty) * 100) if entry and qty else Decimal(0)
-        fees = Decimal(str(bybit_result.get("cumExecFee") or 0))
+        fees = Decimal(str(bybit_result.get("cumExecFee") or 0)) if exit_price else Decimal(0)
         net_pnl = realized_pnl - fees
         return {
             "exit_price": float(exit_price),

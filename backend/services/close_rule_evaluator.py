@@ -102,6 +102,9 @@ class CloseRuleEvaluator:
             evaluate_account(aid, arules) for aid, arules in accounts.items()
         ])
 
+        active_ids = {r["id"] for r in rules}
+        self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
+
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         try:
             wallet = await self._accounts_service.get_wallet(account_id)

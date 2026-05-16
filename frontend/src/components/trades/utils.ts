@@ -26,12 +26,22 @@ export function formatRelativeTime(dateStr: string): string {
   return rtf.format(-Math.round(remaining), "year");
 }
 
+const nfCache = new Map<number, Intl.NumberFormat>();
+function getNf(decimals: number): Intl.NumberFormat {
+  let f = nfCache.get(decimals);
+  if (!f) {
+    f = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    nfCache.set(decimals, f);
+  }
+  return f;
+}
+
 export function formatPrice(value: number | null, decimals = 2): string {
   if (value == null) return "--";
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(value);
+  return getNf(decimals).format(value);
 }
 
 export function formatQty(value: number | null | undefined, decimals = 4): string {
