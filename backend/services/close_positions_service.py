@@ -22,14 +22,16 @@ class ClosePositionsService:
         self._ws_manager = ws_manager
         self._trade_service = trade_service
         self._closing_accounts: set[str] = set()
+        self._closing_lock = asyncio.Lock()
 
     def set_trade_service(self, trade_service: Any) -> None:
         self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
-        if account_id in self._closing_accounts:
-            raise ValueError("Close already in progress for this account")
-        self._closing_accounts.add(account_id)
+        async with self._closing_lock:
+            if account_id in self._closing_accounts:
+                raise ValueError("Close already in progress for this account")
+            self._closing_accounts.add(account_id)
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -117,10 +119,11 @@ class ClosePositionsService:
 
     async def close_all_for_rule(self, account_id: str, rule_id: str | None, *, symbols: list[str] | None = None) -> dict[str, Any]:
         """Close positions triggered by a rule or cycle stop. If symbols is provided, only close those symbols."""
-        if account_id in self._closing_accounts:
-            logger.info("Skipping rule close for %s — close already in progress", account_id)
-            return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
-        self._closing_accounts.add(account_id)
+        async with self._closing_lock:
+            if account_id in self._closing_accounts:
+                logger.info("Skipping rule close for %s — close already in progress", account_id)
+                return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
+            self._closing_accounts.add(account_id)
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -248,6 +251,9 @@ class ClosePositionsService:
             if not reference or Decimal(reference) <= 0:
                 raise ValueError("Cannot create percentage rule: current equity is zero or unavailable")
 
+        if Decimal(threshold) <= 0:
+            raise ValueError("threshold_value must be positive")
+
         row = await self._db.insert_close_rule(
             {
                 "account_id": account_id,
@@ -278,6 +284,9 @@ class ClosePositionsService:
         if data.get("reference_value") is not None:
             fields["reference_value"] = data["reference_value"]
         if data.get("status") is not None:
+            allowed_statuses = {"active", "paused"}
+            if data["status"] not in allowed_statuses:
+                raise ValueError(f"Status must be one of: {', '.join(sorted(allowed_statuses))}")
             fields["status"] = data["status"]
 
         new_type = fields.get("trigger_type", rule["trigger_type"])
