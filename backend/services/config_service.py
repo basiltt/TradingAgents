@@ -48,7 +48,7 @@ class ConfigService:
 
         return {
             "defaults": mask_secrets(defaults),
-            "overrides": dict(self._overrides),
+            "overrides": mask_secrets(dict(self._overrides)),
             "resolved": mask_secrets(resolved),
         }
 

@@ -72,7 +72,7 @@ class AccountWSManager:
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
         dead: list[asyncio.Queue] = []
-        for q in self._frontend_queues:
+        for q in list(self._frontend_queues):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:

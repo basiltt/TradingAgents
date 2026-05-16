@@ -327,20 +327,20 @@ class TradeService:
         return updated
 
     def _extract_pnl(self, bybit_result: dict, trade: dict, close_qty: float | None = None) -> dict:
-        exit_price = float(bybit_result.get("avgPrice") or bybit_result.get("price") or 0)
-        entry = float(trade.get("entry_price") or trade.get("avg_fill_price") or 0)
-        qty = close_qty if close_qty is not None else float(trade["qty"])
-        side_mult = 1 if trade["side"] == "Buy" else -1
-        realized_pnl = (exit_price - entry) * qty * side_mult if entry else 0.0
-        realized_pnl_pct = (realized_pnl / (entry * qty) * 100) if entry and qty else 0.0
-        fees = float(bybit_result.get("cumExecFee") or 0)
+        exit_price = Decimal(str(bybit_result.get("avgPrice") or bybit_result.get("price") or 0))
+        entry = Decimal(str(trade.get("entry_price") or trade.get("avg_fill_price") or 0))
+        qty = Decimal(str(close_qty)) if close_qty is not None else Decimal(str(trade["qty"]))
+        side_mult = Decimal(1) if trade["side"] == "Buy" else Decimal(-1)
+        realized_pnl = (exit_price - entry) * qty * side_mult if entry else Decimal(0)
+        realized_pnl_pct = (realized_pnl / (entry * qty) * 100) if entry and qty else Decimal(0)
+        fees = Decimal(str(bybit_result.get("cumExecFee") or 0))
         net_pnl = realized_pnl - fees
         return {
-            "exit_price": exit_price,
-            "realized_pnl": round(realized_pnl, 8),
-            "realized_pnl_pct": round(realized_pnl_pct, 4),
-            "fees": round(fees, 8),
-            "net_pnl": round(net_pnl, 8),
+            "exit_price": float(exit_price),
+            "realized_pnl": float(round(realized_pnl, 8)),
+            "realized_pnl_pct": float(round(realized_pnl_pct, 4)),
+            "fees": float(round(fees, 8)),
+            "net_pnl": float(round(net_pnl, 8)),
         }
 
     @staticmethod

@@ -122,9 +122,9 @@ def create_app() -> FastAPI:
         ws_manager = WSManager(event_bus=event_bus)
         config_service = ConfigService(db=db)
 
-        llm_max = int(os.environ.get("LLM_MAX_CONCURRENT", "0"))
+        llm_max = _validated_int("LLM_MAX_CONCURRENT", 0, 0, 1000)
         configure_llm_concurrency(llm_max)
-        llm_spacing = int(os.environ.get("LLM_MIN_SPACING_MS", "0"))
+        llm_spacing = _validated_int("LLM_MIN_SPACING_MS", 0, 0, 60000)
         configure_llm_min_spacing(llm_spacing)
 
         app.state.db = db

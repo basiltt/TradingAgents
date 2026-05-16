@@ -12,9 +12,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _check_origin(websocket: WebSocket) -> bool:
+    origin = websocket.headers.get("origin")
+    if not origin:
+        return False
+    allowed = set(websocket.app.state.cors_origins)
+    if origin in allowed:
+        return True
+    try:
+        from urllib.parse import urlparse
+        origin_port = urlparse(origin).port
+        if origin_port is not None:
+            for a in allowed:
+                if urlparse(a).port == origin_port:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 @router.websocket("/ws/v1/accounts")
 async def accounts_ws(websocket: WebSocket):
     app = websocket.app
+
+    if not _check_origin(websocket):
+        await websocket.accept()
+        await websocket.close(code=4403, reason="Origin not allowed")
+        return
+
     ws_manager = getattr(app.state, "account_ws_manager", None)
     if ws_manager is None:
         await websocket.close(code=1011, reason="Accounts WS not available")

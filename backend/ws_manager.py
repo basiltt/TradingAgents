@@ -153,7 +153,13 @@ class WSManager:
             task = self._consumers.get(run_id)
             if task and not task.done():
                 return
-            self._consumers[run_id] = asyncio.create_task(consume_fn())
+            task = asyncio.create_task(consume_fn())
+            task.add_done_callback(lambda _t, _rid=run_id: self._on_consumer_done(_rid))
+            self._consumers[run_id] = task
+
+    def _on_consumer_done(self, run_id: str) -> None:
+        """Remove a finished consumer task from _consumers (done-callback)."""
+        self._consumers.pop(run_id, None)
 
     async def remove_consumer_if_empty(self, run_id: str) -> None:
         async with self._lock:

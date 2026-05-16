@@ -39,16 +39,7 @@ def validate_backend_url(url: str, server_port: int) -> str:
     except ValueError:
         raise ValueError(f"Invalid resolved IP: {resolved_ip}")
 
-    if addr.is_loopback:
-        effective_port = port if port else (443 if parsed.scheme == "https" else 80)
-        if effective_port == server_port:
-            raise ValueError(
-                f"self-request blocked: {hostname}:{effective_port} resolves to "
-                f"loopback on the server's own port {server_port}"
-            )
-        return url
-
-    if addr.is_private or addr.is_link_local or addr.is_reserved:
+    if addr.is_loopback or addr.is_private or addr.is_link_local or addr.is_reserved:
         raise ValueError(
             f"private/internal address blocked: {hostname} resolves to {resolved_ip}"
         )
