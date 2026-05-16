@@ -139,6 +139,7 @@ class TradeService:
         trade_id: str,
         close_reason: str = "manual_single",
         close_rule_id: str | None = None,
+        exchange_result: dict | None = None,
     ) -> dict:
         """Close a trade record in the DB without placing an exchange order.
 
@@ -156,6 +157,11 @@ class TradeService:
         if trade["status"] in ("closed", "failed", "cancelled"):
             raise InvalidStatusTransition(f"Trade is already {trade['status']}")
 
+        pnl_data = self._extract_pnl(exchange_result, trade) if exchange_result else {
+            "exit_price": 0.0, "realized_pnl": 0.0, "realized_pnl_pct": 0.0,
+            "fees": 0.0, "net_pnl": 0.0,
+        }
+
         version = trade["version"]
         async with self._db.pool.acquire() as conn:
             async with conn.transaction():
@@ -168,8 +174,11 @@ class TradeService:
                     conn, trade_id=str(trade["id"]), account_id=account_id,
                     expected_version=version + 1, close_reason=close_reason,
                     close_rule_id=close_rule_id,
-                    exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
-                    fees=0.0, net_pnl=0.0,
+                    exit_price=pnl_data["exit_price"],
+                    realized_pnl=pnl_data["realized_pnl"],
+                    realized_pnl_pct=pnl_data["realized_pnl_pct"],
+                    fees=pnl_data["fees"],
+                    net_pnl=pnl_data["net_pnl"],
                 )
 
         self._invalidate_stats_cache(account_id)

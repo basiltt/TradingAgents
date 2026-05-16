@@ -48,7 +48,9 @@ export function formatPnl(value: number): string {
 }
 
 export function formatAbsoluteTime(dateStr: string): string {
+  if (!dateStr) return "--";
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "--";
   const local = d.toLocaleString();
   const utc = d.toUTCString();
   return `${local} (${utc})`;

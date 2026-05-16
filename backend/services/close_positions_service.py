@@ -65,6 +65,9 @@ class ClosePositionsService:
                             "side": pos["side"],
                             "status": "closed",
                             "orderId": result.get("orderId", ""),
+                            "avgPrice": result.get("avgPrice"),
+                            "cumExecFee": result.get("cumExecFee"),
+                            "cumExecQty": result.get("cumExecQty"),
                         }
                     except BybitAPIError as e:
                         logger.warning("Failed to close %s: %s", pos["symbol"], e.ret_msg)
@@ -199,20 +202,23 @@ class ClosePositionsService:
         if not self._trade_service:
             return
         closed_pairs = {
-            (r["symbol"], r["side"]) for r in results if r["status"] == "closed"
+            (r["symbol"], r["side"]): r for r in results if r["status"] == "closed"
         }
         if not closed_pairs:
             return
         try:
             open_trades = await self._trade_service.get_open_trades(account_id, limit=500)
             for trade in open_trades:
-                if (trade["symbol"], trade["side"]) in closed_pairs:
+                key = (trade["symbol"], trade["side"])
+                if key in closed_pairs:
+                    exchange_result = closed_pairs[key]
                     try:
                         await self._trade_service.close_trade_record_only(
                             account_id=account_id,
                             trade_id=str(trade["id"]),
                             close_reason=close_reason,
                             close_rule_id=rule_id,
+                            exchange_result=exchange_result,
                         )
                     except Exception:
                         logger.warning("failed_to_close_trade_record", extra={
