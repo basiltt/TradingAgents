@@ -125,7 +125,12 @@ class AccountsService:
 
     def _mark_refreshed(self, account_id: str) -> None:
         """Record current monotonic time as last refresh for this account."""
-        self._refresh_locks[account_id] = time.monotonic()
+        now = time.monotonic()
+        self._refresh_locks[account_id] = now
+        if len(self._refresh_locks) > self._CACHE_MAX:
+            stale = [k for k, v in self._refresh_locks.items() if now - v > self._REFRESH_COOLDOWN_S * 10]
+            for k in stale:
+                del self._refresh_locks[k]
 
     async def _build_client(self, account_id: str) -> BybitClient:
         """Get or create a BybitClient for the account, decrypting credentials on first call."""

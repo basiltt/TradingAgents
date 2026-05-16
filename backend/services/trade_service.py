@@ -154,7 +154,7 @@ class TradeService:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
             raise TradeNotFound(f"Trade {trade_id} not found")
-        if trade["status"] in ("closed", "failed", "cancelled"):
+        if trade["status"] in ("closed", "failed", "cancelled", "closing"):
             raise InvalidStatusTransition(f"Trade is already {trade['status']}")
 
         pnl_data = self._extract_pnl(exchange_result, trade) if exchange_result else {
