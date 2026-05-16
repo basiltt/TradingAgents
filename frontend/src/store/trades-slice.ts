@@ -169,13 +169,13 @@ const tradesSlice = createSlice({
       state,
       action: PayloadAction<{ trade_id: string; action: "closing" | "cancelling" }>,
     ) {
-      const { trade_id, action: act } = action.payload;
+      const { trade_id, action: mutationType } = action.payload;
       const trade = state.activeTrades[trade_id];
       if (trade) {
         state.optimisticSnapshots[trade_id] = { ...trade };
-        state.activeTrades[trade_id] = { ...trade, status: act === "closing" ? "closing" : "cancelling" };
+        state.activeTrades[trade_id] = { ...trade, status: mutationType === "closing" ? "closing" : "cancelling" };
       }
-      state.pendingActions[trade_id] = { action: act, startedAt: Date.now() };
+      state.pendingActions[trade_id] = { action: mutationType, startedAt: Date.now() };
     },
     /** Clear pending action and snapshot after successful mutation. */
     clearPendingAction(state, action: PayloadAction<string>) {

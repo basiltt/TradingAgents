@@ -43,6 +43,9 @@ METADATA_ALLOWLIST = {
     "bybit_exec_id", "parent_trade_id", "child_qty",
 }
 
+_MAX_METADATA_BYTES = 8192
+_MAX_PAGE_SIZE = 200
+
 SYMBOL_PATTERN = r"^[A-Z0-9/]{1,30}$"
 
 UPDATABLE_COLUMNS = {
@@ -100,7 +103,7 @@ class TradeRepository:
         if invalid_keys:
             raise ValueError(f"Invalid metadata keys: {invalid_keys}")
         raw = json.dumps(metadata)
-        if len(raw.encode("utf-8")) >= 8192:
+        if len(raw.encode("utf-8")) >= _MAX_METADATA_BYTES:
             raise ValueError("Metadata exceeds 8KB limit")
 
     async def create_trade(
@@ -381,7 +384,7 @@ class TradeRepository:
         if sort not in SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort}. Allowed: {list(SORT_COLUMNS.keys())}")
         sort_col = SORT_COLUMNS[sort]
-        limit = min(limit, 200)
+        limit = min(limit, _MAX_PAGE_SIZE)
 
         if symbol and not re.match(SYMBOL_PATTERN, symbol):
             raise ValueError(f"Invalid symbol: {symbol}")
@@ -536,7 +539,7 @@ class TradeRepository:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort_by}")
         sort_col = SORT_COLUMNS[sort_by]
-        limit = min(limit, 200)
+        limit = min(limit, _MAX_PAGE_SIZE)
 
         conditions = ["t.account_id = ANY($1::text[])"]
         params: list[Any] = [account_ids]

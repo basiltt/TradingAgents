@@ -52,7 +52,7 @@ async function throwApiError(res: Response): Promise<never> {
   throw new ApiError(res.status, detail);
 }
 
-const _DEFAULT_TIMEOUT = 30_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Fetch JSON from a path. Applies 30s default timeout and throws ApiError on non-2xx. */
 async function request<T>(
@@ -62,7 +62,7 @@ async function request<T>(
 ): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    signal: signal ?? init?.signal ?? AbortSignal.timeout(_DEFAULT_TIMEOUT),
+    signal: signal ?? init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     headers: { ...DEFAULT_HEADERS, ...init?.headers },
   });
   if (!res.ok) return throwApiError(res);
@@ -77,7 +77,7 @@ async function requestText(
 ): Promise<string> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: DEFAULT_HEADERS,
-    signal: signal ?? AbortSignal.timeout(_DEFAULT_TIMEOUT),
+    signal: signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
   if (!res.ok) return throwApiError(res);
   return res.text();

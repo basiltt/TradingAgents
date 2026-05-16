@@ -44,8 +44,9 @@ class TradeService:
         self._accounts = accounts_service
         self._ws = ws_manager
         self._stats_cache: dict[str, tuple[float, dict]] = {}
-        self._STATS_CACHE_TTL = 10.0
-        self._STATS_CACHE_MAX = 1000
+
+    _STATS_CACHE_TTL = 10.0
+    _STATS_CACHE_MAX = 1000
 
     async def get_cached_stats(self, account_id: str) -> dict:
         """Return trade statistics for an account, using a TTL cache."""

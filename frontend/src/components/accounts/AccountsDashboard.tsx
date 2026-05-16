@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
@@ -24,11 +24,6 @@ export function AccountsDashboard() {
       if (!silent) dispatch(setError((e as { message?: string }).message || "Failed to load accounts"));
     }
   }, [dispatch]);
-
-  // Initial fetch only — polling is handled by useAccountPolling
-  useEffect(() => {
-    fetchDashboard();
-  }, [fetchDashboard]);
 
   const filtered = dashboard.filter((card) => {
     if (filterType === "all") return true;

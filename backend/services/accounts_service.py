@@ -17,7 +17,15 @@ from backend.services.bybit_client import BybitAPIError, BybitClient
 logger = logging.getLogger(__name__)
 
 _SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+_ONE_DAY_MS = 86_400_000
 _MAX_RANGE_DAYS = 90
+_MAX_ERROR_MESSAGE_LENGTH = 512
+_WALLET_CACHE_TTL_S = 2
+_POSITIONS_CACHE_TTL_S = 3
+_ORDERS_CACHE_TTL_S = 10
+_REFRESH_COOLDOWN_S = 10.0
+_SNAPSHOT_COOLDOWN_S = 30.0
+_SNAPSHOT_RETENTION_DAYS = 1095  # ~3 years
 
 
 def _now_iso() -> str:
@@ -32,9 +40,9 @@ def _date_to_ms(date_str: str) -> int:
 
 
 def _sanitize_error(msg: str) -> str:
-    """Truncate error messages to 512 chars to prevent log/DB overflow."""
-    if len(msg) > 512:
-        msg = msg[:512]
+    """Truncate error messages to prevent log/DB overflow."""
+    if len(msg) > _MAX_ERROR_MESSAGE_LENGTH:
+        msg = msg[:_MAX_ERROR_MESSAGE_LENGTH]
     return msg
 
 
@@ -109,7 +117,7 @@ class AccountsService:
             except RuntimeError:
                 pass
 
-    def _can_refresh(self, account_id: str, cooldown: float = 10.0) -> bool:
+    def _can_refresh(self, account_id: str, cooldown: float = _REFRESH_COOLDOWN_S) -> bool:
         """Return True if cooldown has elapsed since last refresh for this account."""
         last = self._refresh_locks.get(account_id, 0)
         return time.monotonic() - last >= cooldown
@@ -440,7 +448,7 @@ class AccountsService:
     async def get_wallet(self, account_id: str) -> Dict[str, Any]:
         """Fetch wallet balances from exchange, cached with 30s TTL."""
         cache_key = f"{account_id}:wallet"
-        cached = self._get_cached(cache_key, 2)
+        cached = self._get_cached(cache_key, _WALLET_CACHE_TTL_S)
         if cached is not None:
             return cached
 
@@ -448,7 +456,7 @@ class AccountsService:
         try:
             data = await client.get_wallet_balance()
             data["fetched_at"] = _now_iso()
-            self._set_cached(cache_key, data, 2)
+            self._set_cached(cache_key, data, _WALLET_CACHE_TTL_S)
             await self._db.update_account(
                 account_id,
                 last_connected_at=_now_iso(), last_error=None, updated_at=_now_iso(),
@@ -464,25 +472,25 @@ class AccountsService:
     async def get_positions(self, account_id: str) -> List[Dict[str, Any]]:
         """Fetch open perpetual positions from exchange, cached with 15s TTL."""
         cache_key = f"{account_id}:positions"
-        cached = self._get_cached(cache_key, 3)
+        cached = self._get_cached(cache_key, _POSITIONS_CACHE_TTL_S)
         if cached is not None:
             return cached
 
         client = await self._build_client(account_id)
         data = await client.get_positions()
-        self._set_cached(cache_key, data, 3)
+        self._set_cached(cache_key, data, _POSITIONS_CACHE_TTL_S)
         return data
 
     async def get_orders(self, account_id: str) -> List[Dict[str, Any]]:
         """Fetch active orders from exchange, cached with 15s TTL."""
         cache_key = f"{account_id}:orders"
-        cached = self._get_cached(cache_key, 10)
+        cached = self._get_cached(cache_key, _ORDERS_CACHE_TTL_S)
         if cached is not None:
             return cached
 
         client = await self._build_client(account_id)
         data = await client.get_open_orders()
-        self._set_cached(cache_key, data, 10)
+        self._set_cached(cache_key, data, _ORDERS_CACHE_TTL_S)
         return data
 
     async def get_closed_pnl(
@@ -491,12 +499,12 @@ class AccountsService:
     ) -> Dict[str, Any]:
         """Fetch closed PnL records for a date range from the database."""
         start_ms = _date_to_ms(start_date)
-        end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
+        end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
 
         if start_ms > end_ms:
             raise ValueError("start_date must be before or equal to end_date")
 
-        days_diff = (end_ms - start_ms) / (24 * 60 * 60 * 1000)
+        days_diff = (end_ms - start_ms) / _ONE_DAY_MS
         if days_diff > _MAX_RANGE_DAYS:
             raise ValueError(f"Date range exceeds maximum of {_MAX_RANGE_DAYS} days")
 
@@ -508,12 +516,12 @@ class AccountsService:
     ) -> Dict[str, Any]:
         """Compute aggregated PnL summary (total, win rate, avg) for a date range."""
         start_ms = _date_to_ms(start_date)
-        end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
+        end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
 
         if start_ms > end_ms:
             raise ValueError("start_date must be before or equal to end_date")
 
-        days_diff = (end_ms - start_ms) / (24 * 60 * 60 * 1000)
+        days_diff = (end_ms - start_ms) / _ONE_DAY_MS
         if days_diff > _MAX_RANGE_DAYS:
             raise ValueError(f"Date range exceeds maximum of {_MAX_RANGE_DAYS} days")
 
@@ -582,7 +590,7 @@ class AccountsService:
         accounts = await self._db.list_accounts()
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_start_ms = _date_to_ms(today_str)
-        today_end_ms = today_start_ms + (24 * 60 * 60 * 1000 - 1)
+        today_end_ms = today_start_ms + (_ONE_DAY_MS - 1)
 
         cards = await asyncio.gather(
             *[self._fetch_card(acc, today_start_ms, today_end_ms) for acc in accounts]
@@ -649,13 +657,13 @@ class AccountsService:
             raise ValueError("Account is inactive")
 
         snap_key = f"snap:{account_id}"
-        if not self._can_refresh(snap_key, cooldown=30.0):
+        if not self._can_refresh(snap_key, cooldown=_SNAPSHOT_COOLDOWN_S):
             raise ValueError("Snapshot rate limited — try again in 30 seconds")
         self._mark_refreshed(snap_key)
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         today_start_ms = _date_to_ms(today)
-        today_end_ms = today_start_ms + (24 * 60 * 60 * 1000 - 1)
+        today_end_ms = today_start_ms + (_ONE_DAY_MS - 1)
 
         wallet, positions = await asyncio.gather(
             self.get_wallet(account_id),
@@ -873,7 +881,7 @@ class AccountsService:
             return self._empty_analytics()
 
         start_ms = _date_to_ms(start_date)
-        end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
+        end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
         pnl_summary = await self._db.get_closed_pnl_summary(account_id, start_ms, end_ms)
 
         equities = [s["equity"] for s in snapshots]
@@ -987,7 +995,7 @@ class AccountsService:
         worst_date = portfolio_snaps[worst_idx + 1]["snapshot_date"] if daily_returns and worst_idx + 1 < len(portfolio_snaps) else ""
 
         start_ms = _date_to_ms(start_date)
-        end_ms = _date_to_ms(end_date) + (24 * 60 * 60 * 1000 - 1)
+        end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
         pnl_summary = await self._db.get_portfolio_pnl_summary(start_ms, end_ms, account_type=account_type)
 
         win_count = pnl_summary.get("win_count", 0)
@@ -1213,7 +1221,7 @@ class AccountsService:
 
     async def auto_cleanup_old_snapshots(self) -> int:
         """Delete snapshots older than retention period. Returns rows deleted."""
-        return await self._db.cleanup_old_hf_snapshots(max_age_days=1095)
+        return await self._db.cleanup_old_hf_snapshots(max_age_days=_SNAPSHOT_RETENTION_DAYS)
 
     async def set_analytics_inclusion(self, account_id: str, include: bool) -> Optional[Dict[str, Any]]:
         """Toggle whether an account is included in analytics aggregations."""
