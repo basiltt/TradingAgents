@@ -355,6 +355,23 @@ class TestTradeEvents:
         resp = events_client.get(f"/accounts/{_ACCT_A}/trades/not-a-uuid/events")
         assert resp.status_code == 422
 
+    def test_truncated_at_1000(self, events_client, mock_repo, conn):
+        trade_id = str(uuid.uuid4())
+        mock_repo.get_trade = AsyncMock(return_value={"id": trade_id, "account_id": _ACCT_A})
+        events = [
+            {"id": i, "trade_id": uuid.UUID(trade_id), "event_type": "placed",
+             "old_status": None, "new_status": "pending", "fill_qty": None,
+             "fill_price": None, "actor": "user", "payload": None,
+             "created_at": "2026-01-01T00:00:00Z"}
+            for i in range(1000)
+        ]
+        conn.fetch = AsyncMock(return_value=events)
+        resp = events_client.get(f"/accounts/{_ACCT_A}/trades/{trade_id}/events")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["truncated"] is True
+        assert len(data["items"]) == 1000
+
 
 class TestWSBroadcasts:
     """Tests for WS broadcast changes (TASK-1.4, 1.5, 1.6)."""

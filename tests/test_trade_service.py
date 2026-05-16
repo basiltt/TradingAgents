@@ -515,6 +515,10 @@ class TestReconcileFailureFallthrough:
         mock_repo.reconcile_close.assert_awaited_once()
         revert_call = mock_repo.update_trade_status.call_args_list[-1]
         assert revert_call.kwargs["new_status"] == "open"
+        mock_ws.broadcast_to_account.assert_awaited()
+        bc_args = mock_ws.broadcast_to_account.call_args[0]
+        assert bc_args[1] == "trade.close_failed"
+        assert bc_args[2]["previous_status"] == "open"
 
 
 class TestGetPositionsFailure:
