@@ -43,6 +43,7 @@ const initialState: AccountsState = {
   closeExecutionSeq: 0,
 };
 
+/** Compare old/new numeric strings and return trend direction for UI arrows. */
 function getDirection(oldVal: string | undefined, newVal: string): Direction {
   const o = parseFloat(oldVal || "0");
   const n = parseFloat(newVal);

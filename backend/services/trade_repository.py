@@ -92,6 +92,7 @@ class TradeRepository:
         self._db = db
 
     def _validate_metadata(self, metadata: dict) -> None:
+        """Validate metadata keys against allowlist and enforce 8KB size limit."""
         if not metadata:
             return
         invalid_keys = set(metadata.keys()) - METADATA_ALLOWLIST

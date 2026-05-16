@@ -83,6 +83,7 @@ class AccountsService:
         self._cache[key] = (time.monotonic() + ttl, data)
 
     def _invalidate_cache(self, account_id: str) -> None:
+        """Alias for invalidate_cache (internal use)."""
         self.invalidate_cache(account_id)
 
     def invalidate_cache(self, account_id: str) -> None:
@@ -101,13 +102,16 @@ class AccountsService:
                 pass
 
     def _can_refresh(self, account_id: str, cooldown: float = 10.0) -> bool:
+        """Return True if cooldown has elapsed since last refresh for this account."""
         last = self._refresh_locks.get(account_id, 0)
         return time.monotonic() - last >= cooldown
 
     def _mark_refreshed(self, account_id: str) -> None:
+        """Record current monotonic time as last refresh for this account."""
         self._refresh_locks[account_id] = time.monotonic()
 
     async def _build_client(self, account_id: str) -> BybitClient:
+        """Get or create a BybitClient for the account, decrypting credentials on first call."""
         if account_id in self._clients:
             return self._clients[account_id]
 
@@ -1192,6 +1196,7 @@ class AccountsService:
         before_date: Optional[str],
         after_date: Optional[str],
     ) -> tuple:
+        """Convert a preset name (1w, 1m, 3m, 6m, 1y, all) into (before, after) date strings."""
         before_ts = before_date
         after_ts = after_date
         if preset:

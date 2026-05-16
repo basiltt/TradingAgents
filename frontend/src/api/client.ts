@@ -30,6 +30,7 @@ const DEFAULT_HEADERS: HeadersInit = {
   "X-Requested-With": "XMLHttpRequest",
 };
 
+/** Parse error detail from response body and throw ApiError. */
 async function throwApiError(res: Response): Promise<never> {
   let detail = res.statusText;
   try {
@@ -53,6 +54,7 @@ async function throwApiError(res: Response): Promise<never> {
 
 const _DEFAULT_TIMEOUT = 30_000;
 
+/** Fetch JSON from a path. Applies 30s default timeout and throws ApiError on non-2xx. */
 async function request<T>(
   path: string,
   init?: RequestInit,
@@ -68,6 +70,7 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+/** Fetch plain text from a path. Throws ApiError on non-2xx. */
 async function requestText(
   path: string,
   signal?: AbortSignal,
@@ -80,6 +83,7 @@ async function requestText(
   return res.text();
 }
 
+/** Send a mutating request (POST/PUT/PATCH/DELETE) with optional JSON body. */
 function mutate<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   return request<T>(path, {
     method,

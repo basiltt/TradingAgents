@@ -38,6 +38,8 @@ router = APIRouter(tags=["accounts"])
 
 
 class _TokenBucket:
+    """Token-bucket rate limiter with configurable rate (tokens/sec) and burst capacity."""
+
     def __init__(self, rate: float = 10.0, capacity: float = 10.0):
         self.rate = rate
         self.capacity = capacity
@@ -45,6 +47,7 @@ class _TokenBucket:
         self.last_refill = time.monotonic()
 
     def consume(self) -> bool:
+        """Try to consume one token. Returns True if allowed, False if exhausted."""
         now = time.monotonic()
         elapsed = now - self.last_refill
         self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
@@ -61,6 +64,7 @@ _RATE_LIMITER_STALE_SECONDS = 3600
 
 
 async def _check_rate_limit(account_id: str) -> None:
+    """Enforce per-account rate limiting; raises HTTPException(429) when exhausted."""
     now = time.monotonic()
     if len(_rate_limiters) >= _RATE_LIMITER_MAX_ENTRIES:
         stale = [k for k, v in _rate_limiters.items() if now - v.last_refill > _RATE_LIMITER_STALE_SECONDS]
@@ -77,6 +81,7 @@ async def _check_rate_limit(account_id: str) -> None:
 
 
 def _get_service(request: Request):
+    """Retrieve AccountsService from app state or raise 503."""
     svc = request.app.state.accounts_service
     if svc is None:
         raise HTTPException(503, detail="Accounts feature disabled — set ACCOUNTS_ENCRYPTION_KEY")
@@ -84,6 +89,7 @@ def _get_service(request: Request):
 
 
 def _validate_account_id(account_id: str) -> str:
+    """Validate UUID format and return the ID, or raise HTTPException(400)."""
     try:
         _uuid.UUID(account_id)
     except (ValueError, AttributeError):
@@ -344,6 +350,7 @@ async def get_pnl_summary(
 # --- Trade endpoints ---
 
 def _get_trade_repo(request: Request):
+    """Retrieve TradeRepository from app state or raise 503."""
     repo = getattr(request.app.state, "trade_repo", None)
     if repo is None:
         raise HTTPException(503, detail="Trading not configured")
@@ -351,6 +358,7 @@ def _get_trade_repo(request: Request):
 
 
 def _get_db(request: Request):
+    """Retrieve AsyncAnalysisDB from app state or raise 503."""
     db = getattr(request.app.state, "db", None)
     if db is None:
         raise HTTPException(503, detail="Database not available")
@@ -358,6 +366,7 @@ def _get_db(request: Request):
 
 
 def _get_trade_service(request: Request):
+    """Retrieve TradeService from app state, or None if not configured."""
     svc = getattr(request.app.state, "trade_service", None)
     return svc
 
@@ -465,6 +474,7 @@ async def get_trade_detail(request: Request, account_id: str, trade_id: str):
 
 
 def _serialize_trade_event(event: dict) -> dict:
+    """Serialize a trade event dict, converting UUIDs and datetimes to strings."""
     out = dict(event)
     for k, v in out.items():
         if isinstance(v, _uuid.UUID):

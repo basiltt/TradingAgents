@@ -61,6 +61,7 @@ class TradeService:
         return stats
 
     def _invalidate_stats_cache(self, account_id: str) -> None:
+        """Remove cached stats for an account, forcing re-fetch on next access."""
         self._stats_cache.pop(account_id, None)
 
     async def get_open_trades(self, account_id: str, limit: int = 500) -> list[dict]:

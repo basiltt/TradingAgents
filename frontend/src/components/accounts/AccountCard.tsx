@@ -67,6 +67,7 @@ function resolveRule(
   }
 }
 
+/** Build a ResolvedRule for floor-type thresholds, computing buffer percentage from current vs. threshold. */
 function mkFloor(label: string, display: string, current: number, threshold: number): ResolvedRule {
   const buffer = current - threshold;
   const range = Math.abs(threshold) || 1;
@@ -76,12 +77,14 @@ function mkFloor(label: string, display: string, current: number, threshold: num
 
 /* ── Sub-components ──────────────────────────────────────────────── */
 
+/** Renders an up/down arrow for value change animation. */
 function DirectionIcon({ dir }: { dir?: Direction }) {
   if (!dir || dir === "neutral") return null;
   if (dir === "up") return <span className="text-emerald-500 text-[10px] animate-flash">▲</span>;
   return <span className="text-red-500 text-[10px] animate-flash">▼</span>;
 }
 
+/** Colored dot indicating account connection status (active/stale/error/disabled). */
 function StatusDot({ status }: { status: string }) {
   const styles: Record<string, string> = {
     active: "bg-emerald-500 shadow-emerald-500/50",
@@ -92,6 +95,7 @@ function StatusDot({ status }: { status: string }) {
   return <span className={`w-2 h-2 rounded-full shadow-[0_0_6px] ${styles[status] ?? styles.disabled}`} />;
 }
 
+/** Progress bar showing target/floor rule status with percentage and threshold display. */
 function RuleIndicator({ rule }: { rule: ResolvedRule }) {
   const pctClamped = Math.min(Math.max(rule.pct, 0), 100);
   const pctDisplay = Math.round(rule.pct);

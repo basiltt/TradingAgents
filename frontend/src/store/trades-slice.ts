@@ -11,11 +11,13 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { Trade, TradeFilters } from "@/components/trades/types";
 
+/** Tracks an in-flight mutation so server refreshes don't overwrite optimistic UI. */
 interface PendingAction {
   action: "closing" | "cancelling";
   startedAt: number;
 }
 
+/** Auto-expire stale pending actions after 60s. */
 const PENDING_ACTION_TTL_MS = 60_000;
 
 interface TradesState {
@@ -26,9 +28,13 @@ interface TradesState {
   sortDirection: "asc" | "desc";
   selectedTradeId: string | null;
   selectedTrade: Trade | null;
+  /** Trade ID for the close-confirmation modal, null when closed. */
   closeModalTradeId: string | null;
+  /** In-flight close/cancel actions keyed by trade ID. */
   pendingActions: Record<string, PendingAction>;
+  /** Per-account close-all in progress flags. */
   pendingCloseAll: Record<string, boolean>;
+  /** Pre-mutation trade snapshots for rollback on failure. */
   optimisticSnapshots: Record<string, Trade>;
   isFetchingActiveTrades: boolean;
   wsConnected: boolean;

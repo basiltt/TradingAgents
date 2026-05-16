@@ -27,6 +27,7 @@ _MAX_ACCOUNT_IDS = 50
 
 
 def _get_trade_repo(request: Request):
+    """Retrieve TradeRepository from app state or raise 503."""
     repo = getattr(request.app.state, "trade_repo", None)
     if repo is None:
         raise HTTPException(503, detail="Trading not configured")
@@ -34,6 +35,7 @@ def _get_trade_repo(request: Request):
 
 
 def _get_db(request: Request):
+    """Retrieve AsyncAnalysisDB from app state or raise 503."""
     db = getattr(request.app.state, "db", None)
     if db is None:
         raise HTTPException(503, detail="Database not available")
@@ -41,6 +43,7 @@ def _get_db(request: Request):
 
 
 def _get_accounts_service(request: Request):
+    """Retrieve AccountsService from app state or raise 503."""
     svc = getattr(request.app.state, "accounts_service", None)
     if svc is None:
         raise HTTPException(503, detail="Accounts service not available")
@@ -50,6 +53,7 @@ def _get_accounts_service(request: Request):
 
 
 def _validate_account_ids(raw: str | None) -> list[str] | None:
+    """Parse comma-separated account UUIDs, raising ValueError on invalid input."""
     if raw is None:
         return None
     ids = [s.strip() for s in raw.split(",") if s.strip()]
@@ -64,6 +68,7 @@ def _validate_account_ids(raw: str | None) -> list[str] | None:
 
 
 def _validate_statuses(raw: str | None) -> list[str] | None:
+    """Parse comma-separated status values, raising ValueError for unknowns."""
     if raw is None:
         return None
     statuses = [s.strip() for s in raw.split(",") if s.strip()]
@@ -74,6 +79,7 @@ def _validate_statuses(raw: str | None) -> list[str] | None:
 
 
 def _validate_date(raw: str | None, name: str) -> datetime | None:
+    """Parse an ISO 8601 datetime string, raising ValueError on bad format."""
     if raw is None:
         return None
     try:
@@ -183,6 +189,7 @@ async def list_trades_cross_account(
                 pnl_lookup[key] = float(pos.get("unrealisedPnl", 0))
 
     def enrich(trade: dict) -> dict:
+        """Serialize trade and attach unrealized_pnl from position lookup."""
         out = _serialize_trade(trade)
         if out.get("status") in active_statuses:
             key = (str(out["account_id"]), out["symbol"], out["side"], out.get("position_idx", 0))
