@@ -96,6 +96,7 @@ const accountsSlice = createSlice({
       const idx = state.accounts.findIndex((a) => a.id === action.payload.id);
       if (idx >= 0) state.accounts[idx] = action.payload;
     },
+    /** Apply real-time wallet/position WebSocket event to a dashboard card. */
     updateCardRealtime(state, action: PayloadAction<RealtimeEvent>) {
       const { account_id, type, data } = action.payload;
       const idx = state.dashboard.findIndex((d) => d.id === account_id);
@@ -122,6 +123,7 @@ const accountsSlice = createSlice({
 
       state.directions[account_id] = dirs;
     },
+    /** Decrement position count after a close-all execution completes. */
     handleCloseExecution(state, action: PayloadAction<{ account_id: string; data: { closed: number } }>) {
       const { account_id, data } = action.payload;
       const idx = state.dashboard.findIndex((d) => d.id === account_id);

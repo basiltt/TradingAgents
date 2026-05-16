@@ -1184,6 +1184,7 @@ class AccountsService:
         return await self._db.cleanup_old_hf_snapshots(max_age_days=1095)
 
     async def set_analytics_inclusion(self, account_id: str, include: bool) -> Optional[Dict[str, Any]]:
+        """Toggle whether an account is included in analytics aggregations."""
         account = await self._db.get_account(account_id)
         if not account:
             return None
@@ -1227,6 +1228,7 @@ class AccountsService:
         after_date: Optional[str] = None,
         tables: Optional[List[str]] = None,
     ) -> Dict[str, int]:
+        """Delete snapshot rows matching the date range/preset. Returns deleted counts per table."""
         if tables is None:
             tables = ["daily_snapshots", "high_freq_snapshots"]
         for table in tables:
@@ -1248,6 +1250,7 @@ class AccountsService:
         after_date: Optional[str] = None,
         tables: Optional[List[str]] = None,
     ) -> Dict[str, int]:
+        """Count snapshot rows matching the date range/preset without deleting."""
         if tables is None:
             tables = ["daily_snapshots", "high_freq_snapshots"]
         before_ts, after_ts = self._resolve_cleanup_dates(preset, before_date, after_date)

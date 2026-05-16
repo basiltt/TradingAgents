@@ -119,6 +119,7 @@ class TradeRepository:
         metadata: dict | None = None,
         actor: str = "user",
     ) -> dict:
+        """Insert a new trade in 'pending' status and record a 'placed' event."""
         if not re.match(SYMBOL_PATTERN, symbol):
             raise ValueError(f"Invalid symbol: {symbol}")
         if side not in VALID_SIDES:
@@ -159,6 +160,7 @@ class TradeRepository:
         actor: str = "system",
         event_payload: dict | None = None,
     ) -> dict | None:
+        """Transition trade status with optimistic locking and record an audit event."""
         start = time.monotonic()
         tid = uuid.UUID(trade_id)
 
@@ -234,8 +236,8 @@ class TradeRepository:
         expected_version: int, exit_price: float,
         realized_pnl: float, realized_pnl_pct: float,
         fees: float, net_pnl: float, close_reason: str,
-        close_rule_id: str | None = None,
     ) -> dict | None:
+        """Finalize a trade as 'closed' with PnL data and version check."""
         tid = uuid.UUID(trade_id)
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
@@ -293,8 +295,8 @@ class TradeRepository:
         self, conn, *, trade_id: str, account_id: str,
         exit_price: float, realized_pnl: float,
         realized_pnl_pct: float, fees: float,
-        net_pnl: float, close_reason: str,
     ) -> dict:
+        """Close a trade without version check, used for external/reconciliation closes."""
         tid = uuid.UUID(trade_id)
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
@@ -339,6 +341,7 @@ class TradeRepository:
     async def get_trade(
         self, conn, *, account_id: str, trade_id: str,
     ) -> dict | None:
+        """Fetch a single trade by account and trade ID. Returns None if not found."""
         row = await conn.fetchrow(
             "SELECT * FROM trades WHERE id = $1 AND account_id = $2",
             uuid.UUID(trade_id), account_id,
@@ -348,6 +351,7 @@ class TradeRepository:
     async def get_trade_with_events(
         self, conn, *, account_id: str, trade_id: str,
     ) -> dict | None:
+        """Fetch a trade with its audit event history embedded as an 'events' list."""
         trade = await self.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
             return None
@@ -372,6 +376,7 @@ class TradeRepository:
         include_total: bool = False,
         parent_trade_id: str | None = None,
     ) -> dict:
+        """List trades for an account with filters, sorting, and cursor pagination."""
         if sort not in SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort}. Allowed: {list(SORT_COLUMNS.keys())}")
         sort_col = SORT_COLUMNS[sort]
@@ -477,6 +482,7 @@ class TradeRepository:
     async def get_open_trades(
         self, conn, *, account_id: str, limit: int = 500,
     ) -> list[dict]:
+        """Fetch all open/partially-filled trades for an account."""
         rows = await conn.fetch(
             "SELECT * FROM trades WHERE account_id = $1 "
             "AND status IN ('open', 'partially_filled') "
@@ -488,6 +494,7 @@ class TradeRepository:
     async def get_trade_stats(
         self, conn, *, account_id: str,
     ) -> dict:
+        """Compute aggregate trade statistics (total, open count, win rate, PnL) for one account."""
         row = await conn.fetchrow(
             """SELECT
                 COUNT(*) as total_trades,
@@ -523,8 +530,8 @@ class TradeRepository:
         sort_dir: str = "desc",
         cursor_last_id: str | None = None,
         cursor_last_sort_value: str | None = None,
-        limit: int = 50,
     ) -> dict:
+        """List trades across multiple accounts with filters and cursor pagination."""
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort_by}")
         sort_col = SORT_COLUMNS[sort_by]
@@ -604,6 +611,7 @@ class TradeRepository:
     async def get_stats_cross_account(
         self, conn, *, account_ids: list[str],
     ) -> dict:
+        """Compute aggregate trade stats across multiple accounts."""
         row = await conn.fetchrow(
             """SELECT
                 COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) as total_trades,
@@ -633,6 +641,7 @@ class TradeRepository:
         fees: float, net_pnl: float, close_reason: str,
         close_rule_id: str | None = None,
     ) -> dict:
+        """Create a closed child trade from a partial close of the parent."""
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
         child = await conn.fetchrow(
@@ -675,6 +684,7 @@ class TradeRepository:
     async def get_pending_orphans(
         self, conn, *, max_age_minutes: int = 5, limit: int = 100,
     ) -> list[dict]:
+        """Find stale pending trades with no order_id for reconciliation cleanup."""
         # System-level query: intentionally cross-tenant for reconciliation cleanup
         rows = await conn.fetch(
             "SELECT * FROM trades WHERE status = 'pending' AND order_id IS NULL "
@@ -686,6 +696,7 @@ class TradeRepository:
     async def get_open_trades_by_symbol_side(
         self, conn, *, account_id: str, symbol: str, side: str,
     ) -> list[dict]:
+        """Fetch open/partially-filled trades for a specific symbol and side."""
         if not re.match(SYMBOL_PATTERN, symbol):
             raise ValueError(f"Invalid symbol: {symbol}")
         if side not in VALID_SIDES:

@@ -69,6 +69,7 @@ const tradesSlice = createSlice({
   name: "trades",
   initialState,
   reducers: {
+    /** Merge server trades with pending-action trades; expire stale pending actions. */
     setActiveTrades(state, action: PayloadAction<Trade[]>) {
       const now = Date.now();
       // Expire stale pending actions
@@ -94,6 +95,7 @@ const tradesSlice = createSlice({
       state.activeTrades = next;
       state.lastUpdated = now;
     },
+    /** Add or replace a trade, skipping if incoming version is stale. */
     addActiveTrade(state, action: PayloadAction<Trade>) {
       const existing = state.activeTrades[action.payload.id];
       if (existing && existing.version !== undefined && action.payload.version !== undefined && action.payload.version <= existing.version) {
@@ -102,6 +104,7 @@ const tradesSlice = createSlice({
       state.activeTrades[action.payload.id] = action.payload;
       state.lastUpdated = Date.now();
     },
+    /** Partially update a trade; skipped if a pending action guards it or version is stale. */
     updateActiveTrade(
       state,
       action: PayloadAction<{ trade_id: string; updates: Partial<Trade> }>,
@@ -120,6 +123,7 @@ const tradesSlice = createSlice({
       state.activeTrades[trade_id] = { ...existing, ...updates };
       state.lastUpdated = Date.now();
     },
+    /** Remove a trade and clean up related selection/modal/snapshot state. */
     removeActiveTrade(state, action: PayloadAction<string>) {
       delete state.activeTrades[action.payload];
       delete state.optimisticSnapshots[action.payload];
@@ -153,6 +157,7 @@ const tradesSlice = createSlice({
     setCloseModalTradeId(state, action: PayloadAction<string | null>) {
       state.closeModalTradeId = action.payload;
     },
+    /** Snapshot current trade state and apply optimistic status change. */
     startPendingAction(
       state,
       action: PayloadAction<{ trade_id: string; action: "closing" | "cancelling" }>,
@@ -169,6 +174,7 @@ const tradesSlice = createSlice({
       delete state.pendingActions[action.payload];
       delete state.optimisticSnapshots[action.payload];
     },
+    /** Restore pre-mutation snapshot on mutation failure and clear pending state. */
     revertOptimisticUpdate(state, action: PayloadAction<string>) {
       const snapshot = state.optimisticSnapshots[action.payload];
       if (snapshot) {
@@ -187,6 +193,7 @@ const tradesSlice = createSlice({
         delete state.pendingCloseAll[action.payload.account_id];
       }
     },
+    /** Remove multiple trades by ID array (e.g., after close-all completes). */
     bulkRemoveActiveTrades(state, action: PayloadAction<string[]>) {
       const ids = new Set(action.payload);
       for (const id of ids) {
@@ -200,6 +207,7 @@ const tradesSlice = createSlice({
       if (state.closeModalTradeId && ids.has(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
+    /** Remove all trades belonging to a specific account. */
     removeActiveTradesByAccount(state, action: PayloadAction<string>) {
       const accountId = action.payload;
       const idsToRemove: string[] = [];
@@ -217,6 +225,7 @@ const tradesSlice = createSlice({
       if (state.closeModalTradeId && idsToRemove.includes(state.closeModalTradeId)) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
+    /** Update unrealized PnL for all trades matching account/symbol/side from position data. */
     updateUnrealizedPnl(state, action: PayloadAction<{ account_id: string; symbol: string; side: string; unrealized_pnl: number }>) {
       const { account_id, symbol, side, unrealized_pnl } = action.payload;
       for (const trade of Object.values(state.activeTrades)) {

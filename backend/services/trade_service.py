@@ -383,11 +383,13 @@ class TradeService:
 
     @staticmethod
     def _serialize_trade_for_ws(trade: dict) -> dict:
+        """Serialize a trade dict for WebSocket broadcast using shared serializer."""
         return _serialize_trade_shared(trade)
 
     async def _broadcast_trade_event(
         self, event_type: str, trade: dict, *, version_override: int | None = None,
     ) -> None:
+        """Broadcast a trade lifecycle event to account subscribers via WebSocket."""
         if not self._ws:
             return
         try:

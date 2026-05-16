@@ -21,6 +21,7 @@ interface ResolvedRule {
   warn: boolean;      // floor buffer < 25%
 }
 
+/** Trigger types rendered as goal-targets (progress toward); all others are floor-limits (buffer remaining). */
 const TARGET_TYPES = new Set(["BALANCE_ABOVE", "PNL_ABOVE", "EQUITY_RISE_PCT"]);
 
 /**
