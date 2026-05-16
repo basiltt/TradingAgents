@@ -87,14 +87,15 @@ export function useAccountWebSocket() {
       }
       if (msg.type === "trade.partially_closed" && msg.trade_id) {
         dispatch(clearPendingAction(msg.trade_id as string));
+        const childPnl = typeof msg.realized_pnl === "number" ? msg.realized_pnl : 0;
         dispatch(updateActiveTrade({
           trade_id: msg.trade_id as string,
           updates: {
             filled_qty: msg.filled_qty as number,
-            realized_pnl: msg.realized_pnl as number | null,
             version: msg.version as number,
             status: "partially_closed",
           },
+          accumulatePnl: childPnl,
         }));
       }
       if (msg.type === "trade.close_failed" && msg.trade_id) {

@@ -107,9 +107,9 @@ const tradesSlice = createSlice({
     /** Partially update a trade; skipped if a pending action guards it or version is stale. */
     updateActiveTrade(
       state,
-      action: PayloadAction<{ trade_id: string; updates: Partial<Trade> }>,
+      action: PayloadAction<{ trade_id: string; updates: Partial<Trade>; accumulatePnl?: number }>,
     ) {
-      const { trade_id, updates } = action.payload;
+      const { trade_id, updates, accumulatePnl } = action.payload;
       const existing = state.activeTrades[trade_id];
       if (!existing) return;
       if (state.pendingActions[trade_id]) return;
@@ -120,7 +120,11 @@ const tradesSlice = createSlice({
       ) {
         return;
       }
-      state.activeTrades[trade_id] = { ...existing, ...updates };
+      const merged = { ...existing, ...updates };
+      if (accumulatePnl !== undefined) {
+        merged.realized_pnl = (existing.realized_pnl ?? 0) + accumulatePnl;
+      }
+      state.activeTrades[trade_id] = merged;
       state.lastUpdated = Date.now();
     },
     /** Remove a trade and clean up related selection/modal/snapshot state. */

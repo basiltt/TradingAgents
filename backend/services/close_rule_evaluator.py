@@ -207,4 +207,5 @@ class CloseRuleEvaluator:
             rise_pct = ((equity - reference) / reference) * Decimal("100")
             return rise_pct >= threshold
 
+        logger.warning("unknown_trigger_type", extra={"trigger_type": trigger_type, "rule_id": rule.get("id")})
         return False
