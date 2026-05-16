@@ -53,7 +53,7 @@ export function useAccountWebSocket() {
         return;
       }
       if (msg.type === "ping") {
-        ws.send("pong");
+        if (ws.readyState === WebSocket.OPEN) ws.send("pong");
         return;
       }
       if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
