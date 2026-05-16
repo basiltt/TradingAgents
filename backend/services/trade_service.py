@@ -110,7 +110,7 @@ class TradeService:
         if not trade:
             raise TradeNotFound(f"Trade {trade_id} not found")
 
-        if trade["status"] in ("closed", "failed", "cancelled"):
+        if trade["status"] in ("closed", "failed", "cancelled", "closing"):
             raise InvalidStatusTransition(f"Trade is already {trade['status']}")
 
         client = await self._accounts.get_client(account_id)
@@ -414,7 +414,9 @@ class TradeService:
         entry = Decimal(str(trade.get("entry_price") or trade.get("avg_fill_price") or 0))
         qty = Decimal(str(close_qty)) if close_qty is not None else Decimal(str(trade["qty"]))
         side_mult = Decimal(1) if trade["side"] == "Buy" else Decimal(-1)
-        realized_pnl = (exit_price - entry) * qty * side_mult if entry else Decimal(0)
+        if not exit_price:
+            logger.warning("exchange_returned_zero_exit_price", extra={"trade_id": str(trade.get("id"))})
+        realized_pnl = (exit_price - entry) * qty * side_mult if entry and exit_price else Decimal(0)
         realized_pnl_pct = (realized_pnl / abs(entry * qty) * 100) if entry and qty else Decimal(0)
         fees = Decimal(str(bybit_result.get("cumExecFee") or 0))
         net_pnl = realized_pnl - fees
