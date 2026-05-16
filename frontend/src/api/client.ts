@@ -724,14 +724,14 @@ export const accountsApi = {
   /** GET /api/v1/accounts/:id/closed-pnl — fetch closed PnL with pagination. */
   getClosedPnl: (id: string, startDate: string, endDate: string, page = 1, limit = 100, signal?: AbortSignal) =>
     request<ClosedPnlResponse>(
-      `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl?start_date=${startDate}&end_date=${endDate}&page=${page}&limit=${limit}`,
+      `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&page=${page}&limit=${limit}`,
       undefined, signal,
     ),
 
   /** GET /api/v1/accounts/:id/closed-pnl/summary — fetch PnL summary. */
   getPnlSummary: (id: string, startDate: string, endDate: string, signal?: AbortSignal) =>
     request<PnlSummary>(
-      `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl/summary?start_date=${startDate}&end_date=${endDate}`,
+      `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl/summary?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
       undefined, signal,
     ),
 
