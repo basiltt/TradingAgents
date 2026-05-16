@@ -36,6 +36,8 @@ def _sanitize_error(msg: str) -> str:
 
 
 class AccountsService:
+    _CACHE_MAX = 500
+
     def __init__(self, db: AsyncAnalysisDB, ws_manager=None, trade_repo=None, trade_service=None):
         self._db = db
         self._cache: Dict[str, tuple[float, Any]] = {}
@@ -58,6 +60,14 @@ class AccountsService:
         return None
 
     def _set_cached(self, key: str, data: Any, ttl: float) -> None:
+        if len(self._cache) >= self._CACHE_MAX:
+            now = time.monotonic()
+            expired = [k for k, (exp, _) in self._cache.items() if now >= exp]
+            for k in expired:
+                del self._cache[k]
+            if len(self._cache) >= self._CACHE_MAX:
+                oldest = min(self._cache, key=lambda k: self._cache[k][0])
+                del self._cache[oldest]
         self._cache[key] = (time.monotonic() + ttl, data)
 
     def _invalidate_cache(self, account_id: str) -> None:
@@ -67,6 +77,7 @@ class AccountsService:
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
+        self._refresh_locks.pop(account_id, None)
         client = self._clients.pop(account_id, None)
         if client:
             try:

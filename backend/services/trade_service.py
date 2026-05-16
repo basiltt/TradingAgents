@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any
 
 from backend.async_persistence import AsyncAnalysisDB
+from backend.utils import serialize_trade as _serialize_trade_shared
 from backend.services.trade_repository import (
     ConcurrentModification,
     InvalidStatusTransition,
@@ -332,7 +333,7 @@ class TradeService:
         qty = Decimal(str(close_qty)) if close_qty is not None else Decimal(str(trade["qty"]))
         side_mult = Decimal(1) if trade["side"] == "Buy" else Decimal(-1)
         realized_pnl = (exit_price - entry) * qty * side_mult if entry else Decimal(0)
-        realized_pnl_pct = (realized_pnl / (entry * qty) * 100) if entry and qty else Decimal(0)
+        realized_pnl_pct = (realized_pnl / abs(entry * qty) * 100) if entry and qty else Decimal(0)
         fees = Decimal(str(bybit_result.get("cumExecFee") or 0))
         net_pnl = realized_pnl - fees
         return {
@@ -345,17 +346,7 @@ class TradeService:
 
     @staticmethod
     def _serialize_trade_for_ws(trade: dict) -> dict:
-        out = {}
-        for k, v in trade.items():
-            if isinstance(v, _uuid.UUID):
-                out[k] = str(v)
-            elif isinstance(v, Decimal):
-                out[k] = float(v)
-            elif hasattr(v, "isoformat"):
-                out[k] = v.isoformat()
-            else:
-                out[k] = v
-        return out
+        return _serialize_trade_shared(trade)
 
     async def _broadcast_trade_event(
         self, event_type: str, trade: dict, *, version_override: int | None = None,

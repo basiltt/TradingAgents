@@ -9,6 +9,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict
 
+from fastapi import HTTPException
+
 logger = logging.getLogger(__name__)
 
 _SECRET_SUBSTRINGS = frozenset({"api_key", "secret", "token", "password"})
@@ -46,7 +48,6 @@ def serialize_trade(trade: dict) -> dict:
 
 def validate_trade_id(trade_id: str) -> None:
     """Validate that trade_id is a valid UUID, raise HTTPException(400) if not."""
-    from fastapi import HTTPException
     try:
         _uuid.UUID(trade_id)
     except (ValueError, AttributeError):
