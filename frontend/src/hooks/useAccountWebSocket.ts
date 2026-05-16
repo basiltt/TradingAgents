@@ -47,7 +47,7 @@ export function useAccountWebSocket() {
       if (now - lastFetchRef.current > 5000) {
         lastFetchRef.current = now;
         fetchAllActiveTrades(dispatch);
-        queryClientRef.current.invalidateQueries({ queryKey: ["trades"] });
+        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
       }
     };
 

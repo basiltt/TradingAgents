@@ -22,16 +22,14 @@ class ClosePositionsService:
         self._ws_manager = ws_manager
         self._trade_service = trade_service
         self._closing_accounts: set[str] = set()
-        self._closing_lock = asyncio.Lock()
 
     def set_trade_service(self, trade_service: Any) -> None:
         self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
-        async with self._closing_lock:
-            if account_id in self._closing_accounts:
-                raise ValueError("Close already in progress for this account")
-            self._closing_accounts.add(account_id)
+        if account_id in self._closing_accounts:
+            raise ValueError("Close already in progress for this account")
+        self._closing_accounts.add(account_id)
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -122,11 +120,10 @@ class ClosePositionsService:
 
     async def close_all_for_rule(self, account_id: str, rule_id: str | None, *, symbols: list[str] | None = None) -> dict[str, Any]:
         """Close positions triggered by a rule or cycle stop. If symbols is provided, only close those symbols."""
-        async with self._closing_lock:
-            if account_id in self._closing_accounts:
-                logger.info("Skipping rule close for %s — close already in progress", account_id)
-                return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
-            self._closing_accounts.add(account_id)
+        if account_id in self._closing_accounts:
+            logger.info("Skipping rule close for %s — close already in progress", account_id)
+            return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
+        self._closing_accounts.add(account_id)
 
         try:
             client = await self._accounts_service.get_client(account_id)
