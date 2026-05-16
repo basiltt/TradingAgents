@@ -264,7 +264,8 @@ class BybitClient:
 
         all_positions: list[dict[str, Any]] = []
         cursor = ""
-        while True:
+        _MAX_PAGES = 50
+        for _page in range(_MAX_PAGES):
             if cursor:
                 params["cursor"] = cursor
             result = await self._request("GET", "/v5/position/list", params)
@@ -272,6 +273,8 @@ class BybitClient:
             cursor = result.get("nextPageCursor", "")
             if not cursor:
                 break
+        else:
+            logger.warning("get_positions: reached max pages (%d), results may be incomplete", _MAX_PAGES)
 
         return [
             {

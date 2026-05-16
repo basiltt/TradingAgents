@@ -27,16 +27,18 @@ logger = logging.getLogger(__name__)
 _GRAPH_EXECUTOR_WORKERS = int(os.environ.get("GRAPH_EXECUTOR_WORKERS", "8"))
 _graph_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _graph_executor_lock = threading.Lock()
+_graph_executor_dead = False
 
 
 def _get_graph_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _graph_executor
+    global _graph_executor, _graph_executor_dead
     with _graph_executor_lock:
-        if _graph_executor is None or _graph_executor._shutdown:
+        if _graph_executor is None or _graph_executor_dead:
             _graph_executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=_GRAPH_EXECUTOR_WORKERS,
                 thread_name_prefix="langgraph",
             )
+            _graph_executor_dead = False
     return _graph_executor
 
 DEFAULT_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
@@ -169,8 +171,10 @@ class AnalysisService:
         completed = initial_active - len(tasks_to_await)
         cancelled = len(tasks_to_await)
         logger.info("Shutdown complete: %d analyses completed, %d cancelled", completed, cancelled)
+        global _graph_executor_dead
         if _graph_executor is not None:
             _graph_executor.shutdown(wait=False, cancel_futures=True)
+            _graph_executor_dead = True
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         run = await self._db.get_run(run_id)

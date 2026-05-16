@@ -102,7 +102,9 @@ class BybitWSClient:
         if not self._session or self._session.closed:
             self._session = aiohttp.ClientSession()
 
-        self._ws = await self._session.ws_connect(self._url, heartbeat=None)
+        self._ws = await self._session.ws_connect(
+            self._url, heartbeat=None, timeout=15,
+        )
         logger.info("Bybit WS connected to %s", self._url)
 
         await self._ws.send_json(self._auth_payload())
@@ -165,6 +167,13 @@ class BybitWSClient:
         elif topic == "order":
             await self._emit_orders(event_data)
 
+    async def _safe_emit(self, event: dict[str, Any]) -> None:
+        """Call the event callback, catching exceptions to protect the WS loop."""
+        try:
+            await self._on_event(event)
+        except Exception:
+            logger.exception("on_event callback failed for event type=%s", event.get("type"))
+
     async def _emit_wallet(self, data: list[dict]) -> None:
         for account in data:
             coins = account.get("coin", [])
@@ -176,7 +185,7 @@ class BybitWSClient:
                     total_upl = str(float(total_upl) + float(upl))
                 except (ValueError, TypeError):
                     pass
-            await self._on_event({
+            await self._safe_emit({
                 "type": "wallet_update",
                 "data": {
                     "totalEquity": total_equity,
@@ -187,7 +196,7 @@ class BybitWSClient:
 
     async def _emit_positions(self, data: list[dict]) -> None:
         for pos in data:
-            await self._on_event({
+            await self._safe_emit({
                 "type": "position_update",
                 "data": {
                     "symbol": pos.get("symbol", ""),
@@ -203,7 +212,7 @@ class BybitWSClient:
 
     async def _emit_executions(self, data: list[dict]) -> None:
         for ex in data:
-            await self._on_event({
+            await self._safe_emit({
                 "type": "execution",
                 "data": {
                     "symbol": ex.get("symbol", ""),
@@ -216,7 +225,7 @@ class BybitWSClient:
 
     async def _emit_orders(self, data: list[dict]) -> None:
         for order in data:
-            await self._on_event({
+            await self._safe_emit({
                 "type": "order_update",
                 "data": {
                     "orderId": order.get("orderId", ""),

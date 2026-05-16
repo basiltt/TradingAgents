@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
+import { useAccountPolling } from "@/hooks/useAccountPolling";
 import { AccountCard } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +11,7 @@ export function AccountsDashboard() {
   const dispatch = useAppDispatch();
   const { dashboard, filterType, status, error } = useAppSelector((s) => s.accounts);
   const [addOpen, setAddOpen] = useState(false);
+  useAccountPolling();
 
   const fetchDashboard = useCallback(async (silent = false) => {
     if (!silent) dispatch(setLoading());
@@ -21,12 +23,9 @@ export function AccountsDashboard() {
     }
   }, [dispatch]);
 
+  // Initial fetch only — polling is handled by useAccountPolling
   useEffect(() => {
     fetchDashboard();
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") fetchDashboard(true);
-    }, 3_000);
-    return () => clearInterval(interval);
   }, [fetchDashboard]);
 
   const filtered = dashboard.filter((card) => {

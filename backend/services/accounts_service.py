@@ -71,7 +71,8 @@ class AccountsService:
         if client:
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(client.close())
+                task = loop.create_task(client.close())
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             except RuntimeError:
                 pass
 

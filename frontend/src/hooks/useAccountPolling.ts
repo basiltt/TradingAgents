@@ -11,6 +11,7 @@ export function useAccountPolling() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const lastManualRef = useRef<number>(0);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refreshCooldown, setRefreshCooldown] = useState(false);
 
   const poll = useCallback(async () => {
@@ -32,7 +33,8 @@ export function useAccountPolling() {
     }
     lastManualRef.current = now;
     setRefreshCooldown(true);
-    setTimeout(() => setRefreshCooldown(false), MANUAL_REFRESH_COOLDOWN_MS);
+    if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    cooldownTimerRef.current = setTimeout(() => setRefreshCooldown(false), MANUAL_REFRESH_COOLDOWN_MS);
     await poll();
   }, [poll]);
 
@@ -49,6 +51,7 @@ export function useAccountPolling() {
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
       controllerRef.current?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
