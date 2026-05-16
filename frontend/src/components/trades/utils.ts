@@ -58,7 +58,7 @@ function getQtyNf(maxDecimals: number): Intl.NumberFormat {
 }
 
 export function formatQty(value: number | null | undefined, decimals = 4): string {
-  if (value == null) return "—";
+  if (value == null) return "--";
   return getQtyNf(decimals).format(value);
 }
 

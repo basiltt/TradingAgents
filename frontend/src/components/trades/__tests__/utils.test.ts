@@ -43,12 +43,12 @@ describe("formatPrice", () => {
 });
 
 describe("formatQty", () => {
-  it("returns '—' for null", () => {
-    expect(formatQty(null)).toBe("—");
+  it("returns '--' for null", () => {
+    expect(formatQty(null)).toBe("--");
   });
 
-  it("returns '—' for undefined", () => {
-    expect(formatQty(undefined)).toBe("—");
+  it("returns '--' for undefined", () => {
+    expect(formatQty(undefined)).toBe("--");
   });
 
   it("formats number", () => {
