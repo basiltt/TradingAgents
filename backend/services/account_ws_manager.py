@@ -79,6 +79,8 @@ class AccountWSManager:
                 dead.append(q)
         for q in dead:
             self._frontend_queues.discard(q)
+        if dead:
+            logger.warning("frontend_queue_full_evicted", extra={"dropped_count": len(dead)})
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=512)

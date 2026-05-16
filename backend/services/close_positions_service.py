@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from decimal import Decimal
 from typing import Any
 
@@ -30,6 +31,8 @@ class ClosePositionsService:
         if account_id in self._closing_accounts:
             raise ValueError("Close already in progress for this account")
         self._closing_accounts.add(account_id)
+        t0 = time.monotonic()
+        logger.info("close_all_positions_start", extra={"account_id": account_id})
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -107,7 +110,7 @@ class ClosePositionsService:
                 self._trade_service._invalidate_stats_cache(account_id)
 
             await self._broadcast_close_event(account_id, "manual", closed, failed, len(positions))
-            logger.info("close_all_positions_done", extra={"account_id": account_id, "total": len(positions), "closed": closed, "failed": failed})
+            logger.info("close_all_positions_done", extra={"account_id": account_id, "total": len(positions), "closed": closed, "failed": failed, "elapsed_ms": int((time.monotonic() - t0) * 1000)})
 
             return {
                 "total": len(positions),
@@ -125,6 +128,7 @@ class ClosePositionsService:
             logger.info("Skipping rule close for %s — close already in progress", account_id)
             return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
         self._closing_accounts.add(account_id)
+        t0 = time.monotonic()
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -167,6 +171,7 @@ class ClosePositionsService:
                             "cumExecQty": result.get("cumExecQty"),
                         }
                     except BybitAPIError as e:
+                        logger.warning("rule_close_bybit_error", extra={"symbol": pos["symbol"], "ret_code": e.ret_code})
                         return {"symbol": pos["symbol"], "side": pos["side"], "status": "failed", "error": f"Order rejected (code {e.ret_code})"}
                     except Exception as e:
                         logger.warning("rule_close_position_failed", extra={"symbol": pos["symbol"], "error": str(e)[:200]})
@@ -193,7 +198,7 @@ class ClosePositionsService:
             self._accounts_service.invalidate_cache(account_id)
 
             await self._broadcast_close_event(account_id, "rule", closed, failed, len(positions))
-            logger.info("close_all_for_rule_done", extra={"account_id": account_id, "rule_id": rule_id, "total": len(positions), "closed": closed, "failed": failed})
+            logger.info("close_all_for_rule_done", extra={"account_id": account_id, "rule_id": rule_id, "total": len(positions), "closed": closed, "failed": failed, "elapsed_ms": int((time.monotonic() - t0) * 1000)})
 
             return {"total": len(positions), "closed": closed, "failed": failed, "results": results}
         finally:
