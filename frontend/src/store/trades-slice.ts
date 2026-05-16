@@ -134,26 +134,33 @@ const tradesSlice = createSlice({
       if (state.closeModalTradeId === action.payload) state.closeModalTradeId = null;
       state.lastUpdated = Date.now();
     },
+    /** Switch between active and history tabs. */
     setActiveTab(state, action: PayloadAction<"active" | "history">) {
       state.activeTab = action.payload;
     },
+    /** Merge partial filter updates into current filters. */
     setFilters(state, action: PayloadAction<Partial<TradeFilters>>) {
       state.filters = { ...state.filters, ...action.payload };
     },
+    /** Set the column used for trade list sorting. */
     setSortColumn(state, action: PayloadAction<string>) {
       state.sortColumn = action.payload;
     },
+    /** Set sort direction (asc/desc). */
     setSortDirection(state, action: PayloadAction<"asc" | "desc">) {
       state.sortDirection = action.payload;
     },
+    /** Select a trade by ID; clears detail when null. */
     setSelectedTradeId(state, action: PayloadAction<string | null>) {
       state.selectedTradeId = action.payload;
       if (!action.payload) state.selectedTrade = null;
     },
+    /** Set the selected trade object and sync selectedTradeId. */
     setSelectedTrade(state, action: PayloadAction<Trade | null>) {
       state.selectedTrade = action.payload;
       state.selectedTradeId = action.payload?.id ?? null;
     },
+    /** Set or clear the trade ID shown in the close-confirmation modal. */
     setCloseModalTradeId(state, action: PayloadAction<string | null>) {
       state.closeModalTradeId = action.payload;
     },
@@ -170,6 +177,7 @@ const tradesSlice = createSlice({
       }
       state.pendingActions[trade_id] = { action: act, startedAt: Date.now() };
     },
+    /** Clear pending action and snapshot after successful mutation. */
     clearPendingAction(state, action: PayloadAction<string>) {
       delete state.pendingActions[action.payload];
       delete state.optimisticSnapshots[action.payload];
@@ -183,6 +191,7 @@ const tradesSlice = createSlice({
       delete state.optimisticSnapshots[action.payload];
       delete state.pendingActions[action.payload];
     },
+    /** Set or clear the close-all-in-progress flag for an account. */
     setPendingCloseAll(
       state,
       action: PayloadAction<{ account_id: string; pending: boolean }>,
@@ -234,12 +243,15 @@ const tradesSlice = createSlice({
         }
       }
     },
+    /** Set loading state for active trades fetch. */
     setIsFetchingActiveTrades(state, action: PayloadAction<boolean>) {
       state.isFetchingActiveTrades = action.payload;
     },
+    /** Track WebSocket connection status. */
     setWsConnected(state, action: PayloadAction<boolean>) {
       state.wsConnected = action.payload;
     },
+    /** Record timestamp of last data update. */
     setLastUpdated(state, action: PayloadAction<number>) {
       state.lastUpdated = action.payload;
     },

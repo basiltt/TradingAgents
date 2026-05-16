@@ -3,6 +3,7 @@ import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard } from "@/store/accounts-slice";
 
+/** Minimum delay between manual refresh calls to prevent API flooding (ms). */
 const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
 
 /**

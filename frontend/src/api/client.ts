@@ -675,7 +675,9 @@ export interface PlaceTradeResponse {
   usdt_amount: string;
 }
 
+/** Accounts API — CRUD, portfolio, analytics, snapshots, and trade management endpoints. */
 export const accountsApi = {
+  /** GET /api/v1/accounts — list accounts with optional type filter. */
   list: (params?: { account_type?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.account_type) sp.set("account_type", params.account_type);
@@ -683,45 +685,57 @@ export const accountsApi = {
     return request<TradingAccount[]>(`/api/v1/accounts${qs ? `?${qs}` : ""}`, undefined, signal);
   },
 
+  /** POST /api/v1/accounts — create a new trading account. */
   create: (data: { label: string; account_type: string; api_key: string; api_secret: string }) =>
     mutate<TradingAccount>("POST", "/api/v1/accounts", data),
 
+  /** GET /api/v1/accounts/:id — fetch a single account. */
   get: (id: string, signal?: AbortSignal) =>
     request<TradingAccount>(`/api/v1/accounts/${encodeURIComponent(id)}`, undefined, signal),
 
+  /** PATCH /api/v1/accounts/:id — update label or active status. */
   update: (id: string, data: { label?: string; is_active?: boolean }) =>
     mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}`, data),
 
+  /** PATCH /api/v1/accounts/:id/credentials — rotate API key/secret. */
   rotateCredentials: (id: string, data: { api_key: string; api_secret: string }) =>
     mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}/credentials`, data),
 
+  /** DELETE /api/v1/accounts/:id — delete an account. */
   delete: (id: string) =>
     mutate<{ status: string }>("DELETE", `/api/v1/accounts/${encodeURIComponent(id)}`),
 
+  /** POST /api/v1/accounts/:id/test — test exchange connection. */
   testConnection: (id: string) =>
     mutate<{ success: boolean; uid?: string; error?: string }>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/test`),
 
+  /** GET /api/v1/accounts/:id/wallet — fetch wallet balance. */
   getWallet: (id: string, signal?: AbortSignal) =>
     request<WalletBalance>(`/api/v1/accounts/${encodeURIComponent(id)}/wallet`, undefined, signal),
 
+  /** GET /api/v1/accounts/:id/positions — fetch open positions. */
   getPositions: (id: string, signal?: AbortSignal) =>
     request<Position[]>(`/api/v1/accounts/${encodeURIComponent(id)}/positions`, undefined, signal),
 
+  /** GET /api/v1/accounts/:id/orders — fetch open orders. */
   getOrders: (id: string, signal?: AbortSignal) =>
     request<OpenOrder[]>(`/api/v1/accounts/${encodeURIComponent(id)}/orders`, undefined, signal),
 
+  /** GET /api/v1/accounts/:id/closed-pnl — fetch closed PnL with pagination. */
   getClosedPnl: (id: string, startDate: string, endDate: string, page = 1, limit = 100, signal?: AbortSignal) =>
     request<ClosedPnlResponse>(
       `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl?start_date=${startDate}&end_date=${endDate}&page=${page}&limit=${limit}`,
       undefined, signal,
     ),
 
+  /** GET /api/v1/accounts/:id/closed-pnl/summary — fetch PnL summary. */
   getPnlSummary: (id: string, startDate: string, endDate: string, signal?: AbortSignal) =>
     request<PnlSummary>(
       `/api/v1/accounts/${encodeURIComponent(id)}/closed-pnl/summary?start_date=${startDate}&end_date=${endDate}`,
       undefined, signal,
     ),
 
+  /** GET /api/v1/portfolio/dashboard — fetch dashboard cards for all accounts. */
   getDashboard: (params?: { account_type?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.account_type) sp.set("account_type", params.account_type);
@@ -729,18 +743,22 @@ export const accountsApi = {
     return request<DashboardCard[]>(`/api/v1/portfolio/dashboard${qs ? `?${qs}` : ""}`, undefined, signal);
   },
 
+  /** GET /api/v1/portfolio/summary — fetch aggregate portfolio summary. */
   getPortfolioSummary: (signal?: AbortSignal) =>
     request<{ total_equity: string; total_unrealised_pnl: string; active_accounts: number; total_accounts: number }>(
       "/api/v1/portfolio/summary", undefined, signal,
     ),
 
   // Analytics & Snapshots
+  /** POST /api/v1/accounts/:id/snapshots — take a manual snapshot. */
   takeSnapshot: (id: string) =>
     mutate<Record<string, unknown>>("POST", `/api/v1/accounts/${encodeURIComponent(id)}/snapshots`),
 
+  /** POST /api/v1/snapshots/all — take snapshots for all active accounts. */
   takeAllSnapshots: () =>
     mutate<{ snapshots: Record<string, unknown>[]; count: number }>("POST", "/api/v1/snapshots/all"),
 
+  /** GET /api/v1/accounts/:id/snapshots — fetch daily snapshots with date range. */
   getSnapshots: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.start_date) sp.set("start_date", params.start_date);
@@ -753,6 +771,7 @@ export const accountsApi = {
     );
   },
 
+  /** GET /api/v1/accounts/:id/analytics — fetch performance analytics. */
   getAnalytics: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.start_date) sp.set("start_date", params.start_date);
@@ -765,6 +784,7 @@ export const accountsApi = {
     );
   },
 
+  /** GET /api/v1/portfolio/snapshots — fetch portfolio-wide snapshots. */
   getPortfolioSnapshots: (params?: { start_date?: string; end_date?: string; period?: string; account_type?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.start_date) sp.set("start_date", params.start_date);
@@ -778,6 +798,7 @@ export const accountsApi = {
     );
   },
 
+  /** GET /api/v1/portfolio/analytics — fetch portfolio-wide analytics. */
   getPortfolioAnalytics: (params?: { start_date?: string; end_date?: string; period?: string; account_type?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.start_date) sp.set("start_date", params.start_date);
@@ -791,9 +812,11 @@ export const accountsApi = {
     );
   },
 
+  /** PATCH /api/v1/accounts/:id/analytics-inclusion — toggle analytics opt-in. */
   setAnalyticsInclusion: (id: string, include: boolean) =>
     mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}/analytics-inclusion`, { include }),
 
+  /** GET /api/v1/accounts/:id/snapshots/count — count snapshots matching filters. */
   countSnapshots: (id: string | null, params?: { preset?: string; before?: string; after?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.preset) sp.set("preset", params.preset);
@@ -808,6 +831,7 @@ export const accountsApi = {
     );
   },
 
+  /** DELETE /api/v1/accounts/:id/snapshots/cleanup — delete snapshots matching filters. */
   cleanupSnapshots: (id: string | null, params?: { preset?: string; before?: string; after?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.preset) sp.set("preset", params.preset);
@@ -823,27 +847,32 @@ export const accountsApi = {
   },
 
   // ── Close Positions ───────────────────────────────────────────
-
+  /** POST /api/v1/accounts/:id/positions/close-all — close all open positions. */
   closeAllPositions: (accountId: string, signal?: AbortSignal) =>
     mutate<CloseAllResult>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/positions/close-all`, undefined, signal),
 
+  /** GET /api/v1/accounts/:id/close-rules — list close rules. */
   getCloseRules: (accountId: string, signal?: AbortSignal) =>
     request<CloseRule[]>(`/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules`, undefined, signal),
 
+  /** POST /api/v1/accounts/:id/close-rules — create a close rule. */
   createCloseRule: (accountId: string, data: CreateCloseRuleData, signal?: AbortSignal) =>
     mutate<CloseRule>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules`, data, signal),
 
+  /** PUT /api/v1/accounts/:id/close-rules/:ruleId — update a close rule. */
   updateCloseRule: (accountId: string, ruleId: string, data: UpdateCloseRuleData, signal?: AbortSignal) =>
     mutate<CloseRule>("PUT", `/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules/${encodeURIComponent(ruleId)}`, data, signal),
 
+  /** DELETE /api/v1/accounts/:id/close-rules/:ruleId — delete a close rule. */
   deleteCloseRule: (accountId: string, ruleId: string, signal?: AbortSignal) =>
     mutate<{ status: string }>("DELETE", `/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules/${encodeURIComponent(ruleId)}`, undefined, signal),
 
+  /** GET /api/v1/accounts/:id/close-executions — list close execution history. */
   getCloseExecutions: (accountId: string, page = 1, limit = 20, signal?: AbortSignal) =>
     request<CloseExecutionsPage>(`/api/v1/accounts/${encodeURIComponent(accountId)}/close-executions?page=${page}&limit=${limit}`, undefined, signal),
 
   // ── Place Trade ─────────────────────────────────────────────────
-
+  /** POST /api/v1/accounts/:id/trade — place a new trade on the exchange. */
   placeTrade: (accountId: string, data: PlaceTradeRequest, signal?: AbortSignal) =>
     mutate<PlaceTradeResponse>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/trade`, data, signal),
 };
@@ -1079,10 +1108,13 @@ export interface PaginatedCycleList {
   limit: number;
 }
 
+/** Trading cycles API — create, list, stop cycles and preview filters. */
 export const cyclesApi = {
+  /** POST /api/v1/trading-cycles — create a new trading cycle. */
   create: (data: CreateCycleRequest) =>
     mutate<CycleResponse>("POST", "/api/v1/trading-cycles", data),
 
+  /** GET /api/v1/trading-cycles — list cycles with pagination and status filter. */
   list: (params?: { offset?: number; limit?: number; status?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.offset != null) sp.set("offset", String(params.offset));
@@ -1092,15 +1124,19 @@ export const cyclesApi = {
     return request<PaginatedCycleList>(`/api/v1/trading-cycles${qs ? `?${qs}` : ""}`, undefined, signal);
   },
 
+  /** GET /api/v1/trading-cycles/:id — fetch cycle details. */
   get: (cycleId: number, signal?: AbortSignal) =>
     request<CycleDetail>(`/api/v1/trading-cycles/${cycleId}`, undefined, signal),
 
+  /** POST /api/v1/trading-cycles/:id/stop — stop a running cycle. */
   stop: (cycleId: number) =>
     mutate<CycleResponse>("POST", `/api/v1/trading-cycles/${cycleId}/stop`),
 
+  /** POST /api/v1/trading-cycles/dry-run — simulate cycle without executing. */
   dryRun: (data: CreateCycleRequest) =>
     mutate<DryRunResponse>("POST", "/api/v1/trading-cycles/dry-run", data),
 
+  /** GET /api/v1/scans/:scanId/filter-preview — preview cycle filter results. */
   filterPreview: (scanId: string, params?: { min_score?: number; min_confidence?: string; signal_filter?: string }, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (params?.min_score != null) sp.set("min_score", String(params.min_score));
@@ -1111,7 +1147,9 @@ export const cyclesApi = {
   },
 };
 
+/** Cross-account trades API — list, stats, events, close, and cancel. */
 export const tradesApi = {
+  /** GET /api/v1/trades — list trades across all accounts with filters and pagination. */
   list: (
     params?: {
       account_id?: string[];
@@ -1142,6 +1180,7 @@ export const tradesApi = {
     return request<TradeListResponse>(`/api/v1/trades${qs ? `?${qs}` : ""}`, undefined, signal);
   },
 
+  /** GET /api/v1/trades/stats — aggregate trade statistics across accounts. */
   getStats: (accountIds?: string[], signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (accountIds?.length) sp.set("account_id", accountIds.join(","));
@@ -1149,6 +1188,7 @@ export const tradesApi = {
     return request<TradeStatsResponse>(`/api/v1/trades/stats${qs ? `?${qs}` : ""}`, undefined, signal);
   },
 
+  /** GET /api/v1/accounts/:id/trades/:tradeId/events — fetch trade audit events. */
   getEvents: (accountId: string, tradeId: string, signal?: AbortSignal) =>
     request<TradeEventsResponse>(
       `/api/v1/accounts/${encodeURIComponent(accountId)}/trades/${encodeURIComponent(tradeId)}/events`,
@@ -1156,6 +1196,7 @@ export const tradesApi = {
       signal,
     ),
 
+  /** POST /api/v1/accounts/:id/trades/:tradeId/close — close a trade (full or partial). */
   close: (accountId: string, tradeId: string, data?: { qty?: number; close_reason?: string }, signal?: AbortSignal) =>
     mutate<Trade>(
       "POST",
@@ -1164,6 +1205,7 @@ export const tradesApi = {
       signal,
     ),
 
+  /** POST /api/v1/accounts/:id/trades/:tradeId/cancel — cancel a pending trade. */
   cancel: (accountId: string, tradeId: string, signal?: AbortSignal) =>
     mutate<void>(
       "POST",

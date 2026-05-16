@@ -55,43 +55,54 @@ const accountsSlice = createSlice({
   name: "accounts",
   initialState,
   reducers: {
+    /** Replace accounts list from API response. */
     setAccounts(state, action: PayloadAction<TradingAccount[]>) {
       state.accounts = action.payload;
       state.status = "success";
       state.error = null;
     },
+    /** Replace dashboard cards from API response. */
     setDashboard(state, action: PayloadAction<DashboardCard[]>) {
       state.dashboard = action.payload;
       state.status = "success";
       state.error = null;
     },
+    /** Set loading status. */
     setLoading(state) {
       state.status = "loading";
     },
+    /** Set error status with message. */
     setError(state, action: PayloadAction<string>) {
       state.status = "error";
       state.error = action.payload;
     },
+    /** Set dashboard filter (all/demo/live). */
     setFilterType(state, action: PayloadAction<"all" | "demo" | "live">) {
       state.filterType = action.payload;
     },
+    /** Select an account by ID for detail view. */
     setSelectedAccount(state, action: PayloadAction<string | null>) {
       state.selectedAccountId = action.payload;
     },
+    /** Configure polling interval in milliseconds. */
     setPollingInterval(state, action: PayloadAction<number>) {
       state.pollingIntervalMs = action.payload;
     },
+    /** Record timestamp of last manual refresh for an account. */
     recordManualRefresh(state, action: PayloadAction<string>) {
       state.lastManualRefresh[action.payload] = Date.now();
     },
+    /** Prepend a newly created account. */
     addAccount(state, action: PayloadAction<TradingAccount>) {
       state.accounts.unshift(action.payload);
     },
+    /** Remove an account from both lists and direction cache. */
     removeAccount(state, action: PayloadAction<string>) {
       state.accounts = state.accounts.filter((a) => a.id !== action.payload);
       state.dashboard = state.dashboard.filter((d) => d.id !== action.payload);
       delete state.directions[action.payload];
     },
+    /** Replace an account in the list after update. */
     updateAccountInList(state, action: PayloadAction<TradingAccount>) {
       const idx = state.accounts.findIndex((a) => a.id === action.payload.id);
       if (idx >= 0) state.accounts[idx] = action.payload;

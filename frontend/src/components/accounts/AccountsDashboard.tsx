@@ -14,6 +14,7 @@ export function AccountsDashboard() {
   const [addOpen, setAddOpen] = useState(false);
   useAccountPolling();
 
+  /** Fetch dashboard cards; if silent, skips loading state to avoid UI flicker during polling. */
   const fetchDashboard = useCallback(async (silent = false) => {
     if (!silent) dispatch(setLoading());
     try {
@@ -34,6 +35,7 @@ export function AccountsDashboard() {
     return card.account_type === filterType;
   });
 
+  /** Sum a numeric field across filtered dashboard cards. */
   const sumField = (field: keyof typeof filtered[number]) =>
     filtered.reduce((sum, c) => {
       const v = parseFloat(String(c[field] ?? "0"));
