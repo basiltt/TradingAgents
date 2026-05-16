@@ -205,7 +205,9 @@ class TradeService:
                 position_idx=trade.get("position_idx", 0),
             )
         except Exception as e:
-            logger.warning("bybit_close_failed", extra={"trade_id": trade_id, "error": str(e)})
+            logger.warning("bybit_close_failed", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"], "error": str(e),
+            })
             await self._handle_close_failure(client, trade, version)
             raise
 
@@ -220,6 +222,10 @@ class TradeService:
 
         self._invalidate_stats_cache(account_id)
         await self._broadcast_trade_event("trade.closed", closed)
+        logger.info("close_full_done", extra={
+            "trade_id": trade_id, "account_id": account_id,
+            "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
+        })
         return closed
 
     async def _close_partial(
@@ -247,7 +253,10 @@ class TradeService:
                 position_idx=trade.get("position_idx", 0),
             )
         except Exception as e:
-            logger.warning("bybit_partial_close_failed", extra={"trade_id": trade_id, "error": str(e)})
+            logger.warning("bybit_partial_close_failed", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
+                "qty": qty, "error": str(e),
+            })
             await self._handle_close_failure(client, trade, version)
             raise
 
@@ -273,6 +282,10 @@ class TradeService:
                 )
 
         self._invalidate_stats_cache(account_id)
+        logger.info("close_partial_done", extra={
+            "trade_id": trade_id, "account_id": account_id, "closed_qty": qty,
+            "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
+        })
         await self._broadcast_trade_event("trade.closed", child)
 
         new_filled = previously_filled + qty

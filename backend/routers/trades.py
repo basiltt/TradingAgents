@@ -182,6 +182,7 @@ async def list_trades_cross_account(
         )
         for aid, positions in zip(active_account_ids, positions_by_account):
             if isinstance(positions, Exception):
+                logger.warning("position_fetch_failed", extra={"account_id": aid, "error": str(positions)[:200]})
                 continue
             for pos in positions:
                 if float(pos.get("size", 0)) == 0:
@@ -222,6 +223,17 @@ async def get_trades_stats_cross_account(
     except ValueError as e:
         logger.warning("trades_stats_validation_error", extra={"error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
+
+    accounts_svc = _get_accounts_service(request)
+    all_accounts = await accounts_svc.list_accounts()
+    registered_ids = {a["id"] for a in all_accounts}
+
+    if requested_ids:
+        account_ids = [aid for aid in requested_ids if aid in registered_ids]
+    else:
+        account_ids = list(registered_ids)
+
+    if not account_ids:
         return TradeStatsResponse(
             total_trades=0, open_count=0, win_rate=0, avg_pnl=0, total_pnl=0,
         ).model_dump()

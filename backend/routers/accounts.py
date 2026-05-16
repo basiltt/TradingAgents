@@ -112,12 +112,11 @@ async def create_account(request: Request):
         logger.info("create_account_ok", extra={"account_id": account.get("id")})
         return account
     except ValueError as e:
+        logger.warning("create_account_credential_failed", extra={"error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
+        logger.error("create_account_bybit_error", extra={"ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
-
-
-@router.get("/accounts")
 async def list_accounts(
     request: Request,
     account_type: Optional[str] = Query(None, description="Filter by account type: demo or live"),
@@ -175,14 +174,14 @@ async def rotate_credentials(request: Request, account_id: str):
         account = await svc.rotate_credentials(account_id, req.api_key, req.api_secret)
         if not account:
             return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
+        logger.info("rotate_credentials_ok", extra={"account_id": account_id})
         return account
     except ValueError as e:
+        logger.warning("rotate_credentials_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
-
-
-@router.delete("/accounts/{account_id}")
+        logger.error("rotate_credentials_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
+        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)("/accounts/{account_id}")
 async def delete_account(request: Request, account_id: str):
     """Soft-delete an account and invalidate cached data."""
     _validate_account_id(account_id)
@@ -257,6 +256,7 @@ async def place_trade(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 400)
     except BybitAPIError as e:
+        logger.error("place_trade_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 

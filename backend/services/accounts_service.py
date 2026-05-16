@@ -182,6 +182,7 @@ class AccountsService:
         if source not in _VALID_PLACEMENT_SOURCES:
             raise ValueError(f"Invalid source: {source}. Allowed: {_VALID_PLACEMENT_SOURCES}")
 
+        t0 = time.monotonic()
         client = await self._build_client(account_id)
 
         account = await self._db.get_account(account_id)
@@ -193,8 +194,11 @@ class AccountsService:
         else:
             side = "Sell" if signal_direction == "buy" else "Buy"
 
-        logger.info("Placing trade: %s %s %sx, capital=%.2f%%/%.2f, signal=%s/%s",
-                     side, symbol, leverage, capital_pct, base_capital, signal_direction, trade_direction)
+        logger.info("place_trade_start", extra={
+            "account_id": account_id, "side": side, "symbol": symbol,
+            "leverage": leverage, "capital_pct": capital_pct, "base_capital": base_capital,
+            "signal": signal_direction, "direction": trade_direction,
+        })
 
         mark_price_str, instrument = await asyncio.gather(
             client.get_mark_price(symbol),
@@ -272,10 +276,10 @@ class AccountsService:
             if sl_price > 0:
                 sl_price_str = round_price(sl_price)
 
-        logger.info(
-            "Order params: %s %s qty=%s @ mark=%s, TP=%s SL=%s, leverage=%dx",
-            side, symbol, qty_rounded, mark_price, tp_price_str, sl_price_str, leverage,
-        )
+        logger.info("place_trade_order_params", extra={
+            "side": side, "symbol": symbol, "qty": str(qty_rounded),
+            "mark_price": str(mark_price), "tp": tp_price_str, "sl": sl_price_str, "leverage": leverage,
+        })
 
         try:
             result = await client.place_market_order(
@@ -333,9 +337,13 @@ class AccountsService:
                     "order_id": result.get("orderId", ""),
                 })
 
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("place_trade_done", extra={
+            "account_id": account_id, "symbol": symbol, "side": side,
+            "trade_id": str(trade_record["id"]) if trade_record else None,
+            "duration_ms": round(elapsed_ms, 1),
+        })
         return {
-            "orderId": result.get("orderId", ""),
-            "symbol": symbol,
             "side": side,
             "leverage": leverage,
             "max_leverage": max_leverage,
@@ -426,6 +434,7 @@ class AccountsService:
             _now_iso(),
         )
         self.invalidate_cache(account_id)
+        logger.info("rotate_credentials_done", extra={"account_id": account_id})
         return await self._db.get_account(account_id)
 
     async def delete_account(self, account_id: str) -> bool:
@@ -475,6 +484,7 @@ class AccountsService:
             )
             return data
         except BybitAPIError as e:
+            logger.warning("get_wallet_failed", extra={"account_id": account_id, "error": e.ret_msg[:200]})
             await self._db.update_account(
                 account_id,
                 last_error=_sanitize_error(e.ret_msg), updated_at=_now_iso(),

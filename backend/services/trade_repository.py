@@ -154,6 +154,9 @@ class TradeRepository:
             VALUES ($1, 'placed', 'pending', $2)""",
             trade["id"], actor,
         )
+        logger.info("trade_created", extra={
+            "trade_id": str(trade["id"]), "account_id": account_id, "symbol": symbol, "side": side,
+        })
         return trade
 
     async def update_trade_status(
