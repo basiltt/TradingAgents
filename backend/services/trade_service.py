@@ -243,7 +243,7 @@ class TradeService:
                     close_reason=close_reason,
                     close_rule_id=close_rule_id,
                 )
-                await self._repo.update_trade_status(
+                updated_trade = await self._repo.update_trade_status(
                     conn, trade_id=trade_id, account_id=account_id,
                     expected_version=version, new_status="partially_closed",
                     event_type="closed", actor="system",
@@ -260,7 +260,7 @@ class TradeService:
                 pc_payload = {
                     "trade_id": trade_id,
                     "account_id": account_id,
-                    "version": trade["version"] + 2,
+                    "version": updated_trade["version"] if updated_trade else trade["version"],
                     "filled_qty": new_filled,
                     "remaining_qty": remaining,
                     "realized_pnl": float(child.get("net_pnl") or 0) if child else None,

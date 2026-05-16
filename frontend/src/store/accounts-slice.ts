@@ -11,6 +11,8 @@ import type { DashboardCard, TradingAccount } from "@/api/client";
 
 export type Direction = "up" | "down" | "neutral";
 
+const DEFAULT_POLLING_INTERVAL_MS = 60_000;
+
 interface RealtimeEvent {
   account_id: string;
   type: string;
@@ -37,7 +39,7 @@ const initialState: AccountsState = {
   error: null,
   filterType: "all",
   selectedAccountId: null,
-  pollingIntervalMs: 60000,
+  pollingIntervalMs: DEFAULT_POLLING_INTERVAL_MS,
   lastManualRefresh: {},
   directions: {},
   closeExecutionSeq: 0,

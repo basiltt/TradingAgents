@@ -98,10 +98,6 @@ class AccountsService:
                 del self._cache[oldest]
         self._cache[key] = (time.monotonic() + ttl, data)
 
-    def _invalidate_cache(self, account_id: str) -> None:
-        """Alias for invalidate_cache (internal use)."""
-        self.invalidate_cache(account_id)
-
     def invalidate_cache(self, account_id: str) -> None:
         """Remove all cached data and close the exchange client for an account."""
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
@@ -113,7 +109,7 @@ class AccountsService:
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(client.close())
-                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                task.add_done_callback(lambda t: logger.warning("client_close_failed", exc_info=t.exception()) if not t.cancelled() and t.exception() else None)
             except RuntimeError:
                 pass
 
@@ -284,7 +280,7 @@ class AccountsService:
             stop_loss=sl_price_str,
         )
 
-        self._invalidate_cache(account_id)
+        self.invalidate_cache(account_id)
 
         trade_record = None
         if self._trade_repo:
@@ -388,7 +384,7 @@ class AccountsService:
             fields["is_active"] = 1 if is_active else 0
         await self._db.update_account(account_id, **fields)
         if is_active is False:
-            self._invalidate_cache(account_id)
+            self.invalidate_cache(account_id)
         return await self._db.get_account(account_id)
 
     async def rotate_credentials(
@@ -414,14 +410,14 @@ class AccountsService:
             encrypt_value(api_secret),
             _now_iso(),
         )
-        self._invalidate_cache(account_id)
+        self.invalidate_cache(account_id)
         return await self._db.get_account(account_id)
 
     async def delete_account(self, account_id: str) -> bool:
         """Soft-delete an account and invalidate its cache/client."""
         result = await self._db.soft_delete_account(account_id, _now_iso())
         if result:
-            self._invalidate_cache(account_id)
+            self.invalidate_cache(account_id)
             if self._ws_manager:
                 asyncio.ensure_future(self._ws_manager.stop_account(account_id))
         return result

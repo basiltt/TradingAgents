@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { setDashboard } from "@/store/accounts-slice";
+import { setDashboard, setLoading } from "@/store/accounts-slice";
 
 /** Minimum delay between manual refresh calls to prevent API flooding (ms). */
 const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
@@ -44,9 +44,15 @@ export function useAccountPolling() {
     await poll();
   }, [poll]);
 
+  const isFirstPollRef = useRef(true);
+
   useEffect(() => {
     if (pollingIntervalMs <= 0) return;
 
+    if (isFirstPollRef.current) {
+      dispatch(setLoading());
+      isFirstPollRef.current = false;
+    }
     poll();
     intervalRef.current = setInterval(poll, pollingIntervalMs);
 

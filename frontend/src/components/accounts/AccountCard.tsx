@@ -23,6 +23,7 @@ interface ResolvedRule {
 
 /** Trigger types rendered as goal-targets (progress toward); all others are floor-limits (buffer remaining). */
 const TARGET_TYPES = new Set(["BALANCE_ABOVE", "PNL_ABOVE", "EQUITY_RISE_PCT"]);
+const FLOOR_WARNING_THRESHOLD_PCT = 25;
 
 /**
  * Resolve a rule trigger into display data (progress %, threshold label, reached status).
@@ -61,7 +62,7 @@ function resolveRule(
       const drop = ((ref - equity) / ref) * 100;
       const floorVal = ref * (1 - th / 100);
       const bufferPct = th > 0 ? ((th - drop) / th) * 100 : 100;
-      return { kind, label: `-${th}% Floor`, thresholdDisplay: `$${floorVal.toFixed(2)}`, pct: bufferPct, reached: drop >= th, warn: bufferPct > 0 && bufferPct < 25 };
+      return { kind, label: `-${th}% Floor`, thresholdDisplay: `$${floorVal.toFixed(2)}`, pct: bufferPct, reached: drop >= th, warn: bufferPct > 0 && bufferPct < FLOOR_WARNING_THRESHOLD_PCT };
     }
     default:
       return null;
@@ -73,7 +74,7 @@ function mkFloor(label: string, display: string, current: number, threshold: num
   const buffer = current - threshold;
   const range = Math.abs(threshold) || 1;
   const bufferPct = (buffer / range) * 100;
-  return { kind: "floor", label, thresholdDisplay: display, pct: bufferPct, reached: buffer <= 0, warn: bufferPct > 0 && bufferPct < 25 };
+  return { kind: "floor", label, thresholdDisplay: display, pct: bufferPct, reached: buffer <= 0, warn: bufferPct > 0 && bufferPct < FLOOR_WARNING_THRESHOLD_PCT };
 }
 
 /* ── Sub-components ──────────────────────────────────────────────── */
