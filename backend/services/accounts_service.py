@@ -74,10 +74,15 @@ class AccountsService:
 
     async def shutdown(self) -> None:
         """Close all exchange clients and clear caches."""
-        for client in self._clients.values():
-            await client.close()
+        logger.info("shutdown_start", extra={"client_count": len(self._clients)})
+        for cid, client in self._clients.items():
+            try:
+                await client.close()
+            except Exception:
+                logger.warning("shutdown_client_close_failed", extra={"client_id": cid})
         self._clients.clear()
         self._cache.clear()
+        logger.info("shutdown_complete")
 
     def _get_cached(self, key: str, ttl: float) -> Any | None:
         """Return cached value if within TTL, else None."""
@@ -272,13 +277,19 @@ class AccountsService:
             side, symbol, qty_rounded, mark_price, tp_price_str, sl_price_str, leverage,
         )
 
-        result = await client.place_market_order(
-            symbol=symbol,
-            side=side,
-            qty=str(qty_rounded),
-            take_profit=tp_price_str,
-            stop_loss=sl_price_str,
-        )
+        try:
+            result = await client.place_market_order(
+                symbol=symbol,
+                side=side,
+                qty=str(qty_rounded),
+                take_profit=tp_price_str,
+                stop_loss=sl_price_str,
+            )
+        except Exception:
+            logger.error("place_trade_exchange_failed", extra={
+                "account_id": account_id, "symbol": symbol, "side": side, "qty": str(qty_rounded),
+            })
+            raise
 
         self.invalidate_cache(account_id)
 
@@ -317,7 +328,10 @@ class AccountsService:
                     if trade_record:
                         await self._trade_service._broadcast_trade_event("trade.opened", trade_record)
             except Exception:
-                logger.exception("trade_record_creation_failed")
+                logger.exception("trade_record_creation_failed", extra={
+                    "account_id": account_id, "symbol": symbol, "side": side,
+                    "order_id": result.get("orderId", ""),
+                })
 
         return {
             "orderId": result.get("orderId", ""),
@@ -365,6 +379,7 @@ class AccountsService:
         result = await self._db.get_account(account_id)
         if self._ws_manager:
             asyncio.ensure_future(self._ws_manager.start_account(account_id))
+        logger.info("create_account_done", extra={"account_id": account_id, "account_type": account_type})
         return result  # type: ignore
 
     async def list_accounts(self) -> List[Dict[str, Any]]:
@@ -420,6 +435,7 @@ class AccountsService:
             self.invalidate_cache(account_id)
             if self._ws_manager:
                 asyncio.ensure_future(self._ws_manager.stop_account(account_id))
+            logger.info("delete_account_done", extra={"account_id": account_id})
         return result
 
     async def test_connection(self, account_id: str) -> Dict[str, Any]:
@@ -718,6 +734,9 @@ class AccountsService:
             "drawdown_pct": round(drawdown_pct, 4),
         }
         await self._db.upsert_daily_snapshot(snapshot)
+        logger.info("take_snapshot_done", extra={
+            "account_id": account_id, "equity": equity, "positions": len(positions),
+        })
         return snapshot
 
     async def take_all_snapshots(self) -> List[Dict[str, Any]]:
@@ -1204,7 +1223,7 @@ class AccountsService:
                         "position_count": len(positions),
                     }
                 except Exception:
-                    logger.debug("HF snapshot skipped for %s", acc["id"])
+                    logger.warning("hf_snapshot_skipped", extra={"account_id": acc["id"]})
                     return None
 
         results = await asyncio.gather(*[_snap_one(a) for a in eligible])

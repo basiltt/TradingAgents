@@ -189,6 +189,9 @@ class TradeRepository:
         old_status = current["status"]
         allowed = VALID_TRANSITIONS.get(old_status, set())
         if new_status not in allowed:
+            logger.warning("invalid_status_transition", extra={
+                "trade_id": trade_id, "from": old_status, "to": new_status,
+            })
             raise InvalidStatusTransition(
                 f"Cannot transition from {old_status} to {new_status}"
             )
@@ -212,6 +215,7 @@ class TradeRepository:
             *params,
         )
         if not result:
+            logger.warning("concurrent_modification", extra={"trade_id": trade_id})
             raise ConcurrentModification(f"Trade {trade_id} was modified concurrently")
 
         trade = dict(result)
@@ -273,6 +277,9 @@ class TradeRepository:
         old_status = current["status"]
         allowed = VALID_TRANSITIONS.get(old_status, set())
         if "closed" not in allowed:
+            logger.warning("invalid_status_transition", extra={
+                "trade_id": trade_id, "from": old_status, "to": "closed",
+            })
             raise InvalidStatusTransition(
                 f"Cannot transition from {old_status} to closed"
             )
@@ -283,6 +290,7 @@ class TradeRepository:
             *params,
         )
         if not result:
+            logger.warning("concurrent_modification", extra={"trade_id": trade_id})
             raise ConcurrentModification(f"Trade {trade_id} was modified concurrently")
 
         trade = dict(result)
@@ -313,6 +321,7 @@ class TradeRepository:
             tid, account_id,
         )
         if not row:
+            logger.warning("reconcile_close_not_found", extra={"trade_id": trade_id})
             raise ConcurrentModification(
                 f"Trade {trade_id} already closed or not found"
             )
@@ -328,8 +337,8 @@ class TradeRepository:
             fees, net_pnl, close_reason, tid, account_id, expected_version,
         )
         if not result:
+            logger.warning("concurrent_modification", extra={"trade_id": trade_id, "context": "reconcile"})
             raise ConcurrentModification(
-                f"Trade {trade_id} was modified concurrently during reconciliation"
             )
         trade = dict(result)
 

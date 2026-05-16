@@ -96,6 +96,12 @@ class TradeService:
             TradeNotFound: If trade doesn't exist.
             InvalidStatusTransition: If trade is already closed/failed/cancelled.
         """
+        t0 = time.monotonic()
+        logger.info("close_single_trade_start", extra={
+            "account_id": account_id, "trade_id": trade_id,
+            "qty": qty, "close_reason": close_reason,
+        })
+
         if qty is not None and qty <= 0:
             raise ValueError("qty must be positive")
 
@@ -116,8 +122,16 @@ class TradeService:
         is_partial = qty is not None and qty < remaining
 
         if is_partial:
-            return await self._close_partial(client, trade, qty, close_reason, close_rule_id)
-        return await self._close_full(client, trade, close_reason, close_rule_id)
+            result = await self._close_partial(client, trade, qty, close_reason, close_rule_id)
+        else:
+            result = await self._close_full(client, trade, close_reason, close_rule_id)
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("close_single_trade_done", extra={
+            "account_id": account_id, "trade_id": trade_id,
+            "partial": is_partial, "duration_ms": round(elapsed_ms, 1),
+        })
+        return result
 
     async def close_trade_record_only(
         self,
@@ -131,6 +145,10 @@ class TradeService:
         Used when the position has already been closed on the exchange
         (e.g., by a stop-loss) and only the DB record needs updating.
         """
+        t0 = time.monotonic()
+        logger.info("close_trade_record_only_start", extra={
+            "account_id": account_id, "trade_id": trade_id, "close_reason": close_reason,
+        })
         async with self._db.pool.acquire() as conn:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
@@ -156,6 +174,10 @@ class TradeService:
 
         self._invalidate_stats_cache(account_id)
         await self._broadcast_trade_event("trade.closed", closed)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("close_trade_record_only_done", extra={
+            "account_id": account_id, "trade_id": trade_id, "duration_ms": round(elapsed_ms, 1),
+        })
         return closed
 
     async def _close_full(
@@ -322,6 +344,8 @@ class TradeService:
 
     async def cancel_trade(self, account_id: str, trade_id: str) -> dict:
         """Cancel a pending/open trade without placing an exchange order."""
+        t0 = time.monotonic()
+        logger.info("cancel_trade_start", extra={"account_id": account_id, "trade_id": trade_id})
         async with self._db.pool.acquire() as conn:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
@@ -363,6 +387,11 @@ class TradeService:
                     )
 
         self._invalidate_stats_cache(account_id)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("cancel_trade_done", extra={
+            "account_id": account_id, "trade_id": trade_id,
+            "result_status": updated.get("status"), "duration_ms": round(elapsed_ms, 1),
+        })
         return updated
 
     def _extract_pnl(self, bybit_result: dict, trade: dict, close_qty: float | None = None) -> dict:

@@ -109,6 +109,7 @@ async def create_account(request: Request):
     svc = _get_service(request)
     try:
         account = await svc.create_account(req.label, req.account_type, req.api_key, req.api_secret)
+        logger.info("create_account_ok", extra={"account_id": account.get("id")})
         return account
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
@@ -189,6 +190,7 @@ async def delete_account(request: Request, account_id: str):
     try:
         deleted = await svc.delete_account(account_id)
     except Exception as e:
+        logger.error("delete_account_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         if "ForeignKeyViolation" in type(e).__name__ or "foreign key" in str(e).lower():
             return JSONResponse(
                 {"detail": "Cannot delete account with existing trades", "code": "ACCOUNT_HAS_TRADES"},
@@ -526,6 +528,7 @@ async def close_trade(
             account_id=account_id, trade_id=trade_id, qty=body.qty,
             close_reason=body.close_reason or "manual_single",
         )
+        logger.info("close_trade_ok", extra={"account_id": account_id, "trade_id": trade_id})
         return TradeResponse(**_serialize_trade(result))
     except TradeNotFound:
         return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
@@ -552,6 +555,7 @@ async def cancel_trade(request: Request, account_id: str, trade_id: str):
         result = await trade_service.cancel_trade(
             account_id=account_id, trade_id=trade_id,
         )
+        logger.info("cancel_trade_ok", extra={"account_id": account_id, "trade_id": trade_id})
         return TradeResponse(**_serialize_trade(result))
     except TradeNotFound:
         return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)

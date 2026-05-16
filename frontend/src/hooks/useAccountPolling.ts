@@ -27,8 +27,10 @@ export function useAccountPolling() {
     try {
       const cards = await accountsApi.getDashboard(undefined, controllerRef.current.signal);
       dispatch(setDashboard(cards));
-    } catch {
-      // silent — dashboard still shows last data
+    } catch (err) {
+      if (err instanceof Error && err.name !== "AbortError") {
+        console.warn("[useAccountPolling] poll failed:", err.message);
+      }
     }
   }, [dispatch]);
 
