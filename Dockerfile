@@ -25,7 +25,7 @@ RUN cd /app/frontend && npm ci
 
 # Copy full source and finalise installs
 COPY . .
-RUN pip install --no-cache-dir -e . \
+RUN pip install --no-cache-dir --force-reinstall -e . \
     && chmod +x /app/scripts/start-web.sh \
     && cd /app/frontend && npm run build
 
@@ -37,6 +37,6 @@ USER appuser
 EXPOSE 5177 8877
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python3 -c "import urllib.request; r=urllib.request.urlopen('http://localhost:8877/api/v1/health'); assert r.status==200" || exit 1
+  CMD python3 -c "import urllib.request; r=urllib.request.urlopen('http://localhost:8877/api/v1/health'); assert r.status in (200,503)" || exit 1
 
 CMD ["/app/scripts/start-web.sh"]

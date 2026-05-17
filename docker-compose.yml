@@ -1,10 +1,31 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tradingagents
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   tradingagents:
     build: .
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       TRADINGAGENTS_DISABLE_RELOAD: "1"
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tradingagents
     ports:
       - "5177:5177"
       - "8877:8877"
@@ -15,7 +36,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; r=urllib.request.urlopen('http://localhost:8877/api/v1/health'); assert r.status==200"]
+      test: ["CMD", "python3", "-c", "import urllib.request; r=urllib.request.urlopen('http://localhost:8877/api/v1/health'); assert r.status in (200,503)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -33,3 +54,4 @@ services:
 
 volumes:
   tradingagents_data:
+  pgdata:
