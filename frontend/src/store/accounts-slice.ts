@@ -128,10 +128,8 @@ const accountsSlice = createSlice({
           card.total_perp_upl = data.totalPerpUPL;
         }
       } else if (type === "position_update") {
-        if (data.unrealisedPnl) {
-          dirs.pnl = getDirection(card.total_perp_upl, data.unrealisedPnl);
-          card.total_perp_upl = data.unrealisedPnl;
-        }
+        // Per-trade unrealized PnL is handled by trades-slice updateUnrealizedPnl.
+        // Do NOT update total_perp_upl here — wallet_update provides the correct aggregate.
       }
 
       state.directions[account_id] = dirs;

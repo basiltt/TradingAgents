@@ -139,7 +139,7 @@ class BybitWSClient:
         except asyncio.CancelledError:
             pass
         except Exception:
-            pass
+            logger.warning("ping_loop_error", exc_info=True)
 
     async def _handle_message(self, raw: str) -> None:
         try:

@@ -362,6 +362,7 @@ class TradeService:
             return
         except Exception:
             logger.exception("revert_to_open_failed", extra={"trade_id": trade_id})
+            return
 
         trade["_previous_status"] = previous_status
         await self._broadcast_trade_event(

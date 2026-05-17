@@ -243,9 +243,12 @@ class ClosePositionsService:
     async def _broadcast_close_event(self, account_id: str, source: str, closed: int, failed: int, total: int) -> None:
         if not self._ws_manager:
             return
-        await self._ws_manager.broadcast_to_account(account_id, "close_execution", {
-            "trigger_source": source, "closed": closed, "failed": failed, "total": total,
-        })
+        try:
+            await self._ws_manager.broadcast_to_account(account_id, "close_execution", {
+                "trigger_source": source, "closed": closed, "failed": failed, "total": total,
+            })
+        except Exception:
+            logger.warning("broadcast_close_event_failed", extra={"account_id": account_id})
 
     # ── Rule CRUD ────────────────────────────────────────────────
 
