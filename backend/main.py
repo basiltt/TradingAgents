@@ -268,7 +268,7 @@ def create_app() -> FastAPI:
         await ws_manager.shutdown()
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
-        _default_executor.shutdown(wait=True, cancel_futures=False)
+        _default_executor.shutdown(wait=True, cancel_futures=True)
         await db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)

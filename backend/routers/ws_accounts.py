@@ -15,20 +15,11 @@ router = APIRouter()
 def _check_origin(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if not origin:
+        return True  # Allow non-browser clients (monitoring, health checks)
+    allowed = getattr(websocket.app.state, "cors_origins", None)
+    if not allowed:
         return False
-    allowed = set(websocket.app.state.cors_origins)
-    if origin in allowed:
-        return True
-    try:
-        from urllib.parse import urlparse
-        origin_port = urlparse(origin).port
-        if origin_port is not None:
-            for a in allowed:
-                if urlparse(a).port == origin_port:
-                    return True
-    except Exception:
-        pass
-    return False
+    return origin in set(allowed)
 
 
 @router.websocket("/ws/v1/accounts")

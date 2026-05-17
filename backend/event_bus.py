@@ -26,6 +26,7 @@ class EventBus:
         self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = {}
         self._ring_bytes: Dict[str, int] = {}
         self._cleaned: OrderedDict[str, None] = OrderedDict()
+        # RLock because _async_emit acquires lock then calls emit() which also acquires it
         self._lock = threading.RLock()
 
     def _get_queue(self, run_id: str) -> asyncio.Queue:

@@ -254,7 +254,7 @@ const tradesSlice = createSlice({
           const share = parseFloat(String(trade.qty ?? 0)) / totalQty;
           trade.unrealized_pnl = unrealized_pnl * share;
         } else {
-          trade.unrealized_pnl = unrealized_pnl;
+          trade.unrealized_pnl = matching.length > 0 ? unrealized_pnl / matching.length : 0;
         }
       }
     },
