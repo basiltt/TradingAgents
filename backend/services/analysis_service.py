@@ -18,7 +18,7 @@ from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
 from backend.async_persistence import AsyncAnalysisDB
 from backend.services.config_service import ConfigService
-from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, ProgressEvent
+from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, ProgressEvent, ReportChunkEvent
 from backend.validators import validate_backend_url
 from backend.ws_manager import WSManager
 
@@ -290,7 +290,9 @@ class AnalysisService:
         if request.get("output_language"):
             config["output_language"] = request["output_language"]
         if request.get("data_vendors"):
-            config["data_vendors"].update(request["data_vendors"])
+            vendors = config["data_vendors"]
+            if isinstance(vendors, dict):
+                vendors.update(request["data_vendors"])
         if request.get("research_depth"):
             depth = request["research_depth"]
             config["max_debate_rounds"] = depth
@@ -416,7 +418,7 @@ class AnalysisService:
                 self._zombie_count += 1
             asyncio.get_running_loop().call_later(
                 _HARD_TIMEOUT - _WALL_TIMEOUT,
-                lambda rid=run_id: asyncio.create_task(self._reclaim_zombie_async(rid)),
+                lambda rid: asyncio.create_task(self._reclaim_zombie_async(rid)), run_id,
             )
 
         except Exception as e:
@@ -630,7 +632,7 @@ class AnalysisService:
             events = parse_stream_chunk(chunk, seq=seq, state=parser_state)
             for event in events:
                 self._bus.emit_threadsafe(run_id, event)
-                if hasattr(event, "type") and event.type == "report_chunk" and event.section:
+                if isinstance(event, ReportChunkEvent) and event.section:
                     self._db.sync_save_report_section(run_id, event.section, event.content)
 
             last_chunk = chunk

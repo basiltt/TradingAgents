@@ -143,11 +143,11 @@ class BybitClient:
                     request_kwargs: dict[str, Any] = {}
                 elif method == "POST" and params:
                     body_str = json.dumps(params, separators=(",", ":"))
-                    url = f"{self._base_url}{path}"
+                    url = URL(f"{self._base_url}{path}", encoded=True)
                     headers = self._headers(timestamp, body_str)
                     request_kwargs = {"data": body_str}
                 else:
-                    url = f"{self._base_url}{path}"
+                    url = URL(f"{self._base_url}{path}", encoded=True)
                     headers = self._headers(timestamp, "")
                     request_kwargs = {}
 

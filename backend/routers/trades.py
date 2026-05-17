@@ -179,7 +179,7 @@ async def list_trades_cross_account(
             return_exceptions=True,
         )
         for aid, positions in zip(active_account_ids, positions_by_account):
-            if isinstance(positions, Exception):
+            if isinstance(positions, BaseException):
                 logger.warning("position_fetch_failed", extra={"account_id": aid, "error": str(positions)[:200]})
                 continue
             for pos in positions:

@@ -154,7 +154,9 @@ class WSManager:
             if task and not task.done():
                 return
             task = asyncio.create_task(consume_fn())
-            task.add_done_callback(lambda _t, _rid=run_id: self._on_consumer_done(_rid))
+            def _done_cb(_t: asyncio.Task[None], _rid: str = run_id) -> None:
+                self._on_consumer_done(_rid)
+            task.add_done_callback(_done_cb)
             self._consumers[run_id] = task
 
     def _on_consumer_done(self, run_id: str) -> None:

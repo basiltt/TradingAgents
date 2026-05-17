@@ -111,11 +111,12 @@ class BybitWSClient:
             await self._ws.close()
 
         self._ws = await asyncio.wait_for(
-            self._session.ws_connect(self._url, heartbeat=None, timeout=15),
+            self._session.ws_connect(self._url, heartbeat=None, timeout=aiohttp.ClientWSTimeout(ws_close=15)),
             timeout=20,
         )
         logger.info("Bybit WS connected to %s", self._url, extra={"account_id": self._account_id})
 
+        assert self._ws is not None
         await self._ws.send_json(self._auth_payload())
         auth_resp = await self._ws.receive_json(timeout=10)
         if not auth_resp.get("success"):

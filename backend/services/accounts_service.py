@@ -54,6 +54,7 @@ class AccountsService:
     """
 
     _CACHE_MAX = 500
+    _REFRESH_COOLDOWN_S: float = _REFRESH_COOLDOWN_S
 
     def __init__(self, db: AsyncAnalysisDB, ws_manager=None, trade_repo=None, trade_service=None):
         """Initialize with database, optional WebSocket manager, and trade dependencies.

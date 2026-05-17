@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 import psycopg2
 import psycopg2.extras
@@ -158,7 +158,7 @@ def _schema_v26_triggers_sync(cur) -> None:
     """)
 
 
-_MIGRATIONS: list[tuple[int, str | object]] = [
+_MIGRATIONS: list[tuple[int, "str | Callable[[Any], None]"]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
     (3, "CREATE INDEX IF NOT EXISTS idx_runs_asset_type_started ON analysis_runs(asset_type, started_at DESC)"),

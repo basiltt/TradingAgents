@@ -415,7 +415,9 @@ class ScannerService:
         async with self._lock:
             tasks = [s.get("task") for s in self._scans.values() if s.get("task") and not s["task"].done()]
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            valid_tasks = [t for t in tasks if t is not None]
+            if valid_tasks:
+                await asyncio.gather(*valid_tasks, return_exceptions=True)
 
     async def delete_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
         async with self._lock:
@@ -631,7 +633,7 @@ class ScannerService:
                 from tradingagents.dataflows.coingecko_data import prefetch_descriptions_background
                 loop = asyncio.get_running_loop()
                 fut = loop.run_in_executor(None, prefetch_descriptions_background, symbols)
-                fut.add_done_callback(lambda f: None if f.cancelled() else (f.exception() and logger.warning("Background desc prefetch error: %s", f.exception())))
+                fut.add_done_callback(lambda f: None if f.cancelled() else (logger.warning("Background desc prefetch error: %s", f.exception()) if f.exception() else None))
             except Exception:
                 pass
         else:
@@ -801,6 +803,7 @@ class ScannerService:
 
         # Check if scan was cancelled while we waited — only discard if analysis didn't complete
         if run and run.get("status") in _TERMINAL_STATUSES:
+            assert run_id is not None
             await self._collect_result(scan_id, ticker, run_id, run)
             return
 

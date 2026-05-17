@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import asyncpg
 
@@ -104,10 +104,10 @@ class TradingCycleEngine:
         self._max_duration = max_duration_seconds
         self._max_scan_age = max_scan_age_seconds
         self._active_tasks: dict[int, asyncio.Task] = {}
-        self._lifecycle_callbacks: list[callable] = []
+        self._lifecycle_callbacks: list[Callable[..., Any]] = []
         self._sweep_task: Optional[asyncio.Task] = None
 
-    def register_lifecycle_callback(self, callback: callable) -> None:
+    def register_lifecycle_callback(self, callback: Callable[..., Any]) -> None:
         self._lifecycle_callbacks.append(callback)
 
     async def _notify(self, event_type: str, payload: dict) -> None:
@@ -208,6 +208,7 @@ class TradingCycleEngine:
         self._active_tasks[cycle_id] = task
 
         cycle = await self._repo.get_cycle(cycle_id)
+        assert cycle is not None
         return cycle
 
     async def stop_cycle(self, cycle_id: int) -> dict:
@@ -232,6 +233,7 @@ class TradingCycleEngine:
 
         await self._finalize_cycle(cycle_id, "stopped", "user_stopped")
         cycle = await self._repo.get_cycle(cycle_id)
+        assert cycle is not None
         return cycle
 
     async def dry_run(self, config: Any) -> dict:

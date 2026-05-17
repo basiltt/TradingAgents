@@ -109,7 +109,7 @@ class EventBus:
 
     def get_snapshot(self, run_id: str) -> List[Dict[str, Any]]:
         with self._lock:
-            buf = self._ring_buffers.get(run_id, [])
+            buf = list(self._ring_buffers.get(run_id, []))
             return [ev for ev, _ in buf]
 
     def cleanup_run(self, run_id: str) -> None:
