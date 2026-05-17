@@ -125,6 +125,9 @@ const tradesSlice = createSlice({
         merged.realized_pnl = (existing.realized_pnl ?? 0) + accumulatePnl;
       }
       state.activeTrades[trade_id] = merged;
+      if (state.selectedTradeId === trade_id) {
+        state.selectedTrade = merged;
+      }
       state.lastUpdated = Date.now();
     },
     /** Remove a trade and clean up related selection/modal/snapshot state. */

@@ -464,6 +464,7 @@ class AsyncAnalysisDB:
             max_size=int(os.environ.get("DB_POOL_MAX", "10")),
             command_timeout=int(os.environ.get("DB_COMMAND_TIMEOUT", "10")),
             max_inactive_connection_lifetime=300,
+            timeout=10,
         )
         # Sync bridge for graph executor threads
         import psycopg2.pool

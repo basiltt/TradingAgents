@@ -26,6 +26,7 @@ export function useAccountWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pingWatchdog = useRef<ReturnType<typeof setTimeout>>(undefined);
   const mounted = useRef(true);
   const queryClientRef = useRef(queryClient);
   const connectRef = useRef<() => void>(undefined);
@@ -61,6 +62,10 @@ export function useAccountWebSocket() {
       }
       if (msg.type === "ping") {
         if (ws.readyState === WebSocket.OPEN) ws.send("pong");
+        clearTimeout(pingWatchdog.current);
+        pingWatchdog.current = setTimeout(() => {
+          ws.close();
+        }, 45000);
         return;
       }
       if (msg.account_id && msg.type === "wallet_update") {
@@ -114,10 +119,10 @@ export function useAccountWebSocket() {
 
     ws.onclose = () => {
       dispatch(setWsConnected(false));
+      clearTimeout(pingWatchdog.current);
       if (!mounted.current) return;
       reconnectTimer.current = setTimeout(() => {
-        const jitter = 0.5 + Math.random();
-        reconnectDelay.current = Math.min(reconnectDelay.current * 2 * jitter, RECONNECT_MAX);
+        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX) * (0.75 + Math.random() * 0.5);
         connectRef.current?.();
       }, reconnectDelay.current);
     };
@@ -137,6 +142,7 @@ export function useAccountWebSocket() {
     return () => {
       mounted.current = false;
       clearTimeout(reconnectTimer.current);
+      clearTimeout(pingWatchdog.current);
       wsRef.current?.close();
     };
   }, [connect]);

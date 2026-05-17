@@ -32,8 +32,11 @@ class AccountWSManager:
 
     async def shutdown(self) -> None:
         async with self._lock:
-            for client in self._clients.values():
-                await client.stop()
+            if self._clients:
+                await asyncio.gather(
+                    *(client.stop() for client in self._clients.values()),
+                    return_exceptions=True,
+                )
             self._clients.clear()
         logger.info("AccountWSManager shut down")
 

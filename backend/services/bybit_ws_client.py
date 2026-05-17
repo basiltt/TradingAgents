@@ -106,8 +106,12 @@ class BybitWSClient:
         if not self._session or self._session.closed:
             self._session = aiohttp.ClientSession()
 
-        self._ws = await self._session.ws_connect(
-            self._url, heartbeat=None, timeout=15,
+        if self._ws and not self._ws.closed:
+            await self._ws.close()
+
+        self._ws = await asyncio.wait_for(
+            self._session.ws_connect(self._url, heartbeat=None, timeout=15),
+            timeout=20,
         )
         logger.info("Bybit WS connected to %s", self._url, extra={"account_id": self._account_id})
 

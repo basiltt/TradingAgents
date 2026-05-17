@@ -313,6 +313,7 @@ def create_app() -> FastAPI:
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
         _default_executor.shutdown(wait=False, cancel_futures=True)
+        await asyncio.sleep(1)
         await db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
@@ -364,6 +365,11 @@ def create_app() -> FastAPI:
     app.include_router(trading_cycles_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
+
+    @app.get("/api/v1/healthz")
+    async def healthz():
+        """Liveness probe — returns 200 if the process is alive."""
+        return Response(content='{"status":"alive"}', media_type="application/json")
 
     @app.get("/api/v1/health")
     async def health(request: Request):
