@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from backend.rate_limit import check_rate_limit as _check_rate_limit
 from backend.schemas import CreateCloseRuleRequest, UpdateCloseRuleRequest
 from backend.services.bybit_client import BybitAPIError
 
@@ -32,6 +33,7 @@ def _validate_id(value: str, name: str = "ID") -> str:
 @router.post("/accounts/{account_id}/positions/close-all")
 async def close_all_positions(request: Request, account_id: str):
     _validate_id(account_id, "account ID")
+    await _check_rate_limit(account_id)
     svc = _get_service(request)
     try:
         result = await svc.close_all_positions(account_id)
@@ -48,6 +50,7 @@ async def close_all_positions(request: Request, account_id: str):
 @router.post("/accounts/{account_id}/close-rules")
 async def create_close_rule(request: Request, account_id: str):
     _validate_id(account_id, "account ID")
+    await _check_rate_limit(account_id)
     try:
         body = await request.json()
     except Exception:

@@ -26,7 +26,7 @@ def _set_encryption_key(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _clear_rate_limiters():
-    from backend.routers import accounts as mod
+    from backend import rate_limit as mod
     mod._rate_limiters.clear()
     yield
     mod._rate_limiters.clear()
@@ -392,14 +392,14 @@ class TestPlaceTrade:
 
 class TestRateLimiter:
     def test_token_bucket_allows_burst(self):
-        from backend.routers.accounts import _TokenBucket
+        from backend.rate_limit import _TokenBucket
         bucket = _TokenBucket(rate=10.0, capacity=10.0)
         for _ in range(10):
             assert bucket.consume() is True
         assert bucket.consume() is False
 
     def test_token_bucket_refills(self):
-        from backend.routers.accounts import _TokenBucket
+        from backend.rate_limit import _TokenBucket
         bucket = _TokenBucket(rate=100.0, capacity=10.0)
         for _ in range(10):
             bucket.consume()
@@ -409,19 +409,19 @@ class TestRateLimiter:
 
     @pytest.mark.asyncio
     async def test_rate_limit_429(self):
-        from backend.routers.accounts import _check_rate_limit, _rate_limiters, _TokenBucket
+        from backend.rate_limit import check_rate_limit, _rate_limiters, _TokenBucket
         _rate_limiters.clear()
         bucket = _TokenBucket(rate=0.0, capacity=1.0)
         bucket.consume()
         _rate_limiters["test-acct"] = bucket
         with pytest.raises(HTTPException) as exc_info:
-            await _check_rate_limit("test-acct")
+            await check_rate_limit("test-acct")
         assert exc_info.value.status_code == 429
 
     @pytest.mark.asyncio
     async def test_stale_eviction(self):
-        from backend.routers.accounts import (
-            _check_rate_limit, _rate_limiters, _TokenBucket,
+        from backend.rate_limit import (
+            check_rate_limit, _rate_limiters, _TokenBucket,
             _RATE_LIMITER_MAX_ENTRIES, _RATE_LIMITER_STALE_SECONDS,
         )
         _rate_limiters.clear()
@@ -429,7 +429,7 @@ class TestRateLimiter:
             b = _TokenBucket()
             b.last_refill = time.monotonic() - _RATE_LIMITER_STALE_SECONDS - 1
             _rate_limiters[f"stale-{i}"] = b
-        await _check_rate_limit("new-acct")
+        await check_rate_limit("new-acct")
         assert "new-acct" in _rate_limiters
         assert len(_rate_limiters) < _RATE_LIMITER_MAX_ENTRIES
 
