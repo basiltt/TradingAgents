@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { selectActiveTradeAggregates, selectActiveTradesList } from "../selectors";
+import type { RootState } from "@/store";
 
-function makeState(trades: Record<string, any>) {
+function makeState(trades: Record<string, unknown>): RootState {
   return {
     trades: { activeTrades: trades, lastUpdated: null },
-  } as any;
+  } as RootState;
 }
 
 describe("selectActiveTradesList", () => {
