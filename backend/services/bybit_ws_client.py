@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import random
 import time
 from typing import Any, Callable, Coroutine
 
@@ -100,7 +101,7 @@ class BybitWSClient:
             if not self._running:
                 break
             await asyncio.sleep(self._reconnect_delay)
-            self._reconnect_delay = min(self._reconnect_delay * 2, _RECONNECT_MAX)
+            self._reconnect_delay = min(self._reconnect_delay * 2, _RECONNECT_MAX) * (0.75 + random.random() * 0.5)
 
     async def _connect_and_listen(self) -> None:
         if not self._session or self._session.closed:
