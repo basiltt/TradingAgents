@@ -81,7 +81,7 @@ async def _check_rate_limit(account_id: str) -> None:
 
 def _get_service(request: Request):
     """Retrieve AccountsService from app state or raise 503."""
-    svc = request.app.state.accounts_service
+    svc = getattr(request.app.state, "accounts_service", None)
     if svc is None:
         raise HTTPException(503, detail="Accounts feature disabled — set ACCOUNTS_ENCRYPTION_KEY")
     return svc
@@ -99,7 +99,10 @@ def _validate_account_id(account_id: str) -> str:
 @router.post("/accounts")
 async def create_account(request: Request):
     """Create a new trading account with encrypted API credentials."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
     try:
         req = CreateAccountRequest(**body)
     except ValidationError as e:

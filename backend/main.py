@@ -57,7 +57,6 @@ _CSP_HEADER = (
 )
 _CSP_HEADER_BYTES = _CSP_HEADER.encode()
 
-_MUTATING_METHODS = frozenset({b"POST", b"PATCH", b"PUT", b"DELETE"})
 _CSRF_BODY = b'{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED"}'
 
 
@@ -73,7 +72,7 @@ class CSPCSRFMiddleware:
             return
 
         # CSRF check for mutating methods
-        if scope["method"].encode() in _MUTATING_METHODS:
+        if scope["method"] in {"POST", "PATCH", "PUT", "DELETE"}:
             headers = dict(scope.get("headers", []))
             if headers.get(b"x-requested-with") != b"XMLHttpRequest":
                 await send({
@@ -313,7 +312,7 @@ def create_app() -> FastAPI:
         await _safe_shutdown("ws_manager", ws_manager.shutdown())
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
-        _default_executor.shutdown(wait=True, cancel_futures=True)
+        _default_executor.shutdown(wait=False, cancel_futures=True)
         await db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)

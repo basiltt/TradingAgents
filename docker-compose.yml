@@ -9,12 +9,12 @@ services:
       - "5177:5177"
       - "8877:8877"
     volumes:
-      - tradingagents_data:/root/.tradingagents
+      - tradingagents_data:/app/.tradingagents
     tty: true
     stdin_open: true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8877/api/v1/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8877/api/v1/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -23,6 +23,7 @@ services:
       resources:
         limits:
           memory: 4G
+          cpus: '2.0'
     logging:
       driver: json-file
       options:
