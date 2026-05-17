@@ -83,7 +83,8 @@ class EventBus:
         self.emit(run_id, event)
 
     def _add_to_ring(self, run_id: str, event_dict: Dict[str, Any]) -> None:
-        event_bytes = len(str(event_dict))
+        # Rough byte estimate: 64 bytes overhead + 32 per key-value pair avoids str() cost
+        event_bytes = 64 + 32 * len(event_dict)
 
         if run_id not in self._ring_buffers:
             self._ring_buffers[run_id] = deque()

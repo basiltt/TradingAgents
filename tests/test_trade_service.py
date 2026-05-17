@@ -130,7 +130,7 @@ class TestGetCachedStats:
     async def test_cache_invalidation(self, service, mock_repo):
         mock_repo.get_trade_stats.return_value = {"total_trades": 5}
         await service.get_cached_stats("acc-1")
-        service._invalidate_stats_cache("acc-1")
+        service.invalidate_stats_cache("acc-1")
         await service.get_cached_stats("acc-1")
         assert mock_repo.get_trade_stats.await_count == 2
 

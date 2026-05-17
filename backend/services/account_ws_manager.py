@@ -23,10 +23,11 @@ class AccountWSManager:
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        accounts = await self._db.list_accounts()
-        for acc in accounts:
-            if acc["is_active"]:
-                await self._start_account(acc["id"])
+        async with self._lock:
+            accounts = await self._db.list_accounts()
+            for acc in accounts:
+                if acc["is_active"]:
+                    await self._start_account(acc["id"])
         logger.info("AccountWSManager started for %d accounts", len(self._clients))
 
     async def shutdown(self) -> None:
@@ -65,22 +66,22 @@ class AccountWSManager:
             event["account_id"] = account_id
             await self._broadcast(event)
 
-        client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event)
+        client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
         self._clients[account_id] = client
         await client.start()
         logger.info("Started WS for account %s", account_id)
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
-        dead: list[asyncio.Queue] = []
         for q in list(self._frontend_queues):
+            if q.full():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self._frontend_queues.discard(q)
-        if dead:
-            logger.warning("frontend_queue_full_evicted", extra={"dropped_count": len(dead)})
+                pass
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=512)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import OrderedDict
 from decimal import Decimal
 from typing import Any
 
@@ -42,7 +43,7 @@ class TradeService:
         self._repo = trade_repo
         self._accounts = accounts_service
         self._ws = ws_manager
-        self._stats_cache: dict[str, tuple[float, dict]] = {}
+        self._stats_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 
     _STATS_CACHE_TTL = 10.0
     _STATS_CACHE_MAX = 1000
@@ -52,16 +53,17 @@ class TradeService:
         now = time.monotonic()
         cached = self._stats_cache.get(account_id)
         if cached and (now - cached[0]) < self._STATS_CACHE_TTL:
+            self._stats_cache.move_to_end(account_id)
             return cached[1]
         async with self._db.pool.acquire() as conn:
             stats = await self._repo.get_trade_stats(conn, account_id=account_id)
         if len(self._stats_cache) >= self._STATS_CACHE_MAX and account_id not in self._stats_cache:
-            oldest_key = min(self._stats_cache, key=lambda k: self._stats_cache[k][0])
-            del self._stats_cache[oldest_key]
+            self._stats_cache.popitem(last=False)
         self._stats_cache[account_id] = (now, stats)
+        self._stats_cache.move_to_end(account_id)
         return stats
 
-    def _invalidate_stats_cache(self, account_id: str) -> None:
+    def invalidate_stats_cache(self, account_id: str) -> None:
         """Remove cached stats for an account, forcing re-fetch on next access."""
         self._stats_cache.pop(account_id, None)
 
@@ -183,7 +185,7 @@ class TradeService:
                     net_pnl=pnl_data["net_pnl"],
                 )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
         await self._broadcast_trade_event("trade.closed", closed)
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.info("close_trade_record_only_done", extra={
@@ -232,7 +234,7 @@ class TradeService:
                     close_rule_id=close_rule_id, **pnl_data,
                 )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
         await self._broadcast_trade_event("trade.closed", closed)
         logger.info("close_full_done", extra={
             "trade_id": trade_id, "account_id": account_id,
@@ -293,7 +295,7 @@ class TradeService:
                     updates={"filled_qty": previously_filled + qty},
                 )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
         logger.info("close_partial_done", extra={
             "trade_id": trade_id, "account_id": account_id, "closed_qty": qty,
             "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
@@ -342,7 +344,7 @@ class TradeService:
                             exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
                             fees=0.0, net_pnl=0.0, close_reason="external",
                         )
-                self._invalidate_stats_cache(account_id)
+                self.invalidate_stats_cache(account_id)
                 return
             except Exception:
                 logger.exception("reconcile_after_failure_failed", extra={"trade_id": trade_id})
@@ -413,7 +415,7 @@ class TradeService:
                         updates={"filled_qty": trade.get("filled_qty")},
                     )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.info("cancel_trade_done", extra={
             "account_id": account_id, "trade_id": trade_id,

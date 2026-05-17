@@ -1,5 +1,7 @@
 """Tests for ClosePositionsService."""
 
+import time
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -41,7 +43,7 @@ def mock_trade_service():
     ts = MagicMock()
     ts.get_open_trades = AsyncMock(return_value=[])
     ts.close_trade_record_only = AsyncMock()
-    ts._invalidate_stats_cache = MagicMock()
+    ts.invalidate_stats_cache = MagicMock()
     return ts
 
 
@@ -88,7 +90,7 @@ async def test_close_all_positions_empty(service, mock_db):
 @pytest.mark.asyncio
 async def test_close_all_positions_reentrancy_guard(service):
     """Calling close while already closing raises ValueError."""
-    service._closing_accounts.add("acc-1")
+    service._closing_accounts["acc-1"] = time.monotonic()
 
     with pytest.raises(ValueError, match="Close already in progress"):
         await service.close_all_positions("acc-1")

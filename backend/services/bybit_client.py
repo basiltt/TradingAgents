@@ -43,7 +43,7 @@ class BybitClient:
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
         self._recv_window = "5000"
-        self._request_timestamps: collections.deque = collections.deque()
+        self._request_timestamps: collections.deque = collections.deque(maxlen=_RATE_LIMIT_MAX + 50)
         self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
@@ -107,7 +107,7 @@ class BybitClient:
             "Content-Type": "application/json",
         }
 
-    _SYNC_INTERVAL = 30  # re-sync offset every 30 seconds
+    _SYNC_INTERVAL = 300  # re-sync offset every 5 minutes
 
     async def _ensure_time_synced(self) -> None:
         """Ensure time offset is fresh. Re-syncs if stale or never synced."""

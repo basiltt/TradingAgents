@@ -15,7 +15,8 @@ import {
 } from "@/store/trades-slice";
 import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
 
-const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
+const WS_BASE = import.meta.env.VITE_WS_BASE_URL || `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+const WS_URL = `${WS_BASE}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 30000;
 
@@ -115,7 +116,8 @@ export function useAccountWebSocket() {
       dispatch(setWsConnected(false));
       if (!mounted.current) return;
       reconnectTimer.current = setTimeout(() => {
-        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX);
+        const jitter = 0.5 + Math.random();
+        reconnectDelay.current = Math.min(reconnectDelay.current * 2 * jitter, RECONNECT_MAX);
         connectRef.current?.();
       }, reconnectDelay.current);
     };

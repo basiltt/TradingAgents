@@ -250,22 +250,33 @@ def create_app() -> FastAPI:
             app.state.trade_service = None
 
         yield
+
+        async def _safe_shutdown(name: str, coro) -> None:
+            try:
+                await coro
+            except Exception:
+                logger.exception("shutdown_step_failed: %s", name)
+
         _watchdog_task.cancel()
-        await app.state.scheduler_service.shutdown()
+        try:
+            await _watchdog_task
+        except asyncio.CancelledError:
+            pass
+        await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
         if getattr(app.state, "rule_evaluator", None):
-            await app.state.rule_evaluator.shutdown()
+            await _safe_shutdown("rule_evaluator", app.state.rule_evaluator.shutdown())
         if getattr(app.state, "cycle_engine", None):
-            await app.state.cycle_engine.shutdown()
+            await _safe_shutdown("cycle_engine", app.state.cycle_engine.shutdown())
         if app.state.snapshot_scheduler:
-            await app.state.snapshot_scheduler.shutdown()
+            await _safe_shutdown("snapshot_scheduler", app.state.snapshot_scheduler.shutdown())
             await asyncio.sleep(0.5)
         if app.state.account_ws_manager:
-            await app.state.account_ws_manager.shutdown()
+            await _safe_shutdown("account_ws_manager", app.state.account_ws_manager.shutdown())
         if app.state.accounts_service:
-            await app.state.accounts_service.shutdown()
-        await app.state.scanner_service.shutdown()
-        await app.state.analysis_service.shutdown()
-        await ws_manager.shutdown()
+            await _safe_shutdown("accounts_service", app.state.accounts_service.shutdown())
+        await _safe_shutdown("scanner_service", app.state.scanner_service.shutdown())
+        await _safe_shutdown("analysis_service", app.state.analysis_service.shutdown())
+        await _safe_shutdown("ws_manager", ws_manager.shutdown())
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
         _default_executor.shutdown(wait=True, cancel_futures=True)
