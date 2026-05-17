@@ -109,27 +109,22 @@ const accountsSlice = createSlice({
       const idx = state.accounts.findIndex((a) => a.id === action.payload.id);
       if (idx >= 0) state.accounts[idx] = action.payload;
     },
-    /** Apply real-time wallet/position WebSocket event to a dashboard card. */
+    /** Apply real-time wallet WebSocket event to a dashboard card. */
     updateCardRealtime(state, action: PayloadAction<RealtimeEvent>) {
-      const { account_id, type, data } = action.payload;
+      const { account_id, data } = action.payload;
       const idx = state.dashboard.findIndex((d) => d.id === account_id);
       if (idx < 0) return;
 
       const card = state.dashboard[idx];
       const dirs: Record<string, Direction> = state.directions[account_id] || {};
 
-      if (type === "wallet_update") {
-        if (data.totalEquity) {
-          dirs.equity = getDirection(card.total_equity, data.totalEquity);
-          card.total_equity = data.totalEquity;
-        }
-        if (data.totalPerpUPL) {
-          dirs.pnl = getDirection(card.total_perp_upl, data.totalPerpUPL);
-          card.total_perp_upl = data.totalPerpUPL;
-        }
-      } else if (type === "position_update") {
-        // Per-trade unrealized PnL is handled by trades-slice updateUnrealizedPnl.
-        // Do NOT update total_perp_upl here — wallet_update provides the correct aggregate.
+      if (data.totalEquity) {
+        dirs.equity = getDirection(card.total_equity, data.totalEquity);
+        card.total_equity = data.totalEquity;
+      }
+      if (data.totalPerpUPL) {
+        dirs.pnl = getDirection(card.total_perp_upl, data.totalPerpUPL);
+        card.total_perp_upl = data.totalPerpUPL;
       }
 
       state.directions[account_id] = dirs;

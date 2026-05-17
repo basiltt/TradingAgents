@@ -68,6 +68,7 @@ class AccountsService:
         self._cache: Dict[str, tuple[float, Any]] = {}
         self._refresh_locks: Dict[str, float] = {}
         self._clients: Dict[str, BybitClient] = {}
+        self._client_lock = asyncio.Lock()
         self._ws_manager = ws_manager
         self._trade_repo = trade_repo
         self._trade_service = trade_service
@@ -137,19 +138,23 @@ class AccountsService:
         if account_id in self._clients:
             return self._clients[account_id]
 
-        creds = await self._db.get_account_credentials(account_id)
-        if not creds:
-            raise ValueError(f"Account {account_id} not found")
+        async with self._client_lock:
+            if account_id in self._clients:
+                return self._clients[account_id]
 
-        def _decrypt_and_create() -> BybitClient:
-            """Decrypt stored credentials and construct a BybitClient (runs in thread)."""
-            api_key = decrypt_value(creds["api_key_encrypted"])
-            api_secret = decrypt_value(creds["api_secret_encrypted"])
-            return BybitClient(api_key, api_secret, creds["account_type"])
+            creds = await self._db.get_account_credentials(account_id)
+            if not creds:
+                raise ValueError(f"Account {account_id} not found")
 
-        client = await asyncio.to_thread(_decrypt_and_create)
-        self._clients[account_id] = client
-        return client
+            def _decrypt_and_create() -> BybitClient:
+                """Decrypt stored credentials and construct a BybitClient (runs in thread)."""
+                api_key = decrypt_value(creds["api_key_encrypted"])
+                api_secret = decrypt_value(creds["api_secret_encrypted"])
+                return BybitClient(api_key, api_secret, creds["account_type"])
+
+            client = await asyncio.to_thread(_decrypt_and_create)
+            self._clients[account_id] = client
+            return client
 
     async def get_client(self, account_id: str) -> BybitClient:
         """Get or create a Bybit API client for the given account."""

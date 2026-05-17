@@ -241,20 +241,22 @@ const tradesSlice = createSlice({
     /** Update unrealized PnL for all trades matching account/symbol/side from position data, distributed pro-rata by qty. */
     updateUnrealizedPnl(state, action: PayloadAction<{ account_id: string; symbol: string; side: string; unrealized_pnl: number }>) {
       const { account_id, symbol, side, unrealized_pnl } = action.payload;
-      const matching: Trade[] = [];
+      const matchIds: string[] = [];
       let totalQty = 0;
-      for (const trade of Object.values(state.activeTrades)) {
+      for (const [id, trade] of Object.entries(state.activeTrades)) {
         if (trade.account_id === account_id && trade.symbol === symbol && trade.side === side) {
-          matching.push(trade);
+          matchIds.push(id);
           totalQty += parseFloat(String(trade.qty ?? 0));
         }
       }
-      for (const trade of matching) {
-        if (totalQty > 0) {
-          const share = parseFloat(String(trade.qty ?? 0)) / totalQty;
-          trade.unrealized_pnl = unrealized_pnl * share;
-        } else {
-          trade.unrealized_pnl = matching.length > 0 ? unrealized_pnl / matching.length : 0;
+      if (matchIds.length === 0) return;
+      for (const id of matchIds) {
+        const trade = state.activeTrades[id];
+        const newPnl = totalQty > 0
+          ? unrealized_pnl * (parseFloat(String(trade.qty ?? 0)) / totalQty)
+          : unrealized_pnl / matchIds.length;
+        if (Math.abs((trade.unrealized_pnl ?? 0) - newPnl) > 0.0001) {
+          trade.unrealized_pnl = newPnl;
         }
       }
     },
