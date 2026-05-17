@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import json as _json
 import os
 import re as _re
 from contextlib import asynccontextmanager
@@ -86,15 +87,42 @@ class CSPCSRFMiddleware:
                 await send({"type": "http.response.body", "body": _CSRF_BODY})
                 return
 
-        # Inject CSP header into every response
+        # Inject security headers into every response
         async def send_with_csp(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 headers.append([b"content-security-policy", _CSP_HEADER_BYTES])
+                headers.append([b"x-content-type-options", b"nosniff"])
+                headers.append([b"x-frame-options", b"DENY"])
+                headers.append([b"strict-transport-security", b"max-age=63072000; includeSubDomains"])
                 message = {**message, "headers": headers}
             await send(message)
 
         await self.app(scope, receive, send_with_csp)
+
+
+_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+class ContentSizeLimitMiddleware:
+    """Reject HTTP requests with Content-Length exceeding the limit."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            cl = headers.get(b"content-length")
+            if cl is not None:
+                try:
+                    if int(cl) > _MAX_BODY_BYTES:
+                        await send({"type": "http.response.start", "status": 413, "headers": [[b"content-type", b"application/json"]]})
+                        await send({"type": "http.response.body", "body": b'{"detail":"Request body too large"}'})
+                        return
+                except (ValueError, TypeError):
+                    pass
+        await self.app(scope, receive, send)
 
 
 def create_app() -> FastAPI:
@@ -249,11 +277,17 @@ def create_app() -> FastAPI:
             app.state.trade_repo = None
             app.state.trade_service = None
 
+        logger.info("app_ready: all services initialised")
+
         yield
+
+        _SHUTDOWN_TIMEOUT = 15.0
 
         async def _safe_shutdown(name: str, coro) -> None:
             try:
-                await coro
+                await asyncio.wait_for(coro, timeout=_SHUTDOWN_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error("shutdown_timeout: %s exceeded %.0fs", name, _SHUTDOWN_TIMEOUT)
             except Exception:
                 logger.exception("shutdown_step_failed: %s", name)
 
@@ -286,6 +320,7 @@ def create_app() -> FastAPI:
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
+    app.add_middleware(ContentSizeLimitMiddleware)
     app.add_middleware(CSPCSRFMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -340,13 +375,19 @@ def create_app() -> FastAPI:
         status = "ok" if db_ok else "degraded"
         if active > cap * 0.75:
             status = "degraded"
-        return {
+        body = {
             "status": status,
             "db": "ok" if db_ok else "unavailable",
             "analyses_active": active,
             "analyses_max": cap,
             "coingecko": get_coingecko_status(),
         }
+        status_code = 503 if status == "degraded" else 200
+        return Response(
+            content=_json.dumps(body),
+            status_code=status_code,
+            media_type="application/json",
+        )
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
