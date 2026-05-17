@@ -17,7 +17,7 @@ WORKDIR /app
 COPY pyproject.toml setup.cfg setup.py ./
 COPY backend/__init__.py backend/__init__.py
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e . 2>/dev/null || true
+    && pip install --no-cache-dir --no-deps -e .
 
 # Layer caching: install Node deps before copying full frontend source
 COPY frontend/package.json frontend/package-lock.json frontend/
@@ -37,6 +37,6 @@ USER appuser
 EXPOSE 5177 8877
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8877/api/v1/health')" || exit 1
+  CMD python3 -c "import urllib.request; r=urllib.request.urlopen('http://localhost:8877/api/v1/health'); assert r.status==200" || exit 1
 
 CMD ["/app/scripts/start-web.sh"]
