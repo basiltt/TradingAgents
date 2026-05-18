@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.event_bus import EventBus
 from backend.async_persistence import AsyncAnalysisDB
+from backend.observability import ObservabilityMiddleware, configure_structured_logging, metrics
 from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
@@ -129,6 +130,9 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if os.environ.get("LOG_FORMAT", "").lower() == "json":
+            configure_structured_logging(os.environ.get("LOG_LEVEL", "INFO"))
+
         loop = asyncio.get_running_loop()
 
         _default_executor = concurrent.futures.ThreadPoolExecutor(
@@ -320,6 +324,7 @@ def create_app() -> FastAPI:
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
+    app.add_middleware(ObservabilityMiddleware)
     app.add_middleware(ContentSizeLimitMiddleware)
     app.add_middleware(CSPCSRFMiddleware)
     app.add_middleware(
@@ -370,6 +375,11 @@ def create_app() -> FastAPI:
     async def healthz():
         """Liveness probe — returns 200 if the process is alive."""
         return Response(content='{"status":"alive"}', media_type="application/json")
+
+    @app.get("/metrics")
+    async def prometheus_metrics():
+        """Prometheus-compatible metrics endpoint."""
+        return Response(content=metrics.prometheus_text(), media_type="text/plain; charset=utf-8")
 
     @app.get("/api/v1/health")
     async def health(request: Request):
