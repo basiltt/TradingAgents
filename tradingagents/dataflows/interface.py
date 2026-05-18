@@ -1,4 +1,6 @@
 
+from typing import Any, Optional
+
 # Import from vendor-specific modules
 from .y_finance import (
     get_YFin_data_online,
@@ -65,7 +67,7 @@ VENDOR_LIST = [
 ]
 
 # Mapping of methods to their vendor-specific implementations
-VENDOR_METHODS = {
+VENDOR_METHODS: dict[str, dict[str, Any]] = {
     # core_stock_apis
     "get_stock_data": {
         "alpha_vantage": get_alpha_vantage_stock,
@@ -115,7 +117,7 @@ def get_category_for_method(method: str) -> str:
             return category
     raise ValueError(f"Method '{method}' not found in any category")
 
-def get_vendor(category: str, method: str = None) -> str:
+def get_vendor(category: str, method: Optional[str] = None) -> str:
     """Get the configured vendor for a data category or specific tool method.
     Tool-level configuration takes precedence over category-level.
     """

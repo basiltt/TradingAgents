@@ -51,7 +51,7 @@ class TradingAgentsGraph:
         self,
         selected_analysts: list[str] | None = None,
         debug=False,
-        config: Dict[str, Any] = None,
+        config: Optional[Dict[str, Any]] = None,
         callbacks: Optional[List] = None,
     ):
         """Initialize the trading agents graph and components.
@@ -65,7 +65,7 @@ class TradingAgentsGraph:
         if selected_analysts is None:
             selected_analysts = ["market", "social", "news", "fundamentals"]
         self.debug = debug
-        self.config = config or DEFAULT_CONFIG
+        self.config: Dict[str, Any] = dict(config) if config else dict(DEFAULT_CONFIG)
         self.callbacks = callbacks or []
 
         # Update the interface's config
@@ -111,7 +111,7 @@ class TradingAgentsGraph:
 
         # Per-agent model overrides: {agent_key: model_id}
         self._agent_llm_cache: dict = {}
-        self._agent_model_overrides: dict = self.config.get("agent_model_overrides") or {}
+        self._agent_model_overrides: Dict[str, Any] = self.config.get("agent_model_overrides") or {}
         self._llm_kwargs = llm_kwargs
 
         self.memory_log = TradingMemoryLog(self.config)
@@ -139,7 +139,7 @@ class TradingAgentsGraph:
         # State tracking
         self.curr_state = None
         self.ticker = None
-        self.log_states_dict = {}  # date to full state dict
+        self.log_states_dict: Dict[str, Any] = {}
 
         # Set up the graph based on asset type
         asset_type = self.config.get("asset_type", "stock")
@@ -472,7 +472,7 @@ class TradingAgentsGraph:
             reflection = self.reflector.reflect_on_final_decision(
                 final_decision=entry.get("decision", ""),
                 raw_return=raw,
-                alpha_return=alpha,
+                alpha_return=alpha or 0.0,
             )
             updates.append({
                 "ticker": ticker,

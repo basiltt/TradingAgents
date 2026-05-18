@@ -1,7 +1,7 @@
 import re
 import pandas as pd
 from datetime import date, timedelta, datetime
-from typing import Annotated
+from typing import Annotated, Optional
 
 SavePathType = Annotated[str, "File path to save data. If None, data is not saved."]
 
@@ -39,7 +39,7 @@ def safe_ticker_component(value: str, *, max_len: int = 32) -> str:
     return value
 
 
-def save_output(data: pd.DataFrame, tag: str, save_path: SavePathType = None) -> None:
+def save_output(data: pd.DataFrame, tag: str, save_path: Optional[SavePathType] = None) -> None:
     if save_path:
         data.to_csv(save_path, encoding="utf-8")
         print(f"{tag} saved to {save_path}")

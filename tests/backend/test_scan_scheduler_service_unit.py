@@ -1,0 +1,170 @@
+"""Unit tests for ScanSchedulerService — validation, CRUD, scheduling logic."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from backend.services.scan_scheduler_service import (
+    ScanSchedulerService,
+    MAX_SCHEDULES,
+    MIN_INTERVAL_MINUTES,
+    MIN_CRON_INTERVAL_SECONDS,
+    COOLDOWN_SECONDS,
+    MAX_CONSECUTIVE_FAILURES,
+)
+
+
+@pytest.fixture
+def scanner():
+    return AsyncMock()
+
+
+@pytest.fixture
+def db():
+    return AsyncMock()
+
+
+@pytest.fixture
+def config_svc():
+    m = MagicMock()
+    m.get_config.return_value = {"resolved": {
+        "llm_provider": "openai", "deep_think_llm": "gpt-4",
+        "quick_think_llm": "gpt-3.5", "workflow_mode": "quick_trade",
+        "research_depth": 2, "max_debate_rounds": 1,
+        "max_risk_discuss_rounds": 1, "max_recur_limit": 100,
+        "max_parallel": 5, "output_language": "English",
+    }}
+    return m
+
+
+@pytest.fixture
+def svc(scanner, db, config_svc):
+    return ScanSchedulerService(scanner, db, config_svc)
+
+
+class TestValidateSchedule:
+    def test_interval_too_short_raises(self, svc):
+        with pytest.raises(ValueError, match="at least"):
+            svc._validate_schedule("interval", {"interval_minutes": 5})
+
+    def test_interval_valid(self, svc):
+        svc._validate_schedule("interval", {"interval_minutes": 30})
+
+    def test_daily_invalid_time_format(self, svc):
+        with pytest.raises(ValueError, match="HH:MM"):
+            svc._validate_schedule("daily", {"time": "9am"})
+
+    def test_daily_invalid_time_value(self, svc):
+        with pytest.raises(ValueError, match="Invalid time"):
+            svc._validate_schedule("daily", {"time": "25:00"})
+
+    def test_weekly_valid(self, svc):
+        svc._validate_schedule("weekly", {"time": "09:00"})
+
+    def test_cron_too_frequent(self, svc):
+        with pytest.raises(ValueError, match="too frequently"):
+            svc._validate_schedule("cron", {"cron_expression": "* * * * *"})
+
+    def test_cron_valid(self, svc):
+        svc._validate_schedule("cron", {"cron_expression": "0 */6 * * *"})
+
+
+class TestCreate:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_create_success(self, svc, db):
+        db.count_scheduled_scans = AsyncMock(return_value=0)
+        db.insert_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan = AsyncMock(return_value={"id": "abc", "name": "Test"})
+        result = await svc.create({
+            "name": "Test", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 60},
+            "scan_config": {},
+        })
+        assert result["name"] == "Test"
+        db.insert_scheduled_scan.assert_awaited_once()
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_create_at_max_raises(self, svc, db):
+        db.count_scheduled_scans = AsyncMock(return_value=MAX_SCHEDULES)
+        with pytest.raises(ValueError, match="Maximum"):
+            await svc.create({
+                "name": "Test", "schedule_type": "interval",
+                "schedule_config": {"interval_minutes": 60},
+                "scan_config": {},
+            })
+
+
+class TestUpdate:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_update_not_found_raises(self, svc, db):
+        db.get_scheduled_scan = AsyncMock(return_value=None)
+        with pytest.raises(KeyError, match="not found"):
+            await svc.update("missing", {"name": "New"})
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_update_preserves_masked_api_key(self, svc, db):
+        db.get_scheduled_scan = AsyncMock(return_value={
+            "id": "s1", "name": "Old", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 60},
+            "scan_config": {"llm_api_key": "real-key"},
+        })
+        db.update_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan.side_effect = [
+            {"id": "s1", "name": "Old", "schedule_type": "interval",
+             "schedule_config": {"interval_minutes": 60},
+             "scan_config": {"llm_api_key": "real-key"}},
+            {"id": "s1", "name": "New"},
+        ]
+        await svc.update("s1", {"name": "New", "scan_config": {"llm_api_key": "***"}})
+        call_args = db.update_scheduled_scan.call_args
+        updates = call_args[0][1]
+        assert updates.get("scan_config", {}).get("llm_api_key") == "real-key"
+
+
+class TestDelete:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_delete_success(self, svc, db):
+        db.get_scheduled_scan = AsyncMock(return_value={"id": "s1", "status": "active"})
+        db.delete_scheduled_scan = AsyncMock()
+        await svc.delete("s1")
+        db.delete_scheduled_scan.assert_awaited_once_with("s1")
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_delete_not_found_returns_falsy(self, svc, db):
+        db.delete_scheduled_scan = AsyncMock(return_value=False)
+        result = await svc.delete("missing")
+        assert not result
+
+
+class TestSanitizeError:
+    def test_truncates_long(self):
+        result = ScanSchedulerService._sanitize_error("x" * 1000)
+        assert len(result) <= 500
+
+    def test_redacts_api_keys(self):
+        result = ScanSchedulerService._sanitize_error("key sk-1234abcdef")
+        assert "[redacted]" in result
+
+    def test_none_passthrough(self):
+        assert ScanSchedulerService._sanitize_error(None) is None
+
+    def test_empty_passthrough(self):
+        assert ScanSchedulerService._sanitize_error("") == ""
+
+    def test_redacts_paths(self):
+        result = ScanSchedulerService._sanitize_error("Error at C:\\Users\\secret\\file.py")
+        assert "[path]" in result
+
+
+class TestResolveConfig:
+    def test_fills_defaults(self, svc):
+        result = svc._resolve_scan_config({})
+        assert result["provider"] == "openai"
+        assert result["workflow_mode"] == "quick_trade"
+
+    def test_preserves_explicit_values(self, svc):
+        result = svc._resolve_scan_config({"provider": "anthropic"})
+        assert result["provider"] == "anthropic"

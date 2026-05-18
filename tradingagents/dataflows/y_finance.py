@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd
@@ -246,7 +246,7 @@ def get_stockstats_indicator(
 
 def get_fundamentals(
     ticker: Annotated[str, "ticker symbol of the company"],
-    curr_date: Annotated[str, "current date (not used for yfinance)"] = None
+    curr_date: Annotated[Optional[str], "current date (not used for yfinance)"] = None
 ):
     """Get company fundamentals overview from yfinance."""
     try:
@@ -304,7 +304,7 @@ def get_fundamentals(
 def get_balance_sheet(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
-    curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None
+    curr_date: Annotated[Optional[str], "current date in YYYY-MM-DD format"] = None
 ):
     """Get balance sheet data from yfinance."""
     try:
@@ -315,7 +315,8 @@ def get_balance_sheet(
         else:
             data = yf_retry(lambda: ticker_obj.balance_sheet)
 
-        data = filter_financials_by_date(data, curr_date)
+        if curr_date is not None:
+            data = filter_financials_by_date(data, curr_date)
 
         if data.empty:
             return f"No balance sheet data found for symbol '{ticker}'"
@@ -336,7 +337,7 @@ def get_balance_sheet(
 def get_cashflow(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
-    curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None
+    curr_date: Annotated[Optional[str], "current date in YYYY-MM-DD format"] = None
 ):
     """Get cash flow data from yfinance."""
     try:
@@ -347,7 +348,8 @@ def get_cashflow(
         else:
             data = yf_retry(lambda: ticker_obj.cashflow)
 
-        data = filter_financials_by_date(data, curr_date)
+        if curr_date is not None:
+            data = filter_financials_by_date(data, curr_date)
 
         if data.empty:
             return f"No cash flow data found for symbol '{ticker}'"
@@ -368,7 +370,7 @@ def get_cashflow(
 def get_income_statement(
     ticker: Annotated[str, "ticker symbol of the company"],
     freq: Annotated[str, "frequency of data: 'annual' or 'quarterly'"] = "quarterly",
-    curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None
+    curr_date: Annotated[Optional[str], "current date in YYYY-MM-DD format"] = None
 ):
     """Get income statement data from yfinance."""
     try:
@@ -379,7 +381,8 @@ def get_income_statement(
         else:
             data = yf_retry(lambda: ticker_obj.income_stmt)
 
-        data = filter_financials_by_date(data, curr_date)
+        if curr_date is not None:
+            data = filter_financials_by_date(data, curr_date)
 
         if data.empty:
             return f"No income statement data found for symbol '{ticker}'"
