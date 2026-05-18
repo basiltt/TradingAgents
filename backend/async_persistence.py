@@ -428,6 +428,25 @@ ALTER TABLE scheduled_scans ADD CONSTRAINT scheduled_scans_status_check
 """),
     (25, _SCHEMA_V25_TABLES),
     (26, _schema_v26_triggers),
+    (27, """
+CREATE TABLE IF NOT EXISTS dead_letter (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    operation TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    stack_trace TEXT,
+    attempt_count INTEGER DEFAULT 1,
+    max_retries INTEGER DEFAULT 3,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending','retrying','exhausted','resolved')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_retried_at TIMESTAMPTZ,
+    resolved_at TIMESTAMPTZ,
+    resolved_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_status ON dead_letter(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_dead_letter_operation ON dead_letter(operation);
+"""),
 ]
 
 
