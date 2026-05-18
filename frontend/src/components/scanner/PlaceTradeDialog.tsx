@@ -46,7 +46,7 @@ function loadSettings(): TradeSettings {
       const parsed = JSON.parse(raw);
       return { ...DEFAULT_SETTINGS, ...parsed };
     }
-  } catch {}
+  } catch { /* ignored */ }
   return { ...DEFAULT_SETTINGS };
 }
 
@@ -65,7 +65,7 @@ function loadBaseCapital(accountId: string): BaseCapitalEntry | null {
       const all = JSON.parse(raw) as Record<string, BaseCapitalEntry>;
       return all[accountId] || null;
     }
-  } catch {}
+  } catch { /* ignored */ }
   return null;
 }
 
@@ -75,7 +75,7 @@ function saveBaseCapital(accountId: string, value: string) {
     const all = raw ? JSON.parse(raw) : {};
     all[accountId] = { value, date: getTodayKey() };
     localStorage.setItem(BASE_CAPITAL_KEY, JSON.stringify(all));
-  } catch {}
+  } catch { /* ignored */ }
 }
 
 export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, onTradeSuccess }: Props) {
@@ -86,12 +86,13 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
   const [result, setResult] = useState<Record<string, string> | null>(null);
   const submittingRef = useRef(false);
   const initializedRef = useRef(false);
-  const prevSymbolRef = useRef(symbol);
 
-  if (prevSymbolRef.current !== symbol) {
-    prevSymbolRef.current = symbol;
+  // Reset result when symbol changes
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: sync derived state on prop change
     if (result) setResult(null);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts-list"],
@@ -103,6 +104,7 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
     if (accounts.length > 0 && settings.accountId) {
       const acc = accounts.find((a: TradingAccount) => a.id === settings.accountId);
       if (!acc || !acc.is_active) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync: deselect inactive account
         setSettings((prev) => {
           const next = { ...prev, accountId: "" };
           saveSettings(next);

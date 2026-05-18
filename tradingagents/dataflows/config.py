@@ -1,3 +1,9 @@
+"""Runtime configuration singleton for dataflow vendor routing.
+
+Controls which data vendor (Alpha Vantage, Finnhub, etc.) handles each
+data category (stock, indicators, fundamentals, news). Initialized from
+default_config and overridable at runtime via set_config().
+"""
 import tradingagents.default_config as default_config
 from typing import Dict, Optional
 
@@ -22,8 +28,10 @@ def set_config(config: Dict):
 
 def get_config() -> Dict:
     """Get the current configuration."""
+    global _config
     if _config is None:
         initialize_config()
+    assert _config is not None
     return _config.copy()
 
 

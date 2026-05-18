@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import time
 import uuid as _uuid
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -13,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from backend.rate_limit import check_rate_limit as _check_rate_limit
 from backend.schemas import (
     CreateAccountRequest,
     PlaceTradeRequest,
@@ -30,59 +29,23 @@ from backend.services.trade_repository import (
     InvalidStatusTransition,
     TradeNotFound,
 )
+from backend.utils import serialize_trade as _serialize_trade, validate_trade_id as _validate_trade_id
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["accounts"])
 
 
-class _TokenBucket:
-    def __init__(self, rate: float = 10.0, capacity: float = 10.0):
-        self.rate = rate
-        self.capacity = capacity
-        self.tokens = capacity
-        self.last_refill = time.monotonic()
-
-    def consume(self) -> bool:
-        now = time.monotonic()
-        elapsed = now - self.last_refill
-        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-        self.last_refill = now
-        if self.tokens >= 1:
-            self.tokens -= 1
-            return True
-        return False
-
-
-_rate_limiters: dict[str, _TokenBucket] = {}
-_RATE_LIMITER_MAX_ENTRIES = 1000
-_RATE_LIMITER_STALE_SECONDS = 3600
-
-
-async def _check_rate_limit(account_id: str) -> None:
-    now = time.monotonic()
-    if len(_rate_limiters) >= _RATE_LIMITER_MAX_ENTRIES:
-        stale = [k for k, v in _rate_limiters.items() if now - v.last_refill > _RATE_LIMITER_STALE_SECONDS]
-        for k in stale:
-            del _rate_limiters[k]
-    if account_id not in _rate_limiters:
-        if len(_rate_limiters) >= _RATE_LIMITER_MAX_ENTRIES:
-            logger.warning("rate_limiter_capacity_exceeded")
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        _rate_limiters[account_id] = _TokenBucket()
-    if not _rate_limiters[account_id].consume():
-        logger.warning("rate_limit_hit", extra={"account_id": account_id})
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-
 def _get_service(request: Request):
-    svc = request.app.state.accounts_service
+    """Retrieve AccountsService from app state or raise 503."""
+    svc = getattr(request.app.state, "accounts_service", None)
     if svc is None:
         raise HTTPException(503, detail="Accounts feature disabled — set ACCOUNTS_ENCRYPTION_KEY")
     return svc
 
 
 def _validate_account_id(account_id: str) -> str:
+    """Validate UUID format and return the ID, or raise HTTPException(400)."""
     try:
         _uuid.UUID(account_id)
     except (ValueError, AttributeError):
@@ -92,7 +55,11 @@ def _validate_account_id(account_id: str) -> str:
 
 @router.post("/accounts")
 async def create_account(request: Request):
-    body = await request.json()
+    """Create a new trading account with encrypted API credentials."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
     try:
         req = CreateAccountRequest(**body)
     except ValidationError as e:
@@ -101,10 +68,13 @@ async def create_account(request: Request):
     svc = _get_service(request)
     try:
         account = await svc.create_account(req.label, req.account_type, req.api_key, req.api_secret)
+        logger.info("create_account_ok", extra={"account_id": account.get("id")})
         return account
     except ValueError as e:
+        logger.warning("create_account_credential_failed", extra={"error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
+        logger.error("create_account_bybit_error", extra={"ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -113,6 +83,7 @@ async def list_accounts(
     request: Request,
     account_type: Optional[str] = Query(None, description="Filter by account type: demo or live"),
 ):
+    """List all trading accounts, optionally filtered by type."""
     svc = _get_service(request)
     accounts = await svc.list_accounts()
     if account_type:
@@ -124,6 +95,7 @@ async def list_accounts(
 
 @router.get("/accounts/{account_id}")
 async def get_account(request: Request, account_id: str):
+    """Fetch a single account by ID."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     account = await svc.get_account(account_id)
@@ -134,6 +106,7 @@ async def get_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}")
 async def update_account(request: Request, account_id: str):
+    """Update account label or active status."""
     _validate_account_id(account_id)
     body = await request.json()
     try:
@@ -150,6 +123,7 @@ async def update_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}/credentials")
 async def rotate_credentials(request: Request, account_id: str):
+    """Replace API credentials and verify connectivity."""
     _validate_account_id(account_id)
     body = await request.json()
     try:
@@ -162,20 +136,25 @@ async def rotate_credentials(request: Request, account_id: str):
         account = await svc.rotate_credentials(account_id, req.api_key, req.api_secret)
         if not account:
             return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
+        logger.info("rotate_credentials_ok", extra={"account_id": account_id})
         return account
     except ValueError as e:
+        logger.warning("rotate_credentials_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
+        logger.error("rotate_credentials_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 @router.delete("/accounts/{account_id}")
 async def delete_account(request: Request, account_id: str):
+    """Soft-delete an account and invalidate cached data."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
         deleted = await svc.delete_account(account_id)
     except Exception as e:
+        logger.error("delete_account_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         if "ForeignKeyViolation" in type(e).__name__ or "foreign key" in str(e).lower():
             return JSONResponse(
                 {"detail": "Cannot delete account with existing trades", "code": "ACCOUNT_HAS_TRADES"},
@@ -189,6 +168,7 @@ async def delete_account(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}/analytics-inclusion")
 async def toggle_analytics_inclusion(request: Request, account_id: str):
+    """Toggle whether this account is included in portfolio analytics."""
     _validate_account_id(account_id)
     body = await request.json()
     include = body.get("include")
@@ -203,6 +183,7 @@ async def toggle_analytics_inclusion(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/test")
 async def test_connection(request: Request, account_id: str):
+    """Test exchange API connectivity for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -214,6 +195,7 @@ async def test_connection(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/trade")
 async def place_trade(request: Request, account_id: str):
+    """Place a market trade with leverage, TP, and SL on the exchange."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     body = await request.json()
@@ -239,11 +221,13 @@ async def place_trade(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 400)
     except BybitAPIError as e:
+        logger.error("place_trade_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 @router.get("/accounts/{account_id}/wallet")
 async def get_wallet(request: Request, account_id: str):
+    """Fetch wallet balances for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -251,11 +235,13 @@ async def get_wallet(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
+        logger.error("get_wallet_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 @router.get("/accounts/{account_id}/positions")
 async def get_positions(request: Request, account_id: str):
+    """Fetch open perpetual positions for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -263,11 +249,13 @@ async def get_positions(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
+        logger.error("get_positions_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 @router.get("/accounts/{account_id}/orders")
 async def get_orders(request: Request, account_id: str):
+    """Fetch active orders for an account."""
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -275,6 +263,7 @@ async def get_orders(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
+        logger.error("get_orders_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -287,6 +276,7 @@ async def get_closed_pnl(
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=1000),
 ):
+    """Fetch closed PnL records for an account within a date range."""
     _validate_account_id(account_id)
     try:
         date.fromisoformat(start_date)
@@ -300,6 +290,7 @@ async def get_closed_pnl(
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
+        logger.error("get_closed_pnl_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
@@ -310,6 +301,7 @@ async def get_pnl_summary(
     start_date: str = Query(..., description="Start date YYYY-MM-DD"),
     end_date: str = Query(..., description="End date YYYY-MM-DD"),
 ):
+    """Compute aggregated PnL summary (total, win rate, avg) for a date range."""
     _validate_account_id(account_id)
     try:
         date.fromisoformat(start_date)
@@ -323,12 +315,14 @@ async def get_pnl_summary(
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
+        logger.error("get_pnl_summary_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 # --- Trade endpoints ---
 
 def _get_trade_repo(request: Request):
+    """Retrieve TradeRepository from app state or raise 503."""
     repo = getattr(request.app.state, "trade_repo", None)
     if repo is None:
         raise HTTPException(503, detail="Trading not configured")
@@ -336,6 +330,7 @@ def _get_trade_repo(request: Request):
 
 
 def _get_db(request: Request):
+    """Retrieve AsyncAnalysisDB from app state or raise 503."""
     db = getattr(request.app.state, "db", None)
     if db is None:
         raise HTTPException(503, detail="Database not available")
@@ -343,22 +338,11 @@ def _get_db(request: Request):
 
 
 def _get_trade_service(request: Request):
+    """Retrieve TradeService from app state, or None if not configured."""
     svc = getattr(request.app.state, "trade_service", None)
     return svc
 
 
-def _serialize_trade(trade: dict) -> dict:
-    out = dict(trade)
-    for k, v in out.items():
-        if isinstance(v, _uuid.UUID):
-            out[k] = str(v)
-    if isinstance(out.get("metadata"), str):
-        try:
-            out["metadata"] = json.loads(out["metadata"])
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("invalid_trade_metadata", extra={"trade_id": out.get("id")})
-            out["metadata"] = {}
-    return out
 
 
 @router.get("/accounts/{account_id}/trades")
@@ -377,6 +361,7 @@ async def list_trades(
     include_total: bool = False,
     parent_trade_id: Optional[str] = None,
 ):
+    """List trades for an account with filtering, sorting, and cursor pagination."""
     _validate_account_id(account_id)
     repo = _get_trade_repo(request)
     db = _get_db(request)
@@ -415,6 +400,7 @@ async def list_trades(
 
 @router.get("/accounts/{account_id}/trades/open")
 async def get_open_trades(request: Request, account_id: str):
+    """Fetch all currently open trades for an account."""
     _validate_account_id(account_id)
     repo = _get_trade_repo(request)
     db = _get_db(request)
@@ -425,6 +411,7 @@ async def get_open_trades(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/trades/stats")
 async def get_trade_stats(request: Request, account_id: str):
+    """Fetch aggregated trade statistics for an account."""
     _validate_account_id(account_id)
     trade_service = _get_trade_service(request)
     if trade_service is not None:
@@ -439,11 +426,9 @@ async def get_trade_stats(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/trades/{trade_id}")
 async def get_trade_detail(request: Request, account_id: str, trade_id: str):
+    """Fetch a single trade with its event history."""
     _validate_account_id(account_id)
-    try:
-        _uuid.UUID(trade_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+    _validate_trade_id(trade_id)
 
     repo = _get_trade_repo(request)
     db = _get_db(request)
@@ -461,6 +446,7 @@ async def get_trade_detail(request: Request, account_id: str, trade_id: str):
 
 
 def _serialize_trade_event(event: dict) -> dict:
+    """Serialize a trade event dict, converting UUIDs and datetimes to strings."""
     out = dict(event)
     for k, v in out.items():
         if isinstance(v, _uuid.UUID):
@@ -472,6 +458,7 @@ def _serialize_trade_event(event: dict) -> dict:
 
 @router.get("/accounts/{account_id}/trades/{trade_id}/events")
 async def get_trade_events(request: Request, account_id: str, trade_id: str):
+    """Fetch audit trail events for a specific trade."""
     _validate_account_id(account_id)
     try:
         _uuid.UUID(trade_id)
@@ -497,12 +484,10 @@ async def close_trade(
     request: Request, account_id: str, trade_id: str,
     body: TradeCloseRequest = TradeCloseRequest(),
 ):
+    """Close a trade (full or partial) via the exchange."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
-    try:
-        _uuid.UUID(trade_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+    _validate_trade_id(trade_id)
 
     trade_service = _get_trade_service(request)
     if trade_service is None:
@@ -513,6 +498,7 @@ async def close_trade(
             account_id=account_id, trade_id=trade_id, qty=body.qty,
             close_reason=body.close_reason or "manual_single",
         )
+        logger.info("close_trade_ok", extra={"account_id": account_id, "trade_id": trade_id})
         return TradeResponse(**_serialize_trade(result))
     except TradeNotFound:
         return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
@@ -521,17 +507,16 @@ async def close_trade(
     except ConcurrentModification as e:
         return JSONResponse({"detail": str(e), "code": "CONCURRENT_MODIFICATION"}, 409)
     except BybitAPIError as e:
+        logger.error("close_trade_bybit_error", extra={"account_id": account_id, "trade_id": trade_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)
 
 
 @router.post("/accounts/{account_id}/trades/{trade_id}/cancel")
 async def cancel_trade(request: Request, account_id: str, trade_id: str):
+    """Cancel a pending or open trade."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
-    try:
-        _uuid.UUID(trade_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+    _validate_trade_id(trade_id)
 
     trade_service = _get_trade_service(request)
     if trade_service is None:
@@ -541,6 +526,7 @@ async def cancel_trade(request: Request, account_id: str, trade_id: str):
         result = await trade_service.cancel_trade(
             account_id=account_id, trade_id=trade_id,
         )
+        logger.info("cancel_trade_ok", extra={"account_id": account_id, "trade_id": trade_id})
         return TradeResponse(**_serialize_trade(result))
     except TradeNotFound:
         return JSONResponse({"detail": "Trade not found", "code": "TRADE_NOT_FOUND"}, 404)
@@ -549,4 +535,5 @@ async def cancel_trade(request: Request, account_id: str, trade_id: str):
     except ConcurrentModification as e:
         return JSONResponse({"detail": str(e), "code": "CONCURRENT_MODIFICATION"}, 409)
     except BybitAPIError as e:
+        logger.error("cancel_trade_bybit_error", extra={"account_id": account_id, "trade_id": trade_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)

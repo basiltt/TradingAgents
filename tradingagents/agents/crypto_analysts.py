@@ -378,7 +378,6 @@ def create_confluence_checker(llm):
             "Be concise. Focus on actionable information for a trader."
         )
 
-        from tradingagents.agents.utils.state_filter import validate_state_write
         result = llm.invoke(prompt)
         return validate_state_write({
             "confluence_summary": result.content,

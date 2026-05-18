@@ -63,7 +63,7 @@ class TestBybitRateLimiter:
     def test_concurrent_contention_no_over_issuance(self):
         from tradingagents.dataflows.bybit_data import BybitRateLimiter
         limiter = BybitRateLimiter(capacity=80, refill_rate=16.0)
-        acquired = threading.Event()
+        threading.Event()
         count = {"value": 0}
         lock = threading.Lock()
 
@@ -98,7 +98,6 @@ class TestBybitRateLimiter:
 
     def test_warning_logged_on_long_block(self):
         from tradingagents.dataflows.bybit_data import BybitRateLimiter
-        import logging
         limiter = BybitRateLimiter(capacity=1, refill_rate=0.5)
         limiter.acquire()
         with patch("tradingagents.dataflows.bybit_data.logger") as mock_logger:
@@ -143,7 +142,7 @@ class TestBybitCircuitBreaker:
         cb.check()  # 2 < 3, should not raise
 
     def test_thread_safety(self):
-        from tradingagents.dataflows.bybit_data import BybitCircuitBreaker, BybitUnavailableError
+        from tradingagents.dataflows.bybit_data import BybitCircuitBreaker
         cb = BybitCircuitBreaker(failure_threshold=3)
         errors = []
 
@@ -245,7 +244,7 @@ class TestBybitRequest:
         mock_resp = _mock_response({"retCode": 0, "result": {"value": 42}})
         with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
             mock_session.get.return_value = mock_resp
-            result = _bybit_request(
+            _bybit_request(
                 "/v5/test", {}, ("test", "store"),
                 cache=cache, limiter=limiter, circuit_breaker=cb,
             )
@@ -278,7 +277,7 @@ class TestBybitRequest:
         with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
             mock_session.get.side_effect = [mock_resp_429, resp_ok]
             with patch("time.sleep"):
-                result = _bybit_request(
+                _bybit_request(
                     "/v5/test", {}, ("test", "retry"),
                     cache={}, limiter=limiter, circuit_breaker=cb,
                 )
@@ -345,7 +344,7 @@ class TestGetBybitKlines:
                 _mock_response(resp1),
                 _mock_response(resp2),
             ]
-            result = get_bybit_klines(
+            get_bybit_klines(
                 "BTCUSDT", "60",
                 start_time=1699900000000,
                 end_time=1700100000000,
@@ -365,7 +364,7 @@ class TestGetBybitKlines:
         cb = BybitCircuitBreaker()
         with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
             mock_session.get.return_value = _mock_response(resp)
-            result = get_bybit_klines(
+            get_bybit_klines(
                 "BTCUSDT", "60",
                 start_time=1699900000000,
                 end_time=1700100000000,
@@ -391,7 +390,7 @@ class TestGetBybitKlines:
 
         with patch("tradingagents.dataflows.bybit_data._session") as mock_session:
             mock_session.get.side_effect = make_page
-            result = get_bybit_klines(
+            get_bybit_klines(
                 "BTCUSDT", "60",
                 start_time=1600000000000,
                 end_time=1700100000000,
@@ -555,11 +554,11 @@ class TestGetBybitIndicators:
         for i in range(n):
             o = base + random.uniform(-2, 2)
             h = o + random.uniform(0, 3)
-            l = o - random.uniform(0, 3)
+            low = o - random.uniform(0, 3)
             c = o + random.uniform(-1, 1)
             v = random.uniform(500, 5000)
             ts = 1700000000000 + i * 3600000
-            lines.append(f"{ts},{o:.2f},{h:.2f},{l:.2f},{c:.2f},{v:.2f}")
+            lines.append(f"{ts},{o:.2f},{h:.2f},{low:.2f},{c:.2f},{v:.2f}")
         return "\n".join(lines)
 
     def test_computes_indicators(self):
@@ -603,8 +602,6 @@ class TestGetBybitIndicators:
 
 class TestHMACSigning:
     def test_sign_request_produces_valid_hmac(self):
-        import hmac as hmac_mod
-        import hashlib
         from tradingagents.dataflows.bybit_data import _sign_request
         params = {"category": "linear", "symbol": "BTCUSDT"}
         signed = _sign_request(params, api_key="testkey", api_secret="testsecret")

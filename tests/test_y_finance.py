@@ -1,7 +1,6 @@
 """Tests for tradingagents.dataflows.y_finance — Phase 1 unit tests."""
 
-from datetime import datetime
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch
 
 import pandas as pd
 import pytest

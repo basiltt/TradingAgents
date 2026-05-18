@@ -1,3 +1,4 @@
+"""Alpha Vantage daily adjusted stock data retrieval with CSV parsing and date filtering."""
 from datetime import datetime
 from .alpha_vantage_common import _make_api_request, _filter_csv_by_date_range
 
@@ -35,4 +36,6 @@ def get_stock(
 
     response = _make_api_request("TIME_SERIES_DAILY_ADJUSTED", params)
 
+    if not isinstance(response, str):
+        return str(response)
     return _filter_csv_by_date_range(response, start_date, end_date)

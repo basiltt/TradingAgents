@@ -1,50 +1,47 @@
 # TradingAgents/graph/trading_graph.py
 
+import json
 import logging
 import os
-from pathlib import Path
-import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, Tuple, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import yfinance as yf
-
-logger = logging.getLogger(__name__)
-
 from langgraph.prebuilt import ToolNode
 
-from tradingagents.llm_clients import create_llm_client
-
-from tradingagents.agents import *
-from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.agents.utils.memory import TradingMemoryLog
-from tradingagents.dataflows.utils import safe_ticker_component
-from tradingagents.agents.utils.agent_states import (
-    AgentState,
-    InvestDebateState,
-    RiskDebateState,
-)
-from tradingagents.dataflows.config import set_config
-
-# Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
-    get_stock_data,
-    get_indicators,
-    get_fundamentals,
     get_balance_sheet,
     get_cashflow,
+    get_fundamentals,
+    get_global_news,
     get_income_statement,
-    get_news,
+    get_indicators,
     get_insider_transactions,
-    get_global_news
+    get_news,
+    get_stock_data,
 )
+from tradingagents.agents.utils.memory import TradingMemoryLog
+from tradingagents.dataflows.config import set_config
+from tradingagents.dataflows.utils import safe_ticker_component
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.llm_clients import create_llm_client
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
 from .conditional_logic import ConditionalLogic
-from .setup import GraphSetup
 from .propagation import Propagator
 from .reflection import Reflector
+from .setup import GraphSetup
 from .signal_processing import SignalProcessor
+
+logger = logging.getLogger(__name__)
+
+_REASONING_PREFIXES: Tuple[str, ...] = ("o1", "o3", "o4")
+
+
+def _is_reasoning_model(model_name: str) -> bool:
+    """Return True if the model is a reasoning model that rejects temperature."""
+    return any(model_name.lower().startswith(p) for p in _REASONING_PREFIXES)
 
 
 class TradingAgentsGraph:
@@ -52,9 +49,9 @@ class TradingAgentsGraph:
 
     def __init__(
         self,
-        selected_analysts=["market", "social", "news", "fundamentals"],
+        selected_analysts: list[str] | None = None,
         debug=False,
-        config: Dict[str, Any] = None,
+        config: Optional[Dict[str, Any]] = None,
         callbacks: Optional[List] = None,
     ):
         """Initialize the trading agents graph and components.
@@ -65,8 +62,10 @@ class TradingAgentsGraph:
             config: Configuration dictionary. If None, uses default config
             callbacks: Optional list of callback handlers (e.g., for tracking LLM/tool stats)
         """
+        if selected_analysts is None:
+            selected_analysts = ["market", "social", "news", "fundamentals"]
         self.debug = debug
-        self.config = config or DEFAULT_CONFIG
+        self.config: Dict[str, Any] = dict(config) if config else dict(DEFAULT_CONFIG)
         self.callbacks = callbacks or []
 
         # Update the interface's config
@@ -87,15 +86,10 @@ class TradingAgentsGraph:
         # Reasoning models (o1/o3/o4-mini etc.) reject temperature — skip for those.
         deep_model = self.config["deep_think_llm"].lower()
         quick_model = self.config["quick_think_llm"].lower()
-        _reasoning_prefixes = ("o1", "o3", "o4")
-
-        def _is_reasoning(model: str) -> bool:
-            return any(model.startswith(p) for p in _reasoning_prefixes)
-
         llm_kwargs.pop("temperature", None)
 
-        deep_temp = {} if _is_reasoning(deep_model) else {"temperature": 0}
-        quick_temp = {} if _is_reasoning(quick_model) else {"temperature": 0}
+        deep_temp = {} if _is_reasoning_model(deep_model) else {"temperature": 0}
+        quick_temp = {} if _is_reasoning_model(quick_model) else {"temperature": 0}
 
         deep_client = create_llm_client(
             provider=self.config["llm_provider"],
@@ -117,7 +111,7 @@ class TradingAgentsGraph:
 
         # Per-agent model overrides: {agent_key: model_id}
         self._agent_llm_cache: dict = {}
-        self._agent_model_overrides: dict = self.config.get("agent_model_overrides") or {}
+        self._agent_model_overrides: Dict[str, Any] = self.config.get("agent_model_overrides") or {}
         self._llm_kwargs = llm_kwargs
 
         self.memory_log = TradingMemoryLog(self.config)
@@ -145,7 +139,7 @@ class TradingAgentsGraph:
         # State tracking
         self.curr_state = None
         self.ticker = None
-        self.log_states_dict = {}  # date to full state dict
+        self.log_states_dict: Dict[str, Any] = {}
 
         # Set up the graph based on asset type
         asset_type = self.config.get("asset_type", "stock")
@@ -327,8 +321,7 @@ class TradingAgentsGraph:
             return self._agent_llm_cache[model_id]
 
         try:
-            _reasoning_prefixes = ("o1", "o3", "o4")
-            is_reasoning = any(model_id.lower().startswith(p) for p in _reasoning_prefixes)
+            is_reasoning = _is_reasoning_model(model_id)
             temp = {} if is_reasoning else {"temperature": 0}
 
             # Only pass provider-agnostic kwargs to override clients.
@@ -351,8 +344,7 @@ class TradingAgentsGraph:
             self._agent_llm_cache[model_id] = llm
             return llm
         except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "Failed to create override LLM for agent '%s' (model=%s), "
                 "falling back to default",
                 agent_key, model_id, exc_info=True,
@@ -480,7 +472,7 @@ class TradingAgentsGraph:
             reflection = self.reflector.reflect_on_final_decision(
                 final_decision=entry.get("decision", ""),
                 raw_return=raw,
-                alpha_return=alpha,
+                alpha_return=alpha or 0.0,
             )
             updates.append({
                 "ticker": ticker,

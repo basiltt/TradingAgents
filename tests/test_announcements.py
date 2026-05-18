@@ -1,7 +1,6 @@
 """Tests for cli.announcements — Phase 1 unit tests."""
 
 from unittest.mock import patch, MagicMock
-import pytest
 
 
 class TestFetchAnnouncements:

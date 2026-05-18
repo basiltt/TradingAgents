@@ -1,7 +1,6 @@
 """Tests for tradingagents.graph.conditional_logic — Phase 1 unit tests."""
 
 from unittest.mock import MagicMock
-import pytest
 
 from tradingagents.graph.conditional_logic import ConditionalLogic
 

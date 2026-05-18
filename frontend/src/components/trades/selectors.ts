@@ -21,11 +21,12 @@ export const selectActiveTradeAggregates = createSelector(
         totalUnrealizedPnl += trade.unrealized_pnl;
       }
     }
+    const rounded = (v: number) => Math.round(v * 100) / 100;
     return {
       tradeCount: trades.length,
-      totalRealizedPnl,
-      totalUnrealizedPnl,
-      totalPnl: totalRealizedPnl + totalUnrealizedPnl,
+      totalRealizedPnl: rounded(totalRealizedPnl),
+      totalUnrealizedPnl: rounded(totalUnrealizedPnl),
+      totalPnl: rounded(totalRealizedPnl + totalUnrealizedPnl),
     };
   },
 );

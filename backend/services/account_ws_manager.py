@@ -23,16 +23,20 @@ class AccountWSManager:
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        accounts = await self._db.list_accounts()
-        for acc in accounts:
-            if acc["is_active"]:
-                await self._start_account(acc["id"])
+        async with self._lock:
+            accounts = await self._db.list_accounts()
+            for acc in accounts:
+                if acc["is_active"]:
+                    await self._start_account(acc["id"])
         logger.info("AccountWSManager started for %d accounts", len(self._clients))
 
     async def shutdown(self) -> None:
         async with self._lock:
-            for client in self._clients.values():
-                await client.stop()
+            if self._clients:
+                await asyncio.gather(
+                    *(client.stop() for client in self._clients.values()),
+                    return_exceptions=True,
+                )
             self._clients.clear()
         logger.info("AccountWSManager shut down")
 
@@ -58,27 +62,29 @@ class AccountWSManager:
                 return decrypt_value(creds["api_key_encrypted"]), decrypt_value(creds["api_secret_encrypted"])
             api_key, api_secret = await asyncio.to_thread(_decrypt)
         except Exception as e:
-            logger.error("Cannot decrypt credentials for account %s: %s", account_id, e)
+            logger.error("Cannot decrypt credentials for account %s: %s", account_id, type(e).__name__)
             return
 
         async def on_event(event: dict[str, Any]) -> None:
             event["account_id"] = account_id
             await self._broadcast(event)
 
-        client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event)
+        client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
         self._clients[account_id] = client
         await client.start()
         logger.info("Started WS for account %s", account_id)
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
-        dead: list[asyncio.Queue] = []
-        for q in self._frontend_queues:
+        for q in list(self._frontend_queues):
+            if q.full():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self._frontend_queues.discard(q)
+                pass
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=512)

@@ -1,6 +1,5 @@
 """Tests for backend.crypto — Fernet encryption utilities."""
 
-import os
 
 import pytest
 
@@ -39,6 +38,16 @@ def test_decrypt_wrong_key_raises(monkeypatch):
     monkeypatch.setenv("ACCOUNTS_ENCRYPTION_KEY", Fernet.generate_key().decode())
     with pytest.raises(RuntimeError, match="Failed to decrypt"):
         decrypt_value(encrypted)
+
+
+def test_decrypt_memoryview_input():
+    """decrypt_value accepts memoryview (PostgreSQL bytea column scenario)."""
+    from backend.crypto import decrypt_value, encrypt_value
+
+    plaintext = "memoryview-secret-key"
+    encrypted = encrypt_value(plaintext)
+    result = decrypt_value(memoryview(encrypted))
+    assert result == plaintext
 
 
 def test_missing_key_raises(monkeypatch):

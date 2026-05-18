@@ -1,6 +1,5 @@
 """Tests for _parse_signal_from_reports — Phase 3 R1 (TASK-016)."""
 
-import pytest
 
 
 def parse(reports):

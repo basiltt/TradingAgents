@@ -18,7 +18,7 @@ class TestGetIndicators:
     def test_multiple_comma_separated(self, mock_route):
         from tradingagents.agents.utils.technical_indicators_tools import get_indicators
         mock_route.return_value = "data"
-        result = get_indicators.invoke({"symbol": "AAPL", "indicator": "rsi, macd, ema", "curr_date": "2025-01-15"})
+        get_indicators.invoke({"symbol": "AAPL", "indicator": "rsi, macd, ema", "curr_date": "2025-01-15"})
         assert mock_route.call_count == 3
 
     @patch(PATCH)
@@ -32,12 +32,12 @@ class TestGetIndicators:
     def test_custom_lookback(self, mock_route):
         from tradingagents.agents.utils.technical_indicators_tools import get_indicators
         mock_route.return_value = "data"
-        result = get_indicators.invoke({"symbol": "AAPL", "indicator": "rsi", "curr_date": "2025-01-15", "look_back_days": 60})
+        get_indicators.invoke({"symbol": "AAPL", "indicator": "rsi", "curr_date": "2025-01-15", "look_back_days": 60})
         mock_route.assert_called_once_with("get_indicators", "AAPL", "rsi", "2025-01-15", 60)
 
     @patch(PATCH)
     def test_empty_indicator_ignored(self, mock_route):
         from tradingagents.agents.utils.technical_indicators_tools import get_indicators
         mock_route.return_value = "data"
-        result = get_indicators.invoke({"symbol": "AAPL", "indicator": "rsi, , ", "curr_date": "2025-01-15"})
+        get_indicators.invoke({"symbol": "AAPL", "indicator": "rsi, , ", "curr_date": "2025-01-15"})
         assert mock_route.call_count == 1

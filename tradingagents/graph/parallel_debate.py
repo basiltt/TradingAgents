@@ -12,7 +12,6 @@ instead of 2-3.
 
 from __future__ import annotations
 
-import concurrent.futures
 import copy
 import logging
 import os

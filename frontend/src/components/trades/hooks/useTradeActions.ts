@@ -19,9 +19,14 @@ export function useTradeActions() {
     try {
       await tradesApi.close(accountId, tradeId, qty ? { qty } : undefined);
       dispatch(clearPendingAction(tradeId));
-      dispatch(removeActiveTrade(tradeId));
+      if (!qty) {
+        dispatch(removeActiveTrade(tradeId));
+      }
       queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
       queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
+      if (qty) {
+        queryClient.invalidateQueries({ queryKey: ["trades", "active"] });
+      }
     } catch (error) {
       dispatch(revertOptimisticUpdate(tradeId));
       throw error;
@@ -50,6 +55,9 @@ export function useTradeActions() {
       queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
       queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
       return result;
+    } catch (error) {
+      queryClient.invalidateQueries({ queryKey: ["trades", "active"] });
+      throw error;
     } finally {
       dispatch(setPendingCloseAll({ account_id: accountId, pending: false }));
     }

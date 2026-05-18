@@ -26,20 +26,40 @@ export function formatRelativeTime(dateStr: string): string {
   return rtf.format(-Math.round(remaining), "year");
 }
 
+const nfCache = new Map<number, Intl.NumberFormat>();
+function getNf(decimals: number): Intl.NumberFormat {
+  let f = nfCache.get(decimals);
+  if (!f) {
+    f = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    nfCache.set(decimals, f);
+  }
+  return f;
+}
+
 export function formatPrice(value: number | null, decimals = 2): string {
   if (value == null) return "--";
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(value);
+  return getNf(decimals).format(value);
+}
+
+const qtyNfCache = new Map<number, Intl.NumberFormat>();
+function getQtyNf(maxDecimals: number): Intl.NumberFormat {
+  let f = qtyNfCache.get(maxDecimals);
+  if (!f) {
+    f = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: maxDecimals,
+    });
+    qtyNfCache.set(maxDecimals, f);
+  }
+  return f;
 }
 
 export function formatQty(value: number | null | undefined, decimals = 4): string {
-  if (value == null) return "—";
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: decimals,
-  }).format(value);
+  if (value == null) return "--";
+  return getQtyNf(decimals).format(value);
 }
 
 export function formatPnl(value: number): string {
@@ -48,7 +68,9 @@ export function formatPnl(value: number): string {
 }
 
 export function formatAbsoluteTime(dateStr: string): string {
+  if (!dateStr) return "--";
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "--";
   const local = d.toLocaleString();
   const utc = d.toUTCString();
   return `${local} (${utc})`;

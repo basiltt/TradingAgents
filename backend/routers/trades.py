@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import uuid as _uuid
 from base64 import b64decode
 from datetime import datetime
-from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from backend.schemas import TradeStatsResponse
 from backend.services.trade_repository import SORT_COLUMNS, SYMBOL_PATTERN, VALID_SIDES, VALID_STATUSES
+from backend.utils import serialize_trade as _serialize_trade
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +25,7 @@ _MAX_ACCOUNT_IDS = 50
 
 
 def _get_trade_repo(request: Request):
+    """Retrieve TradeRepository from app state or raise 503."""
     repo = getattr(request.app.state, "trade_repo", None)
     if repo is None:
         raise HTTPException(503, detail="Trading not configured")
@@ -33,6 +33,7 @@ def _get_trade_repo(request: Request):
 
 
 def _get_db(request: Request):
+    """Retrieve AsyncAnalysisDB from app state or raise 503."""
     db = getattr(request.app.state, "db", None)
     if db is None:
         raise HTTPException(503, detail="Database not available")
@@ -40,30 +41,17 @@ def _get_db(request: Request):
 
 
 def _get_accounts_service(request: Request):
+    """Retrieve AccountsService from app state or raise 503."""
     svc = getattr(request.app.state, "accounts_service", None)
     if svc is None:
         raise HTTPException(503, detail="Accounts service not available")
     return svc
 
 
-def _serialize_trade(trade: dict) -> dict:
-    out = dict(trade)
-    for k, v in out.items():
-        if isinstance(v, _uuid.UUID):
-            out[k] = str(v)
-        elif isinstance(v, datetime):
-            out[k] = v.isoformat()
-        elif isinstance(v, Decimal):
-            out[k] = float(v)
-    if isinstance(out.get("metadata"), str):
-        try:
-            out["metadata"] = json.loads(out["metadata"])
-        except (json.JSONDecodeError, TypeError):
-            out["metadata"] = {}
-    return out
 
 
 def _validate_account_ids(raw: str | None) -> list[str] | None:
+    """Parse comma-separated account UUIDs, raising ValueError on invalid input."""
     if raw is None:
         return None
     ids = [s.strip() for s in raw.split(",") if s.strip()]
@@ -78,6 +66,7 @@ def _validate_account_ids(raw: str | None) -> list[str] | None:
 
 
 def _validate_statuses(raw: str | None) -> list[str] | None:
+    """Parse comma-separated status values, raising ValueError for unknowns."""
     if raw is None:
         return None
     statuses = [s.strip() for s in raw.split(",") if s.strip()]
@@ -88,6 +77,7 @@ def _validate_statuses(raw: str | None) -> list[str] | None:
 
 
 def _validate_date(raw: str | None, name: str) -> datetime | None:
+    """Parse an ISO 8601 datetime string, raising ValueError on bad format."""
     if raw is None:
         return None
     try:
@@ -110,6 +100,7 @@ async def list_trades_cross_account(
     cursor: Optional[str] = Query(default=None, max_length=512),
     limit: int = Query(default=50, ge=1, le=100),
 ):
+    """List trades across all accounts with filtering, sorting, and cursor pagination."""
     try:
         requested_ids = _validate_account_ids(account_id)
         validated_statuses = _validate_statuses(status)
@@ -141,6 +132,7 @@ async def list_trades_cross_account(
                 raise ValueError("Invalid cursor format")
 
     except ValueError as e:
+        logger.warning("list_trades_validation_error", extra={"error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
 
     accounts_svc = _get_accounts_service(request)
@@ -187,7 +179,8 @@ async def list_trades_cross_account(
             return_exceptions=True,
         )
         for aid, positions in zip(active_account_ids, positions_by_account):
-            if isinstance(positions, Exception):
+            if isinstance(positions, BaseException):
+                logger.warning("position_fetch_failed", extra={"account_id": aid, "error": str(positions)[:200]})
                 continue
             for pos in positions:
                 if float(pos.get("size", 0)) == 0:
@@ -196,6 +189,7 @@ async def list_trades_cross_account(
                 pnl_lookup[key] = float(pos.get("unrealisedPnl", 0))
 
     def enrich(trade: dict) -> dict:
+        """Serialize trade and attach unrealized_pnl from position lookup."""
         out = _serialize_trade(trade)
         if out.get("status") in active_statuses:
             key = (str(out["account_id"]), out["symbol"], out["side"], out.get("position_idx", 0))
@@ -216,9 +210,16 @@ async def get_trades_stats_cross_account(
     request: Request,
     account_id: Optional[str] = Query(default=None),
 ):
+    """Aggregate trade statistics across all (or selected) accounts.
+
+    Returns total trade count, open count, win rate, average PnL, and total PnL.
+    Accepts an optional comma-separated ``account_id`` filter; unrecognised IDs
+    are silently ignored.  When no accounts match, zeroed-out stats are returned.
+    """
     try:
         requested_ids = _validate_account_ids(account_id)
     except ValueError as e:
+        logger.warning("trades_stats_validation_error", extra={"error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
 
     accounts_svc = _get_accounts_service(request)

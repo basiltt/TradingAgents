@@ -1,6 +1,5 @@
 """Tests for information barrier enforcement and allowlist completeness."""
 
-import copy
 from unittest.mock import patch
 
 import pytest

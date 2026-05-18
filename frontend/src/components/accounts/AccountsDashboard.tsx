@@ -1,51 +1,50 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
+import { useAccountPolling } from "@/hooks/useAccountPolling";
 import { AccountCard } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
+/** Top-level accounts dashboard: fetches account cards, displays stats/filters, and renders AccountCard grid. */
 export function AccountsDashboard() {
   const dispatch = useAppDispatch();
   const { dashboard, filterType, status, error } = useAppSelector((s) => s.accounts);
   const [addOpen, setAddOpen] = useState(false);
+  useAccountPolling();
 
+  /** Fetch dashboard cards; if silent, skips loading state to avoid UI flicker during polling. */
   const fetchDashboard = useCallback(async (silent = false) => {
     if (!silent) dispatch(setLoading());
     try {
       const cards = await accountsApi.getDashboard();
       dispatch(setDashboard(cards));
     } catch (e: unknown) {
-      if (!silent) dispatch(setError((e as { message?: string }).message || "Failed to load accounts"));
+      const msg = (e as { message?: string }).message || "Failed to load accounts";
+      if (!silent) dispatch(setError(msg));
+      else console.warn("[AccountsDashboard] silent fetch failed:", msg);
     }
   }, [dispatch]);
-
-  useEffect(() => {
-    fetchDashboard();
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") fetchDashboard(true);
-    }, 3_000);
-    return () => clearInterval(interval);
-  }, [fetchDashboard]);
 
   const filtered = dashboard.filter((card) => {
     if (filterType === "all") return true;
     return card.account_type === filterType;
   });
 
-  const totalEquity = filtered.reduce((sum, c) => {
-    const v = parseFloat(c.total_equity || "0");
-    return sum + (isNaN(v) ? 0 : v);
-  }, 0);
-  const totalPnl = filtered.reduce((sum, c) => {
-    const v = parseFloat(c.total_perp_upl || "0");
-    return sum + (isNaN(v) ? 0 : v);
-  }, 0);
-  const totalTodayPnl = filtered.reduce((sum, c) => {
-    const v = parseFloat(c.today_pnl || "0");
-    return sum + (isNaN(v) ? 0 : v);
-  }, 0);
+  /** Sum a numeric field across filtered dashboard cards.
+   * @param field - Key of DashboardCard to sum.
+   * @returns Numeric total of the field across all filtered cards.
+   */
+  const sumField = (field: keyof typeof filtered[number]) =>
+    filtered.reduce((sum, c) => {
+      const v = parseFloat(String(c[field] ?? "0"));
+      return sum + (isNaN(v) ? 0 : v);
+    }, 0);
+
+  const totalEquity = sumField("total_equity");
+  const totalPnl = sumField("total_perp_upl");
+  const totalTodayPnl = sumField("today_pnl");
   const activeCount = filtered.filter((c) => c.status === "active").length;
   const totalPositions = filtered.reduce((sum, c) => sum + (c.positions_count || 0), 0);
 

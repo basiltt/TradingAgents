@@ -1,7 +1,5 @@
 """Tests for tradingagents.graph.checkpointer — Phase 1 unit tests."""
 
-import tempfile
-import os
 import pytest
 
 
@@ -65,8 +63,8 @@ class TestClearCheckpoint:
         clear_checkpoint(str(tmp_path), "AAPL", "2025-01-10")  # should not raise
 
     def test_clear_with_db(self, tmp_path):
-        from tradingagents.graph.checkpointer import _db_path, clear_checkpoint, get_checkpointer
+        from tradingagents.graph.checkpointer import clear_checkpoint, get_checkpointer
         # Create the DB so it exists
-        with get_checkpointer(str(tmp_path), "AAPL") as saver:
+        with get_checkpointer(str(tmp_path), "AAPL"):
             pass
         clear_checkpoint(str(tmp_path), "AAPL", "2025-01-10")  # should not raise

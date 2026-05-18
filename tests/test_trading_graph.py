@@ -1,7 +1,6 @@
 """Tests for tradingagents.graph.trading_graph._get_provider_kwargs — Phase 1 unit tests."""
 
 from unittest.mock import patch, MagicMock
-import pytest
 
 
 class TestConstructor:
@@ -82,7 +81,7 @@ class TestConstructor:
              patch("tradingagents.agents.crypto_analysts.create_crypto_risk_bull_debater", return_value=MagicMock()), \
              patch("tradingagents.agents.crypto_analysts.create_crypto_risk_bear_debater", return_value=MagicMock()), \
              patch("tradingagents.agents.crypto_analysts.create_crypto_portfolio_manager", return_value=MagicMock()):
-            obj = TradingAgentsGraph(
+            TradingAgentsGraph(
                 selected_analysts=["crypto_technical", "crypto_news"],
                 config=config,
             )
@@ -117,7 +116,7 @@ class TestConstructor:
             "max_debate_rounds": 3,
             "max_risk_discuss_rounds": 3,
         }
-        obj = TradingAgentsGraph(config=config, callbacks=[cb])
+        TradingAgentsGraph(config=config, callbacks=[cb])
         call_kwargs = mock_llm.call_args_list[0][1]
         assert "callbacks" in call_kwargs
 
@@ -421,7 +420,7 @@ class TestPropagate:
 
         final = {"final_trade_decision": "Buy", "company_of_interest": "AAPL", "trade_date": "2025-01-10", "investment_debate_state": None, "risk_debate_state": None}
         with patch.object(TradingAgentsGraph, "_run_graph", return_value=(final, "BUY")):
-            result = obj.propagate("AAPL", "2025-01-10")
+            obj.propagate("AAPL", "2025-01-10")
             mock_get_cp.assert_called_once()
             mock_ctx.__exit__.assert_called_once()
             obj.workflow.compile.assert_called()

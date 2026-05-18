@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import random
 import time
 from typing import Any, Callable, Coroutine
 
@@ -22,6 +23,7 @@ _WS_ENDPOINTS = {
 _RECONNECT_BASE = 2.0
 _RECONNECT_MAX = 30.0
 _PING_INTERVAL = 20.0
+_PONG_TIMEOUT = 45.0  # force reconnect if no message received within this window
 _RECV_WINDOW = "5000"
 
 
@@ -34,17 +36,20 @@ class BybitWSClient:
         api_secret: str,
         account_type: str,
         on_event: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
+        account_id: str = "",
     ):
         self._api_key = api_key
         self._api_secret = api_secret
         self._url = _WS_ENDPOINTS.get(account_type, _WS_ENDPOINTS["demo"])
         self._on_event = on_event
+        self._account_id = account_id
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
         self._running = False
         self._reconnect_delay = _RECONNECT_BASE
+        self._last_msg_at: float = 0.0
 
     def _auth_payload(self) -> dict[str, Any]:
         expires = int((time.time() + 10) * 1000)
@@ -91,20 +96,27 @@ class BybitWSClient:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("Bybit WS error: %s, reconnecting in %.1fs", e, self._reconnect_delay)
+                logger.warning("Bybit WS error: %s, reconnecting in %.1fs", e, self._reconnect_delay, extra={"account_id": self._account_id})
 
             if not self._running:
                 break
             await asyncio.sleep(self._reconnect_delay)
-            self._reconnect_delay = min(self._reconnect_delay * 2, _RECONNECT_MAX)
+            self._reconnect_delay = min(self._reconnect_delay * 2, _RECONNECT_MAX) * (0.75 + random.random() * 0.5)
 
     async def _connect_and_listen(self) -> None:
         if not self._session or self._session.closed:
             self._session = aiohttp.ClientSession()
 
-        self._ws = await self._session.ws_connect(self._url, heartbeat=None)
-        logger.info("Bybit WS connected to %s", self._url)
+        if self._ws and not self._ws.closed:
+            await self._ws.close()
 
+        self._ws = await asyncio.wait_for(
+            self._session.ws_connect(self._url, heartbeat=None, timeout=aiohttp.ClientWSTimeout(ws_close=15)),
+            timeout=20,
+        )
+        logger.info("Bybit WS connected to %s", self._url, extra={"account_id": self._account_id})
+
+        assert self._ws is not None
         await self._ws.send_json(self._auth_payload())
         auth_resp = await self._ws.receive_json(timeout=10)
         if not auth_resp.get("success"):
@@ -114,7 +126,8 @@ class BybitWSClient:
 
         await self._ws.send_json(self._subscribe_payload())
         self._reconnect_delay = _RECONNECT_BASE
-        logger.info("Bybit WS authenticated and subscribed")
+        self._last_msg_at = time.monotonic()
+        logger.info("Bybit WS authenticated and subscribed", extra={"account_id": self._account_id})
 
         self._ping_task = asyncio.create_task(self._ping_loop())
 
@@ -133,17 +146,23 @@ class BybitWSClient:
             while self._running and self._ws and not self._ws.closed:
                 await asyncio.sleep(_PING_INTERVAL)
                 if self._ws and not self._ws.closed:
+                    if self._last_msg_at and (time.monotonic() - self._last_msg_at) > _PONG_TIMEOUT:
+                        logger.warning("Bybit WS stale (no message in %.0fs), forcing reconnect", _PONG_TIMEOUT)
+                        await self._ws.close()
+                        break
                     await self._ws.send_json({"op": "ping"})
         except asyncio.CancelledError:
             pass
         except Exception:
-            pass
+            logger.warning("ping_loop_error", exc_info=True)
 
     async def _handle_message(self, raw: str) -> None:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             return
+
+        self._last_msg_at = time.monotonic()
 
         if data.get("op") == "pong" or data.get("ret_msg") == "pong":
             return
@@ -165,29 +184,35 @@ class BybitWSClient:
         elif topic == "order":
             await self._emit_orders(event_data)
 
+    async def _safe_emit(self, event: dict[str, Any]) -> None:
+        """Call the event callback, catching exceptions to protect the WS loop."""
+        try:
+            await self._on_event(event)
+        except Exception:
+            logger.exception("on_event callback failed for event type=%s", event.get("type"))
+
     async def _emit_wallet(self, data: list[dict]) -> None:
         for account in data:
             coins = account.get("coin", [])
             total_equity = account.get("accountEquity", "0")
-            total_upl = "0"
+            total_upl = 0.0
             for coin in coins:
-                upl = coin.get("unrealisedPnl", "0")
                 try:
-                    total_upl = str(float(total_upl) + float(upl))
+                    total_upl += float(coin.get("unrealisedPnl", "0"))
                 except (ValueError, TypeError):
                     pass
-            await self._on_event({
+            await self._safe_emit({
                 "type": "wallet_update",
                 "data": {
                     "totalEquity": total_equity,
-                    "totalPerpUPL": total_upl,
+                    "totalPerpUPL": str(total_upl),
                     "coins": coins,
                 },
             })
 
     async def _emit_positions(self, data: list[dict]) -> None:
         for pos in data:
-            await self._on_event({
+            await self._safe_emit({
                 "type": "position_update",
                 "data": {
                     "symbol": pos.get("symbol", ""),
@@ -203,7 +228,7 @@ class BybitWSClient:
 
     async def _emit_executions(self, data: list[dict]) -> None:
         for ex in data:
-            await self._on_event({
+            await self._safe_emit({
                 "type": "execution",
                 "data": {
                     "symbol": ex.get("symbol", ""),
@@ -216,7 +241,7 @@ class BybitWSClient:
 
     async def _emit_orders(self, data: list[dict]) -> None:
         for order in data:
-            await self._on_event({
+            await self._safe_emit({
                 "type": "order_update",
                 "data": {
                     "orderId": order.get("orderId", ""),

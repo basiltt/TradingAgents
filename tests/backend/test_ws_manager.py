@@ -1,8 +1,7 @@
 """Tests for WebSocket manager — TASK-011."""
 
 import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -289,7 +288,6 @@ def test_heartbeat_pong_timeout(ws_manager, event_loop):
 
 def test_heartbeat_queue_full_exits(ws_manager, event_loop):
     """Covers ws_manager.py:106-107: heartbeat QueueFull break."""
-    import time
     from backend.ws_manager import WSConnection
     from backend import ws_manager as ws_mod
 

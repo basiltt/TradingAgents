@@ -139,7 +139,7 @@ class _FallbackStructured:
                         self._agent_name, method, exc,
                     )
                     self._skip_methods.add(method)
-                    last_exc = exc
+                    last_exc = ValueError(str(exc))
                     continue
                 raise
         raise last_exc or RuntimeError("All structured methods failed")

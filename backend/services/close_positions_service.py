@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from decimal import Decimal
 from typing import Any
 
@@ -21,15 +22,22 @@ class ClosePositionsService:
         self._accounts_service = accounts_service
         self._ws_manager = ws_manager
         self._trade_service = trade_service
-        self._closing_accounts: set[str] = set()
+        self._closing_accounts: dict[str, float] = {}
+
+    _CLOSE_LOCK_TTL = 300.0  # auto-expire stale close locks after 5 minutes
 
     def set_trade_service(self, trade_service: Any) -> None:
         self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
         if account_id in self._closing_accounts:
-            raise ValueError("Close already in progress for this account")
-        self._closing_accounts.add(account_id)
+            started = self._closing_accounts[account_id]
+            if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
+                raise ValueError("Close already in progress for this account")
+            logger.warning("Expired stale close lock for %s", account_id)
+        self._closing_accounts[account_id] = time.monotonic()
+        t0 = time.monotonic()
+        logger.info("close_all_positions_start", extra={"account_id": account_id})
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -49,39 +57,7 @@ class ClosePositionsService:
 
             semaphore = asyncio.Semaphore(CLOSE_RATE_LIMIT)
 
-            async def close_one(pos: dict) -> dict:
-                async with semaphore:
-                    try:
-                        result = await client.place_market_close_order(
-                            symbol=pos["symbol"],
-                            side=pos["side"],
-                            qty=pos["size"],
-                            position_idx=pos.get("positionIdx", 0),
-                        )
-                        return {
-                            "symbol": pos["symbol"],
-                            "side": pos["side"],
-                            "status": "closed",
-                            "orderId": result.get("orderId", ""),
-                        }
-                    except BybitAPIError as e:
-                        logger.warning("Failed to close %s: %s", pos["symbol"], e.ret_msg)
-                        return {
-                            "symbol": pos["symbol"],
-                            "side": pos["side"],
-                            "status": "failed",
-                            "error": f"Order rejected (code {e.ret_code})",
-                        }
-                    except Exception as e:
-                        logger.warning("Failed to close %s: %s", pos["symbol"], e)
-                        return {
-                            "symbol": pos["symbol"],
-                            "side": pos["side"],
-                            "status": "failed",
-                            "error": "Connection error",
-                        }
-
-            results = await asyncio.gather(*[close_one(p) for p in positions])
+            results = await asyncio.gather(*[self._close_single_position(client, p, semaphore) for p in positions])
 
             closed = sum(1 for r in results if r["status"] == "closed")
             failed = sum(1 for r in results if r["status"] == "failed")
@@ -101,9 +77,10 @@ class ClosePositionsService:
 
             self._accounts_service.invalidate_cache(account_id)
             if self._trade_service:
-                self._trade_service._invalidate_stats_cache(account_id)
+                self._trade_service.invalidate_stats_cache(account_id)
 
             await self._broadcast_close_event(account_id, "manual", closed, failed, len(positions))
+            logger.info("close_all_positions_done", extra={"account_id": account_id, "total": len(positions), "closed": closed, "failed": failed, "elapsed_ms": int((time.monotonic() - t0) * 1000)})
 
             return {
                 "total": len(positions),
@@ -113,14 +90,18 @@ class ClosePositionsService:
                 "execution_id": execution["id"],
             }
         finally:
-            self._closing_accounts.discard(account_id)
+            self._closing_accounts.pop(account_id, None)
 
     async def close_all_for_rule(self, account_id: str, rule_id: str | None, *, symbols: list[str] | None = None) -> dict[str, Any]:
         """Close positions triggered by a rule or cycle stop. If symbols is provided, only close those symbols."""
         if account_id in self._closing_accounts:
-            logger.info("Skipping rule close for %s — close already in progress", account_id)
-            return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
-        self._closing_accounts.add(account_id)
+            started = self._closing_accounts[account_id]
+            if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
+                logger.info("Skipping rule close for %s — close already in progress", account_id)
+                return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
+            logger.warning("Expired stale close lock for %s", account_id)
+        self._closing_accounts[account_id] = time.monotonic()
+        t0 = time.monotonic()
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -146,22 +127,7 @@ class ClosePositionsService:
 
             semaphore = asyncio.Semaphore(CLOSE_RATE_LIMIT)
 
-            async def close_one(pos: dict) -> dict:
-                async with semaphore:
-                    try:
-                        result = await client.place_market_close_order(
-                            symbol=pos["symbol"],
-                            side=pos["side"],
-                            qty=pos["size"],
-                            position_idx=pos.get("positionIdx", 0),
-                        )
-                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "closed", "orderId": result.get("orderId", "")}
-                    except BybitAPIError as e:
-                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "failed", "error": f"Order rejected (code {e.ret_code})"}
-                    except Exception:
-                        return {"symbol": pos["symbol"], "side": pos["side"], "status": "failed", "error": "Connection error"}
-
-            results = await asyncio.gather(*[close_one(p) for p in positions])
+            results = await asyncio.gather(*[self._close_single_position(client, p, semaphore) for p in positions])
             closed = sum(1 for r in results if r["status"] == "closed")
             failed = sum(1 for r in results if r["status"] == "failed")
 
@@ -182,12 +148,52 @@ class ClosePositionsService:
             self._accounts_service.invalidate_cache(account_id)
 
             await self._broadcast_close_event(account_id, "rule", closed, failed, len(positions))
+            logger.info("close_all_for_rule_done", extra={"account_id": account_id, "rule_id": rule_id, "total": len(positions), "closed": closed, "failed": failed, "elapsed_ms": int((time.monotonic() - t0) * 1000)})
 
             return {"total": len(positions), "closed": closed, "failed": failed, "results": results}
         finally:
-            self._closing_accounts.discard(account_id)
+            self._closing_accounts.pop(account_id, None)
 
     # ── Trade record integration ────────────────────────────────
+
+    @staticmethod
+    async def _close_single_position(client: Any, pos: dict, semaphore: asyncio.Semaphore) -> dict:
+        """Close one position via the exchange, respecting the concurrency semaphore."""
+        async with semaphore:
+            try:
+                result = await client.place_market_close_order(
+                    symbol=pos["symbol"],
+                    side=pos["side"],
+                    qty=pos["size"],
+                    position_idx=pos.get("positionIdx", 0),
+                )
+                return {
+                    "symbol": pos["symbol"],
+                    "side": pos["side"],
+                    "status": "closed",
+                    "orderId": result.get("orderId", ""),
+                    "avgPrice": result.get("avgPrice"),
+                    "cumExecFee": result.get("cumExecFee"),
+                    "cumExecQty": result.get("cumExecQty"),
+                }
+            except BybitAPIError as e:
+                logger.warning("close_position_failed", extra={"symbol": pos["symbol"], "ret_code": e.ret_code, "ret_msg": e.ret_msg})
+                return {
+                    "symbol": pos["symbol"],
+                    "side": pos["side"],
+                    "status": "failed",
+                    "error": f"Order rejected (code {e.ret_code})",
+                }
+            except Exception as e:
+                logger.warning("close_position_error", extra={"symbol": pos["symbol"], "error": str(e)[:200]})
+                return {
+                    "symbol": pos["symbol"],
+                    "side": pos["side"],
+                    "status": "failed",
+                    "error": "Connection error",
+                }
+
+    # ── Trade record matching ────────────────────────────────
 
     async def _close_matching_trades(
         self, account_id: str, positions: list[dict], results: list[dict],
@@ -196,25 +202,28 @@ class ClosePositionsService:
         if not self._trade_service:
             return
         closed_pairs = {
-            (r["symbol"], r["side"]) for r in results if r["status"] == "closed"
+            (r["symbol"], r["side"]): r for r in results if r["status"] == "closed"
         }
         if not closed_pairs:
             return
         try:
             open_trades = await self._trade_service.get_open_trades(account_id, limit=500)
             for trade in open_trades:
-                if (trade["symbol"], trade["side"]) in closed_pairs:
+                key = (trade["symbol"], trade["side"])
+                if key in closed_pairs:
+                    exchange_result = closed_pairs[key]
                     try:
                         await self._trade_service.close_trade_record_only(
                             account_id=account_id,
                             trade_id=str(trade["id"]),
                             close_reason=close_reason,
                             close_rule_id=rule_id,
+                            exchange_result=exchange_result,
                         )
                     except Exception:
                         logger.warning("failed_to_close_trade_record", extra={
                             "trade_id": str(trade["id"]), "symbol": trade["symbol"],
-                        })
+                        }, exc_info=True)
         except Exception:
             logger.exception("close_matching_trades_failed", extra={"account_id": account_id})
 
@@ -223,9 +232,12 @@ class ClosePositionsService:
     async def _broadcast_close_event(self, account_id: str, source: str, closed: int, failed: int, total: int) -> None:
         if not self._ws_manager:
             return
-        await self._ws_manager.broadcast_to_account(account_id, "close_execution", {
-            "trigger_source": source, "closed": closed, "failed": failed, "total": total,
-        })
+        try:
+            await self._ws_manager.broadcast_to_account(account_id, "close_execution", {
+                "trigger_source": source, "closed": closed, "failed": failed, "total": total,
+            })
+        except Exception:
+            logger.warning("broadcast_close_event_failed", extra={"account_id": account_id})
 
     # ── Rule CRUD ────────────────────────────────────────────────
 
@@ -247,6 +259,9 @@ class ClosePositionsService:
             reference = wallet.get("totalEquity", "0")
             if not reference or Decimal(reference) <= 0:
                 raise ValueError("Cannot create percentage rule: current equity is zero or unavailable")
+
+        if Decimal(threshold) <= 0:
+            raise ValueError("threshold_value must be positive")
 
         row = await self._db.insert_close_rule(
             {
@@ -278,6 +293,9 @@ class ClosePositionsService:
         if data.get("reference_value") is not None:
             fields["reference_value"] = data["reference_value"]
         if data.get("status") is not None:
+            allowed_statuses = {"active", "paused"}
+            if data["status"] not in allowed_statuses:
+                raise ValueError(f"Status must be one of: {', '.join(sorted(allowed_statuses))}")
             fields["status"] = data["status"]
 
         new_type = fields.get("trigger_type", rule["trigger_type"])

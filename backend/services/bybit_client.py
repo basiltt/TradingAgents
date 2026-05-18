@@ -43,7 +43,7 @@ class BybitClient:
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
         self._recv_window = "5000"
-        self._request_timestamps: collections.deque = collections.deque()
+        self._request_timestamps: collections.deque = collections.deque(maxlen=_RATE_LIMIT_MAX + 50)
         self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
@@ -107,7 +107,7 @@ class BybitClient:
             "Content-Type": "application/json",
         }
 
-    _SYNC_INTERVAL = 30  # re-sync offset every 30 seconds
+    _SYNC_INTERVAL = 300  # re-sync offset every 5 minutes
 
     async def _ensure_time_synced(self) -> None:
         """Ensure time offset is fresh. Re-syncs if stale or never synced."""
@@ -143,11 +143,11 @@ class BybitClient:
                     request_kwargs: dict[str, Any] = {}
                 elif method == "POST" and params:
                     body_str = json.dumps(params, separators=(",", ":"))
-                    url = f"{self._base_url}{path}"
+                    url = URL(f"{self._base_url}{path}", encoded=True)
                     headers = self._headers(timestamp, body_str)
                     request_kwargs = {"data": body_str}
                 else:
-                    url = f"{self._base_url}{path}"
+                    url = URL(f"{self._base_url}{path}", encoded=True)
                     headers = self._headers(timestamp, "")
                     request_kwargs = {}
 
@@ -264,7 +264,8 @@ class BybitClient:
 
         all_positions: list[dict[str, Any]] = []
         cursor = ""
-        while True:
+        _MAX_PAGES = 50
+        for _page in range(_MAX_PAGES):
             if cursor:
                 params["cursor"] = cursor
             result = await self._request("GET", "/v5/position/list", params)
@@ -272,6 +273,8 @@ class BybitClient:
             cursor = result.get("nextPageCursor", "")
             if not cursor:
                 break
+        else:
+            logger.warning("get_positions: reached max pages (%d), results may be incomplete", _MAX_PAGES)
 
         return [
             {

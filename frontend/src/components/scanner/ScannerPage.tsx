@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { formatDuration } from "@/lib/format";
 import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { useModels } from "@/hooks/useModels";
@@ -19,6 +20,7 @@ import { ConnBadge } from "@/components/ui/conn-badge";
 import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
 import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
+import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 
 const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
@@ -79,12 +81,7 @@ function saveScannerSettings(s: ScannerSettings) {
   localStorage.setItem(SCANNER_KEY, JSON.stringify(s));
 }
 
-const DIRECTION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  buy: { label: "BUY", color: "text-emerald-400", bg: "bg-emerald-500/10" },
-  sell: { label: "SELL", color: "text-red-400", bg: "bg-red-500/10" },
-  hold: { label: "HOLD", color: "text-amber-400", bg: "bg-amber-500/10" },
-  unknown: { label: "—", color: "text-muted-foreground", bg: "bg-muted" },
-};
+
 
 function ScoreBar({ score }: { score: number }) {
   const abs = Math.min(Math.abs(score), 10);
@@ -98,16 +95,6 @@ function ScoreBar({ score }: { score: number }) {
       <span className="text-xs font-mono w-6 text-right">{score > 0 ? "+" : ""}{score}</span>
     </div>
   );
-}
-
-function formatDuration(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
 }
 
 function ScanDurationBadge({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string | null; isRunning: boolean }) {

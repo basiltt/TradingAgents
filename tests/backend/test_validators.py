@@ -5,9 +5,16 @@ import pytest
 
 def test_valid_http_url():
     from backend.validators import validate_backend_url
+    from unittest.mock import patch
+    import socket
 
-    result = validate_backend_url("http://localhost:4141", server_port=8000)
-    assert result == "http://localhost:4141"
+    # Use a public IP so it passes validation
+    with patch("backend.validators.socket.getaddrinfo") as mock_gai:
+        mock_gai.return_value = [
+            (socket.AF_INET, None, None, None, ("93.184.216.34", None))
+        ]
+        result = validate_backend_url("http://example.com:4141", server_port=8000)
+        assert result == "http://example.com:4141"
 
 
 def test_valid_https_url():
@@ -66,38 +73,40 @@ def test_reject_cgn():
         validate_backend_url("http://100.64.0.1:8080", server_port=8000)
 
 
-def test_allow_localhost_different_port():
+def test_reject_localhost_different_port():
+    """Loopback addresses are blocked regardless of port."""
     from backend.validators import validate_backend_url
 
-    result = validate_backend_url("http://127.0.0.1:4141", server_port=8000)
-    assert result == "http://127.0.0.1:4141"
+    with pytest.raises(ValueError, match="private|internal"):
+        validate_backend_url("http://127.0.0.1:4141", server_port=8000)
 
 
 def test_reject_self_request():
     from backend.validators import validate_backend_url
 
-    with pytest.raises(ValueError, match="self"):
+    with pytest.raises(ValueError, match="private|internal"):
         validate_backend_url("http://127.0.0.1:8000", server_port=8000)
 
 
 def test_reject_self_request_localhost():
     from backend.validators import validate_backend_url
 
-    with pytest.raises(ValueError, match="self"):
+    with pytest.raises(ValueError, match="private|internal"):
         validate_backend_url("http://localhost:8000", server_port=8000)
 
 
-def test_allow_ipv6_loopback_different_port():
+def test_reject_ipv6_loopback_different_port():
+    """IPv6 loopback is blocked regardless of port."""
     from backend.validators import validate_backend_url
 
-    result = validate_backend_url("http://[::1]:9000", server_port=8000)
-    assert result == "http://[::1]:9000"
+    with pytest.raises(ValueError, match="private|internal"):
+        validate_backend_url("http://[::1]:9000", server_port=8000)
 
 
 def test_reject_ipv6_loopback_self_request():
     from backend.validators import validate_backend_url
 
-    with pytest.raises(ValueError, match="self"):
+    with pytest.raises(ValueError, match="private|internal"):
         validate_backend_url("http://[::1]:8000", server_port=8000)
 
 
@@ -133,7 +142,7 @@ def test_loopback_default_port_80():
 
     with patch("backend.validators.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [(None, None, None, None, ("127.0.0.1", None))]
-        with pytest.raises(ValueError, match="self-request"):
+        with pytest.raises(ValueError, match="private|internal"):
             validate_backend_url("http://localhost", server_port=80)
 
 
@@ -143,7 +152,7 @@ def test_loopback_default_port_443():
 
     with patch("backend.validators.socket.getaddrinfo") as mock_gai:
         mock_gai.return_value = [(None, None, None, None, ("127.0.0.1", None))]
-        with pytest.raises(ValueError, match="self-request"):
+        with pytest.raises(ValueError, match="private|internal"):
             validate_backend_url("https://localhost", server_port=443)
 
 
@@ -180,3 +189,25 @@ def test_ipv6_mapped_private_blocked():
         ]
         with pytest.raises(ValueError, match="private"):
             validate_backend_url("http://example.com:9999", server_port=8000)
+
+
+def test_reject_empty_string():
+    from backend.validators import validate_backend_url
+
+    with pytest.raises(ValueError):
+        validate_backend_url("", server_port=8000)
+
+
+def test_reject_whitespace_only():
+    from backend.validators import validate_backend_url
+
+    with pytest.raises(ValueError):
+        validate_backend_url("   ", server_port=8000)
+
+
+def test_reject_extremely_long_hostname():
+    from backend.validators import validate_backend_url
+
+    long_host = "a" * 300 + ".com"
+    with pytest.raises(ValueError):
+        validate_backend_url(f"http://{long_host}", server_port=8000)

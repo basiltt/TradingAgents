@@ -92,8 +92,8 @@ def _configure() -> None:
         _plan = "demo"
 
     tier = _TIER_DEFAULTS[_plan]
-    _BASE = tier["base"]
-    _AUTH_MODE = tier["auth"] if _API_KEY else None
+    _BASE = str(tier["base"])
+    _AUTH_MODE = str(tier["auth"]) if _API_KEY else None
 
     rpm = int(os.environ.get("COINGECKO_RATE_LIMIT_RPM",
               os.environ.get("COINGECKO_MAX_PER_MIN", str(tier["rpm"]))))
@@ -140,7 +140,7 @@ def _gated_get(path: str, params: dict | None = None, timeout: int = 20) -> requ
 # Response cache
 # ---------------------------------------------------------------------------
 
-_cache: dict[str, tuple[float, str]] = {}
+_cache: dict[str, tuple[float, dict | list]] = {}
 _cache_lock = threading.Lock()
 _CACHE_TTL = 600  # 10 min
 _CACHE_MAX = 1000
@@ -367,6 +367,7 @@ def _get_description_and_categories(coin_id: str) -> tuple[str, list[str]]:
             "sparkline": "false",
         },
     )
+    assert isinstance(data, dict)
     desc = data.get("description", {}).get("en", "")
     categories = data.get("categories", []) or []
 
@@ -473,6 +474,7 @@ def get_coingecko_market_data(symbol: str) -> str:
             "sparkline": "false",
         },
     )
+    assert isinstance(data, dict)
 
     md = data.get("market_data", {})
     lines = [
@@ -535,6 +537,7 @@ def get_coingecko_community_data(symbol: str) -> str:
             "sparkline": "false",
         },
     )
+    assert isinstance(data, dict)
 
     cd = data.get("community_data", {})
     dd = data.get("developer_data", {})
@@ -602,6 +605,7 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
 
     with _bulk_cache_lock:
         entry = _bulk_cache.get(coin_id)
+    data: dict | list
     if entry and (time.time() - entry[0]) < _BULK_CACHE_TTL:
         data = copy.deepcopy(entry[1])
     else:
@@ -615,6 +619,7 @@ def get_coingecko_fundamentals_only(symbol: str) -> str:
                 "sparkline": "false",
             },
         )
+    assert isinstance(data, dict)
 
     try:
         desc, categories = _get_description_and_categories(coin_id)

@@ -2,18 +2,16 @@
 
 import asyncio
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from backend.services.trading_cycle_engine import (
     TradingCycleEngine,
-    CycleAlreadyActiveError,
     NoQualifyingResultsError,
     ScanNotFoundError,
     ScanTooOldError,
     InsufficientEquityError,
-    CloseRuleLimitError,
     AccountNotConfiguredError,
     CycleNotFoundError,
     CycleNotRunningError,
@@ -393,7 +391,7 @@ class TestExecuteCycle:
              "capital_pct": 5, "max_drawdown_pct": 5, "target_type": "percentage",
              "target_value": 10},
         )
-        failed_calls = [c for c in repo.update_trade.call_args_list
+        [c for c in repo.update_trade.call_args_list
                         if c[1].get("status") == "failed" or (len(c[0]) > 1 and "failed" in str(c))]
         assert accounts.place_trade.call_count == 3
 

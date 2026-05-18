@@ -26,7 +26,12 @@ async def client(app):
 
 @pytest.mark.asyncio
 async def test_start_analysis(client):
-    with patch("backend.services.analysis_service.AnalysisService._execute_graph", return_value=None):
+    import uuid
+    fake_run_id = str(uuid.uuid4())
+    with patch(
+        "backend.services.analysis_service.AnalysisService.start_analysis",
+        return_value=fake_run_id,
+    ):
         resp = await client.post(
             "/api/v1/analysis",
             json={"ticker": "SPY", "analysis_date": "2025-06-01", "provider": "anthropic"},
@@ -34,7 +39,7 @@ async def test_start_analysis(client):
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert "run_id" in data
+        assert data["run_id"] == fake_run_id
         assert data["status"] == "running"
 
 

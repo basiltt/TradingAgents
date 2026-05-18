@@ -2,7 +2,7 @@
 
 import uuid
 from base64 import b64encode
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -77,6 +77,7 @@ def mock_accounts_svc():
     svc.list_accounts = AsyncMock(return_value=[
         {"id": _ACCT_A}, {"id": _ACCT_B},
     ])
+    svc.get_positions = AsyncMock(return_value=[])
     return svc
 
 
@@ -123,7 +124,8 @@ class TestListTradesCrossAccount:
         resp = client.get(f"/trades?account_id={_ACCT_A}")
         assert resp.status_code == 200
         call_kw = mock_repo.list_trades_cross_account.call_args
-        assert _ACCT_A in call_kw.kwargs.get("account_ids", call_kw[1].get("account_ids", []))
+        account_ids = call_kw.kwargs.get("account_ids", [])
+        assert _ACCT_A in account_ids
 
     def test_filter_by_status(self, client, mock_repo, conn):
         mock_repo.list_trades_cross_account = AsyncMock(return_value={
@@ -226,6 +228,41 @@ class TestListTradesCrossAccount:
         resp = client.get("/trades?from_date=not-a-date")
         assert resp.status_code == 422
 
+    def test_unrealized_pnl_enrichment(self, client, mock_repo, mock_accounts_svc, conn):
+        trade = _make_trade(account_id=_ACCT_A, status="open", symbol="BTCUSDT", side="Buy")
+        mock_repo.list_trades_cross_account = AsyncMock(return_value={
+            "items": [trade], "cursor": None, "has_more": False,
+        })
+        mock_accounts_svc.get_positions = AsyncMock(return_value=[
+            {"symbol": "BTCUSDT", "side": "Buy", "size": "0.01",
+             "positionIdx": 0, "unrealisedPnl": "123.45"},
+        ])
+        resp = client.get("/trades")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["unrealized_pnl"] == 123.45
+
+    def test_position_fetch_failure_returns_null_pnl(self, client, mock_repo, mock_accounts_svc, conn):
+        trade = _make_trade(account_id=_ACCT_A, status="open")
+        mock_repo.list_trades_cross_account = AsyncMock(return_value={
+            "items": [trade], "cursor": None, "has_more": False,
+        })
+        mock_accounts_svc.get_positions = AsyncMock(side_effect=Exception("network error"))
+        resp = client.get("/trades")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert items[0]["unrealized_pnl"] is None
+
+    def test_closed_trade_has_null_unrealized_pnl(self, client, mock_repo, conn):
+        trade = _make_trade(account_id=_ACCT_A, status="closed")
+        mock_repo.list_trades_cross_account = AsyncMock(return_value={
+            "items": [trade], "cursor": None, "has_more": False,
+        })
+        resp = client.get("/trades")
+        assert resp.status_code == 200
+        assert resp.json()["items"][0]["unrealized_pnl"] is None
+
 
 class TestStatsCrossAccount:
     def test_all_accounts(self, client, mock_repo, conn):
@@ -319,6 +356,23 @@ class TestTradeEvents:
         resp = events_client.get(f"/accounts/{_ACCT_A}/trades/not-a-uuid/events")
         assert resp.status_code == 422
 
+    def test_truncated_at_1000(self, events_client, mock_repo, conn):
+        trade_id = str(uuid.uuid4())
+        mock_repo.get_trade = AsyncMock(return_value={"id": trade_id, "account_id": _ACCT_A})
+        events = [
+            {"id": i, "trade_id": uuid.UUID(trade_id), "event_type": "placed",
+             "old_status": None, "new_status": "pending", "fill_qty": None,
+             "fill_price": None, "actor": "user", "payload": None,
+             "created_at": "2026-01-01T00:00:00Z"}
+            for i in range(1000)
+        ]
+        conn.fetch = AsyncMock(return_value=events)
+        resp = events_client.get(f"/accounts/{_ACCT_A}/trades/{trade_id}/events")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["truncated"] is True
+        assert len(data["items"]) == 1000
+
 
 class TestWSBroadcasts:
     """Tests for WS broadcast changes (TASK-1.4, 1.5, 1.6)."""
@@ -404,3 +458,31 @@ class TestWSBroadcasts:
         await svc._broadcast_trade_event("trade.closed", trade, version_override=10)
         payload = mock_ws.broadcast_to_account.call_args[0][2]
         assert payload["version"] == 10
+
+
+class TestTradesRouter503:
+    def test_trade_repo_none(self, mock_repo, mock_db, mock_accounts_svc):
+        from backend.routers.trades import router as trades_router
+        app = FastAPI()
+        app.include_router(trades_router)
+        app.state.trade_repo = None
+        db, _ = mock_db
+        app.state.db = db
+        app.state.accounts_service = mock_accounts_svc
+        c = TestClient(app)
+        resp = c.get("/trades/stats")
+        assert resp.status_code == 503
+
+    def test_db_none(self, mock_repo, mock_db, mock_accounts_svc):
+        from backend.routers.trades import router as trades_router
+        app = FastAPI()
+        app.include_router(trades_router)
+        app.state.trade_repo = mock_repo
+        app.state.db = None
+        app.state.accounts_service = mock_accounts_svc
+        c = TestClient(app)
+        mock_repo.get_stats_cross_account = AsyncMock(return_value={
+            "total_trades": 0, "open_count": 0, "win_rate": 0, "avg_pnl": 0, "total_pnl": 0,
+        })
+        resp = c.get("/trades/stats")
+        assert resp.status_code == 503

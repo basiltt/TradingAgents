@@ -1,7 +1,6 @@
 """Tests for event bus — TASK-009."""
 
 import asyncio
-import json
 
 import pytest
 
@@ -117,7 +116,7 @@ def test_thread_safe_emit(bus, event_loop):
     import threading
 
     async def _test():
-        done = asyncio.Event()
+        asyncio.Event()
 
         def bg():
             bus.emit_threadsafe("run1", {"type": "message", "from": "thread"})
@@ -233,13 +232,11 @@ def test_queue_full_evict_get_raises_queue_empty(bus, event_loop):
 def test_queue_full_retry_put_also_full(bus, event_loop):
     """R8: emit() QueueFull path — second put_nowait also raises QueueFull (lines 70-71)."""
     from unittest.mock import patch as mpatch
-    import asyncio as _aio
 
     q = asyncio.Queue(maxsize=1)
     q.put_nowait({"type": "first"})
     bus._queues["run1"] = q
 
-    original_put = q.put_nowait
     call_count = [0]
 
     def raising_put(item):

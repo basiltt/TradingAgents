@@ -1,3 +1,8 @@
+"""Trade repository — data access layer for trade CRUD with optimistic locking.
+
+Manages the trade state machine (pending → open → closing → closed/failed/cancelled)
+with version-checked updates to prevent concurrent modification.
+"""
 from __future__ import annotations
 
 import json
@@ -38,6 +43,9 @@ METADATA_ALLOWLIST = {
     "bybit_exec_id", "parent_trade_id", "child_qty",
 }
 
+_MAX_METADATA_BYTES = 8192
+_MAX_PAGE_SIZE = 200
+
 SYMBOL_PATTERN = r"^[A-Z0-9/]{1,30}$"
 
 UPDATABLE_COLUMNS = {
@@ -62,29 +70,40 @@ VALID_EVENT_TYPES = {
 
 
 class TradeNotFound(Exception):
+    """Raised when a trade ID does not exist in the database."""
     pass
 
 
 class InvalidStatusTransition(Exception):
+    """Raised when a status change violates the trade state machine."""
     pass
 
 
 class ConcurrentModification(Exception):
+    """Raised when the trade version has changed since it was last read."""
     pass
 
 
 class TradeRepository:
+    """Data access layer for trades with optimistic locking and state machine enforcement.
+
+    All write methods require an asyncpg connection and expected_version
+    to prevent concurrent modification. Status transitions are validated
+    against VALID_TRANSITIONS before execution.
+    """
     def __init__(self, db: AsyncAnalysisDB) -> None:
+        """Initialize with database adapter for trade persistence."""
         self._db = db
 
     def _validate_metadata(self, metadata: dict) -> None:
+        """Validate metadata keys against allowlist and enforce 8KB size limit."""
         if not metadata:
             return
         invalid_keys = set(metadata.keys()) - METADATA_ALLOWLIST
         if invalid_keys:
             raise ValueError(f"Invalid metadata keys: {invalid_keys}")
         raw = json.dumps(metadata)
-        if len(raw.encode("utf-8")) >= 8192:
+        if len(raw.encode("utf-8")) >= _MAX_METADATA_BYTES:
             raise ValueError("Metadata exceeds 8KB limit")
 
     async def create_trade(
@@ -104,6 +123,7 @@ class TradeRepository:
         metadata: dict | None = None,
         actor: str = "user",
     ) -> dict:
+        """Insert a new trade in 'pending' status and record a 'placed' event."""
         if not re.match(SYMBOL_PATTERN, symbol):
             raise ValueError(f"Invalid symbol: {symbol}")
         if side not in VALID_SIDES:
@@ -134,6 +154,9 @@ class TradeRepository:
             VALUES ($1, 'placed', 'pending', $2)""",
             trade["id"], actor,
         )
+        logger.info("trade_created", extra={
+            "trade_id": str(trade["id"]), "account_id": account_id, "symbol": symbol, "side": side,
+        })
         return trade
 
     async def update_trade_status(
@@ -144,6 +167,7 @@ class TradeRepository:
         actor: str = "system",
         event_payload: dict | None = None,
     ) -> dict | None:
+        """Transition trade status with optimistic locking and record an audit event."""
         start = time.monotonic()
         tid = uuid.UUID(trade_id)
 
@@ -168,6 +192,9 @@ class TradeRepository:
         old_status = current["status"]
         allowed = VALID_TRANSITIONS.get(old_status, set())
         if new_status not in allowed:
+            logger.warning("invalid_status_transition", extra={
+                "trade_id": trade_id, "from": old_status, "to": new_status,
+            })
             raise InvalidStatusTransition(
                 f"Cannot transition from {old_status} to {new_status}"
             )
@@ -191,6 +218,7 @@ class TradeRepository:
             *params,
         )
         if not result:
+            logger.warning("concurrent_modification", extra={"trade_id": trade_id})
             raise ConcurrentModification(f"Trade {trade_id} was modified concurrently")
 
         trade = dict(result)
@@ -221,6 +249,7 @@ class TradeRepository:
         fees: float, net_pnl: float, close_reason: str,
         close_rule_id: str | None = None,
     ) -> dict | None:
+        """Finalize a trade as 'closed' with PnL data and version check."""
         tid = uuid.UUID(trade_id)
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
@@ -252,6 +281,9 @@ class TradeRepository:
         old_status = current["status"]
         allowed = VALID_TRANSITIONS.get(old_status, set())
         if "closed" not in allowed:
+            logger.warning("invalid_status_transition", extra={
+                "trade_id": trade_id, "from": old_status, "to": "closed",
+            })
             raise InvalidStatusTransition(
                 f"Cannot transition from {old_status} to closed"
             )
@@ -262,6 +294,7 @@ class TradeRepository:
             *params,
         )
         if not result:
+            logger.warning("concurrent_modification", extra={"trade_id": trade_id})
             raise ConcurrentModification(f"Trade {trade_id} was modified concurrently")
 
         trade = dict(result)
@@ -280,6 +313,7 @@ class TradeRepository:
         realized_pnl_pct: float, fees: float,
         net_pnl: float, close_reason: str,
     ) -> dict:
+        """Close a trade without version check, used for external/reconciliation closes."""
         tid = uuid.UUID(trade_id)
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
@@ -292,6 +326,7 @@ class TradeRepository:
             tid, account_id,
         )
         if not row:
+            logger.warning("reconcile_close_not_found", extra={"trade_id": trade_id})
             raise ConcurrentModification(
                 f"Trade {trade_id} already closed or not found"
             )
@@ -307,6 +342,7 @@ class TradeRepository:
             fees, net_pnl, close_reason, tid, account_id, expected_version,
         )
         if not result:
+            logger.warning("concurrent_modification", extra={"trade_id": trade_id, "context": "reconcile"})
             raise ConcurrentModification(
                 f"Trade {trade_id} was modified concurrently during reconciliation"
             )
@@ -324,6 +360,7 @@ class TradeRepository:
     async def get_trade(
         self, conn, *, account_id: str, trade_id: str,
     ) -> dict | None:
+        """Fetch a single trade by account and trade ID. Returns None if not found."""
         row = await conn.fetchrow(
             "SELECT * FROM trades WHERE id = $1 AND account_id = $2",
             uuid.UUID(trade_id), account_id,
@@ -333,6 +370,7 @@ class TradeRepository:
     async def get_trade_with_events(
         self, conn, *, account_id: str, trade_id: str,
     ) -> dict | None:
+        """Fetch a trade with its audit event history embedded as an 'events' list."""
         trade = await self.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
             return None
@@ -357,10 +395,11 @@ class TradeRepository:
         include_total: bool = False,
         parent_trade_id: str | None = None,
     ) -> dict:
+        """List trades for an account with filters, sorting, and cursor pagination."""
         if sort not in SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort}. Allowed: {list(SORT_COLUMNS.keys())}")
         sort_col = SORT_COLUMNS[sort]
-        limit = min(limit, 200)
+        limit = min(limit, _MAX_PAGE_SIZE)
 
         if symbol and not re.match(SYMBOL_PATTERN, symbol):
             raise ValueError(f"Invalid symbol: {symbol}")
@@ -462,6 +501,7 @@ class TradeRepository:
     async def get_open_trades(
         self, conn, *, account_id: str, limit: int = 500,
     ) -> list[dict]:
+        """Fetch all open/partially-filled trades for an account."""
         rows = await conn.fetch(
             "SELECT * FROM trades WHERE account_id = $1 "
             "AND status IN ('open', 'partially_filled') "
@@ -473,6 +513,7 @@ class TradeRepository:
     async def get_trade_stats(
         self, conn, *, account_id: str,
     ) -> dict:
+        """Compute aggregate trade statistics (total, open count, win rate, PnL) for one account."""
         row = await conn.fetchrow(
             """SELECT
                 COUNT(*) as total_trades,
@@ -510,10 +551,11 @@ class TradeRepository:
         cursor_last_sort_value: str | None = None,
         limit: int = 50,
     ) -> dict:
+        """List trades across multiple accounts with filters and cursor pagination."""
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort_by}")
         sort_col = SORT_COLUMNS[sort_by]
-        limit = min(limit, 200)
+        limit = min(limit, _MAX_PAGE_SIZE)
 
         conditions = ["t.account_id = ANY($1::text[])"]
         params: list[Any] = [account_ids]
@@ -589,6 +631,7 @@ class TradeRepository:
     async def get_stats_cross_account(
         self, conn, *, account_ids: list[str],
     ) -> dict:
+        """Compute aggregate trade stats across multiple accounts."""
         row = await conn.fetchrow(
             """SELECT
                 COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) as total_trades,
@@ -618,6 +661,7 @@ class TradeRepository:
         fees: float, net_pnl: float, close_reason: str,
         close_rule_id: str | None = None,
     ) -> dict:
+        """Create a closed child trade from a partial close of the parent."""
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
         child = await conn.fetchrow(
@@ -660,6 +704,7 @@ class TradeRepository:
     async def get_pending_orphans(
         self, conn, *, max_age_minutes: int = 5, limit: int = 100,
     ) -> list[dict]:
+        """Find stale pending trades with no order_id for reconciliation cleanup."""
         # System-level query: intentionally cross-tenant for reconciliation cleanup
         rows = await conn.fetch(
             "SELECT * FROM trades WHERE status = 'pending' AND order_id IS NULL "
@@ -671,6 +716,7 @@ class TradeRepository:
     async def get_open_trades_by_symbol_side(
         self, conn, *, account_id: str, symbol: str, side: str,
     ) -> list[dict]:
+        """Fetch open/partially-filled trades for a specific symbol and side."""
         if not re.match(SYMBOL_PATTERN, symbol):
             raise ValueError(f"Invalid symbol: {symbol}")
         if side not in VALID_SIDES:

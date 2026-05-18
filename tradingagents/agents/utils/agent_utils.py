@@ -1,22 +1,27 @@
+"""Agent utility functions and tool re-exports for LangGraph trading agents.
+
+Re-exports all LangChain tools (stock data, indicators, fundamentals, news)
+and provides helper functions for message management and instrument context.
+"""
 from langchain_core.messages import HumanMessage, RemoveMessage
 
-# Import tools from separate utility files
-from tradingagents.agents.utils.core_stock_tools import (
-    get_stock_data
+# Import tools from separate utility files — re-exported for consumers
+from tradingagents.agents.utils.core_stock_tools import (  # noqa: F401
+    get_stock_data,
 )
-from tradingagents.agents.utils.technical_indicators_tools import (
-    get_indicators
+from tradingagents.agents.utils.technical_indicators_tools import (  # noqa: F401
+    get_indicators,
 )
-from tradingagents.agents.utils.fundamental_data_tools import (
+from tradingagents.agents.utils.fundamental_data_tools import (  # noqa: F401
     get_fundamentals,
     get_balance_sheet,
     get_cashflow,
-    get_income_statement
+    get_income_statement,
 )
-from tradingagents.agents.utils.news_data_tools import (
+from tradingagents.agents.utils.news_data_tools import (  # noqa: F401
     get_news,
     get_insider_transactions,
-    get_global_news
+    get_global_news,
 )
 
 
@@ -55,19 +60,17 @@ def build_instrument_context(ticker: str, crypto_interval: str | None = None) ->
     return base
 
 def create_msg_delete():
+    """Return a LangGraph state handler that clears all messages.
+
+    Returns a closure compatible with LangGraph node functions. The closure
+    removes all existing messages and inserts a placeholder HumanMessage
+    ("Continue") required by the Anthropic API to avoid empty message lists.
+    """
     def delete_messages(state):
-        """Clear messages and add placeholder for Anthropic compatibility"""
+        """Clear messages and add placeholder for Anthropic compatibility."""
         messages = state["messages"]
-
-        # Remove all messages
         removal_operations = [RemoveMessage(id=m.id) for m in messages]
-
-        # Add a minimal placeholder message
         placeholder = HumanMessage(content="Continue")
-
         return {"messages": removal_operations + [placeholder]}
 
     return delete_messages
-
-
-        

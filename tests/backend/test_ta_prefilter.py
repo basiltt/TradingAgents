@@ -1,8 +1,6 @@
 """Tests for the TA pre-filter scoring logic."""
 
-import pytest
 from tradingagents.ta_prefilter.scorer import (
-    ScoreBreakdown,
     compute_composite_score,
     score_trend,
     score_momentum,

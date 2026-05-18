@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -131,7 +130,7 @@ class TestGetCachedStats:
     async def test_cache_invalidation(self, service, mock_repo):
         mock_repo.get_trade_stats.return_value = {"total_trades": 5}
         await service.get_cached_stats("acc-1")
-        service._invalidate_stats_cache("acc-1")
+        service.invalidate_stats_cache("acc-1")
         await service.get_cached_stats("acc-1")
         assert mock_repo.get_trade_stats.await_count == 2
 
@@ -192,7 +191,7 @@ class TestCloseSingleTrade:
         child = _make_trade(status="closed", qty=0.5)
         mock_repo.create_child_trade.return_value = child
 
-        result = await service.close_single_trade("acc-1", str(trade["id"]), qty=0.5)
+        await service.close_single_trade("acc-1", str(trade["id"]), qty=0.5)
         mock_repo.create_child_trade.assert_awaited_once()
         assert mock_repo.update_trade_status.await_count == 2
 
@@ -371,6 +370,17 @@ class TestExtractPnl:
         result = service._extract_pnl({"avgPrice": "49000", "cumExecFee": "0"}, trade, 0.01)
         assert result["realized_pnl"] < 0
 
+    def test_price_fallback_when_no_avg_price(self, service):
+        trade = _make_trade(side="Buy", entry_price=50000.0, qty=0.01)
+        result = service._extract_pnl({"price": "51000", "cumExecFee": "0"}, trade, 0.01)
+        assert result["exit_price"] == 51000.0
+        assert result["realized_pnl"] > 0
+
+    def test_avg_fill_price_fallback(self, service):
+        trade = _make_trade(entry_price=None, avg_fill_price=50000.0, side="Buy", qty=0.01)
+        result = service._extract_pnl({"avgPrice": "51000"}, trade, 0.01)
+        assert result["realized_pnl"] > 0
+
 
 class TestCloseTradeRecordOnly:
     @pytest.mark.asyncio
@@ -384,6 +394,9 @@ class TestCloseTradeRecordOnly:
         mock_repo.update_trade_status.assert_awaited_once()
         mock_repo.close_trade.assert_awaited_once()
         mock_ws.broadcast_to_account.assert_awaited_once()
+        ws_args = mock_ws.broadcast_to_account.call_args[0]
+        assert ws_args[1] == "trade.closed"
+        assert "trade_id" in ws_args[2]
 
     @pytest.mark.asyncio
     async def test_close_record_only_not_found(self, service, mock_repo):
@@ -445,9 +458,9 @@ class TestBroadcastOpened:
         await service._broadcast_trade_event("trade.opened", trade)
         mock_ws.broadcast_to_account.assert_awaited_once()
         payload = mock_ws.broadcast_to_account.call_args[0][2]
-        assert payload["side"] == "Buy"
-        assert payload["qty"] == 0.01
-        assert payload["status"] == "open"
+        assert payload["data"]["side"] == "Buy"
+        assert payload["data"]["qty"] == 0.01
+        assert payload["data"]["status"] == "open"
 
     @pytest.mark.asyncio
     async def test_ws_broadcast_unknown_event_ignored(self, service, mock_ws):
@@ -505,6 +518,10 @@ class TestReconcileFailureFallthrough:
         mock_repo.reconcile_close.assert_awaited_once()
         revert_call = mock_repo.update_trade_status.call_args_list[-1]
         assert revert_call.kwargs["new_status"] == "open"
+        mock_ws.broadcast_to_account.assert_awaited()
+        bc_args = mock_ws.broadcast_to_account.call_args[0]
+        assert bc_args[1] == "trade.close_failed"
+        assert bc_args[2]["previous_status"] == "open"
 
 
 class TestGetPositionsFailure:
@@ -603,3 +620,61 @@ class TestBroadcastMetadataString:
         await service._broadcast_trade_event("trade.close_failed", trade)
         payload = mock_ws.broadcast_to_account.call_args[0][2]
         assert payload["error_code"] == "UNKNOWN"
+
+
+class TestCancelPartialFilledExchangeFailure:
+    @pytest.mark.asyncio
+    async def test_cancel_partial_filled_bybit_fails_still_updates(self, service, mock_repo, mock_accounts):
+        trade = _make_trade(status="partially_filled", order_id="ord-1", filled_qty=0.005)
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.cancel_order = AsyncMock(side_effect=Exception("exchange timeout"))
+        mock_accounts.get_client.return_value = client
+        updated = _make_trade(status="open", filled_qty=0.005, version=2)
+        mock_repo.update_trade_status.return_value = updated
+
+        result = await service.cancel_trade("acc-1", str(trade["id"]))
+        assert result["status"] == "open"
+        assert result["filled_qty"] == 0.005
+        mock_repo.update_trade_status.assert_awaited_once()
+        call_kw = mock_repo.update_trade_status.call_args.kwargs
+        assert call_kw["new_status"] == "open"
+        assert call_kw["updates"]["filled_qty"] == 0.005
+
+
+class TestCloseTradeCloseRaiseConcurrentMod:
+    @pytest.mark.asyncio
+    async def test_close_trade_concurrent_mod_propagates(self, service, mock_repo, mock_accounts):
+        trade = _make_trade()
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.place_market_close_order = AsyncMock(return_value={
+            "avgPrice": "51000", "cumExecFee": "0.5",
+        })
+        mock_accounts.get_client.return_value = client
+        mock_repo.update_trade_status.return_value = _make_trade(status="closing", version=2)
+        mock_repo.close_trade.side_effect = ConcurrentModification("version mismatch")
+
+        with pytest.raises(ConcurrentModification):
+            await service.close_single_trade("acc-1", str(trade["id"]))
+
+
+class TestFullCloseAssertsPnlArgs:
+    @pytest.mark.asyncio
+    async def test_full_close_forwards_correct_pnl(self, service, mock_repo, mock_accounts, mock_ws):
+        trade = _make_trade(side="Buy", entry_price=50000.0, qty=0.01)
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.place_market_close_order = AsyncMock(return_value={
+            "avgPrice": "51000", "cumExecFee": "0.5",
+        })
+        mock_accounts.get_client.return_value = client
+        mock_repo.close_trade.return_value = _make_trade(status="closed")
+
+        await service.close_single_trade("acc-1", str(trade["id"]))
+
+        call_kw = mock_repo.close_trade.call_args.kwargs
+        assert call_kw["exit_price"] == 51000.0
+        assert call_kw["realized_pnl"] > 0
+        assert call_kw["fees"] == 0.5
+        assert call_kw["net_pnl"] == call_kw["realized_pnl"] - call_kw["fees"]

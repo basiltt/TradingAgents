@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -72,7 +72,9 @@ function loadSettings(): CycleSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {}
+  } catch {
+    // ignored – corrupt localStorage is fine, fall through to defaults
+  }
   return { ...DEFAULTS };
 }
 
@@ -136,9 +138,10 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
     });
   }, []);
 
-  useEffect(() => {
-    if (open) setStep("config");
-  }, [open]);
+  const handleOpenChange = useCallback((next: boolean) => {
+    if (next) setStep("config");
+    onOpenChange(next);
+  }, [onOpenChange]);
 
   function buildRequest(): CreateCycleRequest {
     return {
@@ -162,7 +165,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
   const canSubmit = settings.accountId && Number(settings.leverage) > 0 && Number(settings.targetValue) > 0;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>

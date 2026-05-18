@@ -21,8 +21,15 @@ interface ResolvedRule {
   warn: boolean;      // floor buffer < 25%
 }
 
+/** Trigger types rendered as goal-targets (progress toward); all others are floor-limits (buffer remaining). */
 const TARGET_TYPES = new Set(["BALANCE_ABOVE", "PNL_ABOVE", "EQUITY_RISE_PCT"]);
+const FLOOR_WARNING_THRESHOLD_PCT = 25;
 
+/**
+ * Resolve a rule trigger into display data (progress %, threshold label, reached status).
+ * AI-CONTEXT: Rules are either "target" (goal to reach) or "floor" (limit to stay above).
+ * Threshold of zero is valid — only NaN/null threshold values are rejected.
+ */
 function resolveRule(
   t: { trigger_type: string; threshold_value: string | null; reference_value: string | null },
   equity: number,
@@ -31,7 +38,7 @@ function resolveRule(
 ): ResolvedRule | null {
   if (!t.threshold_value) return null;
   const th = parseFloat(t.threshold_value);
-  if (!th || th <= 0) return null;
+  if (isNaN(th)) return null;
   const ref = t.reference_value ? parseFloat(t.reference_value) : null;
   const kind: RuleKind = TARGET_TYPES.has(t.trigger_type) ? "target" : "floor";
 
@@ -55,28 +62,31 @@ function resolveRule(
       const drop = ((ref - equity) / ref) * 100;
       const floorVal = ref * (1 - th / 100);
       const bufferPct = th > 0 ? ((th - drop) / th) * 100 : 100;
-      return { kind, label: `-${th}% Floor`, thresholdDisplay: `$${floorVal.toFixed(2)}`, pct: bufferPct, reached: drop >= th, warn: bufferPct > 0 && bufferPct < 25 };
+      return { kind, label: `-${th}% Floor`, thresholdDisplay: `$${floorVal.toFixed(2)}`, pct: bufferPct, reached: drop >= th, warn: bufferPct > 0 && bufferPct < FLOOR_WARNING_THRESHOLD_PCT };
     }
     default:
       return null;
   }
 }
 
+/** Build a ResolvedRule for floor-type thresholds, computing buffer percentage from current vs. threshold. */
 function mkFloor(label: string, display: string, current: number, threshold: number): ResolvedRule {
   const buffer = current - threshold;
   const range = Math.abs(threshold) || 1;
   const bufferPct = (buffer / range) * 100;
-  return { kind: "floor", label, thresholdDisplay: display, pct: bufferPct, reached: buffer <= 0, warn: bufferPct > 0 && bufferPct < 25 };
+  return { kind: "floor", label, thresholdDisplay: display, pct: bufferPct, reached: buffer <= 0, warn: bufferPct > 0 && bufferPct < FLOOR_WARNING_THRESHOLD_PCT };
 }
 
 /* ── Sub-components ──────────────────────────────────────────────── */
 
+/** Renders an up/down arrow for value change animation. */
 function DirectionIcon({ dir }: { dir?: Direction }) {
   if (!dir || dir === "neutral") return null;
   if (dir === "up") return <span className="text-emerald-500 text-[10px] animate-flash">▲</span>;
   return <span className="text-red-500 text-[10px] animate-flash">▼</span>;
 }
 
+/** Colored dot indicating account connection status (active/stale/error/disabled). */
 function StatusDot({ status }: { status: string }) {
   const styles: Record<string, string> = {
     active: "bg-emerald-500 shadow-emerald-500/50",
@@ -87,6 +97,7 @@ function StatusDot({ status }: { status: string }) {
   return <span className={`w-2 h-2 rounded-full shadow-[0_0_6px] ${styles[status] ?? styles.disabled}`} />;
 }
 
+/** Progress bar showing target/floor rule status with percentage and threshold display. */
 function RuleIndicator({ rule }: { rule: ResolvedRule }) {
   const pctClamped = Math.min(Math.max(rule.pct, 0), 100);
   const pctDisplay = Math.round(rule.pct);
@@ -137,6 +148,11 @@ interface AccountCardProps {
   onRefresh: () => void;
 }
 
+/**
+ * Renders a single account card with equity, PnL, rule indicators, and action menu.
+ * @param card - Dashboard card data from the accounts API.
+ * @param onRefresh - Callback to trigger dashboard re-fetch after mutations.
+ */
 export function AccountCard({ card, onRefresh }: AccountCardProps) {
   const navigate = useNavigate();
   const directions = useAppSelector((s) => s.accounts.directions[card.id]);

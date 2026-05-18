@@ -402,7 +402,7 @@ class TradeStatsResponse(BaseModel):
 
 class TradeCloseRequest(BaseModel):
     qty: Optional[float] = None
-    close_reason: Optional[str] = "manual_single"
+    close_reason: Optional[str] = Field(default="manual_single", max_length=128)
 
     @field_validator("qty")
     @classmethod

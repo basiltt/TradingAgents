@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from backend.services.trade_repository import (
-    VALID_TRANSITIONS,
     ConcurrentModification,
     InvalidStatusTransition,
     TradeNotFound,

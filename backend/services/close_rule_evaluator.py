@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 EVALUATION_INTERVAL = 30  # seconds
 PER_ACCOUNT_TIMEOUT = 30  # seconds — must accommodate closing multiple positions
 MAX_CONCURRENT_ACCOUNTS = 5
+MAX_RULE_FAILURES = 3
 
 
 class CloseRuleEvaluator:
@@ -23,6 +24,7 @@ class CloseRuleEvaluator:
         self._db = db
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._rule_failures: dict[str, int] = {}
 
     def set_cycle_callback(self, callback: Any) -> None:
         self._cycle_callback = callback
@@ -100,6 +102,9 @@ class CloseRuleEvaluator:
             evaluate_account(aid, arules) for aid, arules in accounts.items()
         ])
 
+        active_ids = {r["id"] for r in rules}
+        self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
+
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         try:
             wallet = await self._accounts_service.get_wallet(account_id)
@@ -145,6 +150,7 @@ class CloseRuleEvaluator:
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")
+                            self._rule_failures.pop(rule["id"], None)
                             cleared = await self._db.deactivate_rules_for_account(account_id, exclude_rule_id=rule["id"])
                             if cleared:
                                 logger.info("Deactivated %d remaining rules for account %s after rule %s executed", cleared, account_id, rule["id"])
@@ -159,8 +165,15 @@ class CloseRuleEvaluator:
                         await self._db.update_close_rule(rule["id"], status="active")
                         raise
                     except Exception:
-                        logger.exception("Failed to close positions for rule %s, reverting to active", rule["id"])
-                        await self._db.update_close_rule(rule["id"], status="active")
+                        rule_id = rule["id"]
+                        self._rule_failures[rule_id] = self._rule_failures.get(rule_id, 0) + 1
+                        if self._rule_failures[rule_id] >= MAX_RULE_FAILURES:
+                            logger.error("Rule %s failed %d times, pausing", rule_id, self._rule_failures[rule_id])
+                            await self._db.update_close_rule(rule_id, status="paused")
+                            self._rule_failures.pop(rule_id, None)
+                        else:
+                            logger.exception("Failed to close positions for rule %s (attempt %d), reverting to active", rule_id, self._rule_failures[rule_id])
+                            await self._db.update_close_rule(rule_id, status="active")
             except Exception:
                 logger.exception("Error evaluating rule %s", rule["id"])
 
@@ -194,4 +207,5 @@ class CloseRuleEvaluator:
             rise_pct = ((equity - reference) / reference) * Decimal("100")
             return rise_pct >= threshold
 
+        logger.warning("unknown_trigger_type", extra={"trigger_type": trigger_type, "rule_id": rule.get("id")})
         return False

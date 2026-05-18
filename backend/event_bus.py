@@ -26,7 +26,8 @@ class EventBus:
         self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = {}
         self._ring_bytes: Dict[str, int] = {}
         self._cleaned: OrderedDict[str, None] = OrderedDict()
-        self._lock = threading.Lock()
+        # RLock because _async_emit acquires lock then calls emit() which also acquires it
+        self._lock = threading.RLock()
 
     def _get_queue(self, run_id: str) -> asyncio.Queue:
         with self._lock:
@@ -82,7 +83,8 @@ class EventBus:
         self.emit(run_id, event)
 
     def _add_to_ring(self, run_id: str, event_dict: Dict[str, Any]) -> None:
-        event_bytes = len(str(event_dict))
+        # Rough byte estimate: 64 bytes overhead + 32 per key-value pair avoids str() cost
+        event_bytes = 64 + 32 * len(event_dict)
 
         if run_id not in self._ring_buffers:
             self._ring_buffers[run_id] = deque()
@@ -107,7 +109,7 @@ class EventBus:
 
     def get_snapshot(self, run_id: str) -> List[Dict[str, Any]]:
         with self._lock:
-            buf = self._ring_buffers.get(run_id, [])
+            buf = list(self._ring_buffers.get(run_id, []))
             return [ev for ev, _ in buf]
 
     def cleanup_run(self, run_id: str) -> None:

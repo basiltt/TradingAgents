@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid as _uuid
+from collections import OrderedDict
 from decimal import Decimal
 from typing import Any
 
 from backend.async_persistence import AsyncAnalysisDB
+from backend.utils import serialize_trade as _serialize_trade_shared
 from backend.services.trade_repository import (
     ConcurrentModification,
     InvalidStatusTransition,
@@ -23,6 +24,13 @@ VALID_SOURCES = {"manual", "cycle"}
 
 
 class TradeService:
+    """Orchestrates trade lifecycle: open, close (full/partial), cancel.
+
+    Coordinates between TradeRepository (DB), AccountsService (exchange clients),
+    and WebSocket manager (real-time broadcast). Maintains a per-account stats
+    cache with bounded size and TTL eviction.
+    """
+
     def __init__(
         self,
         db: AsyncAnalysisDB,
@@ -30,31 +38,37 @@ class TradeService:
         accounts_service: Any,
         ws_manager: Any = None,
     ) -> None:
+        """Initialize with database, repository, accounts service, and optional WS manager."""
         self._db = db
         self._repo = trade_repo
         self._accounts = accounts_service
         self._ws = ws_manager
-        self._stats_cache: dict[str, tuple[float, dict]] = {}
-        self._STATS_CACHE_TTL = 10.0
-        self._STATS_CACHE_MAX = 1000
+        self._stats_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+
+    _STATS_CACHE_TTL = 10.0
+    _STATS_CACHE_MAX = 1000
 
     async def get_cached_stats(self, account_id: str) -> dict:
+        """Return trade statistics for an account, using a TTL cache."""
         now = time.monotonic()
         cached = self._stats_cache.get(account_id)
         if cached and (now - cached[0]) < self._STATS_CACHE_TTL:
+            self._stats_cache.move_to_end(account_id)
             return cached[1]
         async with self._db.pool.acquire() as conn:
             stats = await self._repo.get_trade_stats(conn, account_id=account_id)
         if len(self._stats_cache) >= self._STATS_CACHE_MAX and account_id not in self._stats_cache:
-            oldest_key = min(self._stats_cache, key=lambda k: self._stats_cache[k][0])
-            del self._stats_cache[oldest_key]
+            self._stats_cache.popitem(last=False)
         self._stats_cache[account_id] = (now, stats)
+        self._stats_cache.move_to_end(account_id)
         return stats
 
-    def _invalidate_stats_cache(self, account_id: str) -> None:
+    def invalidate_stats_cache(self, account_id: str) -> None:
+        """Remove cached stats for an account, forcing re-fetch on next access."""
         self._stats_cache.pop(account_id, None)
 
     async def get_open_trades(self, account_id: str, limit: int = 500) -> list[dict]:
+        """Fetch open trades for an account from the database."""
         async with self._db.pool.acquire() as conn:
             return await self._repo.get_open_trades(conn, account_id=account_id, limit=limit)
 
@@ -66,6 +80,29 @@ class TradeService:
         close_reason: str = "manual_single",
         close_rule_id: str | None = None,
     ) -> dict:
+        """Close a trade (full or partial) via the exchange.
+
+        Args:
+            account_id: Account owning the trade.
+            trade_id: UUID of the trade to close.
+            qty: Quantity to close; None means close entire position.
+            close_reason: Reason code for audit trail.
+            close_rule_id: Optional rule ID that triggered the close.
+
+        Returns:
+            Closed (or child) trade record dict.
+
+        Raises:
+            ValueError: If qty is non-positive or exceeds remaining size.
+            TradeNotFound: If trade doesn't exist.
+            InvalidStatusTransition: If trade is already closed/failed/cancelled.
+        """
+        t0 = time.monotonic()
+        logger.info("close_single_trade_start", extra={
+            "account_id": account_id, "trade_id": trade_id,
+            "qty": qty, "close_reason": close_reason,
+        })
+
         if qty is not None and qty <= 0:
             raise ValueError("qty must be positive")
 
@@ -74,11 +111,14 @@ class TradeService:
         if not trade:
             raise TradeNotFound(f"Trade {trade_id} not found")
 
-        if trade["status"] in ("closed", "failed", "cancelled"):
+        if trade["status"] in ("closed", "failed", "cancelled", "closing"):
             raise InvalidStatusTransition(f"Trade is already {trade['status']}")
 
         client = await self._accounts.get_client(account_id)
         remaining = float(trade["qty"]) - float(trade.get("filled_qty") or 0)
+
+        if remaining <= 0:
+            raise InvalidStatusTransition("No remaining quantity to close")
 
         if qty is not None and qty > remaining:
             raise ValueError(f"qty ({qty}) exceeds remaining position size ({remaining})")
@@ -86,8 +126,17 @@ class TradeService:
         is_partial = qty is not None and qty < remaining
 
         if is_partial:
-            return await self._close_partial(client, trade, qty, close_reason, close_rule_id)
-        return await self._close_full(client, trade, close_reason, close_rule_id)
+            assert qty is not None
+            result = await self._close_partial(client, trade, qty, close_reason, close_rule_id)
+        else:
+            result = await self._close_full(client, trade, close_reason, close_rule_id)
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("close_single_trade_done", extra={
+            "account_id": account_id, "trade_id": trade_id,
+            "partial": is_partial, "duration_ms": round(elapsed_ms, 1),
+        })
+        return result
 
     async def close_trade_record_only(
         self,
@@ -95,13 +144,28 @@ class TradeService:
         trade_id: str,
         close_reason: str = "manual_single",
         close_rule_id: str | None = None,
+        exchange_result: dict | None = None,
     ) -> dict:
+        """Close a trade record in the DB without placing an exchange order.
+
+        Used when the position has already been closed on the exchange
+        (e.g., by a stop-loss) and only the DB record needs updating.
+        """
+        t0 = time.monotonic()
+        logger.info("close_trade_record_only_start", extra={
+            "account_id": account_id, "trade_id": trade_id, "close_reason": close_reason,
+        })
         async with self._db.pool.acquire() as conn:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
             raise TradeNotFound(f"Trade {trade_id} not found")
-        if trade["status"] in ("closed", "failed", "cancelled"):
+        if trade["status"] in ("closed", "failed", "cancelled", "closing"):
             raise InvalidStatusTransition(f"Trade is already {trade['status']}")
+
+        pnl_data = self._extract_pnl(exchange_result, trade) if exchange_result else {
+            "exit_price": 0.0, "realized_pnl": 0.0, "realized_pnl_pct": 0.0,
+            "fees": 0.0, "net_pnl": 0.0,
+        }
 
         version = trade["version"]
         async with self._db.pool.acquire() as conn:
@@ -115,20 +179,30 @@ class TradeService:
                     conn, trade_id=str(trade["id"]), account_id=account_id,
                     expected_version=version + 1, close_reason=close_reason,
                     close_rule_id=close_rule_id,
-                    exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
-                    fees=0.0, net_pnl=0.0,
+                    exit_price=pnl_data["exit_price"],
+                    realized_pnl=pnl_data["realized_pnl"],
+                    realized_pnl_pct=pnl_data["realized_pnl_pct"],
+                    fees=pnl_data["fees"],
+                    net_pnl=pnl_data["net_pnl"],
                 )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
+        assert closed is not None
         await self._broadcast_trade_event("trade.closed", closed)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("close_trade_record_only_done", extra={
+            "account_id": account_id, "trade_id": trade_id, "duration_ms": round(elapsed_ms, 1),
+        })
         return closed
 
     async def _close_full(
         self, client: Any, trade: dict, close_reason: str, close_rule_id: str | None,
     ) -> dict:
+        """Execute a full close: transition to 'closing', place exchange order, finalize."""
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         version = trade["version"]
+        close_qty = float(trade["qty"]) - float(trade.get("filled_qty") or 0)
 
         async with self._db.pool.acquire() as conn:
             async with conn.transaction():
@@ -143,15 +217,17 @@ class TradeService:
             result = await client.place_market_close_order(
                 symbol=trade["symbol"],
                 side=trade["side"],
-                qty=str(trade["qty"]),
+                qty=str(close_qty),
                 position_idx=trade.get("position_idx", 0),
             )
         except Exception as e:
-            logger.warning("bybit_close_failed", extra={"trade_id": trade_id, "error": str(e)})
+            logger.warning("bybit_close_failed", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"], "error": str(e),
+            })
             await self._handle_close_failure(client, trade, version)
             raise
 
-        pnl_data = self._extract_pnl(result, trade, float(trade["qty"]))
+        pnl_data = self._extract_pnl(result, trade, close_qty)
         async with self._db.pool.acquire() as conn:
             async with conn.transaction():
                 closed = await self._repo.close_trade(
@@ -160,13 +236,19 @@ class TradeService:
                     close_rule_id=close_rule_id, **pnl_data,
                 )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
+        assert closed is not None
         await self._broadcast_trade_event("trade.closed", closed)
+        logger.info("close_full_done", extra={
+            "trade_id": trade_id, "account_id": account_id,
+            "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
+        })
         return closed
 
     async def _close_partial(
         self, client: Any, trade: dict, qty: float, close_reason: str, close_rule_id: str | None,
     ) -> dict:
+        """Execute a partial close: close a child portion, keep parent open with reduced qty."""
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         version = trade["version"]
@@ -188,7 +270,10 @@ class TradeService:
                 position_idx=trade.get("position_idx", 0),
             )
         except Exception as e:
-            logger.warning("bybit_partial_close_failed", extra={"trade_id": trade_id, "error": str(e)})
+            logger.warning("bybit_partial_close_failed", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
+                "qty": qty, "error": str(e),
+            })
             await self._handle_close_failure(client, trade, version)
             raise
 
@@ -206,14 +291,18 @@ class TradeService:
                     close_reason=close_reason,
                     close_rule_id=close_rule_id,
                 )
-                await self._repo.update_trade_status(
+                updated_trade = await self._repo.update_trade_status(
                     conn, trade_id=trade_id, account_id=account_id,
                     expected_version=version, new_status="partially_closed",
                     event_type="closed", actor="system",
                     updates={"filled_qty": previously_filled + qty},
                 )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
+        logger.info("close_partial_done", extra={
+            "trade_id": trade_id, "account_id": account_id, "closed_qty": qty,
+            "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
+        })
         await self._broadcast_trade_event("trade.closed", child)
 
         new_filled = previously_filled + qty
@@ -223,7 +312,7 @@ class TradeService:
                 pc_payload = {
                     "trade_id": trade_id,
                     "account_id": account_id,
-                    "version": trade["version"] + 2,
+                    "version": updated_trade["version"] if updated_trade else trade["version"],
                     "filled_qty": new_filled,
                     "remaining_qty": remaining,
                     "realized_pnl": float(child.get("net_pnl") or 0) if child else None,
@@ -235,6 +324,7 @@ class TradeService:
         return child
 
     async def _handle_close_failure(self, client: Any, trade: dict, version: int) -> None:
+        """Revert trade status from 'closing' back to 'open' after exchange failure."""
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         previous_status = trade.get("status")
@@ -244,7 +334,8 @@ class TradeService:
                 p["symbol"] == trade["symbol"] and p["side"] == trade["side"]
                 for p in positions
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("position_check_failed", extra={"trade_id": trade_id, "error": str(exc)[:200]})
             position_gone = False
 
         if position_gone:
@@ -256,7 +347,7 @@ class TradeService:
                             exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
                             fees=0.0, net_pnl=0.0, close_reason="external",
                         )
-                self._invalidate_stats_cache(account_id)
+                self.invalidate_stats_cache(account_id)
                 return
             except Exception:
                 logger.exception("reconcile_after_failure_failed", extra={"trade_id": trade_id})
@@ -276,6 +367,7 @@ class TradeService:
             return
         except Exception:
             logger.exception("revert_to_open_failed", extra={"trade_id": trade_id})
+            return
 
         trade["_previous_status"] = previous_status
         await self._broadcast_trade_event(
@@ -283,6 +375,9 @@ class TradeService:
         )
 
     async def cancel_trade(self, account_id: str, trade_id: str) -> dict:
+        """Cancel a pending/open trade without placing an exchange order."""
+        t0 = time.monotonic()
+        logger.info("cancel_trade_start", extra={"account_id": account_id, "trade_id": trade_id})
         async with self._db.pool.acquire() as conn:
             trade = await self._repo.get_trade(conn, account_id=account_id, trade_id=trade_id)
         if not trade:
@@ -323,43 +418,44 @@ class TradeService:
                         updates={"filled_qty": trade.get("filled_qty")},
                     )
 
-        self._invalidate_stats_cache(account_id)
+        self.invalidate_stats_cache(account_id)
+        assert updated is not None
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.info("cancel_trade_done", extra={
+            "account_id": account_id, "trade_id": trade_id,
+            "result_status": updated.get("status"), "duration_ms": round(elapsed_ms, 1),
+        })
         return updated
 
     def _extract_pnl(self, bybit_result: dict, trade: dict, close_qty: float | None = None) -> dict:
-        exit_price = float(bybit_result.get("avgPrice") or bybit_result.get("price") or 0)
-        entry = float(trade.get("entry_price") or trade.get("avg_fill_price") or 0)
-        qty = close_qty if close_qty is not None else float(trade["qty"])
-        side_mult = 1 if trade["side"] == "Buy" else -1
-        realized_pnl = (exit_price - entry) * qty * side_mult if entry else 0.0
-        realized_pnl_pct = (realized_pnl / (entry * qty) * 100) if entry and qty else 0.0
-        fees = float(bybit_result.get("cumExecFee") or 0)
+        """Calculate realized PnL from exchange close result and trade entry data."""
+        exit_price = Decimal(str(bybit_result.get("avgPrice") or bybit_result.get("price") or 0))
+        entry = Decimal(str(trade.get("entry_price") or trade.get("avg_fill_price") or 0))
+        qty = Decimal(str(close_qty)) if close_qty is not None else Decimal(str(trade["qty"]))
+        side_mult = Decimal(1) if trade["side"] == "Buy" else Decimal(-1)
+        if not exit_price:
+            logger.warning("exchange_returned_zero_exit_price", extra={"trade_id": str(trade.get("id"))})
+        realized_pnl = (exit_price - entry) * qty * side_mult if entry and exit_price else Decimal(0)
+        realized_pnl_pct = (realized_pnl / abs(entry * qty) * 100) if entry and qty else Decimal(0)
+        fees = Decimal(str(bybit_result.get("cumExecFee") or 0)) if exit_price else Decimal(0)
         net_pnl = realized_pnl - fees
         return {
-            "exit_price": exit_price,
-            "realized_pnl": round(realized_pnl, 8),
-            "realized_pnl_pct": round(realized_pnl_pct, 4),
-            "fees": round(fees, 8),
-            "net_pnl": round(net_pnl, 8),
+            "exit_price": float(exit_price),
+            "realized_pnl": float(round(realized_pnl, 8)),
+            "realized_pnl_pct": float(round(realized_pnl_pct, 4)),
+            "fees": float(round(fees, 8)),
+            "net_pnl": float(round(net_pnl, 8)),
         }
 
     @staticmethod
     def _serialize_trade_for_ws(trade: dict) -> dict:
-        out = {}
-        for k, v in trade.items():
-            if isinstance(v, _uuid.UUID):
-                out[k] = str(v)
-            elif isinstance(v, Decimal):
-                out[k] = float(v)
-            elif hasattr(v, "isoformat"):
-                out[k] = v.isoformat()
-            else:
-                out[k] = v
-        return out
+        """Serialize a trade dict for WebSocket broadcast using shared serializer."""
+        return _serialize_trade_shared(trade)
 
     async def _broadcast_trade_event(
         self, event_type: str, trade: dict, *, version_override: int | None = None,
     ) -> None:
+        """Broadcast a trade lifecycle event to account subscribers via WebSocket."""
         if not self._ws:
             return
         try:
@@ -398,4 +494,4 @@ class TradeService:
             payload["version"] = version_override if version_override is not None else trade.get("version")
             await self._ws.broadcast_to_account(trade["account_id"], event_type, payload)
         except Exception:
-            logger.warning("ws_broadcast_failed", extra={"event_type": event_type, "trade_id": str(trade["id"])})
+            logger.warning("ws_broadcast_failed", extra={"event_type": event_type, "trade_id": str(trade["id"])}, exc_info=True)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -829,7 +828,8 @@ class TestRunScanSymbolFetch:
     @pytest.mark.asyncio
     async def test_run_scan_live_fetch_path(self):
         """_run_scan with symbols_override=None fetches from bybit (mocked)."""
-        import uuid, sys
+        import uuid
+        import sys
         svc, analysis = _make_scanner()
         analysis.get_run = AsyncMock(return_value={"status": "completed"})
         sid = str(uuid.uuid4())
@@ -855,7 +855,7 @@ class TestRunScanSymbolFetch:
     @pytest.mark.asyncio
     async def test_run_scan_scan_missing_after_fetch(self):
         """Scan removed from _scans between fetch and processing returns early."""
-        import uuid, sys
+        import uuid
         svc, analysis = _make_scanner()
         sid = str(uuid.uuid4())
         svc._scans[sid] = {
@@ -887,7 +887,8 @@ class TestRunScanSymbolFetch:
     @pytest.mark.asyncio
     async def test_run_scan_db_updates_total(self):
         """When symbols_override is None, DB is updated with total."""
-        import uuid, sys
+        import uuid
+        import sys
         db = MagicMock()
         db.update_scan = AsyncMock()
         svc, analysis = _make_scanner(db=db)
@@ -1139,7 +1140,8 @@ class TestRemainingLines2:
     @pytest.mark.asyncio
     async def test_run_scan_symbol_fetch_fails_with_db(self):
         """Line 325: when symbol fetch fails and DB is set, DB is updated to failed."""
-        import uuid, sys
+        import uuid
+        import sys
         db = MagicMock()
         db.update_scan = AsyncMock()
         svc, _ = _make_scanner(db=db)
@@ -1161,7 +1163,9 @@ class TestRemainingLines2:
             sys.modules.pop("tradingagents.dataflows.bybit_data", None)
 
         assert svc._scans[sid]["status"] == "failed"
-        db.update_scan.assert_called_with(sid, status="failed")
+        call_args = db.update_scan.call_args
+        assert call_args[0][0] == sid
+        assert call_args[1]["status"] == "failed"
 
     @pytest.mark.asyncio
     async def test_run_scan_scan_removed_before_second_lock(self):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import json as _json
 import os
 import re as _re
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.event_bus import EventBus
 from backend.async_persistence import AsyncAnalysisDB
+from backend.observability import ObservabilityMiddleware, configure_structured_logging, metrics
 from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
@@ -56,7 +58,6 @@ _CSP_HEADER = (
 )
 _CSP_HEADER_BYTES = _CSP_HEADER.encode()
 
-_MUTATING_METHODS = frozenset({b"POST", b"PATCH", b"PUT", b"DELETE"})
 _CSRF_BODY = b'{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED"}'
 
 
@@ -72,7 +73,7 @@ class CSPCSRFMiddleware:
             return
 
         # CSRF check for mutating methods
-        if scope["method"].encode() in _MUTATING_METHODS:
+        if scope["method"] in {"POST", "PATCH", "PUT", "DELETE"}:
             headers = dict(scope.get("headers", []))
             if headers.get(b"x-requested-with") != b"XMLHttpRequest":
                 await send({
@@ -86,15 +87,42 @@ class CSPCSRFMiddleware:
                 await send({"type": "http.response.body", "body": _CSRF_BODY})
                 return
 
-        # Inject CSP header into every response
+        # Inject security headers into every response
         async def send_with_csp(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 headers.append([b"content-security-policy", _CSP_HEADER_BYTES])
+                headers.append([b"x-content-type-options", b"nosniff"])
+                headers.append([b"x-frame-options", b"DENY"])
+                headers.append([b"strict-transport-security", b"max-age=63072000; includeSubDomains"])
                 message = {**message, "headers": headers}
             await send(message)
 
         await self.app(scope, receive, send_with_csp)
+
+
+_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+class ContentSizeLimitMiddleware:
+    """Reject HTTP requests with Content-Length exceeding the limit."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            cl = headers.get(b"content-length")
+            if cl is not None:
+                try:
+                    if int(cl) > _MAX_BODY_BYTES:
+                        await send({"type": "http.response.start", "status": 413, "headers": [[b"content-type", b"application/json"]]})
+                        await send({"type": "http.response.body", "body": b'{"detail":"Request body too large"}'})
+                        return
+                except (ValueError, TypeError):
+                    pass
+        await self.app(scope, receive, send)
 
 
 def create_app() -> FastAPI:
@@ -102,6 +130,9 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if os.environ.get("LOG_FORMAT", "").lower() == "json":
+            configure_structured_logging(os.environ.get("LOG_LEVEL", "INFO"))
+
         loop = asyncio.get_running_loop()
 
         _default_executor = concurrent.futures.ThreadPoolExecutor(
@@ -122,9 +153,9 @@ def create_app() -> FastAPI:
         ws_manager = WSManager(event_bus=event_bus)
         config_service = ConfigService(db=db)
 
-        llm_max = int(os.environ.get("LLM_MAX_CONCURRENT", "0"))
+        llm_max = _validated_int("LLM_MAX_CONCURRENT", 0, 0, 1000)
         configure_llm_concurrency(llm_max)
-        llm_spacing = int(os.environ.get("LLM_MIN_SPACING_MS", "0"))
+        llm_spacing = _validated_int("LLM_MIN_SPACING_MS", 0, 0, 60000)
         configure_llm_min_spacing(llm_spacing)
 
         app.state.db = db
@@ -249,32 +280,52 @@ def create_app() -> FastAPI:
             app.state.trade_repo = None
             app.state.trade_service = None
 
+        logger.info("app_ready: all services initialised")
+
         yield
+
+        _SHUTDOWN_TIMEOUT = 15.0
+
+        async def _safe_shutdown(name: str, coro) -> None:
+            try:
+                await asyncio.wait_for(coro, timeout=_SHUTDOWN_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error("shutdown_timeout: %s exceeded %.0fs", name, _SHUTDOWN_TIMEOUT)
+            except Exception:
+                logger.exception("shutdown_step_failed: %s", name)
+
         _watchdog_task.cancel()
-        await app.state.scheduler_service.shutdown()
+        try:
+            await _watchdog_task
+        except asyncio.CancelledError:
+            pass
+        await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
         if getattr(app.state, "rule_evaluator", None):
-            await app.state.rule_evaluator.shutdown()
+            await _safe_shutdown("rule_evaluator", app.state.rule_evaluator.shutdown())
         if getattr(app.state, "cycle_engine", None):
-            await app.state.cycle_engine.shutdown()
+            await _safe_shutdown("cycle_engine", app.state.cycle_engine.shutdown())
         if app.state.snapshot_scheduler:
-            await app.state.snapshot_scheduler.shutdown()
+            await _safe_shutdown("snapshot_scheduler", app.state.snapshot_scheduler.shutdown())
             await asyncio.sleep(0.5)
         if app.state.account_ws_manager:
-            await app.state.account_ws_manager.shutdown()
+            await _safe_shutdown("account_ws_manager", app.state.account_ws_manager.shutdown())
         if app.state.accounts_service:
-            await app.state.accounts_service.shutdown()
-        await app.state.scanner_service.shutdown()
-        await app.state.analysis_service.shutdown()
-        await ws_manager.shutdown()
+            await _safe_shutdown("accounts_service", app.state.accounts_service.shutdown())
+        await _safe_shutdown("scanner_service", app.state.scanner_service.shutdown())
+        await _safe_shutdown("analysis_service", app.state.analysis_service.shutdown())
+        await _safe_shutdown("ws_manager", ws_manager.shutdown())
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
         _default_executor.shutdown(wait=False, cancel_futures=True)
+        await asyncio.sleep(1)
         await db.close()
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
+    app.add_middleware(ObservabilityMiddleware)
+    app.add_middleware(ContentSizeLimitMiddleware)
     app.add_middleware(CSPCSRFMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -320,6 +371,16 @@ def create_app() -> FastAPI:
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
 
+    @app.get("/api/v1/healthz")
+    async def healthz():
+        """Liveness probe — returns 200 if the process is alive."""
+        return Response(content='{"status":"alive"}', media_type="application/json")
+
+    @app.get("/metrics")
+    async def prometheus_metrics():
+        """Prometheus-compatible metrics endpoint."""
+        return Response(content=metrics.prometheus_text(), media_type="text/plain; charset=utf-8")
+
     @app.get("/api/v1/health")
     async def health(request: Request):
         db_ok = request.app.state.db.is_healthy()
@@ -329,18 +390,23 @@ def create_app() -> FastAPI:
         status = "ok" if db_ok else "degraded"
         if active > cap * 0.75:
             status = "degraded"
-        return {
+        body = {
             "status": status,
             "db": "ok" if db_ok else "unavailable",
             "analyses_active": active,
             "analyses_max": cap,
             "coingecko": get_coingecko_status(),
         }
+        status_code = 503 if status == "degraded" else 200
+        return Response(
+            content=_json.dumps(body),
+            status_code=status_code,
+            media_type="application/json",
+        )
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        import logging
-        logging.getLogger(__name__).error(f"Unhandled exception: {exc}", exc_info=True)
+        logger.error("unhandled_exception", extra={"path": request.url.path, "method": request.method, "exc_type": type(exc).__name__}, exc_info=True)
         return Response(
             content='{"detail":"Internal server error","code":"INTERNAL_ERROR"}',
             status_code=500,

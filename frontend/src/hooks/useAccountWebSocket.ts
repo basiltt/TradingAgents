@@ -15,7 +15,8 @@ import {
 } from "@/store/trades-slice";
 import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
 
-const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/v1/accounts`;
+const WS_BASE = import.meta.env.VITE_WS_BASE_URL || `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+const WS_URL = `${WS_BASE}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 30000;
 
@@ -25,11 +26,14 @@ export function useAccountWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pingWatchdog = useRef<ReturnType<typeof setTimeout>>(undefined);
   const mounted = useRef(true);
   const queryClientRef = useRef(queryClient);
   const connectRef = useRef<() => void>(undefined);
 
   useEffect(() => { queryClientRef.current = queryClient; });
+
+  const lastFetchRef = useRef(0);
 
   const connect = useCallback(() => {
     if (!mounted.current) return;
@@ -41,8 +45,12 @@ export function useAccountWebSocket() {
     ws.onopen = () => {
       reconnectDelay.current = RECONNECT_BASE;
       dispatch(setWsConnected(true));
-      fetchAllActiveTrades(dispatch);
-      queryClientRef.current.invalidateQueries({ queryKey: ["trades"] });
+      const now = Date.now();
+      if (now - lastFetchRef.current > 5000) {
+        lastFetchRef.current = now;
+        fetchAllActiveTrades(dispatch);
+        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+      }
     };
 
     ws.onmessage = (event) => {
@@ -53,10 +61,14 @@ export function useAccountWebSocket() {
         return;
       }
       if (msg.type === "ping") {
-        ws.send("pong");
+        if (ws.readyState === WebSocket.OPEN) ws.send("pong");
+        clearTimeout(pingWatchdog.current);
+        pingWatchdog.current = setTimeout(() => {
+          ws.close();
+        }, 45000);
         return;
       }
-      if (msg.account_id && (msg.type === "wallet_update" || msg.type === "position_update")) {
+      if (msg.account_id && msg.type === "wallet_update") {
         dispatch(updateCardRealtime(msg as unknown as { account_id: string; type: string; data: Record<string, string> }));
       }
       if (msg.type === "position_update" && msg.account_id && msg.data) {
@@ -71,7 +83,8 @@ export function useAccountWebSocket() {
         }
       }
       if (msg.account_id && msg.type === "close_execution") {
-        dispatch(handleCloseExecution(msg as unknown as { account_id: string; data: { closed: number } }));
+        const closed = typeof msg.closed === "number" ? msg.closed : 0;
+        dispatch(handleCloseExecution({ account_id: msg.account_id as string, data: { closed } }));
       }
 
       if (msg.type === "trade.opened" && msg.data) {
@@ -86,14 +99,15 @@ export function useAccountWebSocket() {
       }
       if (msg.type === "trade.partially_closed" && msg.trade_id) {
         dispatch(clearPendingAction(msg.trade_id as string));
+        const childPnl = typeof msg.realized_pnl === "number" ? msg.realized_pnl : 0;
         dispatch(updateActiveTrade({
           trade_id: msg.trade_id as string,
           updates: {
             filled_qty: msg.filled_qty as number,
-            realized_pnl: msg.realized_pnl as number | null,
             version: msg.version as number,
             status: "partially_closed",
           },
+          accumulatePnl: childPnl,
         }));
       }
       if (msg.type === "trade.close_failed" && msg.trade_id) {
@@ -105,9 +119,10 @@ export function useAccountWebSocket() {
 
     ws.onclose = () => {
       dispatch(setWsConnected(false));
+      clearTimeout(pingWatchdog.current);
       if (!mounted.current) return;
       reconnectTimer.current = setTimeout(() => {
-        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX);
+        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX) * (0.75 + Math.random() * 0.5);
         connectRef.current?.();
       }, reconnectDelay.current);
     };
@@ -127,6 +142,7 @@ export function useAccountWebSocket() {
     return () => {
       mounted.current = false;
       clearTimeout(reconnectTimer.current);
+      clearTimeout(pingWatchdog.current);
       wsRef.current?.close();
     };
   }, [connect]);

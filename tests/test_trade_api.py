@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from backend.routers.accounts import router, _rate_limiters
+from backend.routers.accounts import router
+from backend.rate_limit import _rate_limiters
 from backend.schemas import TradeCloseRequest
 
 
@@ -346,7 +346,7 @@ class TestRateLimiter:
         assert resp.status_code != 429
 
     def test_rate_limit_eviction_stale_entries(self, client):
-        from backend.routers.accounts import _RATE_LIMITER_MAX_ENTRIES, _TokenBucket
+        from backend.rate_limit import _RATE_LIMITER_MAX_ENTRIES, _TokenBucket
         _rate_limiters.clear()
         now = time.monotonic()
         for i in range(_RATE_LIMITER_MAX_ENTRIES):
@@ -361,7 +361,7 @@ class TestRateLimiter:
         assert resp.status_code != 429
 
     def test_rate_limit_capacity_exceeded_non_stale(self, client):
-        from backend.routers.accounts import _RATE_LIMITER_MAX_ENTRIES, _TokenBucket
+        from backend.rate_limit import _RATE_LIMITER_MAX_ENTRIES, _TokenBucket
         _rate_limiters.clear()
         for i in range(_RATE_LIMITER_MAX_ENTRIES):
             _rate_limiters[f"fresh-{i}"] = _TokenBucket()

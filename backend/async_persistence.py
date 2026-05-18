@@ -10,7 +10,7 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Union
 
 import asyncpg
 
@@ -158,7 +158,9 @@ async def _schema_v26_triggers(conn) -> None:
     """)
 
 
-_MIGRATIONS: list[tuple[int, str | object]] = [
+_MigrationSQL = Union[str, Callable[[Any], Coroutine[Any, Any, None]]]
+
+_MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
     (3, "CREATE INDEX IF NOT EXISTS idx_runs_asset_type_started ON analysis_runs(asset_type, started_at DESC)"),
@@ -426,6 +428,25 @@ ALTER TABLE scheduled_scans ADD CONSTRAINT scheduled_scans_status_check
 """),
     (25, _SCHEMA_V25_TABLES),
     (26, _schema_v26_triggers),
+    (27, """
+CREATE TABLE IF NOT EXISTS dead_letter (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    operation TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    stack_trace TEXT,
+    attempt_count INTEGER DEFAULT 1,
+    max_retries INTEGER DEFAULT 3,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending','retrying','exhausted','resolved')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_retried_at TIMESTAMPTZ,
+    resolved_at TIMESTAMPTZ,
+    resolved_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_status ON dead_letter(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_dead_letter_operation ON dead_letter(operation);
+"""),
 ]
 
 
@@ -464,6 +485,7 @@ class AsyncAnalysisDB:
             max_size=int(os.environ.get("DB_POOL_MAX", "10")),
             command_timeout=int(os.environ.get("DB_COMMAND_TIMEOUT", "10")),
             max_inactive_connection_lifetime=300,
+            timeout=10,
         )
         # Sync bridge for graph executor threads
         import psycopg2.pool
@@ -476,7 +498,7 @@ class AsyncAnalysisDB:
 
     @asynccontextmanager
     async def _transaction(self):
-        async with self._pool.acquire() as conn:
+        async with self.pool.acquire() as conn:
             async with conn.transaction():
                 yield conn
 
@@ -620,7 +642,7 @@ class AsyncAnalysisDB:
 
     async def insert_run(self, run: Dict[str, Any]) -> None:
         try:
-            await self._pool.execute(
+            await self.pool.execute(
                 "INSERT INTO analysis_runs "
                 "(run_id, ticker, analysis_date, status, config, started_at, instance_id, asset_type) "
                 "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -643,7 +665,7 @@ class AsyncAnalysisDB:
         error: Optional[str],
         completed_at: Optional[str],
     ) -> bool:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE analysis_runs SET status=$1, error=$2, completed_at=$3 "
             "WHERE run_id=$4 AND status='running'",
             status, error, completed_at, run_id,
@@ -652,7 +674,7 @@ class AsyncAnalysisDB:
 
     async def save_report_section(self, run_id: str, section: str, content: str) -> None:
         try:
-            await self._pool.execute(
+            await self.pool.execute(
                 "INSERT INTO report_sections (run_id, section, content) VALUES ($1, $2, $3) "
                 "ON CONFLICT (run_id, section) DO UPDATE SET content = EXCLUDED.content",
                 run_id, section, content,
@@ -661,7 +683,7 @@ class AsyncAnalysisDB:
             pass
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT * FROM analysis_runs WHERE run_id=$1", run_id
         )
         return dict(row) if row else None
@@ -705,10 +727,10 @@ class AsyncAnalysisDB:
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * limit
 
-        total = await self._pool.fetchval(
+        total = await self.pool.fetchval(
             f"SELECT COUNT(*) FROM analysis_runs {where}", *params
         )
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             f"SELECT run_id, ticker, analysis_date, status, started_at, "
             f"completed_at, asset_type, config FROM analysis_runs {where} "
             f"ORDER BY started_at DESC LIMIT ${idx + 1} OFFSET ${idx + 2}",
@@ -722,13 +744,13 @@ class AsyncAnalysisDB:
         }
 
     async def get_report_sections(self, run_id: str) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM report_sections WHERE run_id=$1 ORDER BY id", run_id
         )
         return [dict(r) for r in rows]
 
     async def recover_orphans(self) -> int:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE analysis_runs SET status='failed', "
             "error='Server restarted — orphaned run' "
             "WHERE status='running'"
@@ -736,31 +758,31 @@ class AsyncAnalysisDB:
         return int(result.split()[-1])
 
     async def get_checkpoint_exists(self, ticker: str, date: str) -> bool:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT 1 FROM analysis_runs WHERE ticker=$1 AND analysis_date=$2 LIMIT 1",
             ticker, date,
         )
         return row is not None
 
     async def delete_run(self, run_id: str) -> bool:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM analysis_runs WHERE run_id=$1", run_id
         )
         return int(result.split()[-1]) > 0
 
     async def delete_all_runs(self) -> int:
-        result = await self._pool.execute("DELETE FROM analysis_runs")
+        result = await self.pool.execute("DELETE FROM analysis_runs")
         return int(result.split()[-1])
 
     async def delete_all_checkpoints(self) -> int:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM analysis_runs "
             "WHERE status IN ('completed', 'failed', 'cancelled')"
         )
         return int(result.split()[-1])
 
     async def delete_ticker_checkpoints(self, ticker: str) -> int:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM analysis_runs "
             "WHERE ticker=$1 AND status IN ('completed', 'failed', 'cancelled')",
             ticker,
@@ -772,7 +794,7 @@ class AsyncAnalysisDB:
 
     async def health_check(self) -> str:
         try:
-            await self._pool.fetchval("SELECT 1")
+            await self.pool.fetchval("SELECT 1")
             return "ok"
         except Exception:
             return "degraded"
@@ -780,7 +802,7 @@ class AsyncAnalysisDB:
     # ── Scanner persistence ──────────────────────────────────────────
 
     async def insert_scan(self, scan: Dict[str, Any]) -> None:
-        await self._pool.execute(
+        await self.pool.execute(
             "INSERT INTO scans "
             "(scan_id, status, config, total, completed, failed, started_at, schedule_id, triggered_by) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
@@ -806,7 +828,7 @@ class AsyncAnalysisDB:
             parts.append(f"{k}=${i}")
             params.append(v)
         params.append(scan_id)
-        await self._pool.execute(
+        await self.pool.execute(
             f"UPDATE scans SET {', '.join(parts)} WHERE scan_id=${len(params)}",
             *params,
         )
@@ -827,7 +849,7 @@ class AsyncAnalysisDB:
             logger.warning("insert_scan_result: invalid status %r — forcing unknown", status)
             status = "unknown"
 
-        await self._pool.execute(
+        await self.pool.execute(
             "INSERT INTO scan_results "
             "(scan_id, ticker, run_id, status, direction, confidence, "
             "score, decision_summary, signal_source) "
@@ -849,13 +871,13 @@ class AsyncAnalysisDB:
         )
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT * FROM scans WHERE scan_id=$1", scan_id
         )
         if not row:
             return None
         scan = dict(row)
-        results = await self._pool.fetch(
+        results = await self.pool.fetch(
             "SELECT ticker, run_id, status, direction, confidence, score, "
             "decision_summary, signal_source "
             "FROM scan_results WHERE scan_id=$1 ORDER BY ABS(score) DESC",
@@ -865,7 +887,7 @@ class AsyncAnalysisDB:
         return scan
 
     async def list_scans(self) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT scan_id, status, config, total, completed, failed, "
             "started_at, completed_at, schedule_id, triggered_by "
             "FROM scans ORDER BY started_at DESC LIMIT 50"
@@ -874,7 +896,7 @@ class AsyncAnalysisDB:
         if not scans:
             return []
         scan_ids = [s["scan_id"] for s in scans]
-        counts = await self._pool.fetch(
+        counts = await self.pool.fetch(
             "SELECT scan_id, direction, COUNT(*) as cnt "
             "FROM scan_results WHERE scan_id = ANY($1) "
             "GROUP BY scan_id, direction",
@@ -889,7 +911,7 @@ class AsyncAnalysisDB:
         return scans
 
     async def get_scan_completed_tickers(self, scan_id: str) -> set[str]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT ticker FROM scan_results WHERE scan_id=$1", scan_id
         )
         return {r["ticker"] for r in rows}
@@ -897,13 +919,13 @@ class AsyncAnalysisDB:
     async def increment_scan_counter(self, scan_id: str, field: str) -> None:
         if field not in ("completed", "failed"):
             return
-        await self._pool.execute(
+        await self.pool.execute(
             f"UPDATE scans SET {field} = {field} + 1 WHERE scan_id=$1",
             scan_id,
         )
 
     async def get_running_scans(self) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM scans WHERE status='running'"
         )
         return [dict(r) for r in rows]
@@ -948,7 +970,7 @@ class AsyncAnalysisDB:
         }
 
     async def get_scan_analysis_count(self, scan_id: str) -> int:
-        return await self._pool.fetchval(
+        return await self.pool.fetchval(
             "SELECT COUNT(*) FROM scan_results WHERE scan_id=$1 AND run_id IS NOT NULL",
             scan_id,
         )
@@ -956,7 +978,7 @@ class AsyncAnalysisDB:
     # ── Trading Accounts persistence ────────────────────────────────────
 
     async def insert_account(self, account: Dict[str, Any]) -> None:
-        await self._pool.execute(
+        await self.pool.execute(
             "INSERT INTO trading_accounts "
             "(id, label, account_type, api_key_masked, api_key_encrypted, "
             "api_secret_encrypted, key_version, is_active, bybit_uid, "
@@ -977,7 +999,7 @@ class AsyncAnalysisDB:
         )
 
     async def list_accounts(self) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
             "include_in_analytics "
@@ -987,7 +1009,7 @@ class AsyncAnalysisDB:
         return [dict(r) for r in rows]
 
     async def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
             "include_in_analytics "
@@ -997,7 +1019,7 @@ class AsyncAnalysisDB:
         return dict(row) if row else None
 
     async def get_account_credentials(self, account_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT id, account_type, api_key_encrypted, api_secret_encrypted "
             "FROM trading_accounts WHERE id=$1 AND deleted_at IS NULL",
             account_id,
@@ -1023,7 +1045,7 @@ class AsyncAnalysisDB:
             parts.append(f"{k}=${i}")
             params.append(v)
         params.append(account_id)
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             f"UPDATE trading_accounts SET {', '.join(parts)} WHERE id=${len(params)} AND deleted_at IS NULL",
             *params,
         )
@@ -1033,7 +1055,7 @@ class AsyncAnalysisDB:
         self, account_id: str, api_key_masked: str,
         api_key_encrypted: bytes, api_secret_encrypted: bytes, updated_at: str,
     ) -> bool:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE trading_accounts SET api_key_masked=$1, api_key_encrypted=$2, "
             "api_secret_encrypted=$3, last_error=NULL, updated_at=$4 "
             "WHERE id=$5 AND deleted_at IS NULL",
@@ -1042,7 +1064,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1]) > 0
 
     async def soft_delete_account(self, account_id: str, deleted_at: str) -> bool:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE trading_accounts SET deleted_at=$1, is_active=0, updated_at=$1 "
             "WHERE id=$2 AND deleted_at IS NULL",
             deleted_at, account_id,
@@ -1057,7 +1079,7 @@ class AsyncAnalysisDB:
         inserted = 0
         for rec in records:
             try:
-                await self._pool.execute(
+                await self.pool.execute(
                     "INSERT INTO closed_pnl_records "
                     "(account_id, symbol, side, qty, avg_entry_price, avg_exit_price, "
                     "closed_pnl, leverage, created_time, bybit_order_id) "
@@ -1086,12 +1108,12 @@ class AsyncAnalysisDB:
         page: int = 1, limit: int = 50,
     ) -> Dict[str, Any]:
         offset = (page - 1) * limit
-        total = await self._pool.fetchval(
+        total = await self.pool.fetchval(
             "SELECT COUNT(*) FROM closed_pnl_records "
             "WHERE account_id=$1 AND created_time>=$2 AND created_time<=$3",
             account_id, start_time, end_time,
         )
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM closed_pnl_records "
             "WHERE account_id=$1 AND created_time>=$2 AND created_time<=$3 "
             "ORDER BY created_time DESC LIMIT $4 OFFSET $5",
@@ -1102,7 +1124,7 @@ class AsyncAnalysisDB:
     async def get_closed_pnl_summary(
         self, account_id: str, start_time: int, end_time: int,
     ) -> Dict[str, Any]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT closed_pnl FROM closed_pnl_records "
             "WHERE account_id=$1 AND created_time>=$2 AND created_time<=$3",
             account_id, start_time, end_time,
@@ -1147,7 +1169,7 @@ class AsyncAnalysisDB:
         if account_type:
             sql += " AND ta.account_type = $3"
             params.append(account_type)
-        rows = await self._pool.fetch(sql, *params)
+        rows = await self.pool.fetch(sql, *params)
 
         if not rows:
             return {
@@ -1175,7 +1197,7 @@ class AsyncAnalysisDB:
         }
 
     async def get_latest_closed_pnl_time(self, account_id: str) -> Optional[int]:
-        val = await self._pool.fetchval(
+        val = await self.pool.fetchval(
             "SELECT MAX(created_time) FROM closed_pnl_records WHERE account_id=$1",
             account_id,
         )
@@ -1184,7 +1206,7 @@ class AsyncAnalysisDB:
     # ── Daily Snapshots ────────────────────────────────────────────────
 
     async def upsert_daily_snapshot(self, snapshot: Dict[str, Any]) -> None:
-        await self._pool.execute(
+        await self.pool.execute(
             "INSERT INTO daily_snapshots "
             "(account_id, snapshot_date, equity, wallet_balance, available_balance, "
             "unrealised_pnl, realised_pnl, positions_count, margin_used, "
@@ -1220,7 +1242,7 @@ class AsyncAnalysisDB:
     async def get_daily_snapshots(
         self, account_id: str, start_date: str, end_date: str,
     ) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM daily_snapshots "
             "WHERE account_id=$1 AND snapshot_date>=$2 AND snapshot_date<=$3 "
             "ORDER BY snapshot_date ASC",
@@ -1243,11 +1265,11 @@ class AsyncAnalysisDB:
             sql += "AND ta.account_type = $3 "
             params.append(account_type)
         sql += "ORDER BY ds.snapshot_date ASC"
-        rows = await self._pool.fetch(sql, *params)
+        rows = await self.pool.fetch(sql, *params)
         return [dict(r) for r in rows]
 
     async def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT * FROM daily_snapshots "
             "WHERE account_id=$1 ORDER BY snapshot_date DESC LIMIT 1",
             account_id,
@@ -1255,7 +1277,7 @@ class AsyncAnalysisDB:
         return dict(row) if row else None
 
     async def get_previous_snapshot(self, account_id: str, before_date: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT * FROM daily_snapshots "
             "WHERE account_id=$1 AND snapshot_date < $2 "
             "ORDER BY snapshot_date DESC LIMIT 1",
@@ -1268,7 +1290,7 @@ class AsyncAnalysisDB:
     async def get_hf_snapshots(
         self, account_id: str, since_ts: datetime,
     ) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM high_freq_snapshots "
             "WHERE account_id=$1 AND ts >= $2 "
             "ORDER BY ts ASC",
@@ -1291,7 +1313,7 @@ class AsyncAnalysisDB:
             sql += "AND ta.account_type = $2 "
             params.append(account_type)
         sql += "ORDER BY hf.ts ASC"
-        rows = await self._pool.fetch(sql, *params)
+        rows = await self.pool.fetch(sql, *params)
         return [dict(r) for r in rows]
 
     async def insert_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> int:
@@ -1348,13 +1370,13 @@ class AsyncAnalysisDB:
         if not conditions:
             conditions.append("TRUE")
         where = " AND ".join(conditions)
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             f"DELETE FROM {table} WHERE {where}", *params
         )
         return int(result.split()[-1])
 
     async def cleanup_old_hf_snapshots(self, max_age_days: int = 1095) -> int:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM high_freq_snapshots WHERE ts < NOW() - make_interval(days => $1)",
             max_age_days,
         )
@@ -1394,14 +1416,14 @@ class AsyncAnalysisDB:
         if not conditions:
             conditions.append("TRUE")
         where = " AND ".join(conditions)
-        return await self._pool.fetchval(
+        return await self.pool.fetchval(
             f"SELECT COUNT(*) FROM {table} WHERE {where}", *params
         )
 
     # ── Strategies ──────────────────────────────────────────────────
 
     async def insert_strategy(self, strategy: Dict[str, Any]) -> None:
-        await self._pool.execute(
+        await self.pool.execute(
             "INSERT INTO strategies (id, name, description, category, status, config, created_at, updated_at) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             strategy["id"], strategy["name"], strategy.get("description", ""),
@@ -1423,7 +1445,7 @@ class AsyncAnalysisDB:
             conditions.append(f"category = ${idx}")
             params.append(category)
         where = " AND ".join(conditions) if conditions else "TRUE"
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             f"SELECT id, name, description, category, status, config, created_at, updated_at "
             f"FROM strategies WHERE {where} ORDER BY updated_at DESC",
             *params,
@@ -1431,7 +1453,7 @@ class AsyncAnalysisDB:
         return [self._deserialize_strategy(r) for r in rows]
 
     async def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT id, name, description, category, status, config, created_at, updated_at "
             "FROM strategies WHERE id = $1",
             strategy_id,
@@ -1454,14 +1476,14 @@ class AsyncAnalysisDB:
             parts.append(f"{k} = ${i}")
             params.append(v)
         params.append(strategy_id)
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             f"UPDATE strategies SET {', '.join(parts)} WHERE id = ${len(params)}",
             *params,
         )
         return int(result.split()[-1]) > 0
 
     async def delete_strategy(self, strategy_id: str) -> bool:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM strategies WHERE id = $1", strategy_id
         )
         return int(result.split()[-1]) > 0
@@ -1470,7 +1492,7 @@ class AsyncAnalysisDB:
 
     async def insert_scheduled_scan(self, data: Dict[str, Any]) -> None:
         try:
-            await self._pool.execute(
+            await self.pool.execute(
                 "INSERT INTO scheduled_scans "
                 "(id, name, schedule_type, schedule_config, scan_config, status, "
                 "timezone, next_run_at, created_at, updated_at) "
@@ -1507,32 +1529,32 @@ class AsyncAnalysisDB:
             parts.append(f"{k}=${i}")
             params.append(v)
         params.append(schedule_id)
-        await self._pool.execute(
+        await self.pool.execute(
             f"UPDATE scheduled_scans SET {', '.join(parts)} WHERE id=${len(params)}",
             *params,
         )
 
     async def delete_scheduled_scan(self, schedule_id: str) -> bool:
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM scheduled_scans WHERE id=$1", schedule_id
         )
         return int(result.split()[-1]) > 0
 
     async def list_scheduled_scans(self) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM scheduled_scans ORDER BY created_at DESC"
         )
         return [self._deserialize_schedule(r) for r in rows]
 
     async def get_scheduled_scan(self, schedule_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT * FROM scheduled_scans WHERE id=$1", schedule_id
         )
         return self._deserialize_schedule(row) if row else None
 
     async def get_due_scheduled_scans(self) -> List[Dict[str, Any]]:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM scheduled_scans "
             "WHERE status='active' AND next_run_at <= $1 "
             "ORDER BY next_run_at ASC LIMIT 5",
@@ -1544,7 +1566,7 @@ class AsyncAnalysisDB:
         self, schedule_id: str, old_next: str, new_next: Optional[str]
     ) -> bool:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE scheduled_scans "
             "SET next_run_at=$1, last_run_at=$2, updated_at=$2 "
             "WHERE id=$3 AND next_run_at=$4 AND status='active'",
@@ -1553,7 +1575,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1]) > 0
 
     async def insert_schedule_execution(self, data: Dict[str, Any]) -> int:
-        return await self._pool.fetchval(
+        return await self.pool.fetchval(
             "INSERT INTO schedule_executions "
             "(schedule_id, scan_id, status, started_at, completed_at, error_message) "
             "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
@@ -1576,7 +1598,7 @@ class AsyncAnalysisDB:
             parts.append(f"{k}=${i}")
             params.append(v)
         params.append(exec_id)
-        await self._pool.execute(
+        await self.pool.execute(
             f"UPDATE schedule_executions SET {', '.join(parts)} WHERE id=${len(params)}",
             *params,
         )
@@ -1584,7 +1606,7 @@ class AsyncAnalysisDB:
     async def list_schedule_executions(
         self, schedule_id: str, limit: int = 20
     ) -> List[Dict[str, Any]]:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM schedule_executions "
             "WHERE schedule_id=$1 ORDER BY started_at DESC LIMIT $2",
             schedule_id, limit,
@@ -1593,7 +1615,7 @@ class AsyncAnalysisDB:
 
     async def cleanup_old_executions(self, days: int = 90, min_keep: int = 100) -> int:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "DELETE FROM schedule_executions "
             "WHERE started_at < $1 "
             "AND id NOT IN ("
@@ -1609,18 +1631,18 @@ class AsyncAnalysisDB:
     async def update_scan_schedule_link(
         self, scan_id: str, schedule_id: str, triggered_by: str
     ) -> None:
-        await self._pool.execute(
+        await self.pool.execute(
             "UPDATE scans SET schedule_id=$1, triggered_by=$2 WHERE scan_id=$3",
             schedule_id, triggered_by, scan_id,
         )
 
     async def count_scheduled_scans(self) -> int:
-        return await self._pool.fetchval("SELECT COUNT(*) FROM scheduled_scans")
+        return await self.pool.fetchval("SELECT COUNT(*) FROM scheduled_scans")
 
     async def mark_orphaned_executions(self) -> int:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         threshold = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE schedule_executions SET status='failed', "
             "completed_at=$1, error_message='Server restarted during execution' "
             "WHERE status='started' AND started_at < $2",
@@ -1638,21 +1660,21 @@ class AsyncAnalysisDB:
             vals["status"] = "active"
         col_names = ", ".join(vals.keys())
         placeholders = ", ".join(f"${i}" for i in range(1, len(vals) + 1))
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             f"INSERT INTO close_rules ({col_names}) VALUES ({placeholders}) RETURNING *",
             *vals.values(),
         )
         return self._serialize_row(row)
 
     async def list_close_rules(self, account_id: str) -> list:
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM close_rules WHERE account_id = $1 ORDER BY created_at DESC",
             account_id,
         )
         return [self._serialize_row(r) for r in rows]
 
     async def get_close_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "SELECT * FROM close_rules WHERE id = $1", rule_id
         )
         if not row:
@@ -1674,7 +1696,7 @@ class AsyncAnalysisDB:
             parts.append(f"{k} = ${i}")
             params.append(v)
         params.append(rule_id)
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             f"UPDATE close_rules SET {', '.join(parts)} WHERE id = ${len(params)} RETURNING *",
             *params,
         )
@@ -1684,7 +1706,7 @@ class AsyncAnalysisDB:
 
     async def atomic_trigger_rule(self, rule_id: str) -> bool:
         """Atomically set rule status to 'triggered' only if currently 'active'. Returns True if transitioned."""
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             "UPDATE close_rules SET status = 'triggered', triggered_at = now(), updated_at = now() "
             "WHERE id = $1 AND status = 'active' RETURNING id",
             rule_id,
@@ -1695,13 +1717,13 @@ class AsyncAnalysisDB:
         """Deactivate all active/paused rules for an account (e.g. after a rule triggers a close-all).
         Returns the number of rules deactivated."""
         if exclude_rule_id:
-            result = await self._pool.execute(
+            result = await self.pool.execute(
                 "UPDATE close_rules SET status = 'expired', updated_at = now() "
                 "WHERE account_id = $1 AND id != $2 AND status IN ('active', 'paused', 'triggered')",
                 account_id, exclude_rule_id,
             )
         else:
-            result = await self._pool.execute(
+            result = await self.pool.execute(
                 "UPDATE close_rules SET status = 'expired', updated_at = now() "
                 "WHERE account_id = $1 AND status IN ('active', 'paused', 'triggered')",
                 account_id,
@@ -1716,7 +1738,7 @@ class AsyncAnalysisDB:
 
     async def list_active_rules(self) -> list:
         """Fetch all active rules for non-deleted, active accounts."""
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT cr.* FROM close_rules cr "
             "JOIN trading_accounts ta ON cr.account_id = ta.id "
             "WHERE cr.status = 'active' AND ta.deleted_at IS NULL "
@@ -1728,7 +1750,7 @@ class AsyncAnalysisDB:
 
     async def recover_stuck_triggered_rules(self, max_age_seconds: int = 120) -> int:
         """Revert rules stuck in 'triggered' state for longer than max_age_seconds."""
-        result = await self._pool.execute(
+        result = await self.pool.execute(
             "UPDATE close_rules SET status = 'active', triggered_at = NULL "
             "WHERE status = 'triggered' "
             "AND triggered_at < now() - interval '1 second' * $1",
@@ -1738,7 +1760,7 @@ class AsyncAnalysisDB:
 
     async def count_active_rules_by_account(self) -> Dict[str, int]:
         """Return {account_id: count} for all accounts with active rules."""
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT account_id::text, COUNT(*) as cnt FROM close_rules "
             "WHERE status = 'active' GROUP BY account_id",
         )
@@ -1746,7 +1768,7 @@ class AsyncAnalysisDB:
 
     async def get_active_targets_by_account(self) -> Dict[str, list]:
         """Return {account_id: [{trigger_type, threshold_value, reference_value}]} for active rules."""
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT account_id::text, trigger_type, threshold_value, reference_value "
             "FROM close_rules WHERE status = 'active' ORDER BY account_id, created_at",
         )
@@ -1760,7 +1782,7 @@ class AsyncAnalysisDB:
         return result
 
     async def count_rules_for_account(self, account_id: str) -> int:
-        return await self._pool.fetchval(
+        return await self.pool.fetchval(
             "SELECT COUNT(*) FROM close_rules WHERE account_id = $1 AND status IN ('active', 'paused')",
             account_id,
         )
@@ -1775,7 +1797,7 @@ class AsyncAnalysisDB:
             vals["results"] = json.dumps(vals["results"])
         col_names = ", ".join(vals.keys())
         placeholders = ", ".join(f"${i}" for i in range(1, len(vals) + 1))
-        row = await self._pool.fetchrow(
+        row = await self.pool.fetchrow(
             f"INSERT INTO close_executions ({col_names}) VALUES ({placeholders}) RETURNING *",
             *vals.values(),
         )
@@ -1783,11 +1805,11 @@ class AsyncAnalysisDB:
 
     async def list_close_executions(self, account_id: str, page: int = 1, limit: int = 20) -> Dict[str, Any]:
         offset = (page - 1) * limit
-        total = await self._pool.fetchval(
+        total = await self.pool.fetchval(
             "SELECT COUNT(*) FROM close_executions WHERE account_id = $1",
             account_id,
         )
-        rows = await self._pool.fetch(
+        rows = await self.pool.fetch(
             "SELECT * FROM close_executions WHERE account_id = $1 "
             "ORDER BY executed_at DESC LIMIT $2 OFFSET $3",
             account_id, limit, offset,
