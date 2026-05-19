@@ -23,9 +23,9 @@ import { ACTIVE_STATUSES } from "@/components/trades/types";
 
 function TableSkeleton() {
   return (
-    <div className="space-y-2">
-      {Array.from({ length: 5 }, (_, i) => (
-        <Skeleton key={i} className="h-12 w-full" />
+    <div className="space-y-1">
+      {Array.from({ length: 6 }, (_, i) => (
+        <Skeleton key={i} className="h-10 w-full rounded" />
       ))}
     </div>
   );
@@ -34,11 +34,9 @@ function TableSkeleton() {
 function TableError({ resetErrorBoundary }: { resetErrorBoundary?: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-      <p className="text-lg font-medium">Something went wrong loading trades.</p>
+      <p className="text-sm font-medium">Failed to load trades</p>
       {resetErrorBoundary && (
-        <Button variant="outline" size="sm" className="mt-3" onClick={resetErrorBoundary}>
-          Retry
-        </Button>
+        <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={resetErrorBoundary}>Retry</Button>
       )}
     </div>
   );
@@ -47,11 +45,9 @@ function TableError({ resetErrorBoundary }: { resetErrorBoundary?: () => void })
 function FullPageError({ resetErrorBoundary }: { resetErrorBoundary?: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-      <p className="text-xl font-medium">Something went wrong.</p>
+      <p className="text-base font-medium">Something went wrong</p>
       {resetErrorBoundary && (
-        <Button variant="outline" className="mt-4" onClick={resetErrorBoundary}>
-          Reload page
-        </Button>
+        <Button variant="outline" className="mt-4 text-xs" onClick={resetErrorBoundary}>Reload</Button>
       )}
     </div>
   );
@@ -65,17 +61,19 @@ function ActiveTradesView() {
   const accountId = filters.account_ids?.[0];
   const activeTrades = trades.filter((t) => ACTIVE_STATUSES.includes(t.status));
   const hasActiveTrades = activeTrades.length > 0;
+  const accountActiveCount = activeTrades.filter((t) => t.account_id === accountId).length;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {hasActiveTrades && accountId && (
         <div className="flex justify-end">
           <Button
-            variant="destructive"
+            variant="ghost"
             size="sm"
+            className="h-7 text-[11px] text-destructive hover:bg-destructive/10"
             onClick={() => setCloseAllOpen(true)}
           >
-            Close All ({activeTrades.filter((t) => t.account_id === accountId).length})
+            Close All ({accountActiveCount})
           </Button>
         </div>
       )}
@@ -100,10 +98,8 @@ function HistoryTradesView() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground">
-        <p>Failed to load trade history.</p>
-        <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
-          Retry
-        </Button>
+        <p className="text-xs">Failed to load trade history.</p>
+        <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => refetch()}>Retry</Button>
       </div>
     );
   }
@@ -113,8 +109,8 @@ function HistoryTradesView() {
       <TradesTable trades={allTrades} />
       {hasNextPage && (
         <div className="flex justify-center pt-2">
-          <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
-            {isFetchingNextPage ? "Loading..." : "Load More"}
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+            {isFetchingNextPage ? "Loading..." : "Load more"}
           </Button>
         </div>
       )}
@@ -142,9 +138,9 @@ export default function TradesPage() {
 
   if (isMobile) {
     return (
-      <div className="p-4 text-center text-gray-400">
-        <p className="text-lg font-medium">Trades dashboard is optimized for desktop.</p>
-        <p className="text-sm mt-2">Please use a wider screen for the full experience.</p>
+      <div className="p-4 text-center text-muted-foreground">
+        <p className="text-sm font-medium">Desktop only</p>
+        <p className="text-xs mt-1">Use a wider screen for the trades terminal.</p>
       </div>
     );
   }
@@ -152,9 +148,9 @@ export default function TradesPage() {
   if (accounts.length === 0 && accountsStatus !== "idle" && accountsStatus !== "loading") {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <p className="text-lg font-medium">No accounts connected</p>
-        <p className="text-sm mt-2">Add a trading account to start viewing trades.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate({ to: "/accounts" })}>
+        <p className="text-sm font-medium">No accounts connected</p>
+        <p className="text-xs mt-1.5">Connect a trading account to get started.</p>
+        <Button variant="outline" size="sm" className="mt-4 text-xs" onClick={() => navigate({ to: "/accounts" })}>
           Go to Accounts
         </Button>
       </div>
@@ -163,21 +159,48 @@ export default function TradesPage() {
 
   return (
     <ErrorBoundary FallbackComponent={FullPageError}>
-      <div className="space-y-6">
+      <div className="space-y-4">
         {!wsConnected && <WsDisconnectBanner lastUpdated={lastUpdated} />}
+
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold tracking-tight">Positions</h1>
+          <div className="flex items-center gap-2">
+            {wsConnected && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[10px] font-medium text-emerald-400">Live</span>
+              </div>
+            )}
+          </div>
+        </div>
+
         <TradeStats />
+
         <Tabs value={activeTab} onValueChange={(tab) => dispatch(setActiveTab(tab as "active" | "history"))}>
-          <TabsList>
-            <TabsTrigger value="active">Active Trades</TabsTrigger>
-            <TabsTrigger value="history">Trade History</TabsTrigger>
-          </TabsList>
+          <div className="flex items-center justify-between border-b border-border/30 pb-0">
+            <TabsList className="bg-transparent p-0 h-auto gap-0">
+              <TabsTrigger
+                value="active"
+                className="text-[11px] font-medium px-3 py-1.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground text-muted-foreground/70 data-[state=active]:shadow-none"
+              >
+                Active
+              </TabsTrigger>
+              <TabsTrigger
+                value="history"
+                className="text-[11px] font-medium px-3 py-1.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground text-muted-foreground/70 data-[state=active]:shadow-none"
+              >
+                History
+              </TabsTrigger>
+            </TabsList>
+          </div>
           <TradeFilters />
-          <TabsContent value="active">
+          <TabsContent value="active" className="mt-0">
             <ErrorBoundary FallbackComponent={TableError}>
               {isFetching ? <TableSkeleton /> : <ActiveTradesView />}
             </ErrorBoundary>
           </TabsContent>
-          <TabsContent value="history">
+          <TabsContent value="history" className="mt-0">
             <ErrorBoundary FallbackComponent={TableError}>
               <HistoryTradesView />
             </ErrorBoundary>
