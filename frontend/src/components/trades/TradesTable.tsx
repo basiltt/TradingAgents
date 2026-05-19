@@ -10,17 +10,17 @@ import { useTradeActions } from "@/components/trades/hooks/useTradeActions";
 
 const COLUMNS = [
   { key: "__select", label: "", width: "w-9" },
-  { key: "symbol", label: "Pair" },
+  { key: "symbol", label: "Pair", width: "" },
   { key: "side", label: "Side", width: "w-16" },
-  { key: "account_id", label: "Account" },
+  { key: "account_id", label: "Account", width: "" },
   { key: "status", label: "Status", width: "w-24" },
-  { key: "qty", label: "Size" },
-  { key: "entry_price", label: "Entry" },
+  { key: "qty", label: "Size", width: "" },
+  { key: "entry_price", label: "Entry", width: "" },
   { key: "leverage", label: "Lev", width: "w-14" },
-  { key: "realized_pnl", label: "PnL" },
-  { key: "unrealized_pnl", label: "Unreal. PnL" },
-  { key: "fees", label: "Fees" },
-  { key: "opened_at", label: "Opened" },
+  { key: "realized_pnl", label: "PnL", width: "" },
+  { key: "unrealized_pnl", label: "Unreal. PnL", width: "" },
+  { key: "fees", label: "Fees", width: "" },
+  { key: "opened_at", label: "Opened", width: "" },
   { key: "", label: "", width: "w-20" },
 ] as const;
 
