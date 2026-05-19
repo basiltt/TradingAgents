@@ -159,7 +159,7 @@ function AutoTradeCard({ config, index, accounts, onChange, onDuplicate, onRemov
       {/* Account Selection */}
       <div>
         <Label className="text-xs">Account</Label>
-        <Select value={config.account_id} onValueChange={(v) => onChange({ account_id: v })}>
+        <Select value={config.account_id} onValueChange={(v) => v != null && onChange({ account_id: v })}>
           <SelectTrigger className="mt-1">
             <SelectValue placeholder="Select account..." />
           </SelectTrigger>
@@ -292,7 +292,7 @@ function AutoTradeCard({ config, index, accounts, onChange, onDuplicate, onRemov
         </div>
         <div>
           <Label className="text-xs">Confidence</Label>
-          <Select value={config.confidence_filter} onValueChange={(v: AutoTradeConfig["confidence_filter"]) => onChange({ confidence_filter: v })}>
+          <Select value={config.confidence_filter} onValueChange={(v) => v != null && onChange({ confidence_filter: v as AutoTradeConfig["confidence_filter"] })}>
             <SelectTrigger className="mt-1">
               <SelectValue />
             </SelectTrigger>
@@ -306,7 +306,7 @@ function AutoTradeCard({ config, index, accounts, onChange, onDuplicate, onRemov
         </div>
         <div>
           <Label className="text-xs">Signal Sides</Label>
-          <Select value={config.signal_sides} onValueChange={(v: AutoTradeConfig["signal_sides"]) => onChange({ signal_sides: v })}>
+          <Select value={config.signal_sides} onValueChange={(v) => v != null && onChange({ signal_sides: v as AutoTradeConfig["signal_sides"] })}>
             <SelectTrigger className="mt-1">
               <SelectValue />
             </SelectTrigger>
