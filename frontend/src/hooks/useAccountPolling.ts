@@ -58,16 +58,10 @@ export function useAccountPolling() {
     poll();
     intervalRef.current = setInterval(poll, pollingIntervalMs);
 
-    const onVisibilityChange = () => {
-      if (!document.hidden) poll();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
       controllerRef.current?.abort();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [poll, pollingIntervalMs]);
 
