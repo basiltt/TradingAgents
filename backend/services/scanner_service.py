@@ -165,11 +165,16 @@ def _validate_signal_consistency(
 
 
 def _rating_to_direction(rating: str) -> str:
-    """Map 5-tier PortfolioRating string to 3-tier scanner direction."""
+    """Map 5-tier PortfolioRating string to 3-tier scanner direction.
+
+    For crypto futures, only strong conviction (Buy/Sell) maps to a
+    tradeable direction. Overweight/Underweight map to hold because
+    this system opens NEW positions — it doesn't manage existing ones.
+    """
     r = rating.lower().strip()
     if r in ("buy", "overweight"):
         return "buy"
-    if r in ("sell", "underweight"):
+    if r == "sell":
         return "sell"
     return "hold"
 

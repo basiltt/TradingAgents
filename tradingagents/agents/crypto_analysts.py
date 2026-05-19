@@ -524,6 +524,14 @@ def create_crypto_research_manager(llm):
         instrument_context = build_instrument_context(filtered.get("company_of_interest", ""), crypto_interval)
         investment_debate_state = filtered.get("investment_debate_state", {})
         history = _truncate_history(investment_debate_state.get("history", ""))
+        confluence = filtered.get("confluence_summary", "")
+
+        confluence_section = ""
+        if confluence and confluence.strip():
+            confluence_section = (
+                "\n**Confluence Summary** (cross-analyst synthesis — use as a safety net to catch data points the debaters may have missed):\n"
+                f"{confluence}\n\n"
+            )
 
         prompt = f"""As the Crypto Research Manager and debate facilitator, critically evaluate the bull/bear debate and deliver a clear, actionable investment plan for the crypto trader.
 
@@ -549,7 +557,7 @@ CRITICAL GUIDANCE FOR CRYPTO FUTURES:
 - Ask yourself: "Would I bet real money on this direction right now?" If not, Hold.
 
 ---
-
+{confluence_section}
 **Debate History:**
 {history}"""
 
@@ -620,11 +628,9 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             f"## Technical Levels Summary\n{technical_levels}\n\n"
             f"IMPORTANT — CURRENT PRICE DATA (base your entry/SL/TP on this):\n{price_context}\n\n"
             f"EXECUTION RULES:\n"
-            f"- If the RM recommends Buy, output a Long signal\n"
+            f"- If the RM recommends Buy or Overweight, output a Long signal\n"
             f"- If the RM recommends Sell, output a Short signal\n"
-            f"- If the RM recommends Overweight, output a Long signal ONLY if the reasoning shows strong bullish conviction with specific catalysts; otherwise output 'No Trade'\n"
-            f"- If the RM recommends Underweight, output 'No Trade' (Underweight means reduce exposure, NOT initiate a short position)\n"
-            f"- If the RM recommends Hold, output 'No Trade'\n"
+            f"- If the RM recommends Underweight or Hold, output 'No Trade'\n"
             f"- Do NOT override the RM's direction — focus on execution levels only\n\n"
             f"PRICE ANCHORING RULES (mandatory when trading):\n"
             f"- Your entry_price MUST be within 2% of the current last-traded price.\n"

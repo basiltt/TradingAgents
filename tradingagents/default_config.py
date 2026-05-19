@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
     # Default analysts for quick_trade mode (user-configurable).
     # Full analysis uses all available analysts; quick_trade uses this subset.
     "quick_trade_analysts": {
-        "crypto": ["crypto_technical", "crypto_derivatives", "crypto_news"],
+        "crypto": ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals"],
         "stock": ["market", "news"],
     },
     # Crypto-specific settings

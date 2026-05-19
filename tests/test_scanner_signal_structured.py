@@ -19,7 +19,7 @@ class TestRatingToDirection:
     def test_buy(self):           assert _direction("Buy") == "buy"
     def test_overweight(self):    assert _direction("Overweight") == "buy"
     def test_hold(self):          assert _direction("Hold") == "hold"
-    def test_underweight(self):   assert _direction("Underweight") == "sell"
+    def test_underweight(self):   assert _direction("Underweight") == "hold"
     def test_sell(self):          assert _direction("Sell") == "sell"
     def test_unknown_defaults_to_hold(self): assert _direction("Unknown") == "hold"
     def test_case_insensitive(self): assert _direction("BUY") == "buy"
@@ -43,10 +43,10 @@ class TestExtractSignalFromStructured:
         assert result["direction"] == "buy"
         assert result["score"] == 7
 
-    def test_underweight_uses_sell(self):
+    def test_underweight_uses_hold(self):
         result = _extract({"rating": "Underweight", "confidence": 4})
-        assert result["direction"] == "sell"
-        assert result["score"] == -4
+        assert result["direction"] == "hold"
+        assert result["score"] == 0
 
     def test_hold_always_zero(self):
         result = _extract({"rating": "Hold", "confidence": 9})

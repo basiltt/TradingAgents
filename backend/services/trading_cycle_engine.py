@@ -151,7 +151,7 @@ class TradingCycleEngine:
 
         filtered = []
         for r in scan_results:
-            if r.get("score", 0) < min_score:
+            if abs(r.get("score", 0)) < min_score:
                 continue
             if CONFIDENCE_ORDER.get(r.get("confidence", "none"), 0) < min_conf_val:
                 continue
@@ -162,7 +162,7 @@ class TradingCycleEngine:
                 continue
             filtered.append(r)
 
-        filtered.sort(key=lambda x: x.get("score", 0), reverse=True)
+        filtered.sort(key=lambda x: abs(x.get("score", 0)), reverse=True)
         return filtered[:max_trades]
 
     async def start_cycle(self, config: Any) -> dict:
