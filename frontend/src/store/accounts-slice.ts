@@ -11,7 +11,7 @@ import type { DashboardCard, TradingAccount } from "@/api/client";
 
 export type Direction = "up" | "down" | "neutral";
 
-const DEFAULT_POLLING_INTERVAL_MS = 60_000;
+const DEFAULT_POLLING_INTERVAL_MS = 30_000;
 
 interface RealtimeEvent {
   account_id: string;
@@ -118,13 +118,16 @@ const accountsSlice = createSlice({
       const card = state.dashboard[idx];
       const dirs: Record<string, Direction> = state.directions[account_id] || {};
 
-      if (data.totalEquity) {
+      if (data.totalEquity !== undefined && data.totalEquity !== "") {
         dirs.equity = getDirection(card.total_equity, data.totalEquity);
         card.total_equity = data.totalEquity;
       }
-      if (data.totalPerpUPL) {
+      if (data.totalPerpUPL !== undefined && data.totalPerpUPL !== "") {
         dirs.pnl = getDirection(card.total_perp_upl, data.totalPerpUPL);
         card.total_perp_upl = data.totalPerpUPL;
+      }
+      if (data.totalWalletBalance !== undefined && data.totalWalletBalance !== "") {
+        card.total_wallet_balance = data.totalWalletBalance;
       }
 
       state.directions[account_id] = dirs;

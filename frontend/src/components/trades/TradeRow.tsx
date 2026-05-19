@@ -57,13 +57,13 @@ export const TradeRow = memo(function TradeRow({
       </td>
       <td className="px-3 py-2"><TradeStatusBadge status={trade.status} /></td>
       <td className="px-3 py-2 text-[11px] font-mono tabular-nums text-muted-foreground">
-        {formatQty(trade.filled_qty)}<span className="text-muted-foreground/40">/{formatQty(trade.qty)}</span>
+        {formatQty(trade.filled_qty ?? (isActive ? trade.qty : null))}<span className="text-muted-foreground/40">/{formatQty(trade.qty)}</span>
       </td>
       <td className="px-3 py-2 text-[11px] font-mono tabular-nums">{formatPrice(trade.entry_price)}</td>
       <td className="px-3 py-2 text-[11px] font-mono tabular-nums text-muted-foreground">{trade.leverage}×</td>
-      <td className="px-3 py-2 text-[11px] font-mono tabular-nums"><PnLDisplay value={trade.realized_pnl} /></td>
-      <td className="px-3 py-2 text-[11px] font-mono tabular-nums"><PnLDisplay value={trade.unrealized_pnl} /></td>
-      <td className="px-3 py-2 text-[11px] font-mono tabular-nums text-muted-foreground/60">{formatPrice(trade.fees)}</td>
+      <td className="px-3 py-2 text-[11px] font-mono tabular-nums"><PnLDisplay value={trade.realized_pnl ?? (isActive ? 0 : null)} /></td>
+      <td className="px-3 py-2 text-[11px] font-mono tabular-nums"><PnLDisplay value={trade.unrealized_pnl ?? (isActive ? 0 : null)} /></td>
+      <td className="px-3 py-2 text-[11px] font-mono tabular-nums text-muted-foreground/60">{formatPrice(trade.fees ?? 0)}</td>
       <td className="px-3 py-2 text-[11px] text-muted-foreground/60">
         <Tooltip>
           <TooltipTrigger>

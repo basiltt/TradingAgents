@@ -50,7 +50,7 @@ SYMBOL_PATTERN = r"^[A-Z0-9/]{1,30}$"
 
 UPDATABLE_COLUMNS = {
     "order_id", "entry_price", "avg_fill_price", "exit_price",
-    "mark_price_at_open", "opened_at", "filled_qty",
+    "mark_price_at_open", "opened_at", "filled_qty", "fees",
     "stop_loss_price", "take_profit_price",
 }
 

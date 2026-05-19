@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAppDispatch } from "@/store";
-import { updateCardRealtime, handleCloseExecution } from "@/store/accounts-slice";
+import { updateCardRealtime, handleCloseExecution, setDashboard } from "@/store/accounts-slice";
 import type { Trade } from "@/components/trades/types";
 import {
   addActiveTrade,
@@ -14,6 +14,7 @@ import {
   updateUnrealizedPnl,
 } from "@/store/trades-slice";
 import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
+import { accountsApi } from "@/api/client";
 
 const WS_BASE = import.meta.env.VITE_WS_BASE_URL || `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 const WS_URL = `${WS_BASE}/ws/v1/accounts`;
@@ -30,6 +31,18 @@ export function useAccountWebSocket() {
   const mounted = useRef(true);
   const queryClientRef = useRef(queryClient);
   const connectRef = useRef<() => void>(undefined);
+  const dashboardRefreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const refreshDashboard = useCallback(() => {
+    clearTimeout(dashboardRefreshTimer.current);
+    dashboardRefreshTimer.current = setTimeout(async () => {
+      if (!mounted.current) return;
+      try {
+        const cards = await accountsApi.getDashboard();
+        if (mounted.current) dispatch(setDashboard(cards));
+      } catch { /* polling will catch up */ }
+    }, 1500);
+  }, [dispatch]);
 
   useEffect(() => { queryClientRef.current = queryClient; });
 
@@ -51,6 +64,7 @@ export function useAccountWebSocket() {
         fetchAllActiveTrades(dispatch);
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
       }
+      refreshDashboard();
     };
 
     ws.onmessage = (event) => {
@@ -85,17 +99,20 @@ export function useAccountWebSocket() {
       if (msg.account_id && msg.type === "close_execution") {
         const closed = typeof msg.closed === "number" ? msg.closed : 0;
         dispatch(handleCloseExecution({ account_id: msg.account_id as string, data: { closed } }));
+        refreshDashboard();
       }
 
       if (msg.type === "trade.opened" && msg.data) {
         dispatch(addActiveTrade(msg.data as Trade));
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+        refreshDashboard();
       }
       if (msg.type === "trade.closed" && msg.trade_id) {
         dispatch(removeActiveTrade(msg.trade_id as string));
         dispatch(clearPendingAction(msg.trade_id as string));
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "history"] });
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+        refreshDashboard();
       }
       if (msg.type === "trade.partially_closed" && msg.trade_id) {
         dispatch(clearPendingAction(msg.trade_id as string));
@@ -130,7 +147,7 @@ export function useAccountWebSocket() {
     ws.onerror = () => {
       ws.close();
     };
-  }, [dispatch]);
+  }, [dispatch, refreshDashboard]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -143,6 +160,7 @@ export function useAccountWebSocket() {
       mounted.current = false;
       clearTimeout(reconnectTimer.current);
       clearTimeout(pingWatchdog.current);
+      clearTimeout(dashboardRefreshTimer.current);
       wsRef.current?.close();
     };
   }, [connect]);

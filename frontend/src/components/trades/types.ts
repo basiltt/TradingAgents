@@ -32,6 +32,7 @@ export interface Trade {
   stop_loss_price: number | null;
   take_profit_price: number | null;
   leverage: number;
+  margin_mode: string;
   status: TradeStatus;
   realized_pnl: number | null;
   realized_pnl_pct: number | null;

@@ -77,13 +77,13 @@ export function TradeDetailPanel() {
                   <div>
                     <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground/70 font-medium">Unrealized PnL</span>
                     <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
-                      <PnLDisplay value={trade.unrealized_pnl} />
+                      <PnLDisplay value={trade.unrealized_pnl ?? (isActive ? 0 : null)} />
                     </div>
                   </div>
                   <div>
                     <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground/70 font-medium">Realized PnL</span>
                     <div className="text-xl font-bold font-mono tabular-nums mt-0.5">
-                      <PnLDisplay value={trade.realized_pnl} />
+                      <PnLDisplay value={trade.realized_pnl ?? (isActive ? 0 : null)} />
                     </div>
                   </div>
                 </div>
@@ -91,12 +91,12 @@ export function TradeDetailPanel() {
                   <div>
                     <span className="text-[10px] text-muted-foreground/60">Net PnL</span>
                     <div className="text-sm font-semibold font-mono tabular-nums">
-                      <PnLDisplay value={trade.net_pnl} />
+                      <PnLDisplay value={trade.net_pnl ?? (isActive ? ((trade.unrealized_pnl ?? 0) + (trade.realized_pnl ?? 0) - (trade.fees ?? 0)) : null)} />
                     </div>
                   </div>
                   <div>
                     <span className="text-[10px] text-muted-foreground/60">Fees</span>
-                    <div className="text-sm font-mono tabular-nums text-muted-foreground">{formatPrice(trade.fees)}</div>
+                    <div className="text-sm font-mono tabular-nums text-muted-foreground">{formatPrice(trade.fees ?? 0)}</div>
                   </div>
                   <div>
                     <span className="text-[10px] text-muted-foreground/60">Leverage</span>
@@ -108,10 +108,12 @@ export function TradeDetailPanel() {
               {/* Position Info */}
               <Section title="Position">
                 <div className="space-y-2">
-                  <Row label="Quantity" value={`${formatQty(trade.filled_qty)} / ${formatQty(trade.qty)}`} />
+                  <Row label="Quantity" value={`${formatQty(trade.filled_qty ?? (isActive ? trade.qty : null))} / ${formatQty(trade.qty)}`} />
                   <Row label="Entry Price" value={formatPrice(trade.entry_price)} mono />
                   <Row label="Avg Fill Price" value={formatPrice(trade.avg_fill_price)} mono />
                   <Row label="Exit Price" value={formatPrice(trade.exit_price)} mono />
+                  <Row label="Order Type" value={trade.order_type} />
+                  <Row label="Margin Mode" value={trade.margin_mode ?? "--"} />
                   <Row label="Source" value={trade.source} />
                 </div>
               </Section>

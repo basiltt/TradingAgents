@@ -194,18 +194,15 @@ class BybitWSClient:
     async def _emit_wallet(self, data: list[dict]) -> None:
         for account in data:
             coins = account.get("coin", [])
-            total_equity = account.get("accountEquity", "0")
-            total_upl = 0.0
-            for coin in coins:
-                try:
-                    total_upl += float(coin.get("unrealisedPnl", "0"))
-                except (ValueError, TypeError):
-                    pass
+            total_equity = account.get("totalEquity", "0")
+            total_wallet_balance = account.get("totalWalletBalance", "0")
+            total_perp_upl = account.get("totalPerpUPL", "0")
             await self._safe_emit({
                 "type": "wallet_update",
                 "data": {
                     "totalEquity": total_equity,
-                    "totalPerpUPL": str(total_upl),
+                    "totalPerpUPL": total_perp_upl,
+                    "totalWalletBalance": total_wallet_balance,
                     "coins": coins,
                 },
             })

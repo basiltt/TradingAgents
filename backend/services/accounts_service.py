@@ -333,8 +333,10 @@ class AccountsService:
                             event_type="filled", actor="system",
                             updates={
                                 "order_id": result.get("orderId", ""),
-                                "entry_price": float(mark_price),
-                                "avg_fill_price": float(mark_price),
+                                "filled_qty": float(result.get("cumExecQty") or qty_rounded),
+                                "entry_price": float(result.get("avgPrice") or mark_price),
+                                "avg_fill_price": float(result.get("avgPrice") or mark_price),
+                                "fees": float(result.get("cumExecFee") or 0),
                                 "opened_at": datetime.now(timezone.utc),
                             },
                         )

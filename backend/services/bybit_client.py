@@ -382,9 +382,14 @@ class BybitClient:
             else:
                 raise
 
+        order_id = result.get("orderId", "")
+        detail = await self._poll_order_fill(symbol, order_id)
         return {
-            "orderId": result.get("orderId", ""),
+            "orderId": order_id,
             "orderLinkId": result.get("orderLinkId", order_link_id),
+            "avgPrice": detail.get("avgPrice"),
+            "cumExecFee": detail.get("cumExecFee"),
+            "cumExecQty": detail.get("cumExecQty"),
         }
 
     async def set_leverage(self, symbol: str, leverage: int) -> dict[str, Any]:
@@ -465,10 +470,43 @@ class BybitClient:
             else:
                 raise
 
+        order_id = result.get("orderId", "")
+        detail = await self._poll_order_fill(symbol, order_id)
         return {
-            "orderId": result.get("orderId", ""),
+            "orderId": order_id,
             "orderLinkId": result.get("orderLinkId", order_link_id),
+            "avgPrice": detail.get("avgPrice"),
+            "cumExecFee": detail.get("cumExecFee"),
+            "cumExecQty": detail.get("cumExecQty"),
         }
+
+    async def _poll_order_fill(
+        self, symbol: str, order_id: str, max_attempts: int = 5, delay: float = 0.2,
+    ) -> dict[str, Any]:
+        """Poll order history until the order is filled or max attempts reached.
+
+        Market orders typically fill within milliseconds, so the first attempt
+        after a short delay usually succeeds. Uses exponential backoff for resilience.
+        """
+        if not order_id:
+            return {}
+        for attempt in range(max_attempts):
+            if attempt > 0:
+                await asyncio.sleep(delay * (2 ** (attempt - 1)))
+            try:
+                result = await self._request("GET", "/v5/order/history", {
+                    "category": "linear",
+                    "symbol": symbol,
+                    "orderId": order_id,
+                    "limit": "1",
+                })
+                orders = result.get("list", [])
+                if orders and orders[0].get("orderStatus") == "Filled":
+                    return orders[0]
+            except Exception:
+                logger.debug("poll_order_fill_attempt_%d_failed", attempt + 1)
+        logger.warning("poll_order_fill_exhausted", extra={"symbol": symbol, "order_id": order_id})
+        return {}
 
     async def get_mark_price(self, symbol: str) -> str:
         """Get the current mark price for a symbol."""

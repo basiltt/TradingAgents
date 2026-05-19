@@ -227,3 +227,6 @@ __marimo__/
 # Ignore all claude worktrees
 .claude
 .worktrees/
+
+ # Ignore all node_modules even if it is in child directories
+node_modules/
