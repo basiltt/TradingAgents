@@ -550,11 +550,10 @@ You do NOT have access to any market data tools. Do NOT attempt to call get_klin
 
 CRITICAL GUIDANCE FOR CRYPTO FUTURES:
 - This system OPENS new positions (Long or Short). It does NOT manage existing holdings.
-- Therefore: only recommend Buy/Sell when you have HIGH conviction with specific evidence.
-- "Absence of bullish signals" is NOT sufficient reason to Sell/Short. You need ACTIVE bearish signals.
-- When evidence is mixed, ambiguous, or data is insufficient, use Hold. Hold is the correct default.
-- Shorting crypto is inherently riskier (unlimited upside risk). Require STRONGER evidence for Sell than for Buy.
-- Ask yourself: "Would I bet real money on this direction right now?" If not, Hold.
+- Buy/Overweight: Use when the bull case has concrete evidence (breakout patterns, rising OI + positive funding, strong momentum indicators, bullish divergences). You do NOT need certainty — a clear directional lean with supporting data is enough.
+- Sell: Use when the bear case has concrete evidence (breakdown below support, negative funding + declining OI, confirmed bearish reversal patterns). Require slightly stronger evidence than Buy since shorting crypto carries unlimited upside risk.
+- Hold: Use when evidence is genuinely mixed or contradictory, data is insufficient for any directional lean, or both bull and bear cases are equally weak.
+- Do NOT default to Hold out of caution. If the analysts found a directional signal, act on it. The system's edge comes from taking positions when signals align.
 
 ---
 {confluence_section}
@@ -617,6 +616,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             return validate_state_write({
                 "messages": [AIMessage(content=json.dumps(no_trade_signal, indent=2))],
                 "trader_investment_plan": json.dumps(no_trade_signal, indent=2),
+                "_trader_signal_data": no_trade_signal,
                 "sender": "CryptoTrader",
             }, "trader")
 
@@ -675,6 +675,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                 return validate_state_write({
                     "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
                     "trader_investment_plan": json.dumps(no_trade, indent=2),
+                    "_trader_signal_data": no_trade,
                     "sender": "CryptoTrader",
                 }, "trader")
 
@@ -683,6 +684,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                 return validate_state_write({
                     "messages": [AIMessage(content=result.content)],
                     "trader_investment_plan": json.dumps(parsed, indent=2),
+                    "_trader_signal_data": parsed,
                     "sender": "CryptoTrader",
                 }, "trader")
 
@@ -703,6 +705,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
         return validate_state_write({
             "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
             "trader_investment_plan": json.dumps(no_trade, indent=2),
+            "_trader_signal_data": no_trade,
             "sender": "CryptoTrader",
         }, "trader")
 

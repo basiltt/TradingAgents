@@ -359,8 +359,10 @@ class TradingCycleEngine:
 
             if symbol in position_symbols:
                 logger.warning("Skipping %s — existing position", symbol)
+                td = cfg.get("trade_direction", "straight")
+                skip_side = ("Buy" if direction == "buy" else "Sell") if td == "straight" else ("Sell" if direction == "buy" else "Buy")
                 await self._repo.add_trade(cycle_id, {
-                    "symbol": symbol, "side": "Buy",
+                    "symbol": symbol, "side": skip_side,
                     "status": "cancelled", "error_msg": "existing_position",
                 })
                 trades_failed += 1

@@ -146,3 +146,68 @@ class TestCollectResultStructuredPath:
         assert results[0]["direction"] == "hold"
         assert results[0]["score"] == 0
         assert results[0]["signal_source"] == "none"
+
+    def test_trader_signal_only_quick_trade_long(self):
+        """In quick_trade mode, only _trader_signal exists (no PM). Parse it directly."""
+        trader_json = _json.dumps({"trade_type": "Long", "confidence": 7})
+        scanner = _make_scanner({
+            "_trader_signal": trader_json,
+            "trader": "some narrative text",
+        })
+        run = {"status": "completed"}
+        asyncio.run(
+            scanner._collect_result("scan-1", "BTCUSDT", "run-200", run)
+        )
+        results = scanner._scans["scan-1"]["results"]
+        assert len(results) == 1
+        r = results[0]
+        assert r["direction"] == "buy"
+        assert r["confidence"] == "high"
+        assert r["score"] == 7
+        assert r["signal_source"] == "structured"
+
+    def test_trader_signal_only_quick_trade_short(self):
+        trader_json = _json.dumps({"trade_type": "Short", "confidence": 6})
+        scanner = _make_scanner({
+            "_trader_signal": trader_json,
+        })
+        run = {"status": "completed"}
+        asyncio.run(
+            scanner._collect_result("scan-1", "ETHUSDT", "run-201", run)
+        )
+        results = scanner._scans["scan-1"]["results"]
+        r = results[0]
+        assert r["direction"] == "sell"
+        assert r["confidence"] == "moderate"
+        assert r["score"] == -6
+        assert r["signal_source"] == "structured"
+
+    def test_trader_signal_only_no_trade(self):
+        trader_json = _json.dumps({"trade_type": "No Trade", "confidence": 3})
+        scanner = _make_scanner({
+            "_trader_signal": trader_json,
+        })
+        run = {"status": "completed"}
+        asyncio.run(
+            scanner._collect_result("scan-1", "SOLUSDT", "run-202", run)
+        )
+        results = scanner._scans["scan-1"]["results"]
+        r = results[0]
+        assert r["direction"] == "hold"
+        assert r["score"] == 0
+        assert r["signal_source"] == "structured"
+
+    def test_trader_signal_malformed_falls_back_to_regex(self):
+        """If _trader_signal JSON lacks trade_type, fall back to regex on narrative."""
+        trader_json = _json.dumps({"action": "buy", "confidence": 8})
+        scanner = _make_scanner({
+            "_trader_signal": trader_json,
+            "portfolio_manager": "Final decision: APPROVE. We go long. Confidence: 8/10.",
+        })
+        run = {"status": "completed"}
+        asyncio.run(
+            scanner._collect_result("scan-1", "BTCUSDT", "run-203", run)
+        )
+        results = scanner._scans["scan-1"]["results"]
+        r = results[0]
+        assert r["signal_source"] == "regex_fallback"

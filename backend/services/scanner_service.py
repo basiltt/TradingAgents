@@ -26,6 +26,26 @@ _VALID_CONFIDENCES = frozenset({"high", "moderate", "low", "none"})
 # Signal extraction helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_signal(direction: str, conf_score: Optional[int]) -> Dict[str, Any]:
+    """Build a normalized signal dict from direction + raw confidence score."""
+    if direction == "hold":
+        return {"direction": "hold", "confidence": "none", "score": 0}
+    if conf_score is None:
+        conf_score = 5
+    try:
+        conf_score = max(1, min(10, int(conf_score)))
+    except (TypeError, ValueError):
+        conf_score = 5
+    if conf_score >= 7:
+        confidence = "high"
+    elif conf_score >= 4:
+        confidence = "moderate"
+    else:
+        confidence = "low"
+    sign = 1 if direction == "buy" else (-1 if direction == "sell" else 0)
+    return {"direction": direction, "confidence": confidence, "score": sign * conf_score}
+
+
 def _extract_trader_signal(trader_text: str) -> Optional[Dict[str, Any]]:
     """Parse trader's structured JSON output.
 
@@ -197,21 +217,8 @@ def _extract_signal_from_structured(
     # PM confidence is authoritative; fall back to trader's if absent
     pm_conf = pm_data.get("confidence")
     conf_score = pm_conf if pm_conf is not None else trader_data.get("confidence")
-    if conf_score is None:
-        conf_score = 5  # neutral default when direction is known but conviction isn't
-    conf_score = max(1, min(10, int(conf_score)))
 
-    if conf_score >= 7:
-        confidence = "high"
-    elif conf_score >= 4:
-        confidence = "moderate"
-    else:
-        confidence = "low"
-
-    sign = 1 if direction == "buy" else -1
-    score = sign * conf_score
-
-    return {"direction": direction, "confidence": confidence, "score": score}
+    return _build_signal(direction, conf_score)
 
 
 def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
@@ -285,30 +292,17 @@ def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
     if is_no_trade:
         return {"direction": "hold", "confidence": "none", "score": 0}
 
-    # Map confidence score to label
-    if conf_score is None:
-        conf_score = 5  # middle ground when direction is known but confidence isn't specified
-    conf_score = max(1, min(10, int(conf_score)))
-
-    if conf_score >= 7:
-        confidence = "high"
-    elif conf_score >= 4:
-        confidence = "moderate"
-    else:
-        confidence = "low"
-
-    sign = 1 if direction == "buy" else (-1 if direction == "sell" else 0)
-    score = sign * conf_score
+    signal = _build_signal(direction, conf_score)
 
     # Final safety validation — reject any value not in the allowed sets
-    if direction not in _VALID_DIRECTIONS:
-        logger.error("Invalid direction value %r — forcing hold", direction)
+    if signal["direction"] not in _VALID_DIRECTIONS:
+        logger.error("Invalid direction value %r — forcing hold", signal["direction"])
         return {"direction": "hold", "confidence": "none", "score": 0}
-    if confidence not in _VALID_CONFIDENCES:
-        logger.error("Invalid confidence value %r — forcing none", confidence)
-        confidence = "none"
+    if signal["confidence"] not in _VALID_CONFIDENCES:
+        logger.error("Invalid confidence value %r — forcing none", signal["confidence"])
+        signal["confidence"] = "none"
 
-    return {"direction": direction, "confidence": confidence, "score": score}
+    return signal
 
 
 
@@ -907,9 +901,26 @@ class ScannerService:
                     )
                     signal = _parse_signal_from_reports(reports)
                     signal_source = "regex_fallback"
-            elif reports.get("_trader_signal"):
-                signal = _parse_signal_from_reports(reports)
-                signal_source = "regex_fallback"
+            elif (trader_json := reports.get("_trader_signal")):
+                # quick_trade mode: no PM, use trader's structured JSON directly
+                try:
+                    trader_parsed = _extract_trader_signal(trader_json)
+                    if trader_parsed is None:
+                        signal = _parse_signal_from_reports(reports)
+                        signal_source = "regex_fallback"
+                    elif not trader_parsed.get("no_trade"):
+                        signal = _build_signal(trader_parsed["direction"], trader_parsed.get("confidence_score"))
+                        signal_source = "structured"
+                    else:
+                        signal = {"direction": "hold", "confidence": "none", "score": 0}
+                        signal_source = "structured"
+                except Exception:
+                    logger.exception(
+                        "Failed to parse _trader_signal for %s/%s — falling back",
+                        scan_id, run_id,
+                    )
+                    signal = _parse_signal_from_reports(reports)
+                    signal_source = "regex_fallback"
             else:
                 signal = _parse_signal_from_reports(reports)
                 signal_source = "regex_fallback"
