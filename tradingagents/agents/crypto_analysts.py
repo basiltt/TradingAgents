@@ -534,13 +534,19 @@ You do NOT have access to any market data tools. Do NOT attempt to call get_klin
 ---
 
 **Rating Scale** (use exactly one):
-- **Buy**: Strong conviction in the bull thesis; recommend taking or growing the position
-- **Overweight**: Constructive view; recommend gradually increasing exposure
-- **Hold**: Balanced view; recommend maintaining the current position
-- **Underweight**: Cautious view; recommend trimming exposure
-- **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
+- **Buy**: Strong conviction in the bull thesis with specific, data-backed catalysts; recommend opening a LONG position
+- **Overweight**: Constructive bullish view with supporting evidence; recommend gradual long exposure
+- **Hold**: Balanced, unclear, or insufficient evidence; recommend NO position (no trade)
+- **Underweight**: Cautious view but insufficient bearish conviction for active shorting; recommend NO position (no trade)
+- **Sell**: Strong conviction in the bear thesis with specific, data-backed reasons (e.g., breakdown below key support, negative funding + declining OI, confirmed bearish reversal); recommend opening a SHORT position
 
-Commit to a clear stance based on the weight of evidence. Hold is a fully valid recommendation when the evidence is balanced or insufficient — not a last resort.
+CRITICAL GUIDANCE FOR CRYPTO FUTURES:
+- This system OPENS new positions (Long or Short). It does NOT manage existing holdings.
+- Therefore: only recommend Buy/Sell when you have HIGH conviction with specific evidence.
+- "Absence of bullish signals" is NOT sufficient reason to Sell/Short. You need ACTIVE bearish signals.
+- When evidence is mixed, ambiguous, or data is insufficient, use Hold. Hold is the correct default.
+- Shorting crypto is inherently riskier (unlimited upside risk). Require STRONGER evidence for Sell than for Buy.
+- Ask yourself: "Would I bet real money on this direction right now?" If not, Hold.
 
 ---
 
@@ -614,8 +620,10 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             f"## Technical Levels Summary\n{technical_levels}\n\n"
             f"IMPORTANT — CURRENT PRICE DATA (base your entry/SL/TP on this):\n{price_context}\n\n"
             f"EXECUTION RULES:\n"
-            f"- If the RM recommends Buy or Overweight, output a Long signal\n"
-            f"- If the RM recommends Sell or Underweight, output a Short signal\n"
+            f"- If the RM recommends Buy, output a Long signal\n"
+            f"- If the RM recommends Sell, output a Short signal\n"
+            f"- If the RM recommends Overweight, output a Long signal ONLY if the reasoning shows strong bullish conviction with specific catalysts; otherwise output 'No Trade'\n"
+            f"- If the RM recommends Underweight, output 'No Trade' (Underweight means reduce exposure, NOT initiate a short position)\n"
             f"- If the RM recommends Hold, output 'No Trade'\n"
             f"- Do NOT override the RM's direction — focus on execution levels only\n\n"
             f"PRICE ANCHORING RULES (mandatory when trading):\n"
