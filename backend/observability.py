@@ -147,7 +147,7 @@ class ObservabilityMiddleware:
             path = scope.get("path", "/")
             metrics.record_request(method, path, status_code, duration)
 
-            if duration > 1.0:
+            if duration > 3.0:
                 logger = logging.getLogger("backend.observability")
                 logger.warning(
                     "slow_request",

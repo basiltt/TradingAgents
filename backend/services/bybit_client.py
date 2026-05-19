@@ -481,18 +481,19 @@ class BybitClient:
         }
 
     async def _poll_order_fill(
-        self, symbol: str, order_id: str, max_attempts: int = 5, delay: float = 0.2,
+        self, symbol: str, order_id: str, max_attempts: int = 7, delay: float = 0.3,
     ) -> dict[str, Any]:
         """Poll order history until the order is filled or max attempts reached.
 
         Market orders typically fill within milliseconds, so the first attempt
-        after a short delay usually succeeds. Uses exponential backoff for resilience.
+        after a short delay usually succeeds. Uses exponential backoff with a
+        capped delay for resilience against Bybit API eventual consistency.
         """
         if not order_id:
             return {}
         for attempt in range(max_attempts):
             if attempt > 0:
-                await asyncio.sleep(delay * (2 ** (attempt - 1)))
+                await asyncio.sleep(min(delay * (2 ** (attempt - 1)), 3.0))
             try:
                 result = await self._request("GET", "/v5/order/history", {
                     "category": "linear",

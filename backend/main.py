@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import gc
 import logging
 import json as _json
 import os
@@ -200,6 +201,13 @@ def create_app() -> FastAPI:
                     logger.warning("Event loop stall: %.0fms drift", drift * 1000)
 
         _watchdog_task = asyncio.create_task(_event_loop_watchdog())
+
+        # Tune GC to reduce stop-the-world pauses that stall the event loop.
+        # Raise gen2 threshold so full collections happen less frequently;
+        # large LLM response objects accumulate in gen2 during analysis scans.
+        gc.set_threshold(700, 10, 50)
+        gc.freeze()  # freeze current objects so GC skips them in gen0/gen1 sweeps
+        logger.info("GC tuned: thresholds=%s, frozen=%d objects", gc.get_threshold(), gc.get_freeze_count())
 
         # Trading accounts service (optional — only if encryption key is configured)
         from backend.services.accounts_service import AccountsService

@@ -26,19 +26,27 @@ class EventBus:
         self._ring_buffers: Dict[str, Deque[Tuple[Dict[str, Any], int]]] = {}
         self._ring_bytes: Dict[str, int] = {}
         self._cleaned: OrderedDict[str, None] = OrderedDict()
-        # RLock because _async_emit acquires lock then calls emit() which also acquires it
-        self._lock = threading.RLock()
+        # Lock only for cleanup_run and get_snapshot (called infrequently);
+        # emit/drain run lock-free on the event loop thread.
+        self._lock = threading.Lock()
 
     def _get_queue(self, run_id: str) -> asyncio.Queue:
-        with self._lock:
-            if run_id in self._cleaned:
-                raise StopAsyncIteration(f"Run {run_id} already cleaned up")
-            if run_id not in self._queues:
-                self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
-            return self._queues[run_id]
+        """Called from event loop thread only (via drain)."""
+        if run_id in self._cleaned:
+            raise StopAsyncIteration(f"Run {run_id} already cleaned up")
+        if run_id not in self._queues:
+            self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
+        return self._queues[run_id]
 
     def emit(self, run_id: str, event: Any) -> None:
-        """Must only be called from the event loop thread. Use emit_threadsafe() from other threads."""
+        """Must only be called from the event loop thread. Use emit_threadsafe() from other threads.
+
+        Does NOT acquire the threading lock — this runs exclusively on the event
+        loop thread so dict/queue access is safe without locking.  The only writers
+        that mutate _queues/_cleaned from other threads go through emit_threadsafe
+        (which schedules back onto this thread) or cleanup_run (which holds _lock
+        and only removes entries, safe against concurrent reads on this thread).
+        """
         if __debug__:
             try:
                 running = asyncio.get_running_loop()
@@ -47,40 +55,55 @@ class EventBus:
                 pass
         event_dict = asdict(event) if hasattr(event, "__dataclass_fields__") else event
 
-        with self._lock:
-            if run_id in self._cleaned:
-                return
-            queue = self._queues.get(run_id)
-            if queue is None:
-                self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
-                queue = self._queues[run_id]
+        if run_id in self._cleaned:
+            return
+        queue = self._queues.get(run_id)
+        if queue is None:
+            self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
+            queue = self._queues[run_id]
 
-            self._add_to_ring(run_id, event_dict)
+        self._add_to_ring(run_id, event_dict)
 
+        try:
+            queue.put_nowait(event_dict)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            logger.warning("Event bus queue full for run %s, dropping oldest", run_id)
+            self._add_to_ring(run_id, {"type": "events_dropped", "run_id": run_id})
             try:
                 queue.put_nowait(event_dict)
             except asyncio.QueueFull:
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                logger.warning("Event bus queue full for run %s, dropping oldest", run_id)
-                self._add_to_ring(run_id, {"type": "events_dropped", "run_id": run_id})
-                try:
-                    queue.put_nowait(event_dict)
-                except asyncio.QueueFull:
-                    pass
+                pass
 
     def emit_threadsafe(self, run_id: str, event: Any) -> None:
-        asyncio.run_coroutine_threadsafe(
-            self._async_emit(run_id, event), self._loop
-        )
+        event_dict = asdict(event) if hasattr(event, "__dataclass_fields__") else event
+        self._loop.call_soon_threadsafe(self._emit_from_threadsafe, run_id, event_dict)
 
-    async def _async_emit(self, run_id: str, event: Any) -> None:
-        with self._lock:
-            if run_id in self._cleaned:
-                return
-        self.emit(run_id, event)
+    def _emit_from_threadsafe(self, run_id: str, event_dict: Dict[str, Any]) -> None:
+        """Callback scheduled on the event loop by emit_threadsafe. Lock-free."""
+        if run_id in self._cleaned:
+            return
+        queue = self._queues.get(run_id)
+        if queue is None:
+            self._queues[run_id] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
+            queue = self._queues[run_id]
+
+        self._add_to_ring(run_id, event_dict)
+
+        try:
+            queue.put_nowait(event_dict)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(event_dict)
+            except asyncio.QueueFull:
+                pass
 
     def _add_to_ring(self, run_id: str, event_dict: Dict[str, Any]) -> None:
         # Rough byte estimate: 64 bytes overhead + 32 per key-value pair avoids str() cost

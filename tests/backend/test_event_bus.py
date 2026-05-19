@@ -131,10 +131,10 @@ def test_thread_safe_emit(bus, event_loop):
     event_loop.run_until_complete(_test())
 
 
-def test_async_emit_on_cleaned_run(bus, event_loop):
+def test_emit_threadsafe_on_cleaned_run(bus, event_loop):
     async def _test():
         bus.cleanup_run("run1")
-        await bus._async_emit("run1", {"type": "message"})
+        bus._emit_from_threadsafe("run1", {"type": "message"})
         assert bus.get_snapshot("run1") == []
     event_loop.run_until_complete(_test())
 

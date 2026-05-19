@@ -447,7 +447,7 @@ class TestPlaceMarketCloseOrder:
             mock_req.return_value = {"orderId": "close1", "orderLinkId": "x"}
             result = await client.place_market_close_order("BTCUSDT", "Buy", "0.1")
         assert result["orderId"] == "close1"
-        call_params = mock_req.call_args[0][2]
+        call_params = mock_req.call_args_list[0][0][2]
         assert call_params["side"] == "Sell"  # flipped
         assert call_params["reduceOnly"] is True
 
@@ -457,11 +457,12 @@ class TestPlaceMarketCloseOrder:
             mock_req.side_effect = [
                 BybitAPIError(110043, "position idx not match"),
                 {"orderId": "close2", "orderLinkId": "y"},
+                {"list": [{"orderStatus": "Filled", "avgPrice": "100", "cumExecFee": "0.1", "cumExecQty": "0.1"}]},
             ]
             result = await client.place_market_close_order("BTCUSDT", "Buy", "0.1", position_idx=0)
         assert result["orderId"] == "close2"
-        # Second call uses hedge idx
-        second_call_params = mock_req.call_args[0][2]
+        # Second call (index 1) uses hedge idx
+        second_call_params = mock_req.call_args_list[1][0][2]
         assert second_call_params["positionIdx"] == 1  # Sell side for close of Buy
 
     @pytest.mark.asyncio(loop_scope="function")
@@ -502,7 +503,7 @@ class TestPlaceMarketOrder:
             mock_req.return_value = {"orderId": "ord1", "orderLinkId": "link1"}
             result = await client.place_market_order("BTCUSDT", "Buy", "0.01")
         assert result["orderId"] == "ord1"
-        call_params = mock_req.call_args[0][2]
+        call_params = mock_req.call_args_list[0][0][2]
         assert call_params["orderType"] == "Market"
         assert "takeProfit" not in call_params
 
@@ -511,7 +512,7 @@ class TestPlaceMarketOrder:
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = {"orderId": "ord2", "orderLinkId": "link2"}
             await client.place_market_order("BTCUSDT", "Buy", "0.01", take_profit="60000", stop_loss="45000")
-        call_params = mock_req.call_args[0][2]
+        call_params = mock_req.call_args_list[0][0][2]
         assert call_params["takeProfit"] == "60000"
         assert call_params["stopLoss"] == "45000"
         assert call_params["tpTriggerBy"] == "MarkPrice"
@@ -522,10 +523,11 @@ class TestPlaceMarketOrder:
             mock_req.side_effect = [
                 BybitAPIError(10001, "position idx not match"),
                 {"orderId": "ord3", "orderLinkId": "link3"},
+                {"list": [{"orderStatus": "Filled", "avgPrice": "100", "cumExecFee": "0.1", "cumExecQty": "0.01"}]},
             ]
             result = await client.place_market_order("BTCUSDT", "Buy", "0.01")
         assert result["orderId"] == "ord3"
-        second_call_params = mock_req.call_args[0][2]
+        second_call_params = mock_req.call_args_list[1][0][2]
         assert second_call_params["positionIdx"] == 1  # Buy hedge idx
 
     @pytest.mark.asyncio(loop_scope="function")

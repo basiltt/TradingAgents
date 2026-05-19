@@ -227,6 +227,14 @@ class TradeService:
             await self._handle_close_failure(client, trade, version)
             raise
 
+        if not result.get("avgPrice"):
+            try:
+                mark = await client.get_mark_price(trade["symbol"])
+                result["avgPrice"] = mark
+                logger.info("poll_fill_fallback_to_mark_price", extra={"trade_id": trade_id, "mark_price": mark})
+            except Exception:
+                pass
+
         pnl_data = self._extract_pnl(result, trade, close_qty)
         async with self._db.pool.acquire() as conn:
             async with conn.transaction():
@@ -276,6 +284,14 @@ class TradeService:
             })
             await self._handle_close_failure(client, trade, version)
             raise
+
+        if not result.get("avgPrice"):
+            try:
+                mark = await client.get_mark_price(trade["symbol"])
+                result["avgPrice"] = mark
+                logger.info("poll_fill_fallback_to_mark_price", extra={"trade_id": trade_id, "mark_price": mark})
+            except Exception:
+                pass
 
         pnl_data = self._extract_pnl(result, trade, qty)
         previously_filled = float(trade.get("filled_qty") or 0)
