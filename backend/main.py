@@ -343,10 +343,10 @@ def create_app() -> FastAPI:
     from backend.routers.symbols import router as symbols_router
     from backend.routers.scanner import router as scanner_router
     from backend.routers.ws import router as ws_router
+    from backend.routers.ws_accounts import router as ws_accounts_router
     from backend.routers.accounts import router as accounts_router
     from backend.routers.trades import router as trades_router
     from backend.routers.portfolio import router as portfolio_router
-    from backend.routers.ws_accounts import router as ws_accounts_router
     from backend.routers.analytics import router as analytics_router
     from backend.routers.strategies import router as strategies_router
     from backend.routers.scheduled_scans import router as scheduled_scans_router

@@ -30,7 +30,7 @@ _SNAPSHOT_RETENTION_DAYS = 1095  # ~3 years
 
 def _now_iso() -> str:
     """Return current UTC timestamp as ISO 8601 string (no microseconds)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _date_to_ms(date_str: str) -> int:
