@@ -196,6 +196,23 @@ export interface AnalysisSnapshot {
   reports: Record<string, string>;
 }
 
+export interface AutoTradeConfig {
+  account_id: string;
+  direction: "straight" | "reverse";
+  leverage: number;
+  capital_pct: number;
+  take_profit_pct: number;
+  stop_loss_pct: number;
+  min_score: number;
+  confidence_filter: "any" | "high" | "moderate" | "low";
+  signal_sides: "both" | "buy" | "sell";
+  max_trades: number;
+  max_drawdown_pct: number;
+  target_goal_type?: "profit_pct" | "profit_usdt" | "trade_count" | null;
+  target_goal_value?: number | null;
+  execution_mode: "immediate" | "batch";
+}
+
 export interface ScanRequest {
   analysis_date: string;
   asset_type?: AssetType;
@@ -218,6 +235,7 @@ export interface ScanRequest {
   agent_model_overrides?: Record<string, string>;
   ta_prefilter_enabled?: boolean;
   ta_prefilter_threshold?: number;
+  auto_trade_configs?: AutoTradeConfig[];
 }
 
 export interface ScanResultItem {
@@ -228,6 +246,15 @@ export interface ScanResultItem {
   confidence: string;
   score: number;
   decision_summary: string;
+}
+
+export interface AutoTradeResult {
+  symbol: string;
+  side: string;
+  status: "success" | "failed";
+  order_id?: string | null;
+  error?: string | null;
+  account_id: string;
 }
 
 export interface ScanStatus {
@@ -252,6 +279,7 @@ export interface ScanStatus {
   backend_url?: string;
   research_depth?: number;
   max_debate_rounds?: number;
+  auto_trade_results?: AutoTradeResult[];
 }
 
 export type StrategyCategory = "scalping" | "intraday" | "swing" | "positional" | "grid" | "dca" | "hedging" | "arbitrage";

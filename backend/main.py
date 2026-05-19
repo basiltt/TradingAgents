@@ -218,6 +218,7 @@ def create_app() -> FastAPI:
             account_ws_mgr = AccountWSManager(db=db)
             app.state.account_ws_manager = account_ws_mgr
             app.state.accounts_service = AccountsService(db=db, ws_manager=account_ws_mgr)
+            app.state.scanner_service._accounts = app.state.accounts_service
             await account_ws_mgr.start()
 
             from backend.scheduler import SnapshotScheduler
@@ -278,6 +279,16 @@ def create_app() -> FastAPI:
             app.state.trade_service = trade_service
             app.state.accounts_service.set_trade_dependencies(trade_repo, trade_service)
             app.state.close_positions_service.set_trade_service(trade_service)
+
+            from backend.services.position_reconciler import PositionReconciler
+            position_reconciler = PositionReconciler(
+                db=db,
+                accounts_service=app.state.accounts_service,
+                trade_service=trade_service,
+                ws_manager=account_ws_mgr,
+            )
+            await position_reconciler.start()
+            app.state.position_reconciler = position_reconciler
         else:
             app.state.accounts_service = None
             app.state.account_ws_manager = None
@@ -287,6 +298,7 @@ def create_app() -> FastAPI:
             app.state.cycle_engine = None
             app.state.trade_repo = None
             app.state.trade_service = None
+            app.state.position_reconciler = None
 
         logger.info("app_ready: all services initialised")
 
@@ -312,6 +324,8 @@ def create_app() -> FastAPI:
             await _safe_shutdown("rule_evaluator", app.state.rule_evaluator.shutdown())
         if getattr(app.state, "cycle_engine", None):
             await _safe_shutdown("cycle_engine", app.state.cycle_engine.shutdown())
+        if getattr(app.state, "position_reconciler", None):
+            await _safe_shutdown("position_reconciler", app.state.position_reconciler.shutdown())
         if app.state.snapshot_scheduler:
             await _safe_shutdown("snapshot_scheduler", app.state.snapshot_scheduler.shutdown())
             await asyncio.sleep(0.5)

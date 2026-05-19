@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.services.analysis_service import ConcurrencyLimitError, DEFAULT_MAX_CONCURRENT
+from backend.services.auto_trade_service import AutoTradeExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -313,10 +314,11 @@ class ScannerBusyError(Exception):
 class ScannerService:
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
+        self._accounts = accounts_service
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -356,7 +358,16 @@ class ScannerService:
             "completed_at": None,
             "cancel": False,
             "task": None,
+            "auto_trade_executor": None,
+            "auto_trade_results": [],
         }
+
+        # Initialize auto-trade executor if configs provided
+        auto_configs = config.get("auto_trade_configs")
+        if auto_configs and self._accounts:
+            executor = AutoTradeExecutor(self._accounts)
+            executor.init_configs(auto_configs)
+            scan["auto_trade_executor"] = executor
 
         async with self._lock:
             self._scans[scan_id] = scan
@@ -500,7 +511,13 @@ class ScannerService:
                 "completed_at": None,
                 "cancel": False,
                 "task": None,
+                "auto_trade_executor": None,
+                "auto_trade_results": [],
             }
+
+            # Do NOT re-initialize auto-trade executor on resume — state (trades_executed,
+            # trades_failed) is not persisted, so a fresh executor would lose track of
+            # already-executed trades and could cause duplicates.
 
             async with self._lock:
                 self._scans[scan_id] = scan
@@ -547,6 +564,7 @@ class ScannerService:
             "backend_url": config.get("backend_url"),
             "research_depth": config.get("research_depth"),
             "max_debate_rounds": config.get("max_debate_rounds"),
+            "auto_trade_results": scan.get("auto_trade_results", []),
         }
 
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
@@ -579,6 +597,7 @@ class ScannerService:
             "backend_url": config.get("backend_url"),
             "research_depth": config.get("research_depth"),
             "max_debate_rounds": config.get("max_debate_rounds"),
+            "auto_trade_results": [],
         }
 
     async def _run_scan(self, scan_id: str, symbols_override: Optional[List[str]] = None) -> None:
@@ -677,6 +696,33 @@ class ScannerService:
         final_completed = 0
         final_failed = 0
         final_completed_at = now
+
+        # Auto-trade batch execution (after scan completes, not on cancel/error)
+        if not scan_error:
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                executor = scan.get("auto_trade_executor") if scan else None
+                all_results = list(scan["results"]) if scan else []
+                cancelled = scan.get("cancel", False) if scan else True
+                total = scan["total"] if scan else 0
+                failed_count = scan["failed"] if scan else 0
+            # Skip batch if >50% of symbols failed (unreliable data)
+            too_many_failures = total > 0 and failed_count > total * 0.5
+            if executor and all_results and not cancelled and not too_many_failures:
+                try:
+                    batch_executions = await executor.execute_batch(all_results)
+                    if batch_executions:
+                        async with self._lock:
+                            scan = self._scans.get(scan_id)
+                            if scan:
+                                scan["auto_trade_results"].extend(
+                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                                    for e in batch_executions
+                                )
+                except Exception as e:
+                    logger.warning("auto_trade_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan:
@@ -690,6 +736,7 @@ class ScannerService:
                     scan["completed_at"] = now
                 scan["current_tickers"] = []
                 scan["task"] = None
+                scan["auto_trade_executor"] = None
                 final_status = scan["status"]
                 final_completed = scan["completed"]
                 final_failed = scan["failed"]
@@ -949,6 +996,27 @@ class ScannerService:
                 else:
                     scan["failed"] += 1
                 scan["results"].append(result)
+
+        # Auto-trade immediate execution
+        if status == "completed":
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                executor = scan.get("auto_trade_executor") if scan else None
+                cancelled = scan.get("cancel", False) if scan else True
+            if executor and not cancelled:
+                try:
+                    executions = await executor.evaluate_result(result)
+                    if executions:
+                        async with self._lock:
+                            scan = self._scans.get(scan_id)
+                            if scan:
+                                scan["auto_trade_results"].extend(
+                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                                    for e in executions
+                                )
+                except Exception as e:
+                    logger.warning("auto_trade_immediate_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 
         if self._db:
             await self._db.insert_scan_result(scan_id, result)

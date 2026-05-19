@@ -20,6 +20,7 @@ import { ConnBadge } from "@/components/ui/conn-badge";
 import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
 import { cn } from "@/lib/utils";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
+import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
 import {
   Dialog,
   DialogContent,
@@ -605,6 +606,7 @@ interface ScheduledFormDefaults {
   llmApiKey?: string;
   deepModel?: string;
   quickModel?: string;
+  autoTradeConfigs?: import("@/api/client").AutoTradeConfig[];
 }
 
 function loadFormDefaults(): ScheduledFormDefaults {
@@ -671,6 +673,9 @@ function ScheduleFormDialog({
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState(() => formDefaults.llmMaxConcurrent ?? 0);
   const [llmMinSpacingMs, setLlmMinSpacingMs] = useState(() => formDefaults.llmMinSpacingMs ?? 0);
   const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
+  const [autoTradeConfigs, setAutoTradeConfigs] = useState<import("@/api/client").AutoTradeConfig[]>(() => {
+    try { return JSON.parse(localStorage.getItem("tradingagents_auto_trade_configs") ?? "[]"); } catch { return []; }
+  });
   const [showWorkflowSettings, setShowWorkflowSettings] = useState(false);
   const [showLlmSettings, setShowLlmSettings] = useState(false);
 
@@ -774,6 +779,9 @@ function ScheduleFormDialog({
       if (sc.agent_model_overrides != null && typeof sc.agent_model_overrides === "object") {
         setAgentModelOverrides(sc.agent_model_overrides as Record<string, string>);
       }
+      if (Array.isArray(sc.auto_trade_configs)) {
+        setAutoTradeConfigs(sc.auto_trade_configs as import("@/api/client").AutoTradeConfig[]);
+      }
     }
   }, [editData, editingId]);
 
@@ -785,7 +793,7 @@ function ScheduleFormDialog({
       researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
       maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
       taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
-      backendUrl, llmApiKey, deepModel, quickModel,
+      backendUrl, llmApiKey, deepModel, quickModel, autoTradeConfigs,
     });
   }, [
     editingId, name, scheduleType, runAt, intervalMinutes, time, days, day,
@@ -793,7 +801,7 @@ function ScheduleFormDialog({
     researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
     maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
     taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
-    backendUrl, llmApiKey, deepModel, quickModel,
+    backendUrl, llmApiKey, deepModel, quickModel, autoTradeConfigs,
   ]);
 
   function handleOpenChange(v: boolean) {
@@ -822,6 +830,7 @@ function ScheduleFormDialog({
       setCheckpointEnabled(fd.checkpointEnabled ?? false);
       setLlmMaxConcurrent(fd.llmMaxConcurrent ?? 0); setLlmMinSpacingMs(fd.llmMinSpacingMs ?? 0);
       setAgentModelOverrides(loadOverrides());
+      setAutoTradeConfigs(fd.autoTradeConfigs ?? []);
       setShowScanConfig(false); setShowWorkflowSettings(false); setShowLlmSettings(false); setShowEndpoints(false);
     }
     onOpenChange(v);
@@ -882,6 +891,7 @@ function ScheduleFormDialog({
           llm_max_concurrent: llmMaxConcurrent,
           llm_min_spacing_ms: llmMinSpacingMs,
           agent_model_overrides: filterOverridesForAssetType(agentModelOverrides, "crypto"),
+          auto_trade_configs: autoTradeConfigs.length > 0 ? autoTradeConfigs.filter(c => c.account_id) : undefined,
         },
         timezone,
       };
@@ -1228,6 +1238,11 @@ function ScheduleFormDialog({
           {/* Agent Model Overrides */}
           <div className="rounded-xl border border-border/30 px-4 py-3">
             <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
+
+            {/* Auto-Trade */}
+            <div className="pt-3">
+              <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
+            </div>
           </div>
 
           <DialogFooter>

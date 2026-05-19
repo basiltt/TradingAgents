@@ -67,6 +67,36 @@ class TradeService:
         """Remove cached stats for an account, forcing re-fetch on next access."""
         self._stats_cache.pop(account_id, None)
 
+    async def reconcile_close(
+        self,
+        trade_id: str,
+        account_id: str,
+        exit_price: float,
+        realized_pnl: float,
+        realized_pnl_pct: float,
+        fees: float,
+        net_pnl: float,
+        close_reason: str,
+    ) -> dict | None:
+        """Force-close a trade via reconciliation and broadcast the event."""
+        async with self._db.pool.acquire() as conn:
+            async with conn.transaction():
+                closed = await self._repo.reconcile_close(
+                    conn,
+                    trade_id=trade_id,
+                    account_id=account_id,
+                    exit_price=exit_price,
+                    realized_pnl=realized_pnl,
+                    realized_pnl_pct=realized_pnl_pct,
+                    fees=fees,
+                    net_pnl=net_pnl,
+                    close_reason=close_reason,
+                )
+        self.invalidate_stats_cache(account_id)
+        if closed:
+            await self._broadcast_trade_event("trade.closed", closed)
+        return closed
+
     async def get_open_trades(self, account_id: str, limit: int = 500) -> list[dict]:
         """Fetch open trades for an account from the database."""
         async with self._db.pool.acquire() as conn:

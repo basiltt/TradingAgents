@@ -189,7 +189,7 @@ class AccountsService:
         """
         from decimal import Decimal, ROUND_DOWN
 
-        _VALID_PLACEMENT_SOURCES = {"manual", "cycle"}
+        _VALID_PLACEMENT_SOURCES = {"manual", "cycle", "scanner"}
         if source not in _VALID_PLACEMENT_SOURCES:
             raise ValueError(f"Invalid source: {source}. Allowed: {_VALID_PLACEMENT_SOURCES}")
 

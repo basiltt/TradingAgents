@@ -420,6 +420,35 @@ class TradeCloseRequest(BaseModel):
         return v
 
 
+class AutoTradeConfig(BaseModel):
+    """Per-account auto-trade configuration for market scans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    account_id: str = Field(..., min_length=1, max_length=64)
+    direction: Literal["straight", "reverse"] = "straight"
+    leverage: int = Field(default=20, ge=1, le=125)
+    capital_pct: float = Field(default=5, gt=0, le=100)
+    take_profit_pct: float = Field(default=150, gt=0, le=1000)
+    stop_loss_pct: float = Field(default=100, gt=0, le=1000)
+    min_score: float = Field(default=0, ge=0, le=10)
+    confidence_filter: Literal["any", "high", "moderate", "low"] = "any"
+    signal_sides: Literal["both", "buy", "sell"] = "both"
+    max_trades: int = Field(default=999, ge=1, le=999)
+    max_drawdown_pct: float = Field(default=100, ge=1, le=100)
+    target_goal_type: Optional[Literal["profit_pct", "profit_usdt", "trade_count"]] = None
+    target_goal_value: Optional[float] = Field(None, gt=0)
+    execution_mode: Literal["immediate", "batch"] = "immediate"
+
+    @model_validator(mode="after")
+    def validate_target_goal(self) -> "AutoTradeConfig":
+        if self.target_goal_type and not self.target_goal_value:
+            raise ValueError("target_goal_value required when target_goal_type is set")
+        if self.target_goal_value and not self.target_goal_type:
+            raise ValueError("target_goal_type required when target_goal_value is set")
+        return self
+
+
 class ScanRequest(BaseModel):
     analysis_date: str
     asset_type: Optional[str] = "crypto"
@@ -442,6 +471,7 @@ class ScanRequest(BaseModel):
     agent_model_overrides: Optional[Dict[str, str]] = None
     ta_prefilter_enabled: Optional[bool] = None
     ta_prefilter_threshold: Optional[int] = Field(None, ge=0, le=100)
+    auto_trade_configs: Optional[List["AutoTradeConfig"]] = None
 
     @field_validator("workflow_mode")
     @classmethod
@@ -634,6 +664,7 @@ class UpdateAccountRequest(BaseModel):
 class RotateCredentialsRequest(BaseModel):
     api_key: str = Field(..., min_length=10)
     api_secret: str = Field(..., min_length=10)
+
 
 
 class PlaceTradeRequest(BaseModel):
@@ -906,6 +937,14 @@ class CreateScheduledScanRequest(BaseModel):
         if "interval" in v and v["interval"] is not None:
             if v["interval"] not in VALID_CRYPTO_INTERVALS:
                 raise ValueError(f"Invalid interval: {v['interval']}")
+        if "auto_trade_configs" in v and v["auto_trade_configs"] is not None:
+            if not isinstance(v["auto_trade_configs"], list):
+                raise ValueError("auto_trade_configs must be a list")
+            for i, cfg in enumerate(v["auto_trade_configs"]):
+                try:
+                    AutoTradeConfig(**cfg)
+                except Exception as e:
+                    raise ValueError(f"auto_trade_configs[{i}]: {e}")
         return v
 
     @model_validator(mode="after")

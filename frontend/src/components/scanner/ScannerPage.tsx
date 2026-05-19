@@ -21,6 +21,7 @@ import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } fro
 import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
+import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
 
 const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
@@ -225,6 +226,9 @@ export function ScannerPage() {
   const [endpoints, setEndpoints] = useState(loadEndpoints);
   const [showEndpoints, setShowEndpoints] = useState(false);
   const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
+  const [autoTradeConfigs, setAutoTradeConfigs] = useState<import("@/api/client").AutoTradeConfig[]>(() => {
+    try { return JSON.parse(localStorage.getItem("tradingagents_auto_trade_configs") ?? "[]"); } catch { return []; }
+  });
   const endpointsRef = useRef<HTMLDivElement>(null);
 
   const { data: providersData } = useQuery({
@@ -387,6 +391,7 @@ export function ScannerPage() {
         const filtered = filterOverridesForAssetType(agentModelOverrides, "crypto");
         return Object.keys(filtered).length > 0 ? filtered : undefined;
       })(),
+      auto_trade_configs: autoTradeConfigs.length > 0 ? autoTradeConfigs.filter(c => c.account_id) : undefined,
     };
     startMutation.mutate(body);
   };
@@ -883,6 +888,9 @@ export function ScannerPage() {
             </div>
           </div>
 
+          {/* Auto-Trade Accounts */}
+          <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
+
           {/* Start button */}
           <Button
             onClick={handleStart}
@@ -993,6 +1001,39 @@ export function ScannerPage() {
                 <p className="text-xs text-muted-foreground">Hold / Neutral</p>
               </div>
             </div>
+
+            {/* Auto-trade results */}
+            {scan.auto_trade_results && scan.auto_trade_results.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Auto-Trade Executions</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2 text-center">
+                    <p className="text-lg font-bold text-emerald-500">
+                      {scan.auto_trade_results.filter(r => r.status === "success").length}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">Executed</p>
+                  </div>
+                  <div className="rounded-lg bg-red-500/5 border border-red-500/10 p-2 text-center">
+                    <p className="text-lg font-bold text-red-500">
+                      {scan.auto_trade_results.filter(r => r.status === "failed").length}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">Failed</p>
+                  </div>
+                </div>
+                <div className="max-h-32 overflow-y-auto space-y-1">
+                  {scan.auto_trade_results.map((r, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs px-2 py-1 rounded bg-muted/30" title={r.error || undefined}>
+                      <span className="font-mono flex-shrink-0">{r.symbol}</span>
+                      <span className={cn("flex-shrink-0", r.side === "buy" ? "text-emerald-500" : "text-red-500")}>{r.side}</span>
+                      <span className="text-muted-foreground truncate text-[10px]">{r.account_id.slice(0, 8)}</span>
+                      <span className={cn("ml-auto flex-shrink-0", r.status === "success" ? "text-emerald-400" : "text-red-400")}>
+                        {r.status === "success" ? "✓" : "✗"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Current batch tickers */}
             {isRunning && scan.current_tickers.length > 0 && (
