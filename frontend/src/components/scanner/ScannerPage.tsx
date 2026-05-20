@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient, type ScanRequest, type ScanStatus, type ScanResultItem, type CryptoInterval } from "@/api/client";
+import { apiClient, accountsApi, type ScanRequest, type ScanStatus, type ScanResultItem, type CryptoInterval } from "@/api/client";
 import { ModelSelect } from "@/components/ui/model-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -198,6 +198,8 @@ function ScanConfigBanner({ scan }: { scan: ScanStatus }) {
 
 export function ScannerPage() {
   const queryClient = useQueryClient();
+  const { data: accountsList = [] } = useQuery({ queryKey: ["accounts"], queryFn: () => accountsApi.list(), staleTime: 60_000 });
+  const accountLabelMap = Object.fromEntries(accountsList.map((a) => [a.id, a.label]));
   const [saved] = useState(loadSavedSettings);
   const [scanner] = useState(loadScannerSettings);
   const [analysisDate, setAnalysisDate] = useState(scanner.analysisDate ?? getToday());
@@ -1025,7 +1027,7 @@ export function ScannerPage() {
                     <div key={i} className="flex items-center gap-2 text-xs px-2 py-1 rounded bg-muted/30" title={r.error || undefined}>
                       <span className="font-mono flex-shrink-0">{r.symbol}</span>
                       <span className={cn("flex-shrink-0", r.side === "buy" ? "text-emerald-500" : "text-red-500")}>{r.side}</span>
-                      <span className="text-muted-foreground truncate text-[10px]">{r.account_id.slice(0, 8)}</span>
+                      <span className="text-muted-foreground truncate text-[10px]">{accountLabelMap[r.account_id] || r.account_id.slice(0, 8)}</span>
                       <span className={cn("ml-auto flex-shrink-0", r.status === "success" ? "text-emerald-400" : "text-red-400")}>
                         {r.status === "success" ? "✓" : "✗"}
                       </span>

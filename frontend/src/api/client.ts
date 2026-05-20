@@ -208,9 +208,10 @@ export interface AutoTradeConfig {
   signal_sides: "both" | "buy" | "sell";
   max_trades: number;
   max_drawdown_pct: number;
-  target_goal_type?: "profit_pct" | "profit_usdt" | "trade_count" | null;
+  target_goal_type?: "profit_pct" | "trade_count" | null;
   target_goal_value?: number | null;
   execution_mode: "immediate" | "batch";
+  skip_if_positions_open?: boolean;
 }
 
 export interface ScanRequest {

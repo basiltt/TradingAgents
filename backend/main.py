@@ -233,6 +233,7 @@ def create_app() -> FastAPI:
             app.state.close_positions_service = ClosePositionsService(
                 db=db, accounts_service=app.state.accounts_service, ws_manager=account_ws_mgr,
             )
+            app.state.scanner_service._close_svc = app.state.close_positions_service
 
             from backend.services.close_rule_evaluator import CloseRuleEvaluator
             rule_evaluator = CloseRuleEvaluator(

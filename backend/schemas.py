@@ -436,9 +436,10 @@ class AutoTradeConfig(BaseModel):
     signal_sides: Literal["both", "buy", "sell"] = "both"
     max_trades: int = Field(default=999, ge=1, le=999)
     max_drawdown_pct: float = Field(default=100, ge=1, le=100)
-    target_goal_type: Optional[Literal["profit_pct", "profit_usdt", "trade_count"]] = None
+    target_goal_type: Optional[Literal["trade_count", "profit_pct"]] = None
     target_goal_value: Optional[float] = Field(None, gt=0)
     execution_mode: Literal["immediate", "batch"] = "immediate"
+    skip_if_positions_open: bool = False
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":

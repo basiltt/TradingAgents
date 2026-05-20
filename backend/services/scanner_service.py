@@ -314,11 +314,12 @@ class ScannerBusyError(Exception):
 class ScannerService:
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
         self._accounts = accounts_service
+        self._close_svc = close_positions_service
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -365,8 +366,9 @@ class ScannerService:
         # Initialize auto-trade executor if configs provided
         auto_configs = config.get("auto_trade_configs")
         if auto_configs and self._accounts:
-            executor = AutoTradeExecutor(self._accounts)
+            executor = AutoTradeExecutor(self._accounts, self._close_svc)
             executor.init_configs(auto_configs)
+            await executor.init_balances()
             scan["auto_trade_executor"] = executor
 
         async with self._lock:
@@ -518,6 +520,8 @@ class ScannerService:
             # Do NOT re-initialize auto-trade executor on resume — state (trades_executed,
             # trades_failed) is not persisted, so a fresh executor would lose track of
             # already-executed trades and could cause duplicates.
+            if config.get("auto_trade_configs"):
+                logger.info("auto_trade_disabled_on_resume", extra={"scan_id": scan_id})
 
             async with self._lock:
                 self._scans[scan_id] = scan
@@ -725,6 +729,7 @@ class ScannerService:
 
         async with self._lock:
             scan = self._scans.get(scan_id)
+            executor = scan.get("auto_trade_executor") if scan else None
             if scan:
                 if scan["cancel"]:
                     scan["status"] = "cancelled"
@@ -741,6 +746,13 @@ class ScannerService:
                 final_completed = scan["completed"]
                 final_failed = scan["failed"]
                 final_completed_at = scan["completed_at"]
+
+        # Clean up close rules for accounts that had zero successful trades
+        if executor:
+            try:
+                await executor.cleanup_unused_rules()
+            except Exception:
+                pass
 
         if self._db:
             await self._db.update_scan(

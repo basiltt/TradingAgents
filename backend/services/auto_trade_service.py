@@ -24,8 +24,9 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None):
         self._accounts = accounts_service
+        self._close_svc = close_positions_service
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
 
@@ -34,6 +35,85 @@ class AutoTradeExecutor:
         for i, cfg in enumerate(configs):
             key = f"{cfg['account_id']}_{i}"
             self._state[key] = _AccountState(config=cfg)
+
+    async def init_balances(self) -> None:
+        """Pre-fetch wallet balances and check positions for all configured accounts."""
+        rules_created_for: set = set()  # track accounts that already got close rules this cycle
+        for key, state in self._state.items():
+            if state.stopped:
+                continue
+            account_id = state.config["account_id"]
+            if not account_id:
+                state.stopped = True
+                state.stopped_reason = "no_account_id"
+                continue
+            # Check positions if skip_if_positions_open is enabled
+            if state.config.get("skip_if_positions_open"):
+                try:
+                    positions = await self._accounts.get_positions(account_id)
+                    if positions:
+                        state.stopped = True
+                        state.stopped_reason = "positions_already_open"
+                        logger.info("auto_trade_skipped_positions", extra={"account_id": account_id, "position_count": len(positions)})
+                        continue
+                except Exception as e:
+                    logger.warning("auto_trade_position_check_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+            # Fetch and lock balance for this cycle
+            try:
+                wallet = await self._accounts.get_wallet(account_id)
+                balance_str = wallet.get("totalAvailableBalance") or wallet.get("totalWalletBalance") or "0"
+                state.base_capital = float(balance_str)
+            except Exception as e:
+                state.stopped = True
+                state.stopped_reason = f"wallet_fetch_failed: {str(e)[:200]}"
+                logger.warning("auto_trade_init_balance_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                continue
+            if state.base_capital <= 0:
+                state.stopped = True
+                state.stopped_reason = "zero_balance"
+                continue
+            # Create close rules (only once per account per cycle)
+            if account_id not in rules_created_for:
+                # Profit target rule
+                if state.config.get("target_goal_type") == "profit_pct" and self._close_svc:
+                    goal_value = state.config.get("target_goal_value")
+                    if goal_value and goal_value > 0:
+                        try:
+                            rule = await self._close_svc.create_rule(
+                                account_id=account_id,
+                                rule_data={
+                                    "trigger_type": "EQUITY_RISE_PCT",
+                                    "threshold_value": str(goal_value),
+                                    "reference_value": str(state.base_capital),
+                                },
+                            )
+                            state.close_rule_id = rule.get("id")
+                            logger.info("auto_trade_close_rule_created", extra={"account_id": account_id, "rule_id": state.close_rule_id, "threshold": goal_value})
+                        except Exception as e:
+                            state.stopped = True
+                            state.stopped_reason = "profit_rule_creation_failed"
+                            logger.warning("auto_trade_close_rule_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                            continue
+                # Max drawdown rule
+                max_drawdown = state.config.get("max_drawdown_pct", 100)
+                if max_drawdown < 100 and self._close_svc:
+                    try:
+                        rule = await self._close_svc.create_rule(
+                            account_id=account_id,
+                            rule_data={
+                                "trigger_type": "EQUITY_DROP_PCT",
+                                "threshold_value": str(max_drawdown),
+                                "reference_value": str(state.base_capital),
+                            },
+                        )
+                        state.drawdown_rule_id = rule.get("id")
+                        logger.info("auto_trade_drawdown_rule_created", extra={"account_id": account_id, "rule_id": state.drawdown_rule_id, "threshold": max_drawdown})
+                    except Exception as e:
+                        state.stopped = True
+                        state.stopped_reason = "drawdown_rule_creation_failed"
+                        logger.warning("auto_trade_drawdown_rule_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                        continue
+                rules_created_for.add(account_id)
 
     async def evaluate_result(self, result: Dict[str, Any]) -> List[TradeExecution]:
         """Evaluate one scan result against all 'immediate' mode configs. Returns executions."""
@@ -97,6 +177,8 @@ class AutoTradeExecutor:
                 "trades_failed": state.trades_failed,
                 "trades_skipped": state.trades_skipped,
                 "stopped_reason": state.stopped_reason,
+                "close_rule_id": state.close_rule_id,
+                "drawdown_rule_id": state.drawdown_rule_id,
                 "executions": [
                     {"symbol": e.symbol, "side": e.side, "status": e.status,
                      "order_id": e.order_id, "error": e.error}
@@ -104,6 +186,21 @@ class AutoTradeExecutor:
                 ],
             })
         return summaries
+
+    async def cleanup_unused_rules(self) -> None:
+        """Delete close rules for accounts that had zero successful trades (e.g., scan cancelled)."""
+        if not self._close_svc:
+            return
+        for key, state in self._state.items():
+            if state.trades_executed > 0:
+                continue
+            account_id = state.config["account_id"]
+            for rule_id in (state.close_rule_id, state.drawdown_rule_id):
+                if rule_id:
+                    try:
+                        await self._close_svc.delete_rule(account_id, rule_id)
+                    except Exception:
+                        pass
 
     async def _try_trade(self, state: "_AccountState", result: Dict[str, Any]) -> Optional[TradeExecution]:
         cfg = state.config
@@ -152,21 +249,9 @@ class AutoTradeExecutor:
                 state.stopped_reason = "target_goal_reached"
                 return None
 
-        # Fetch base capital if not cached
-        if state.base_capital is None:
-            try:
-                wallet = await self._accounts.get_wallet(cfg["account_id"])
-                balance_str = wallet.get("totalAvailableBalance") or wallet.get("totalWalletBalance") or "0"
-                state.base_capital = float(balance_str)
-            except Exception as e:
-                logger.warning("auto_trade_wallet_fetch_failed", extra={"account_id": cfg["account_id"], "error": str(e)[:512]})
-                state.stopped = True
-                state.stopped_reason = f"wallet_fetch_failed: {str(e)[:200]}"
-                return None
-
-        if state.base_capital <= 0:
+        if state.base_capital is None or state.base_capital <= 0:
             state.stopped = True
-            state.stopped_reason = "zero_balance"
+            state.stopped_reason = "no_balance_captured"
             return None
 
         # Execute trade
@@ -213,12 +298,6 @@ class AutoTradeExecutor:
                 "account_id": cfg["account_id"], "symbol": symbol, "error": str(e)[:512],
             })
 
-            # Check max drawdown (simplified — count failures)
-            max_drawdown = cfg.get("max_drawdown_pct", 100)
-            if state.trades_failed > 3 and max_drawdown < 100:
-                state.stopped = True
-                state.stopped_reason = "max_drawdown_protection"
-
             return execution
 
 
@@ -231,4 +310,6 @@ class _AccountState:
     base_capital: Optional[float] = None
     stopped: bool = False
     stopped_reason: Optional[str] = None
+    close_rule_id: Optional[str] = None
+    drawdown_rule_id: Optional[str] = None
     executions: List[TradeExecution] = field(default_factory=list)
