@@ -83,7 +83,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-3xl font-bold tracking-tight">Account Detail</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Account Detail</h1>
         </div>
         <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
           <p className="text-destructive text-sm">{error}</p>

@@ -220,7 +220,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
                     className="w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30 resize-none"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs text-muted-foreground mb-1.5">Category</Label>
                     <div className="flex flex-wrap gap-1.5 mt-1">
@@ -258,7 +258,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <FormField label="Trading Mode">
                     <select value={config.trading_mode ?? ""} onChange={(e) => updateConfig({ trading_mode: e.target.value })} className={SELECT_CLASS}>
                       <option value="manual_reference">Manual Reference</option>
@@ -278,7 +278,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Signal Processing */}
             <Section id="signal" title="Signal Processing & Execution" icon={SECTION_ICONS.signal} open={openSections.has("signal")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Signal Adherence">
                   <select value={config.signal_adherence ?? ""} onChange={(e) => updateConfig({ signal_adherence: e.target.value })} className={SELECT_CLASS}>
                     <option value="strict_follow">Strict Follow</option>
@@ -314,7 +314,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Capital Allocation */}
             <Section id="capital" title="Capital Allocation & Position Sizing" icon={SECTION_ICONS.capital} open={openSections.has("capital")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Allocation Mode">
                   <select value={config.capital_allocation_mode ?? ""} onChange={(e) => updateConfig({ capital_allocation_mode: e.target.value })} className={SELECT_CLASS}>
                     <option value="fixed_amount">Fixed Amount</option>
@@ -360,7 +360,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Risk Management */}
             <Section id="risk" title="Risk Management" icon={SECTION_ICONS.risk} open={openSections.has("risk")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Risk Per Trade (%)">
                   <Input type="number" step="0.5" value={config.risk_per_trade_pct ?? ""} onChange={(e) => updateConfig({ risk_per_trade_pct: e.target.value ? Number(e.target.value) : undefined })} />
                 </FormField>
@@ -381,7 +381,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Stop Loss */}
             <Section id="stoploss" title="Stop Loss" icon={SECTION_ICONS.stoploss} open={openSections.has("stoploss")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="SL Type">
                   <select value={config.sl_type ?? ""} onChange={(e) => updateConfig({ sl_type: e.target.value })} className={SELECT_CLASS}>
                     <option value="fixed_pct">Fixed %</option>
@@ -413,7 +413,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Take Profit */}
             <Section id="takeprofit" title="Take Profit" icon={SECTION_ICONS.takeprofit} open={openSections.has("takeprofit")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="TP Type">
                   <select value={config.tp_type ?? ""} onChange={(e) => updateConfig({ tp_type: e.target.value })} className={SELECT_CLASS}>
                     <option value="fixed_pct">Fixed %</option>
@@ -431,7 +431,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Trade Lifecycle */}
             <Section id="lifecycle" title="Trade Lifecycle" icon={SECTION_ICONS.lifecycle} open={openSections.has("lifecycle")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Pyramiding">
                   <Toggle checked={config.pyramiding_enabled ?? false} onChange={(v) => updateConfig({ pyramiding_enabled: v })} />
                 </FormField>
@@ -468,7 +468,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Market Condition Filters */}
             <Section id="market" title="Market Filters" icon={SECTION_ICONS.market} open={openSections.has("market")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Trend Only">
                   <Toggle checked={config.trend_only ?? false} onChange={(v) => updateConfig({ trend_only: v })} />
                 </FormField>
@@ -492,7 +492,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Trading Schedule */}
             <Section id="schedule" title="Trading Schedule" icon={SECTION_ICONS.schedule} open={openSections.has("schedule")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Active Sessions">
                   <Input placeholder="e.g. London, New York" value={(config.trading_sessions ?? []).join(", ")} onChange={(e) => updateConfig({ trading_sessions: e.target.value ? e.target.value.split(",").map(s => s.trim()).filter(Boolean) : undefined })} />
                 </FormField>
@@ -515,7 +515,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
                   <Toggle checked={config.cycle_enabled ?? false} onChange={(v) => updateConfig({ cycle_enabled: v })} />
                 </FormField>
                 {config.cycle_enabled && (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <FormField label="Target PnL (%)">
                       <Input type="number" step="0.5" value={config.cycle_target_pnl_pct ?? ""} onChange={(e) => updateConfig({ cycle_target_pnl_pct: e.target.value ? Number(e.target.value) : undefined })} />
                     </FormField>
@@ -544,7 +544,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
             {/* Alerts */}
             <Section id="alerts" title="Notifications & Alerts" icon={SECTION_ICONS.alerts} open={openSections.has("alerts")} onToggle={toggleSection}>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FormField label="Entry Alert">
                   <Toggle checked={config.alert_entry ?? false} onChange={(v) => updateConfig({ alert_entry: v })} />
                 </FormField>

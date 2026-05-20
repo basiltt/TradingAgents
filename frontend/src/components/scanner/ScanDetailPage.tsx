@@ -393,7 +393,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
           )}
 
           {/* Summary boxes */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-center">
               <div className="text-2xl font-bold text-emerald-500">{buyResults.length}</div>
               <div className="text-xs text-muted-foreground mt-1">Buy Signals</div>

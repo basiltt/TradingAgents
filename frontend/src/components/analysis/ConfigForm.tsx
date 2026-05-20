@@ -359,7 +359,7 @@ export function ConfigForm() {
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">New Analysis</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">New Analysis</h1>
         <p className="text-sm text-muted-foreground mt-1.5">Configure and start a new multi-agent trading analysis.</p>
       </div>
 

@@ -43,7 +43,7 @@ export function TradeDetailPanel() {
       <div className="fixed inset-0 z-40 bg-black/50" onClick={handleClose} />
       <div
         ref={panelRef}
-        className="fixed right-0 top-0 z-50 h-full w-full max-w-[440px] overflow-y-auto border-l border-border/30 bg-background shadow-2xl animate-in slide-in-from-right duration-200 custom-scrollbar"
+        className="fixed right-0 top-0 z-50 h-full w-full max-w-[100vw] sm:max-w-[440px] overflow-y-auto border-l border-border/30 bg-background shadow-2xl animate-in slide-in-from-right duration-200 custom-scrollbar"
       >
         {!trade ? (
           <div className="flex items-center justify-center h-full">

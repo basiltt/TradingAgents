@@ -166,7 +166,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {step === "config" ? "Start Trading Cycle" : "Confirm Trading Cycle"}
@@ -191,7 +191,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="cycle-direction">Direction</Label>
                 <Select value={settings.direction} onValueChange={(v) => update({ direction: v as "straight" | "reverse" })}>
@@ -208,7 +208,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="cycle-capital">Capital %</Label>
                 <Input id="cycle-capital" type="number" min={0.1} max={100} step={0.1} value={settings.capitalPct} onChange={(e) => update({ capitalPct: e.target.value })} />
@@ -225,7 +225,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
 
             <div className="border-t pt-3 space-y-3">
               <p className="text-sm font-medium">Scan Filters</p>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="cycle-score">Min Score</Label>
                   <Input id="cycle-score" type="number" min={-10} max={10} value={settings.minScore} onChange={(e) => update({ minScore: e.target.value })} />
@@ -264,7 +264,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="cycle-max-trades">Max Trades</Label>
                 <Input id="cycle-max-trades" type="number" min={1} max={20} value={settings.maxTrades} onChange={(e) => update({ maxTrades: e.target.value })} />
@@ -277,7 +277,7 @@ export function TradingCycleDialog({ open, onOpenChange, scanId, scanLabel, onSu
 
             <div className="border-t pt-3 space-y-3">
               <p className="text-sm font-medium">Target Goal</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="cycle-target-type">Type</Label>
                   <Select value={settings.targetType} onValueChange={(v) => update({ targetType: v as "percentage" | "amount" })}>

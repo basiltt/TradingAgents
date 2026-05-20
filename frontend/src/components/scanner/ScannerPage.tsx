@@ -989,7 +989,7 @@ export function ScannerPage() {
             </div>
 
             {/* Stats row */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-3 text-center">
                 <p className="text-2xl font-bold text-emerald-500">{buyResults.length}</p>
                 <p className="text-xs text-muted-foreground">Buy Signals</p>

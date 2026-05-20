@@ -197,7 +197,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
       </div>
 
       {/* Direction & Execution Mode */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label className="text-xs text-muted-foreground">Direction</Label>
           <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40">
@@ -251,7 +251,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
       {/* Trade Parameters */}
       <div className="space-y-3">
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Trade Parameters</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div>
             <Label className="text-xs text-muted-foreground">Leverage</Label>
             <div className="flex items-center gap-1 mt-1.5">
@@ -290,7 +290,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
       </div>
 
       {/* TP / SL */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label className="text-xs text-muted-foreground">Take Profit %</Label>
           <Input
@@ -316,7 +316,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
       {/* Signal Filters */}
       <div className="space-y-3">
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Signal Filters</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div>
             <Label className="text-xs text-muted-foreground">Min Score</Label>
             <Input
@@ -363,7 +363,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
       {/* Risk Management */}
       <div className="space-y-3">
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Risk Management</p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <Label className="text-xs text-muted-foreground">Max Drawdown %</Label>
             <Input

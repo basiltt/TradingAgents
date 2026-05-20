@@ -52,7 +52,7 @@ export function AccountsDashboard() {
     return (
       <div className="space-y-6">
         <Skeleton className="h-10 w-56" />
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-28 rounded-2xl" />)}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -65,7 +65,7 @@ export function AccountsDashboard() {
   if (status === "error" && dashboard.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Trading Accounts</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Trading Accounts</h1>
         <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
           <p className="text-destructive text-sm">{error || "Failed to load accounts."}</p>
           <button

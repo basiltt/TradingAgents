@@ -946,7 +946,7 @@ function ScheduleFormDialog({
           {/* Schedule type selector */}
           <div>
             <Label className="text-xs font-medium">Schedule Type</Label>
-            <div className="grid grid-cols-5 gap-1.5 mt-1.5">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 mt-1.5">
               {SCHEDULE_TYPES.map((t) => {
                 const typeIcon = TYPE_CONFIG[t.value]?.icon ?? "";
                 return (
@@ -1221,7 +1221,7 @@ function ScheduleFormDialog({
                 <p className="text-[11px] text-muted-foreground">Model for fast, lightweight tasks</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <Label className="text-xs font-medium">LLM Concurrency Limit</Label>
                 <Input type="number" min={0} max={100} value={llmMaxConcurrent} onChange={(e) => setLlmMaxConcurrent(Number(e.target.value))} className="w-28 text-xs" />

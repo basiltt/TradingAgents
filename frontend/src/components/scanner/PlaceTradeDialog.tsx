@@ -261,7 +261,7 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !loading && handleClose()} />
-      <div className="relative bg-card border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-card border rounded-xl shadow-2xl p-4 sm:p-6 max-w-[95vw] sm:max-w-md w-full mx-2 sm:mx-4 space-y-4 max-h-[90vh] overflow-y-auto">
         <h3 className="text-lg font-bold flex items-center gap-2">
           <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
@@ -397,7 +397,7 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
             </div>
 
             {/* Leverage & Capital % */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Leverage</label>
                 <div className="flex items-center gap-2">
@@ -444,7 +444,7 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
             )}
 
             {/* TP / SL */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Take Profit %</label>
                 <input

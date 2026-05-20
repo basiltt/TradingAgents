@@ -134,7 +134,7 @@ export function CleanupDialog({ accountId, onComplete, onClose }: Props) {
             </div>
 
             {mode === "preset" ? (
-              <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
                 {PRESETS.map((p) => (
                   <button
                     key={p.value}

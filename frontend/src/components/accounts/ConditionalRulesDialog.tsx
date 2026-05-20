@@ -123,7 +123,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => !saving && handleDialogClose()}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="relative bg-popover border border-border/50 rounded-2xl shadow-2xl shadow-black/30 max-w-xl w-full mx-4 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
+        className="relative bg-popover border border-border/50 rounded-2xl shadow-2xl shadow-black/30 max-w-[95vw] sm:max-w-xl w-full mx-2 sm:mx-4 max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

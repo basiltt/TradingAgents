@@ -142,7 +142,7 @@ export function ScanHistoryPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Scan History</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scan History</h1>
         <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
           <p className="text-destructive text-sm">Failed to load scan history.</p>
         </div>
