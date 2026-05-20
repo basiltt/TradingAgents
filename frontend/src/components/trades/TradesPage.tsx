@@ -8,7 +8,6 @@ import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling"
 import { useTradePolling } from "@/components/trades/hooks/useTradePolling";
 import { useTradeFilters } from "@/components/trades/hooks/useTradeFilters";
 import { useTradeHistory } from "@/components/trades/hooks/useTradeHistory";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -127,7 +126,7 @@ export default function TradesPage() {
   const lastUpdated = useAppSelector((s) => s.trades.lastUpdated);
   const accounts = useAppSelector((s) => s.accounts.dashboard);
   const accountsStatus = useAppSelector((s) => s.accounts.status);
-  const isMobile = useMediaQuery("(max-width: 767px)");
+
 
   useTradePolling(wsConnected);
   useTradeFilters();
