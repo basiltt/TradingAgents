@@ -388,6 +388,8 @@ ALTER TABLE scheduled_scans ADD CONSTRAINT scheduled_scans_status_check
 """),
     (25, _SCHEMA_V25_TABLES),
     (26, _schema_v26_triggers_sync),
+    (28, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_results JSONB NOT NULL DEFAULT '[]'"),
+    (29, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_summaries JSONB NOT NULL DEFAULT '[]'"),
 ]
 def _default_dsn() -> str:
     dsn = os.environ.get("DATABASE_URL")
@@ -774,7 +776,7 @@ class AnalysisDB:
                 raise
 
     def update_scan(self, scan_id: str, **fields: Any) -> None:
-        allowed = {"status", "total", "completed", "failed", "completed_at"}
+        allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return

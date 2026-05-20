@@ -447,6 +447,8 @@ CREATE TABLE IF NOT EXISTS dead_letter (
 CREATE INDEX IF NOT EXISTS idx_dead_letter_status ON dead_letter(status) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_dead_letter_operation ON dead_letter(operation);
 """),
+    (28, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_results JSONB NOT NULL DEFAULT '[]'"),
+    (29, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_summaries JSONB NOT NULL DEFAULT '[]'"),
 ]
 
 
@@ -818,7 +820,7 @@ class AsyncAnalysisDB:
         )
 
     async def update_scan(self, scan_id: str, **fields: Any) -> None:
-        allowed = {"status", "total", "completed", "failed", "completed_at"}
+        allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return

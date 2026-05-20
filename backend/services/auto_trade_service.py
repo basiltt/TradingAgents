@@ -29,12 +29,28 @@ class AutoTradeExecutor:
         self._close_svc = close_positions_service
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
+        self._position_cache: Dict[str, float] = {}  # account_id -> last check timestamp
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
         self._state.clear()
         for i, cfg in enumerate(configs):
             key = f"{cfg['account_id']}_{i}"
             self._state[key] = _AccountState(config=cfg)
+
+    def restore_state(self, prior_results: List[Dict[str, Any]]) -> None:
+        """Restore trade counters from previously executed auto_trade_results (for resume)."""
+        account_success: Dict[str, int] = {}
+        account_failed: Dict[str, int] = {}
+        for r in prior_results:
+            aid = r.get("account_id", "")
+            if r.get("status") == "success":
+                account_success[aid] = account_success.get(aid, 0) + 1
+            else:
+                account_failed[aid] = account_failed.get(aid, 0) + 1
+        for state in self._state.values():
+            aid = state.config["account_id"]
+            state.trades_executed = account_success.get(aid, 0)
+            state.trades_failed = account_failed.get(aid, 0)
 
     async def init_balances(self) -> None:
         """Pre-fetch wallet balances and check positions for all configured accounts."""
@@ -115,6 +131,23 @@ class AutoTradeExecutor:
                         continue
                 rules_created_for.add(account_id)
 
+        # Propagate rule IDs and base_capital to sibling configs sharing the same account
+        account_rule_map: Dict[str, tuple] = {}
+        for state in self._state.values():
+            aid = state.config["account_id"]
+            if state.close_rule_id or state.drawdown_rule_id or state.base_capital:
+                account_rule_map.setdefault(aid, (state.close_rule_id, state.drawdown_rule_id, state.base_capital))
+        for state in self._state.values():
+            aid = state.config["account_id"]
+            if aid in account_rule_map:
+                cr, dr, bc = account_rule_map[aid]
+                if not state.close_rule_id and cr:
+                    state.close_rule_id = cr
+                if not state.drawdown_rule_id and dr:
+                    state.drawdown_rule_id = dr
+                if state.base_capital is None and bc:
+                    state.base_capital = bc
+
     async def evaluate_result(self, result: Dict[str, Any]) -> List[TradeExecution]:
         """Evaluate one scan result against all 'immediate' mode configs. Returns executions."""
         async with self._lock:
@@ -188,19 +221,38 @@ class AutoTradeExecutor:
         return summaries
 
     async def cleanup_unused_rules(self) -> None:
-        """Delete close rules for accounts that had zero successful trades (e.g., scan cancelled)."""
+        """Delete close rules for accounts that had zero successful trades across ALL configs."""
         if not self._close_svc:
             return
-        for key, state in self._state.items():
+        # Aggregate: did any config for this account execute successfully?
+        account_has_trades: Dict[str, bool] = {}
+        for state in self._state.values():
+            aid = state.config["account_id"]
             if state.trades_executed > 0:
+                account_has_trades[aid] = True
+            elif aid not in account_has_trades:
+                account_has_trades[aid] = False
+
+        # Collect all rule IDs per account (deduplicated)
+        account_rules: Dict[str, set] = {}
+        for state in self._state.values():
+            aid = state.config["account_id"]
+            if aid not in account_rules:
+                account_rules[aid] = set()
+            if state.close_rule_id:
+                account_rules[aid].add(state.close_rule_id)
+            if state.drawdown_rule_id:
+                account_rules[aid].add(state.drawdown_rule_id)
+
+        # Delete rules only for accounts with zero total trades
+        for aid, has_trades in account_has_trades.items():
+            if has_trades:
                 continue
-            account_id = state.config["account_id"]
-            for rule_id in (state.close_rule_id, state.drawdown_rule_id):
-                if rule_id:
-                    try:
-                        await self._close_svc.delete_rule(account_id, rule_id)
-                    except Exception:
-                        pass
+            for rule_id in account_rules.get(aid, set()):
+                try:
+                    await self._close_svc.delete_rule(aid, rule_id)
+                except Exception:
+                    pass
 
     async def _try_trade(self, state: "_AccountState", result: Dict[str, Any]) -> Optional[TradeExecution]:
         cfg = state.config
@@ -249,6 +301,27 @@ class AutoTradeExecutor:
                 state.stopped_reason = "target_goal_reached"
                 return None
 
+        account_id = cfg["account_id"]
+
+        # Fix #2: Re-check positions before each trade if skip_if_positions_open
+        if cfg.get("skip_if_positions_open"):
+            try:
+                positions = await self._accounts.get_positions(account_id)
+                if positions:
+                    state.stopped = True
+                    state.stopped_reason = "positions_opened_during_scan"
+                    return None
+            except Exception as e:
+                logger.warning("auto_trade_position_recheck_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+
+        # Fix #3: Refresh available balance before each trade
+        try:
+            wallet = await self._accounts.get_wallet(account_id)
+            balance_str = wallet.get("totalAvailableBalance") or wallet.get("totalWalletBalance") or "0"
+            state.base_capital = float(balance_str)
+        except Exception as e:
+            logger.warning("auto_trade_balance_refresh_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+
         if state.base_capital is None or state.base_capital <= 0:
             state.stopped = True
             state.stopped_reason = "no_balance_captured"
@@ -257,7 +330,7 @@ class AutoTradeExecutor:
         # Execute trade
         try:
             result_data = await self._accounts.place_trade(
-                account_id=cfg["account_id"],
+                account_id=account_id,
                 symbol=symbol,
                 signal_direction=direction,
                 trade_direction=cfg.get("direction", "straight"),
@@ -269,7 +342,7 @@ class AutoTradeExecutor:
                 source="scanner",
             )
             execution = TradeExecution(
-                account_id=cfg["account_id"],
+                account_id=account_id,
                 symbol=symbol,
                 side=result_data.get("side", direction),
                 status="success",
@@ -279,14 +352,14 @@ class AutoTradeExecutor:
             state.trades_executed += 1
             state.executions.append(execution)
             logger.info("auto_trade_executed", extra={
-                "account_id": cfg["account_id"], "symbol": symbol,
+                "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
             })
             return execution
 
         except Exception as e:
             execution = TradeExecution(
-                account_id=cfg["account_id"],
+                account_id=account_id,
                 symbol=symbol,
                 side=direction,
                 status="failed",
@@ -295,7 +368,7 @@ class AutoTradeExecutor:
             state.trades_failed += 1
             state.executions.append(execution)
             logger.warning("auto_trade_failed", extra={
-                "account_id": cfg["account_id"], "symbol": symbol, "error": str(e)[:512],
+                "account_id": account_id, "symbol": symbol, "error": str(e)[:512],
             })
 
             return execution

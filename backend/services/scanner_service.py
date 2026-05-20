@@ -370,6 +370,8 @@ class ScannerService:
             executor.init_configs(auto_configs)
             await executor.init_balances()
             scan["auto_trade_executor"] = executor
+        elif auto_configs and not self._accounts:
+            logger.warning("auto_trade_configs provided but accounts service unavailable — ignoring")
 
         async with self._lock:
             self._scans[scan_id] = scan
@@ -517,11 +519,23 @@ class ScannerService:
                 "auto_trade_results": [],
             }
 
-            # Do NOT re-initialize auto-trade executor on resume — state (trades_executed,
-            # trades_failed) is not persisted, so a fresh executor would lose track of
-            # already-executed trades and could cause duplicates.
-            if config.get("auto_trade_configs"):
-                logger.info("auto_trade_disabled_on_resume", extra={"scan_id": scan_id})
+            # Restore auto-trade executor on resume — use prior results to restore trade counters
+            auto_configs = config.get("auto_trade_configs")
+            if auto_configs and self._accounts:
+                executor = AutoTradeExecutor(self._accounts, self._close_svc)
+                executor.init_configs(auto_configs)
+                # Restore counters from already-executed trades stored in DB
+                prior_auto_results = (db_results or {}).get("auto_trade_results", [])
+                if prior_auto_results:
+                    executor.restore_state(prior_auto_results)
+                await executor.init_balances()
+                scan["auto_trade_executor"] = executor
+                scan["auto_trade_results"] = list(prior_auto_results)
+                logger.info("auto_trade_restored_on_resume", extra={
+                    "scan_id": scan_id, "prior_trades": len(prior_auto_results),
+                })
+            elif auto_configs:
+                logger.warning("auto_trade_configs_on_resume_but_no_accounts_service", extra={"scan_id": scan_id})
 
             async with self._lock:
                 self._scans[scan_id] = scan
@@ -569,6 +583,7 @@ class ScannerService:
             "research_depth": config.get("research_depth"),
             "max_debate_rounds": config.get("max_debate_rounds"),
             "auto_trade_results": scan.get("auto_trade_results", []),
+            "auto_trade_summaries": scan.get("auto_trade_summaries", []),
         }
 
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
@@ -601,7 +616,8 @@ class ScannerService:
             "backend_url": config.get("backend_url"),
             "research_depth": config.get("research_depth"),
             "max_debate_rounds": config.get("max_debate_rounds"),
-            "auto_trade_results": [],
+            "auto_trade_results": scan.get("auto_trade_results") or [],
+            "auto_trade_summaries": scan.get("auto_trade_summaries") or [],
         }
 
     async def _run_scan(self, scan_id: str, symbols_override: Optional[List[str]] = None) -> None:
@@ -753,12 +769,24 @@ class ScannerService:
                 await executor.cleanup_unused_rules()
             except Exception:
                 pass
+            # Fix #4: Surface per-account summaries (including stopped_reason) to UI
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                if scan:
+                    scan["auto_trade_summaries"] = executor.get_summaries()
 
         if self._db:
+            import json as _json
+            async with self._lock:
+                scan_data = self._scans.get(scan_id, {})
+                auto_results = list(scan_data.get("auto_trade_results", []))
+                auto_summaries = list(scan_data.get("auto_trade_summaries", []))
             await self._db.update_scan(
                 scan_id,
                 status=final_status, completed_at=final_completed_at,
                 completed=final_completed, failed=final_failed,
+                auto_trade_results=_json.dumps(auto_results) if auto_results else "[]",
+                auto_trade_summaries=_json.dumps(auto_summaries) if auto_summaries else "[]",
             )
 
         await self._notify_scan_list_changed()

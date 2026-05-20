@@ -378,7 +378,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             <Label className="text-xs text-muted-foreground">Target Goal</Label>
             <Select
               value={config.target_goal_type ?? "none"}
-              onValueChange={(v) => v != null && onChange({ target_goal_type: v === "none" ? null : v as AutoTradeConfig["target_goal_type"] })}
+              onValueChange={(v) => v != null && onChange({ target_goal_type: v === "none" ? null : v as AutoTradeConfig["target_goal_type"], ...(v === "none" ? { target_goal_value: null } : {}) })}
             >
               <SelectTrigger className="mt-1.5">
                 <SelectValue />

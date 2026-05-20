@@ -1037,6 +1037,21 @@ export function ScannerPage() {
               </div>
             )}
 
+            {/* Auto-trade account summaries (stopped reasons, rule failures) */}
+            {scan.auto_trade_summaries && scan.auto_trade_summaries.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Account Status</p>
+                <div className="space-y-1">
+                  {scan.auto_trade_summaries.filter((s: any) => s.stopped_reason).map((s: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 text-[10px] px-2 py-1 rounded bg-amber-500/5 border border-amber-500/10">
+                      <span className="text-muted-foreground">{accountLabelMap[s.account_id] || s.account_id?.slice(0, 8)}</span>
+                      <span className="text-amber-400 ml-auto">{s.stopped_reason?.replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Current batch tickers */}
             {isRunning && scan.current_tickers.length > 0 && (
               <div className="space-y-1.5">

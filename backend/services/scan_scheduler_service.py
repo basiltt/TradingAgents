@@ -178,8 +178,8 @@ class ScanSchedulerService:
             raise KeyError(f"Schedule {scan_id} not found")
         if existing["status"] in ("completed", "cancelled"):
             raise ValueError(f"Cannot trigger a {existing['status']} schedule")
-        if scan_id in self._in_flight:
-            raise ValueError("A scan is already running for this schedule")
+        if self._in_flight:
+            raise ValueError("Another scheduled scan is currently running — please wait for it to complete")
 
         if existing["last_run_at"]:
             last = datetime.fromisoformat(existing["last_run_at"].replace("Z", "+00:00"))
@@ -239,13 +239,19 @@ class ScanSchedulerService:
                 logger.exception("Error checking in-flight completions")
 
             try:
-                due = await self._db.get_due_scheduled_scans()
-                for schedule in due:
-                    if self._shutdown_event.is_set():
-                        break
-                    if schedule["id"] in self._in_flight:
-                        continue
-                    await self._try_execute(schedule)
+                # Global concurrency gate: only one scheduled scan at a time
+                if self._in_flight:
+                    logger.debug("Scheduler: scan in-flight, deferring due schedules")
+                else:
+                    due = await self._db.get_due_scheduled_scans()
+                    for schedule in due:
+                        if self._shutdown_event.is_set():
+                            break
+                        if self._in_flight:
+                            break  # just launched one — wait for next cycle
+                        if schedule["id"] in self._in_flight:
+                            continue
+                        await self._try_execute(schedule)
 
                 await self._maybe_cleanup()
             except Exception:

@@ -258,6 +258,16 @@ export interface AutoTradeResult {
   account_id: string;
 }
 
+export interface AutoTradeSummary {
+  account_id: string;
+  trades_executed: number;
+  trades_failed: number;
+  trades_skipped: number;
+  stopped_reason?: string | null;
+  close_rule_id?: string | null;
+  drawdown_rule_id?: string | null;
+}
+
 export interface ScanStatus {
   scan_id: string;
   status: string;
@@ -281,6 +291,7 @@ export interface ScanStatus {
   research_depth?: number;
   max_debate_rounds?: number;
   auto_trade_results?: AutoTradeResult[];
+  auto_trade_summaries?: AutoTradeSummary[];
 }
 
 export type StrategyCategory = "scalping" | "intraday" | "swing" | "positional" | "grid" | "dca" | "hedging" | "arbitrage";
