@@ -467,7 +467,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             <input
               type="checkbox"
               checked={config.close_on_profit_pct != null && config.close_on_profit_pct > 0}
-              onChange={(e) => onChange({ close_on_profit_pct: e.target.checked ? 5 : null })}
+              onChange={(e) => onChange({ close_on_profit_pct: e.target.checked ? 50 : null })}
               className="sr-only peer"
             />
             <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
@@ -475,23 +475,26 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
           </div>
           <div className="flex-1">
             <span className="text-xs font-medium group-hover:text-foreground transition-colors">Close & re-trade on profit</span>
-            <p className="text-[10px] text-muted-foreground">Close all existing positions if unrealized profit exceeds threshold, then open new trades</p>
+            <p className="text-[10px] text-muted-foreground">Close all existing positions when this % of target profit goal is achieved, then open new trades</p>
           </div>
           {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && (
             <div className="flex items-center gap-1">
               <Input
                 type="number"
-                min={0.1}
-                max={1000}
-                step={0.5}
+                min={1}
+                max={100}
+                step={5}
                 value={config.close_on_profit_pct}
-                onChange={(e) => onChange({ close_on_profit_pct: parseFloat(e.target.value) || 5 })}
+                onChange={(e) => onChange({ close_on_profit_pct: parseFloat(e.target.value) || 50 })}
                 className="w-16 h-6 text-xs text-center"
               />
               <span className="text-[10px] text-muted-foreground">%</span>
             </div>
           )}
         </label>
+        {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && !config.target_goal_value && (
+          <p className="text-[10px] text-amber-500 ml-12">Requires a Target Goal (profit_pct) to be set above</p>
+        )}
       </div>
     </div>
   );

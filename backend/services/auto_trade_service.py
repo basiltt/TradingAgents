@@ -66,15 +66,17 @@ class AutoTradeExecutor:
         rules_created_for: set = set()  # track accounts that already got close rules this cycle
         force_closed_accounts: set = set()  # track accounts already force-closed this cycle
 
-        # Pre-pass: force-close accounts that have close_on_profit_pct configured and meet threshold
-        accounts_with_close_target: Dict[str, float] = {}
+        # Pre-pass: force-close accounts where unrealized PnL has reached X% of the target goal
+        # close_on_profit_pct = percentage of target_goal_value achieved (e.g., 50 means close at 50% of target)
+        accounts_with_close_target: Dict[str, tuple] = {}  # account_id -> (close_pct, target_goal_value)
         for state in self._state.values():
             aid = state.config.get("account_id", "")
-            target = state.config.get("close_on_profit_pct")
-            if target and aid and aid not in accounts_with_close_target:
-                accounts_with_close_target[aid] = target
+            close_pct = state.config.get("close_on_profit_pct")
+            target_goal = state.config.get("target_goal_value")
+            if close_pct and target_goal and aid and aid not in accounts_with_close_target:
+                accounts_with_close_target[aid] = (close_pct, target_goal)
 
-        for account_id, close_target in accounts_with_close_target.items():
+        for account_id, (close_pct, target_goal) in accounts_with_close_target.items():
             if not self._close_svc:
                 break
             try:
@@ -83,9 +85,13 @@ class AutoTradeExecutor:
                 unrealized = float(wallet.get("totalPerpUPL") or "0")
                 if wallet_balance > 0 and unrealized > 0:
                     pnl_pct = (unrealized / wallet_balance) * 100
-                    if pnl_pct >= close_target:
+                    # Threshold = close_pct% of the target_goal equity rise
+                    effective_threshold = (close_pct / 100) * target_goal
+                    if pnl_pct >= effective_threshold:
                         logger.info("auto_trade_force_close_triggered", extra={
-                            "account_id": account_id, "pnl_pct": round(pnl_pct, 2), "threshold": close_target,
+                            "account_id": account_id, "pnl_pct": round(pnl_pct, 2),
+                            "effective_threshold": round(effective_threshold, 2),
+                            "close_pct": close_pct, "target_goal": target_goal,
                         })
                         await self._close_svc.close_all_positions(account_id)
                         await asyncio.sleep(2)

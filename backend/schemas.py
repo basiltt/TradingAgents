@@ -441,7 +441,7 @@ class AutoTradeConfig(BaseModel):
     execution_mode: Literal["immediate", "batch"] = "immediate"
     skip_if_positions_open: bool = False
     fill_to_max_trades: bool = False
-    close_on_profit_pct: Optional[float] = Field(None, gt=0, le=1000)
+    close_on_profit_pct: Optional[float] = Field(None, gt=0, le=100)
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":
@@ -449,6 +449,8 @@ class AutoTradeConfig(BaseModel):
             raise ValueError("target_goal_value required when target_goal_type is set")
         if self.target_goal_value and not self.target_goal_type:
             raise ValueError("target_goal_type required when target_goal_value is set")
+        if self.close_on_profit_pct and not self.target_goal_value:
+            raise ValueError("close_on_profit_pct requires target_goal_value to be set")
         return self
 
 
