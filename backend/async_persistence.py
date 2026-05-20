@@ -1208,6 +1208,9 @@ class AsyncAnalysisDB:
     # ── Daily Snapshots ────────────────────────────────────────────────
 
     async def upsert_daily_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        snap_date = snapshot["snapshot_date"]
+        if isinstance(snap_date, str):
+            snap_date = date.fromisoformat(snap_date)
         await self.pool.execute(
             "INSERT INTO daily_snapshots "
             "(account_id, snapshot_date, equity, wallet_balance, available_balance, "
@@ -1227,7 +1230,7 @@ class AsyncAnalysisDB:
             "drawdown_pct = EXCLUDED.drawdown_pct, "
             "updated_at = now()",
             snapshot["account_id"],
-            snapshot["snapshot_date"],
+            snap_date,
             snapshot.get("equity", 0),
             snapshot.get("wallet_balance", 0),
             snapshot.get("available_balance", 0),
@@ -1244,17 +1247,21 @@ class AsyncAnalysisDB:
     async def get_daily_snapshots(
         self, account_id: str, start_date: str, end_date: str,
     ) -> List[Dict[str, Any]]:
+        sd = date.fromisoformat(start_date) if isinstance(start_date, str) else start_date
+        ed = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
         rows = await self.pool.fetch(
             "SELECT * FROM daily_snapshots "
             "WHERE account_id=$1 AND snapshot_date>=$2 AND snapshot_date<=$3 "
             "ORDER BY snapshot_date ASC",
-            account_id, start_date, end_date,
+            account_id, sd, ed,
         )
         return [dict(r) for r in rows]
 
     async def get_all_account_snapshots(
         self, start_date: str, end_date: str, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        sd = date.fromisoformat(start_date) if isinstance(start_date, str) else start_date
+        ed = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
         sql = (
             "SELECT ds.* FROM daily_snapshots ds "
             "JOIN trading_accounts ta ON ta.id = ds.account_id "
@@ -1262,7 +1269,7 @@ class AsyncAnalysisDB:
             "AND ta.include_in_analytics = TRUE "
             "AND ds.snapshot_date>=$1 AND ds.snapshot_date<=$2 "
         )
-        params: list = [start_date, end_date]
+        params: list = [sd, ed]
         if account_type:
             sql += "AND ta.account_type = $3 "
             params.append(account_type)
@@ -1278,7 +1285,9 @@ class AsyncAnalysisDB:
         )
         return dict(row) if row else None
 
-    async def get_previous_snapshot(self, account_id: str, before_date: str) -> Optional[Dict[str, Any]]:
+    async def get_previous_snapshot(self, account_id: str, before_date: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(before_date, str):
+            before_date = date.fromisoformat(before_date)
         row = await self.pool.fetchrow(
             "SELECT * FROM daily_snapshots "
             "WHERE account_id=$1 AND snapshot_date < $2 "

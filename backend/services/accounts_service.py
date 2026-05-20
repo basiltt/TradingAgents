@@ -696,7 +696,8 @@ class AccountsService:
             raise ValueError("Snapshot rate limited — try again in 30 seconds")
         self._mark_refreshed(snap_key)
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_dt = datetime.now(timezone.utc).date()
+        today = today_dt.isoformat()
         today_start_ms = _date_to_ms(today)
         today_end_ms = today_start_ms + (_ONE_DAY_MS - 1)
 
@@ -705,10 +706,10 @@ class AccountsService:
             self.get_positions(account_id),
         )
 
-        equity = float(wallet.get("totalEquity", 0))
-        wallet_balance = float(wallet.get("totalWalletBalance", 0))
-        available_balance = float(wallet.get("totalAvailableBalance", 0))
-        unrealised_pnl = float(wallet.get("totalPerpUPL", 0))
+        equity = float(wallet.get("totalEquity") or 0)
+        wallet_balance = float(wallet.get("totalWalletBalance") or 0)
+        available_balance = float(wallet.get("totalAvailableBalance") or 0)
+        unrealised_pnl = float(wallet.get("totalPerpUPL") or 0)
         margin_used = wallet_balance - available_balance if wallet_balance > available_balance else 0
 
         await self._fetch_and_store_closed_pnl(account_id, today_start_ms, today_end_ms)
@@ -720,7 +721,7 @@ class AccountsService:
         prev = await self._db.get_latest_snapshot(account_id)
         is_resnapshot = prev and str(prev["snapshot_date"]) == today
         if is_resnapshot:
-            yesterday = await self._db.get_previous_snapshot(account_id, today)
+            yesterday = await self._db.get_previous_snapshot(account_id, today_dt)
         else:
             yesterday = None
 
@@ -743,7 +744,7 @@ class AccountsService:
 
         snapshot = {
             "account_id": account_id,
-            "snapshot_date": today,
+            "snapshot_date": today_dt,
             "equity": equity,
             "wallet_balance": wallet_balance,
             "available_balance": available_balance,
