@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid as _uuid
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -600,8 +601,8 @@ async def demo_reset_balance(request: Request):
                 wallet = await client.get_wallet_balance()
                 current_balance = float(wallet.get("totalWalletBalance") or "0")
                 diff = target - current_balance
-                # Bybit demo-apply-money only accepts integer amounts
-                abs_amount = int(abs(diff))
+                # Bybit demo-apply-money only accepts integer amounts; ceil to ensure we reach target
+                abs_amount = math.ceil(abs(diff))
                 if abs_amount < 1:
                     entry.update({"status": "unchanged", "balance": current_balance})
                 elif diff > 0:
