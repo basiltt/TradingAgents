@@ -1738,6 +1738,33 @@ class AsyncAnalysisDB:
             result = await conn.execute("DELETE FROM close_rules WHERE id = $1", rule_id)
         return int(result.split()[-1]) > 0
 
+    async def delete_all_rules_for_account(self, account_id: str) -> int:
+        """Delete all close rules (and their executions) for an account."""
+        async with self._transaction() as conn:
+            await conn.execute(
+                "DELETE FROM close_executions WHERE rule_id IN "
+                "(SELECT id FROM close_rules WHERE account_id = $1)",
+                account_id,
+            )
+            result = await conn.execute(
+                "DELETE FROM close_rules WHERE account_id = $1", account_id,
+            )
+        return int(result.split()[-1])
+
+    async def delete_non_executed_rules_for_account(self, account_id: str) -> int:
+        """Delete non-executed rules for an account (keeps executed ones for history)."""
+        async with self._transaction() as conn:
+            await conn.execute(
+                "DELETE FROM close_executions WHERE rule_id IN "
+                "(SELECT id FROM close_rules WHERE account_id = $1 AND status != 'executed')",
+                account_id,
+            )
+            result = await conn.execute(
+                "DELETE FROM close_rules WHERE account_id = $1 AND status != 'executed'",
+                account_id,
+            )
+        return int(result.split()[-1])
+
     async def list_active_rules(self) -> list:
         """Fetch all active rules for non-deleted, active accounts."""
         rows = await self.pool.fetch(

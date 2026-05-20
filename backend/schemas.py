@@ -440,6 +440,8 @@ class AutoTradeConfig(BaseModel):
     target_goal_value: Optional[float] = Field(None, gt=0)
     execution_mode: Literal["immediate", "batch"] = "immediate"
     skip_if_positions_open: bool = False
+    fill_to_max_trades: bool = False
+    close_on_profit_pct: Optional[float] = Field(None, gt=0, le=1000)
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":

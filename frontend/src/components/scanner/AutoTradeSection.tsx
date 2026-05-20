@@ -24,6 +24,8 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   target_goal_value: null,
   execution_mode: "immediate",
   skip_if_positions_open: false,
+  fill_to_max_trades: false,
+  close_on_profit_pct: null,
 };
 
 function loadConfigs(): AutoTradeConfig[] {
@@ -443,6 +445,52 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             <span className="text-xs font-medium group-hover:text-foreground transition-colors">Skip if positions open</span>
             <p className="text-[10px] text-muted-foreground">Don't open new trades if this account already has active positions</p>
           </div>
+        </label>
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              checked={config.fill_to_max_trades ?? false}
+              onChange={(e) => onChange({ fill_to_max_trades: e.target.checked })}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
+            <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <div>
+            <span className="text-xs font-medium group-hover:text-foreground transition-colors">Fill to max trades</span>
+            <p className="text-[10px] text-muted-foreground">If not enough signals pass filters, fill remaining slots with the best available scores</p>
+          </div>
+        </label>
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              checked={config.close_on_profit_pct != null && config.close_on_profit_pct > 0}
+              onChange={(e) => onChange({ close_on_profit_pct: e.target.checked ? 5 : null })}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
+            <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <div className="flex-1">
+            <span className="text-xs font-medium group-hover:text-foreground transition-colors">Close & re-trade on profit</span>
+            <p className="text-[10px] text-muted-foreground">Close all existing positions if unrealized profit exceeds threshold, then open new trades</p>
+          </div>
+          {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && (
+            <div className="flex items-center gap-1">
+              <Input
+                type="number"
+                min={0.1}
+                max={1000}
+                step={0.5}
+                value={config.close_on_profit_pct}
+                onChange={(e) => onChange({ close_on_profit_pct: parseFloat(e.target.value) || 5 })}
+                className="w-16 h-6 text-xs text-center"
+              />
+              <span className="text-[10px] text-muted-foreground">%</span>
+            </div>
+          )}
         </label>
       </div>
     </div>

@@ -29,7 +29,6 @@ class AutoTradeExecutor:
         self._close_svc = close_positions_service
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
-        self._position_cache: Dict[str, float] = {}  # account_id -> last check timestamp
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
         self._state.clear()
@@ -38,23 +37,62 @@ class AutoTradeExecutor:
             self._state[key] = _AccountState(config=cfg)
 
     def restore_state(self, prior_results: List[Dict[str, Any]]) -> None:
-        """Restore trade counters from previously executed auto_trade_results (for resume)."""
+        """Restore trade counters and execution records from previously executed auto_trade_results (for resume)."""
         account_success: Dict[str, int] = {}
         account_failed: Dict[str, int] = {}
+        account_executions: Dict[str, List[TradeExecution]] = {}
         for r in prior_results:
             aid = r.get("account_id", "")
             if r.get("status") == "success":
                 account_success[aid] = account_success.get(aid, 0) + 1
             else:
                 account_failed[aid] = account_failed.get(aid, 0) + 1
+            account_executions.setdefault(aid, []).append(TradeExecution(
+                account_id=aid,
+                symbol=r.get("symbol", ""),
+                side=r.get("side", ""),
+                status=r.get("status", "failed"),
+                order_id=r.get("order_id"),
+                error=r.get("error"),
+            ))
         for state in self._state.values():
             aid = state.config["account_id"]
             state.trades_executed = account_success.get(aid, 0)
             state.trades_failed = account_failed.get(aid, 0)
+            state.executions = list(account_executions.get(aid, []))
 
     async def init_balances(self) -> None:
         """Pre-fetch wallet balances and check positions for all configured accounts."""
         rules_created_for: set = set()  # track accounts that already got close rules this cycle
+        force_closed_accounts: set = set()  # track accounts already force-closed this cycle
+
+        # Pre-pass: force-close accounts that have close_on_profit_pct configured and meet threshold
+        accounts_with_close_target: Dict[str, float] = {}
+        for state in self._state.values():
+            aid = state.config.get("account_id", "")
+            target = state.config.get("close_on_profit_pct")
+            if target and aid and aid not in accounts_with_close_target:
+                accounts_with_close_target[aid] = target
+
+        for account_id, close_target in accounts_with_close_target.items():
+            if not self._close_svc:
+                break
+            try:
+                wallet = await self._accounts.get_wallet(account_id)
+                wallet_balance = float(wallet.get("totalWalletBalance") or "0")
+                unrealized = float(wallet.get("totalPerpUPL") or "0")
+                if wallet_balance > 0 and unrealized > 0:
+                    pnl_pct = (unrealized / wallet_balance) * 100
+                    if pnl_pct >= close_target:
+                        logger.info("auto_trade_force_close_triggered", extra={
+                            "account_id": account_id, "pnl_pct": round(pnl_pct, 2), "threshold": close_target,
+                        })
+                        await self._close_svc.close_all_positions(account_id)
+                        await asyncio.sleep(2)
+                        force_closed_accounts.add(account_id)
+            except Exception as e:
+                logger.warning("auto_trade_close_on_profit_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+
         for key, state in self._state.items():
             if state.stopped:
                 continue
@@ -64,7 +102,7 @@ class AutoTradeExecutor:
                 state.stopped_reason = "no_account_id"
                 continue
             # Check positions if skip_if_positions_open is enabled
-            if state.config.get("skip_if_positions_open"):
+            if state.config.get("skip_if_positions_open") and account_id not in force_closed_accounts:
                 try:
                     positions = await self._accounts.get_positions(account_id)
                     if positions:
@@ -90,10 +128,10 @@ class AutoTradeExecutor:
                 continue
             # Create close rules (only once per account per cycle)
             if account_id not in rules_created_for:
-                # Deactivate any leftover rules from previous scans
+                # Delete any leftover rules from previous scans before creating new ones
                 if self._close_svc:
                     try:
-                        cleared = await self._close_svc.deactivate_all_rules(account_id)
+                        cleared = await self._close_svc.delete_all_rules(account_id)
                         if cleared:
                             logger.info("auto_trade_cleared_stale_rules", extra={"account_id": account_id, "count": cleared})
                     except Exception:
@@ -207,6 +245,119 @@ class AutoTradeExecutor:
                         traded.add(trade_key)
                     if execution:
                         executions.append(execution)
+
+            # Fill pass: if fill_to_max_trades is enabled and max_trades not reached,
+            # retry with relaxed filters using best remaining signals by score
+            for key, state in self._state.items():
+                if state.config.get("execution_mode") != "batch":
+                    continue
+                if not state.config.get("fill_to_max_trades"):
+                    continue
+                if state.stopped and state.stopped_reason != "max_trades_reached":
+                    continue
+                max_trades = state.config.get("max_trades", 999)
+                remaining_slots = max_trades - state.trades_executed
+                if remaining_slots <= 0:
+                    continue
+
+                account_id = state.config.get("account_id", "")
+                # Sort remaining signals by abs(score) descending
+                fill_candidates = sorted(
+                    [r for r in unique_results
+                     if r.get("ticker") and (account_id, r["ticker"]) not in traded
+                     and r.get("direction", "hold") != "hold"
+                     and r.get("status") == "completed"],
+                    key=lambda r: abs(r.get("score", 0)),
+                    reverse=True,
+                )
+
+                # Reset stopped flag if it was set due to max_trades during strict pass
+                if state.stopped and state.stopped_reason == "max_trades_reached":
+                    state.stopped = False
+                    state.stopped_reason = None
+
+                for result in fill_candidates[:remaining_slots]:
+                    if state.stopped:
+                        break
+                    ticker = result.get("ticker", "")
+                    trade_key = (account_id, ticker)
+                    if trade_key in traded:
+                        continue
+                    execution = await self._try_trade(state, result, relaxed=True)
+                    if execution and execution.status == "success":
+                        traded.add(trade_key)
+                    if execution:
+                        executions.append(execution)
+
+            return executions
+
+    async def fill_immediate_remaining(self, results: List[Dict[str, Any]]) -> List[TradeExecution]:
+        """For immediate-mode configs with fill_to_max_trades, backfill from all results after scan completes."""
+        async with self._lock:
+            seen: Dict[str, Dict[str, Any]] = {}
+            for r in results:
+                ticker = r.get("ticker", "")
+                if ticker:
+                    seen[ticker] = r
+            unique_results = list(seen.values())
+
+            executions: List[TradeExecution] = []
+            traded: set = set()  # (account_id, symbol) cross-config deduplication
+
+            def _to_symbol(ticker: str) -> str:
+                return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
+
+            # Pre-populate traded set from strict-pass executions
+            for state in self._state.values():
+                if state.config.get("execution_mode") != "immediate":
+                    continue
+                aid = state.config.get("account_id", "")
+                for e in state.executions:
+                    if e.status == "success":
+                        traded.add((aid, e.symbol))
+
+            for key, state in self._state.items():
+                if state.config.get("execution_mode") != "immediate":
+                    continue
+                if not state.config.get("fill_to_max_trades"):
+                    continue
+                max_trades = state.config.get("max_trades", 999)
+                remaining_slots = max_trades - state.trades_executed
+                if remaining_slots <= 0:
+                    continue
+
+                # Reset stopped flag if it was set during strict evaluation
+                if state.stopped and state.stopped_reason == "max_trades_reached":
+                    state.stopped = False
+                    state.stopped_reason = None
+                elif state.stopped:
+                    continue
+
+                account_id = state.config.get("account_id", "")
+
+                fill_candidates = sorted(
+                    [r for r in unique_results
+                     if r.get("direction", "hold") != "hold"
+                     and r.get("status") == "completed"
+                     and r.get("ticker")
+                     and (account_id, _to_symbol(r["ticker"])) not in traded],
+                    key=lambda r: abs(r.get("score", 0)),
+                    reverse=True,
+                )
+
+                for result in fill_candidates[:remaining_slots]:
+                    if state.stopped:
+                        break
+                    ticker = result.get("ticker", "")
+                    symbol = _to_symbol(ticker)
+                    if (account_id, symbol) in traded:
+                        continue
+                    execution = await self._try_trade(state, result, relaxed=True)
+                    if execution and execution.status == "success":
+                        traded.add((account_id, symbol))
+                    if execution:
+                        executions.append(execution)
+
             return executions
 
     def get_summaries(self) -> List[Dict[str, Any]]:
@@ -262,7 +413,7 @@ class AutoTradeExecutor:
                 except Exception:
                     pass
 
-    async def _try_trade(self, state: "_AccountState", result: Dict[str, Any]) -> Optional[TradeExecution]:
+    async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False) -> Optional[TradeExecution]:
         cfg = state.config
         if result.get("status") != "completed":
             return None
@@ -277,22 +428,23 @@ class AutoTradeExecutor:
         if direction == "hold":
             return None
 
-        # Apply filters
+        # Apply filters (skipped in relaxed/fill mode)
         signal_sides = cfg.get("signal_sides", "both")
         if signal_sides != "both" and signal_sides != direction:
             return None
 
-        min_score = cfg.get("min_score", 0)
-        if score < min_score:
-            state.trades_skipped += 1
-            return None
-
-        conf_filter = cfg.get("confidence_filter", "any")
-        if conf_filter != "any":
-            conf_order = {"high": 3, "moderate": 2, "low": 1, "none": 0}
-            if conf_order.get(confidence, 0) < conf_order.get(conf_filter, 0):
+        if not relaxed:
+            min_score = cfg.get("min_score", 0)
+            if score < min_score:
                 state.trades_skipped += 1
                 return None
+
+            conf_filter = cfg.get("confidence_filter", "any")
+            if conf_filter != "any":
+                conf_order = {"high": 3, "moderate": 2, "low": 1, "none": 0}
+                if conf_order.get(confidence, 0) < conf_order.get(conf_filter, 0):
+                    state.trades_skipped += 1
+                    return None
 
         # Check limits
         if state.trades_executed >= cfg.get("max_trades", 999):
@@ -310,25 +462,6 @@ class AutoTradeExecutor:
                 return None
 
         account_id = cfg["account_id"]
-
-        # Fix #2: Re-check positions before each trade if skip_if_positions_open
-        if cfg.get("skip_if_positions_open"):
-            try:
-                positions = await self._accounts.get_positions(account_id)
-                if positions:
-                    state.stopped = True
-                    state.stopped_reason = "positions_opened_during_scan"
-                    return None
-            except Exception as e:
-                logger.warning("auto_trade_position_recheck_failed", extra={"account_id": account_id, "error": str(e)[:200]})
-
-        # Fix #3: Refresh available balance before each trade
-        try:
-            wallet = await self._accounts.get_wallet(account_id)
-            balance_str = wallet.get("totalAvailableBalance") or wallet.get("totalWalletBalance") or "0"
-            state.base_capital = float(balance_str)
-        except Exception as e:
-            logger.warning("auto_trade_balance_refresh_failed", extra={"account_id": account_id, "error": str(e)[:200]})
 
         if state.base_capital is None or state.base_capital <= 0:
             state.stopped = True

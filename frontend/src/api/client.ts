@@ -212,6 +212,8 @@ export interface AutoTradeConfig {
   target_goal_value?: number | null;
   execution_mode: "immediate" | "batch";
   skip_if_positions_open?: boolean;
+  fill_to_max_trades?: boolean;
+  close_on_profit_pct?: number | null;
 }
 
 export interface ScanRequest {

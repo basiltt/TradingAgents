@@ -742,6 +742,20 @@ class ScannerService:
                                 )
                 except Exception as e:
                     logger.warning("auto_trade_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+                # Fill remaining slots for immediate-mode configs with fill_to_max_trades
+                try:
+                    fill_executions = await executor.fill_immediate_remaining(all_results)
+                    if fill_executions:
+                        async with self._lock:
+                            scan = self._scans.get(scan_id)
+                            if scan:
+                                scan["auto_trade_results"].extend(
+                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                                    for e in fill_executions
+                                )
+                except Exception as e:
+                    logger.warning("auto_trade_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 
         async with self._lock:
             scan = self._scans.get(scan_id)
