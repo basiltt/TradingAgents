@@ -1240,10 +1240,10 @@ class AccountsService:
                     positions = await self.get_positions(acc["id"])
                     return {
                         "account_id": acc["id"],
-                        "equity": float(wallet.get("totalEquity", 0)),
-                        "unrealised_pnl": float(wallet.get("totalPerpUPL", 0)),
+                        "equity": float(wallet.get("totalEquity") or 0),
+                        "unrealised_pnl": float(wallet.get("totalPerpUPL") or 0),
                         "realised_pnl": 0,
-                        "balance": float(wallet.get("totalWalletBalance", 0)),
+                        "balance": float(wallet.get("totalWalletBalance") or 0),
                         "position_count": len(positions),
                     }
                 except Exception:

@@ -112,6 +112,7 @@ async def take_snapshot(request: Request, account_id: str):
 async def take_all_snapshots(request: Request):
     svc = _get_service(request)
     results = await svc.take_all_snapshots()
+    await svc.take_all_hf_snapshots()
     return {"snapshots": results, "count": len(results)}
 
 
