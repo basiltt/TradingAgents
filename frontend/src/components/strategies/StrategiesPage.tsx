@@ -121,14 +121,14 @@ export function StrategiesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">Trading Strategies</h1>
           <p className="text-muted-foreground text-sm mt-1">
             Define and manage your trading strategy configurations
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <input
             ref={importRef}
             type="file"
@@ -189,7 +189,7 @@ export function StrategiesPage() {
           placeholder="Search strategies..."
           value={searchQuery}
           onChange={(e) => dispatch(setSearchQuery(e.target.value))}
-          className="px-3 py-2 rounded-lg border border-border bg-card text-sm w-64 placeholder:text-muted-foreground"
+          className="px-3 py-2 rounded-lg border border-border bg-card text-sm w-full sm:w-64 placeholder:text-muted-foreground"
         />
         <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
           {(["all", ...STATUSES] as const).map((s) => (

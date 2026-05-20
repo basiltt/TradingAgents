@@ -12,7 +12,7 @@ export function TradeFilters() {
     !!filters.side;
 
   return (
-    <div className="flex items-center gap-2 py-2.5">
+    <div className="flex flex-wrap items-center gap-2 py-2.5">
       <select
         aria-label="Filter by account"
         className="h-7 rounded-md border border-border/40 bg-muted/20 px-2.5 text-[11px] font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors"

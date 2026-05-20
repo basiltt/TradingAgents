@@ -133,18 +133,18 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={() => navigate({ to: "/accounts" })}
-            className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground shrink-0"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Account Detail</h1>
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Account Detail</h1>
             <p className="text-sm text-muted-foreground/60 mt-0.5">
               {positions.length} position{positions.length !== 1 ? "s" : ""} · {orders.length} order{orders.length !== 1 ? "s" : ""}
             </p>
@@ -154,7 +154,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         <button
           disabled={deleting}
           onClick={() => setDeleteConfirm(true)}
-          className="px-4 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50"
+          className="px-4 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50 shrink-0 self-start sm:self-auto"
         >
           {deleting ? "Deleting..." : "Delete Account"}
         </button>

@@ -55,16 +55,16 @@ export function ConfigPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="rounded-lg border overflow-hidden">
+              <div className="rounded-lg border overflow-hidden overflow-x-auto">
                 {Object.entries(data.resolved).map(([key, value], i) => (
                   <div
                     key={key}
-                    className={`flex items-start gap-4 px-4 py-2.5 text-sm ${
+                    className={`flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 px-4 py-2.5 text-sm ${
                       i % 2 === 0 ? "bg-muted/30" : ""
                     }`}
                   >
-                    <span className="font-mono text-muted-foreground w-48 shrink-0 font-medium">{key}</span>
-                    <span className="font-mono break-all">
+                    <span className="font-mono text-muted-foreground sm:w-48 sm:shrink-0 font-medium text-xs sm:text-sm">{key}</span>
+                    <span className="font-mono break-all text-xs sm:text-sm">
                       {String(value) === "***" ? (
                         <span className="text-muted-foreground italic">masked</span>
                       ) : (

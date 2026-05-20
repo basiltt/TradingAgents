@@ -176,14 +176,14 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
     <div className="space-y-6">
       {/* Header - hidden when embedded in a tab */}
       {!embedded && (
-        <div className="flex items-end justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Performance Analytics</h1>
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Performance Analytics</h1>
             <p className="text-sm text-muted-foreground mt-1.5">
               Track your trading performance with detailed metrics and charts
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => setShowCleanup(true)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-muted text-foreground font-medium text-sm hover:bg-muted/80 transition-all"
@@ -241,7 +241,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         )}
 
         {/* Period selector */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-muted/50">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-muted/50 overflow-x-auto max-w-full">
           {PERIODS.map((p) => (
             <button
               key={p}

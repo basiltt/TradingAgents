@@ -136,14 +136,7 @@ export default function TradesPage() {
     fetchAllActiveTrades(dispatch);
   }, [dispatch]);
 
-  if (isMobile) {
-    return (
-      <div className="p-4 text-center text-muted-foreground">
-        <p className="text-sm font-medium">Desktop only</p>
-        <p className="text-xs mt-1">Use a wider screen for the trades terminal.</p>
-      </div>
-    );
-  }
+  // Mobile is now supported - no blocking gate
 
   if (accounts.length === 0 && accountsStatus !== "idle" && accountsStatus !== "loading") {
     return (

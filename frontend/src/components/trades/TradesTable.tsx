@@ -131,8 +131,8 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
           </div>
         </div>
       )}
-      <div className="rounded-xl border border-border/50 overflow-hidden bg-card/60">
-        <table className="w-full text-left">
+      <div className="rounded-xl border border-border/50 overflow-hidden bg-card/60 overflow-x-auto">
+        <table className="w-full text-left min-w-[800px]">
           <thead>
             <tr className="bg-muted/20">
               {COLUMNS.map((col) => (

@@ -44,7 +44,7 @@ export function PositionsTable({ positions }: PositionsTableProps) {
       </div>
 
       <div className="rounded-2xl border border-border/40 bg-card overflow-hidden overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm min-w-[700px]">
           <thead>
             <tr className="border-b border-border/30">
               <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>

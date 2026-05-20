@@ -21,7 +21,7 @@ export function TradeStats() {
     const totalExposure = trades.reduce((acc, t) => acc + (t.qty * (t.entry_price ?? 0)), 0);
 
     return (
-      <div className="grid grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
         <Metric
           label="Positions"
           value={String(aggregates.tradeCount)}
@@ -52,7 +52,7 @@ export function TradeStats() {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
         {Array.from({ length: 5 }, (_, i) => (
           <div key={i} className="bg-card p-4">
             <Skeleton className="h-3 w-12 mb-2" />
@@ -64,7 +64,7 @@ export function TradeStats() {
   }
 
   return (
-    <div className="grid grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
       <Metric label="Total Trades" value={String(stats?.total_trades ?? 0)} />
       <Metric label="Open" value={String(stats?.open_count ?? 0)} valueColor="profit" />
       <Metric label="Win Rate" value={`${((stats?.win_rate ?? 0) * 100).toFixed(1)}%`} valueColor={((stats?.win_rate ?? 0)) >= 0.5 ? "profit" : "loss"} />
