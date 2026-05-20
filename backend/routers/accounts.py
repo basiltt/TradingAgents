@@ -600,27 +600,28 @@ async def demo_reset_balance(request: Request):
                 wallet = await client.get_wallet_balance()
                 current_balance = float(wallet.get("totalWalletBalance") or "0")
                 diff = target - current_balance
-                if abs(diff) < 0.01:
+                # Bybit demo-apply-money only accepts integer amounts
+                abs_amount = int(abs(diff))
+                if abs_amount < 1:
                     entry.update({"status": "unchanged", "balance": current_balance})
                 elif diff > 0:
-                    # Bybit max 100k per call; chunk if needed
-                    remaining = diff
+                    remaining = abs_amount
                     while remaining > 0:
                         chunk = min(remaining, 100000)
-                        await client.demo_apply_money("USDT", str(round(chunk, 2)))
+                        await client.demo_apply_money("USDT", str(chunk))
                         remaining -= chunk
                         if remaining > 0:
                             await asyncio.sleep(0.3)
-                    entry.update({"status": "added", "amount": round(diff, 2), "new_balance": target})
+                    entry.update({"status": "added", "amount": abs_amount, "new_balance": round(current_balance + abs_amount, 2)})
                 else:
-                    remaining = abs(diff)
+                    remaining = abs_amount
                     while remaining > 0:
                         chunk = min(remaining, 100000)
-                        await client.demo_apply_money("USDT", str(round(chunk, 2)), reduce=True)
+                        await client.demo_apply_money("USDT", str(chunk), reduce=True)
                         remaining -= chunk
                         if remaining > 0:
                             await asyncio.sleep(0.3)
-                    entry.update({"status": "reduced", "amount": round(abs(diff), 2), "new_balance": target})
+                    entry.update({"status": "reduced", "amount": abs_amount, "new_balance": round(current_balance - abs_amount, 2)})
                 if i < total - 1:
                     await asyncio.sleep(0.5)
             except BybitAPIError as e:
