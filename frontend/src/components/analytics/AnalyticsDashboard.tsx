@@ -260,7 +260,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         {/* Auto-snapshot indicator */}
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          Auto-capturing every 1 min
+          Auto-capturing every 5 min
         </div>
 
         {/* Snapshot button when embedded */}

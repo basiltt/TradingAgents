@@ -14,7 +14,7 @@ class SnapshotScheduler:
         self,
         snapshot_fn: Callable[[], Coroutine[Any, Any, Any]],
         cleanup_fn: Callable[[], Coroutine[Any, Any, Any]],
-        snapshot_interval: int = 60,
+        snapshot_interval: int = 300,
         cleanup_hour: int = 3,
     ):
         self._snapshot_fn = snapshot_fn
