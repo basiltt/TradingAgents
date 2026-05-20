@@ -259,10 +259,9 @@ class BybitClient:
     async def demo_apply_money(self, coin: str = "USDT", amount: str = "100000", *, reduce: bool = False) -> dict[str, Any]:
         """Add or reduce funds on a demo account. Only works on api-demo.bybit.com."""
         params: dict[str, Any] = {
+            "adjustType": 1 if reduce else 0,
             "utaDemoApplyMoney": [{"coin": coin, "amountStr": amount}],
         }
-        if reduce:
-            params["adjustType"] = 1
         return await self._request("POST", "/v5/account/demo-apply-money", params)
 
     async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
