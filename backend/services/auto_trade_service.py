@@ -65,6 +65,7 @@ class AutoTradeExecutor:
         """Pre-fetch wallet balances and check positions for all configured accounts."""
         rules_created_for: set = set()  # track accounts that already got close rules this cycle
         force_closed_accounts: set = set()  # track accounts already force-closed this cycle
+        positions_cache: Dict[str, list] = {}  # account_id -> positions list (avoid re-fetching)
 
         # Pre-pass: force-close accounts where unrealized PnL has reached X% of the target goal
         # close_on_profit_pct = percentage of target_goal_value achieved (e.g., 50 means close at 50% of target)
@@ -109,15 +110,20 @@ class AutoTradeExecutor:
                 continue
             # Check positions if skip_if_positions_open is enabled
             if state.config.get("skip_if_positions_open") and account_id not in force_closed_accounts:
-                try:
-                    positions = await self._accounts.get_positions(account_id)
-                    if positions:
-                        state.stopped = True
-                        state.stopped_reason = "positions_already_open"
-                        logger.info("auto_trade_skipped_positions", extra={"account_id": account_id, "position_count": len(positions)})
-                        continue
-                except Exception as e:
-                    logger.warning("auto_trade_position_check_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                if account_id in positions_cache:
+                    positions = positions_cache[account_id]
+                else:
+                    try:
+                        positions = await self._accounts.get_positions(account_id)
+                        positions_cache[account_id] = positions
+                    except Exception as e:
+                        positions = []
+                        logger.warning("auto_trade_position_check_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                if positions:
+                    state.stopped = True
+                    state.stopped_reason = "positions_already_open"
+                    logger.info("auto_trade_skipped_positions", extra={"account_id": account_id, "position_count": len(positions)})
+                    continue
             # Fetch and lock balance for this cycle
             try:
                 wallet = await self._accounts.get_wallet(account_id)
@@ -132,6 +138,14 @@ class AutoTradeExecutor:
                 state.stopped = True
                 state.stopped_reason = "zero_balance"
                 continue
+            # Record existing position symbols to avoid opening trades on symbols already held
+            if account_id not in force_closed_accounts:
+                if account_id not in positions_cache:
+                    try:
+                        positions_cache[account_id] = await self._accounts.get_positions(account_id)
+                    except Exception:
+                        positions_cache[account_id] = []
+                state.existing_symbols = {p.get("symbol", "") for p in positions_cache[account_id]}
             # Create close rules (only once per account per cycle)
             if account_id not in rules_created_for:
                 # Delete any leftover rules from previous scans before creating new ones
@@ -431,6 +445,10 @@ class AutoTradeExecutor:
             return None
         symbol = f"{ticker}USDT" if not ticker.endswith("USDT") else ticker
 
+        if symbol in state.existing_symbols:
+            state.trades_skipped += 1
+            return None
+
         if direction == "hold":
             return None
 
@@ -498,6 +516,7 @@ class AutoTradeExecutor:
             )
             state.trades_executed += 1
             state.executions.append(execution)
+            state.existing_symbols.add(symbol)
             logger.info("auto_trade_executed", extra={
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
@@ -533,3 +552,4 @@ class _AccountState:
     close_rule_id: Optional[str] = None
     drawdown_rule_id: Optional[str] = None
     executions: List[TradeExecution] = field(default_factory=list)
+    existing_symbols: set = field(default_factory=set)

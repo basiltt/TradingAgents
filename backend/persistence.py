@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS trades (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_source_id CHECK (
         (source = 'cycle' AND source_id IS NOT NULL) OR
-        (source = 'manual' AND source_id IS NULL)
+        (source = 'manual' AND source_id IS NULL) OR
+        (source = 'scanner')
     )
 );
 CREATE INDEX idx_trades_account_status_created ON trades(account_id, status, created_at DESC, id DESC);

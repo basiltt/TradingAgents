@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS trades (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_source_id CHECK (
         (source = 'cycle' AND source_id IS NOT NULL) OR
-        (source = 'manual' AND source_id IS NULL)
+        (source = 'manual' AND source_id IS NULL) OR
+        (source = 'scanner')
     )
 );
 CREATE INDEX idx_trades_account_status_created ON trades(account_id, status, created_at DESC, id DESC);
@@ -449,6 +450,14 @@ CREATE INDEX IF NOT EXISTS idx_dead_letter_operation ON dead_letter(operation);
 """),
     (28, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_results JSONB NOT NULL DEFAULT '[]'"),
     (29, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_summaries JSONB NOT NULL DEFAULT '[]'"),
+    (30, """
+ALTER TABLE trades DROP CONSTRAINT IF EXISTS chk_source_id;
+ALTER TABLE trades ADD CONSTRAINT chk_source_id CHECK (
+    (source = 'cycle' AND source_id IS NOT NULL) OR
+    (source = 'manual' AND source_id IS NULL) OR
+    (source = 'scanner')
+)
+"""),
 ]
 
 
