@@ -102,6 +102,10 @@ export function useAccountWebSocket() {
         refreshDashboard();
       }
 
+      if (msg.type === "master_close_progress" || msg.type === "master_close_complete" || msg.type === "demo_reset_progress" || msg.type === "demo_reset_complete") {
+        window.dispatchEvent(new CustomEvent(msg.type as string, { detail: msg }));
+      }
+
       if (msg.type === "trade.opened" && msg.data) {
         dispatch(addActiveTrade(msg.data as Trade));
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });

@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["accounts"])
 
+_background_tasks: set = set()
+
+
+def _validate_id(value: str, name: str = "ID") -> str:
+    try:
+        _uuid.UUID(value)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, detail=f"Invalid {name} format")
+    return value
+
 
 def _get_service(request: Request):
     """Retrieve AccountsService from app state or raise 503."""
@@ -542,8 +552,11 @@ async def cancel_trade(request: Request, account_id: str, trade_id: str):
 
 @router.post("/accounts/demo-reset-balance")
 async def demo_reset_balance(request: Request):
-    """Set USDT balance for all demo accounts to a target amount by applying the difference."""
+    """Set USDT balance for selected demo accounts to a target amount.
+    Accepts optional account_ids list; defaults to all active demo accounts.
+    Returns immediately with a task_id; progress is streamed via WebSocket."""
     svc = _get_service(request)
+    ws_mgr = getattr(request.app.state, "account_ws_manager", None)
     try:
         body = await request.json()
     except Exception:
@@ -556,37 +569,94 @@ async def demo_reset_balance(request: Request):
     if target <= 0 or target > 100000:
         return JSONResponse({"detail": "target_balance must be between 0.01 and 100000"}, 400)
 
+    account_ids = body.get("account_ids")  # optional list of specific account IDs
+    if account_ids is not None:
+        if not isinstance(account_ids, list) or not all(isinstance(x, str) for x in account_ids):
+            return JSONResponse({"detail": "account_ids must be a list of strings"}, 400)
+        for aid in account_ids:
+            _validate_id(aid, "account ID")
+
     accounts = await svc.list_accounts()
     demo_accounts = [a for a in accounts if a.get("account_type") == "demo" and a.get("is_active")]
+
+    if account_ids:
+        id_set = set(account_ids)
+        demo_accounts = [a for a in demo_accounts if a["id"] in id_set]
 
     if not demo_accounts:
         return JSONResponse({"detail": "No active demo accounts found"}, 404)
 
-    results = []
-    for i, acct in enumerate(demo_accounts):
-        acct_id = acct["id"]
-        acct_name = acct.get("label", "")
-        try:
-            client = await svc.get_client(acct_id)
-            wallet = await client.get_wallet_balance()
-            current_balance = float(wallet.get("totalWalletBalance") or "0")
-            diff = target - current_balance
-            if abs(diff) < 0.01:
-                results.append({"account_id": acct_id, "name": acct_name, "status": "unchanged", "balance": current_balance})
-                continue
-            if diff > 0:
-                await client.demo_apply_money("USDT", str(round(diff, 2)))
-                results.append({"account_id": acct_id, "name": acct_name, "status": "added", "amount": round(diff, 2), "new_balance": target})
-            else:
-                await client.demo_apply_money("USDT", str(round(abs(diff), 2)), reduce=True)
-                results.append({"account_id": acct_id, "name": acct_name, "status": "reduced", "amount": round(abs(diff), 2), "new_balance": target})
-            if i < len(demo_accounts) - 1:
-                await asyncio.sleep(0.5)
-        except BybitAPIError as e:
-            results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": e.ret_msg})
-        except Exception as e:
-            results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": str(e)})
+    task_id = str(_uuid.uuid4())
 
-    svc.invalidate_all_caches()
-    success_count = sum(1 for r in results if r["status"] in ("added", "reduced", "unchanged"))
-    return {"target_balance": target, "accounts_processed": len(results), "success": success_count, "results": results}
+    async def _run_reset():
+        results = []
+        total = len(demo_accounts)
+        for i, acct in enumerate(demo_accounts):
+            acct_id = acct["id"]
+            acct_name = acct.get("label", "")
+            entry: dict = {"account_id": acct_id, "name": acct_name}
+            try:
+                client = await svc.get_client(acct_id)
+                wallet = await client.get_wallet_balance()
+                current_balance = float(wallet.get("totalWalletBalance") or "0")
+                diff = target - current_balance
+                if abs(diff) < 0.01:
+                    entry.update({"status": "unchanged", "balance": current_balance})
+                elif diff > 0:
+                    # Bybit max 100k per call; chunk if needed
+                    remaining = diff
+                    while remaining > 0:
+                        chunk = min(remaining, 100000)
+                        await client.demo_apply_money("USDT", str(round(chunk, 2)))
+                        remaining -= chunk
+                        if remaining > 0:
+                            await asyncio.sleep(0.3)
+                    entry.update({"status": "added", "amount": round(diff, 2), "new_balance": target})
+                else:
+                    remaining = abs(diff)
+                    while remaining > 0:
+                        chunk = min(remaining, 100000)
+                        await client.demo_apply_money("USDT", str(round(chunk, 2)), reduce=True)
+                        remaining -= chunk
+                        if remaining > 0:
+                            await asyncio.sleep(0.3)
+                    entry.update({"status": "reduced", "amount": round(abs(diff), 2), "new_balance": target})
+                if i < total - 1:
+                    await asyncio.sleep(0.5)
+            except BybitAPIError as e:
+                entry.update({"status": "error", "reason": e.ret_msg})
+            except Exception as e:
+                logger.exception("demo_reset_balance failed for %s", acct_id)
+                entry.update({"status": "error", "reason": str(e)})
+            results.append(entry)
+            if ws_mgr:
+                try:
+                    await ws_mgr.broadcast_event({
+                        "type": "demo_reset_progress",
+                        "task_id": task_id,
+                        "current": i + 1,
+                        "total": total,
+                        "account": entry,
+                    })
+                except Exception:
+                    pass
+
+        svc.invalidate_all_caches()
+        success_count = sum(1 for r in results if r["status"] in ("added", "reduced", "unchanged"))
+        if ws_mgr:
+            try:
+                await ws_mgr.broadcast_event({
+                    "type": "demo_reset_complete",
+                    "task_id": task_id,
+                    "target_balance": target,
+                    "accounts_processed": len(results),
+                    "success": success_count,
+                    "results": results,
+                })
+            except Exception:
+                pass
+
+    task = asyncio.create_task(_run_reset())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"task_id": task_id, "accounts_total": len(demo_accounts), "message": "Balance reset started"}

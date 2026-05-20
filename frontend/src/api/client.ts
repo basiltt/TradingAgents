@@ -893,13 +893,13 @@ export const accountsApi = {
   closeAllPositions: (accountId: string, signal?: AbortSignal) =>
     mutate<CloseAllResult>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/positions/close-all`, undefined, signal),
 
-  /** POST /api/v1/accounts/master-close-all — kill switch: close all positions & rules across ALL accounts. */
+  /** POST /api/v1/accounts/master-close-all — kill switch: starts background close, progress via WS. */
   masterCloseAll: (signal?: AbortSignal) =>
-    mutate<MasterCloseAllResult>("POST", `/api/v1/accounts/master-close-all`, undefined, signal ?? AbortSignal.timeout(120_000)),
+    mutate<MasterCloseStartResult>("POST", `/api/v1/accounts/master-close-all`, undefined, signal),
 
-  /** POST /api/v1/accounts/demo-reset-balance — set all demo accounts to a target USDT balance. */
-  demoResetBalance: (targetBalance: number, signal?: AbortSignal) =>
-    mutate<DemoResetBalanceResult>("POST", `/api/v1/accounts/demo-reset-balance`, { target_balance: targetBalance }, signal ?? AbortSignal.timeout(120_000)),
+  /** POST /api/v1/accounts/demo-reset-balance — starts background balance reset, progress via WS. */
+  demoResetBalance: (targetBalance: number, accountIds?: string[], signal?: AbortSignal) =>
+    mutate<DemoResetStartResult>("POST", `/api/v1/accounts/demo-reset-balance`, { target_balance: targetBalance, ...(accountIds?.length ? { account_ids: accountIds } : {}) }, signal),
 
   /** GET /api/v1/accounts/:id/close-rules — list close rules. */
   getCloseRules: (accountId: string, signal?: AbortSignal) =>
@@ -1052,6 +1052,12 @@ export interface CloseAllResult {
   execution_id: string;
 }
 
+export interface MasterCloseStartResult {
+  task_id: string | null;
+  accounts_total: number;
+  message: string;
+}
+
 export interface MasterCloseAllResult {
   accounts_processed: number;
   total_positions_closed: number;
@@ -1064,6 +1070,12 @@ export interface MasterCloseAllResult {
     failed?: number;
     reason?: string;
   }>;
+}
+
+export interface DemoResetStartResult {
+  task_id: string | null;
+  accounts_total: number;
+  message: string;
 }
 
 export interface DemoResetBalanceResult {

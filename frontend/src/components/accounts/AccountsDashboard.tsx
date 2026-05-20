@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { accountsApi } from "@/api/client";
 import type { MasterCloseAllResult, DemoResetBalanceResult } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
@@ -16,10 +16,15 @@ export function AccountsDashboard() {
   const [killOpen, setKillOpen] = useState(false);
   const [killLoading, setKillLoading] = useState(false);
   const [killResult, setKillResult] = useState<MasterCloseAllResult | null>(null);
+  const [killProgress, setKillProgress] = useState<{ current: number; total: number; accounts: Array<{ name: string; status: string; closed?: number }> }>({ current: 0, total: 0, accounts: [] });
+  const killTaskId = useRef<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [resetAmount, setResetAmount] = useState("100");
   const [resetResult, setResetResult] = useState<DemoResetBalanceResult | null>(null);
+  const [resetProgress, setResetProgress] = useState<{ current: number; total: number; accounts: Array<{ name: string; status: string; amount?: number }> }>({ current: 0, total: 0, accounts: [] });
+  const resetTaskId = useRef<string | null>(null);
+  const [resetSelectedIds, setResetSelectedIds] = useState<string[]>([]);
   useAccountPolling();
 
   /** Fetch dashboard cards; if silent, skips loading state to avoid UI flicker during polling. */
@@ -34,6 +39,53 @@ export function AccountsDashboard() {
       else console.warn("[AccountsDashboard] silent fetch failed:", msg);
     }
   }, [dispatch]);
+
+  useEffect(() => {
+    const onProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (killTaskId.current && d.task_id !== killTaskId.current) return;
+      setKillProgress(p => ({
+        current: d.current,
+        total: d.total,
+        accounts: [...p.accounts, { name: d.account?.name || "", status: d.account?.status || "", closed: d.account?.closed }],
+      }));
+    };
+    const onComplete = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (killTaskId.current && d.task_id !== killTaskId.current) return;
+      setKillResult({ accounts_processed: d.accounts_processed, total_positions_closed: d.total_positions_closed, accounts_failed: d.accounts_failed, results: d.results });
+      setKillLoading(false);
+      killTaskId.current = null;
+      fetchDashboard(true);
+    };
+    const onResetProgress = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (resetTaskId.current && d.task_id !== resetTaskId.current) return;
+      setResetProgress(p => ({
+        current: d.current,
+        total: d.total,
+        accounts: [...p.accounts, { name: d.account?.name || "", status: d.account?.status || "", amount: d.account?.amount }],
+      }));
+    };
+    const onResetComplete = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (resetTaskId.current && d.task_id !== resetTaskId.current) return;
+      setResetResult({ target_balance: d.target_balance, accounts_processed: d.accounts_processed, success: d.success, results: d.results });
+      setResetLoading(false);
+      resetTaskId.current = null;
+      fetchDashboard(true);
+    };
+    window.addEventListener("master_close_progress", onProgress);
+    window.addEventListener("master_close_complete", onComplete);
+    window.addEventListener("demo_reset_progress", onResetProgress);
+    window.addEventListener("demo_reset_complete", onResetComplete);
+    return () => {
+      window.removeEventListener("master_close_progress", onProgress);
+      window.removeEventListener("master_close_complete", onComplete);
+      window.removeEventListener("demo_reset_progress", onResetProgress);
+      window.removeEventListener("demo_reset_complete", onResetComplete);
+    };
+  }, [fetchDashboard]);
 
   const filtered = dashboard.filter((card) => {
     if (filterType === "all") return true;
@@ -103,7 +155,7 @@ export function AccountsDashboard() {
         <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
           {hasDemoAccounts && (
             <button
-              onClick={() => setResetOpen(true)}
+              onClick={() => { setResetOpen(true); setResetSelectedIds(dashboard.filter(c => c.account_type === "demo" && c.is_active).map(c => c.id)); }}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-500 font-medium text-sm hover:bg-amber-500/20 active:scale-[0.98] transition-all"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -217,9 +269,9 @@ export function AccountsDashboard() {
       {/* Master Kill Switch Dialog */}
       {killOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { if (!killLoading) { setKillOpen(false); setKillResult(null); } }} />
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { if (!killLoading) { setKillOpen(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); } }} />
           <div className="relative bg-card border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl mx-4">
-            {!killResult ? (
+            {!killLoading && !killResult ? (
               <>
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">
@@ -232,9 +284,7 @@ export function AccountsDashboard() {
                     <p className="text-xs text-muted-foreground">Master Kill Switch</p>
                   </div>
                 </div>
-                <p className="text-sm text-muted-foreground mb-2">
-                  This will immediately:
-                </p>
+                <p className="text-sm text-muted-foreground mb-2">This will immediately:</p>
                 <ul className="text-sm text-muted-foreground mb-5 space-y-1 list-disc list-inside">
                   <li>Close <span className="text-foreground font-medium">all open positions</span> on every active account</li>
                   <li>Delete <span className="text-foreground font-medium">all conditional close rules</span></li>
@@ -245,7 +295,6 @@ export function AccountsDashboard() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => setKillOpen(false)}
-                    disabled={killLoading}
                     className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-muted/50 transition-all"
                   >
                     Cancel
@@ -253,26 +302,69 @@ export function AccountsDashboard() {
                   <button
                     onClick={async () => {
                       setKillLoading(true);
+                      setKillProgress({ current: 0, total: 0, accounts: [] });
                       try {
                         const res = await accountsApi.masterCloseAll();
-                        setKillResult(res);
-                        fetchDashboard(true);
+                        killTaskId.current = res.task_id;
+                        setKillProgress(p => ({ ...p, total: res.accounts_total }));
+                        if (!res.task_id) {
+                          setKillResult({ accounts_processed: 0, total_positions_closed: 0, accounts_failed: 0, results: [] });
+                          setKillLoading(false);
+                        }
                       } catch (e: unknown) {
                         setKillResult({ accounts_processed: 0, total_positions_closed: 0, accounts_failed: 1, results: [{ account_id: "", name: "", status: "error", reason: (e as { message?: string }).message || "Unknown error" }] });
-                      } finally {
                         setKillLoading(false);
                       }
                     }}
-                    disabled={killLoading}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 active:scale-[0.98] transition-all disabled:opacity-50"
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 active:scale-[0.98] transition-all"
                   >
-                    {killLoading ? "Closing..." : "Close Everything"}
+                    Close Everything
                   </button>
                 </div>
               </>
-            ) : (
+            ) : killLoading ? (
               <>
-                <h3 className="text-lg font-semibold mb-3">Result</h3>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center animate-pulse">
+                    <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Closing Positions...</h3>
+                    <p className="text-xs text-muted-foreground">{killProgress.current} / {killProgress.total} accounts</p>
+                  </div>
+                </div>
+                {killProgress.total > 0 && (
+                  <div className="mb-4">
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-red-500 transition-all duration-300 ease-out rounded-full"
+                        style={{ width: `${(killProgress.current / killProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div className="max-h-48 overflow-y-auto space-y-1.5">
+                  {killProgress.accounts.map((a, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm px-2 py-1 rounded-lg bg-muted/30">
+                      <span className="truncate mr-2">{a.name}</span>
+                      <span className={`text-xs font-medium shrink-0 ${a.status === "closed" ? "text-emerald-500" : a.status === "error" ? "text-red-500" : "text-muted-foreground"}`}>
+                        {a.status === "closed" ? `${a.closed || 0} closed` : a.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => { setKillOpen(false); setKillLoading(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); killTaskId.current = null; fetchDashboard(true); }}
+                  className="mt-4 w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Dismiss (continues in background)
+                </button>
+              </>
+            ) : killResult ? (
+              <>
+                <h3 className="text-lg font-semibold mb-3">Complete</h3>
                 <div className="space-y-2 text-sm mb-5">
                   <p>Accounts processed: <span className="font-medium">{killResult.accounts_processed}</span></p>
                   <p>Positions closed: <span className="font-medium text-emerald-500">{killResult.total_positions_closed}</span></p>
@@ -288,13 +380,13 @@ export function AccountsDashboard() {
                   )}
                 </div>
                 <button
-                  onClick={() => { setKillOpen(false); setKillResult(null); }}
+                  onClick={() => { setKillOpen(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); }}
                   className="w-full px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-medium hover:brightness-110 transition-all"
                 >
                   Done
                 </button>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       )}
@@ -302,9 +394,9 @@ export function AccountsDashboard() {
       {/* Demo Reset Balance Dialog */}
       {resetOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { if (!resetLoading) { setResetOpen(false); setResetResult(null); } }} />
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { if (!resetLoading) { setResetOpen(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); } }} />
           <div className="relative bg-card border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl mx-4">
-            {!resetResult ? (
+            {!resetLoading && !resetResult ? (
               <>
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
@@ -314,13 +406,10 @@ export function AccountsDashboard() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold">Reset Demo Balance</h3>
-                    <p className="text-xs text-muted-foreground">Set all demo accounts to a target USDT balance</p>
+                    <p className="text-xs text-muted-foreground">Set demo accounts to a target USDT balance</p>
                   </div>
                 </div>
-                <p className="text-sm text-muted-foreground mb-4">
-                  This will adjust the USDT balance on all active demo accounts to match your target amount (adds or removes funds as needed).
-                </p>
-                <div className="mb-5">
+                <div className="mb-4">
                   <label className="text-sm font-medium mb-1.5 block">Target Balance (USDT)</label>
                   <input
                     type="number"
@@ -334,10 +423,39 @@ export function AccountsDashboard() {
                   />
                   <p className="text-xs text-muted-foreground mt-1.5">Max: 100,000 USDT per Bybit demo limits</p>
                 </div>
+                <div className="mb-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium">Accounts</label>
+                    <button
+                      onClick={() => {
+                        const demoIds = dashboard.filter(c => c.account_type === "demo" && c.is_active).map(c => c.id);
+                        setResetSelectedIds(prev => prev.length === demoIds.length ? [] : demoIds);
+                      }}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      {resetSelectedIds.length === dashboard.filter(c => c.account_type === "demo" && c.is_active).length ? "Deselect all" : "Select all"}
+                    </button>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 border border-border/50 rounded-xl p-2">
+                    {dashboard.filter(c => c.account_type === "demo" && c.is_active).map(acct => (
+                      <label key={acct.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={resetSelectedIds.includes(acct.id)}
+                          onChange={(e) => {
+                            setResetSelectedIds(prev => e.target.checked ? [...prev, acct.id] : prev.filter(id => id !== acct.id));
+                          }}
+                          className="w-4 h-4 rounded border-border text-primary focus:ring-primary/50"
+                        />
+                        <span className="text-sm truncate">{acct.label}</span>
+                        <span className="text-xs text-muted-foreground ml-auto tabular-nums">${parseFloat(String(acct.total_equity ?? "0")).toFixed(2)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setResetOpen(false)}
-                    disabled={resetLoading}
+                    onClick={() => { setResetOpen(false); setResetSelectedIds([]); }}
                     className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-muted/50 transition-all"
                   >
                     Cancel
@@ -346,27 +464,74 @@ export function AccountsDashboard() {
                     onClick={async () => {
                       const amount = parseFloat(resetAmount);
                       if (!amount || amount <= 0 || amount > 100000) return;
+                      if (resetSelectedIds.length === 0) return;
                       setResetLoading(true);
+                      setResetProgress({ current: 0, total: 0, accounts: [] });
                       try {
-                        const res = await accountsApi.demoResetBalance(amount);
-                        setResetResult(res);
-                        fetchDashboard(true);
+                        const allDemoIds = dashboard.filter(c => c.account_type === "demo" && c.is_active).map(c => c.id);
+                        const ids = resetSelectedIds.length === allDemoIds.length ? undefined : resetSelectedIds;
+                        const res = await accountsApi.demoResetBalance(amount, ids);
+                        resetTaskId.current = res.task_id;
+                        setResetProgress(p => ({ ...p, total: res.accounts_total }));
+                        if (!res.task_id) {
+                          setResetResult({ target_balance: amount, accounts_processed: 0, success: 0, results: [] });
+                          setResetLoading(false);
+                        }
                       } catch (e: unknown) {
                         setResetResult({ target_balance: amount, accounts_processed: 0, success: 0, results: [{ account_id: "", name: "", status: "error", reason: (e as { message?: string }).message || "Unknown error" }] });
-                      } finally {
                         setResetLoading(false);
                       }
                     }}
-                    disabled={resetLoading || !resetAmount || parseFloat(resetAmount) <= 0}
+                    disabled={!resetAmount || parseFloat(resetAmount) <= 0 || resetSelectedIds.length === 0}
                     className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 active:scale-[0.98] transition-all disabled:opacity-50"
                   >
-                    {resetLoading ? "Resetting..." : "Set Balance"}
+                    Set Balance
                   </button>
                 </div>
               </>
-            ) : (
+            ) : resetLoading ? (
               <>
-                <h3 className="text-lg font-semibold mb-3">Result</h3>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center animate-pulse">
+                    <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Resetting Balances...</h3>
+                    <p className="text-xs text-muted-foreground">{resetProgress.current} / {resetProgress.total} accounts</p>
+                  </div>
+                </div>
+                {resetProgress.total > 0 && (
+                  <div className="mb-4">
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-amber-500 transition-all duration-300 ease-out rounded-full"
+                        style={{ width: `${(resetProgress.current / resetProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div className="max-h-48 overflow-y-auto space-y-1.5">
+                  {resetProgress.accounts.map((a, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm px-2 py-1 rounded-lg bg-muted/30">
+                      <span className="truncate mr-2">{a.name}</span>
+                      <span className={`text-xs font-medium shrink-0 ${a.status === "error" ? "text-red-500" : a.status === "unchanged" ? "text-muted-foreground" : "text-emerald-500"}`}>
+                        {a.status === "added" || a.status === "reduced" ? `${a.status} $${a.amount || 0}` : a.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => { setResetOpen(false); setResetLoading(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); resetTaskId.current = null; fetchDashboard(true); }}
+                  className="mt-4 w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Dismiss (continues in background)
+                </button>
+              </>
+            ) : resetResult ? (
+              <>
+                <h3 className="text-lg font-semibold mb-3">Complete</h3>
                 <div className="space-y-2 text-sm mb-5">
                   <p>Target: <span className="font-medium">${resetResult.target_balance} USDT</span></p>
                   <p>Accounts processed: <span className="font-medium">{resetResult.accounts_processed}</span></p>
@@ -380,13 +545,13 @@ export function AccountsDashboard() {
                   )}
                 </div>
                 <button
-                  onClick={() => { setResetOpen(false); setResetResult(null); }}
+                  onClick={() => { setResetOpen(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); setResetSelectedIds([]); }}
                   className="w-full px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-medium hover:brightness-110 transition-all"
                 >
                   Done
                 </button>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       )}
