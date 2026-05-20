@@ -166,6 +166,14 @@ class PositionReconciler:
                 self._in_progress.discard(trade_id)
                 await asyncio.sleep(_API_CALL_DELAY_S)
 
+        # If no positions remain on exchange, deactivate any leftover close rules
+        if stale_trades and not position_counts:
+            try:
+                await self._db.deactivate_rules_for_account(account_id)
+                logger.info("Deactivated stale close rules for account %s (no positions)", account_id)
+            except Exception:
+                logger.warning("Failed to deactivate rules for account %s", account_id)
+
     async def _reconcile_trade(self, client: Any, trade: dict, *, backfill_only: bool = False) -> None:
         trade_id = str(trade["id"])
         account_id = trade["account_id"]

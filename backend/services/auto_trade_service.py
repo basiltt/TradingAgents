@@ -90,6 +90,14 @@ class AutoTradeExecutor:
                 continue
             # Create close rules (only once per account per cycle)
             if account_id not in rules_created_for:
+                # Deactivate any leftover rules from previous scans
+                if self._close_svc:
+                    try:
+                        cleared = await self._close_svc.deactivate_all_rules(account_id)
+                        if cleared:
+                            logger.info("auto_trade_cleared_stale_rules", extra={"account_id": account_id, "count": cleared})
+                    except Exception:
+                        logger.warning("auto_trade_clear_rules_failed", extra={"account_id": account_id})
                 # Profit target rule
                 if state.config.get("target_goal_type") == "profit_pct" and self._close_svc:
                     goal_value = state.config.get("target_goal_value")

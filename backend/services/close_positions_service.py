@@ -80,6 +80,14 @@ class ClosePositionsService:
                 self._trade_service.invalidate_stats_cache(account_id)
 
             await self._broadcast_close_event(account_id, "manual", closed, failed, len(positions))
+
+            # Deactivate leftover close rules since all positions are now closed
+            if closed > 0 and failed == 0:
+                try:
+                    await self._db.deactivate_rules_for_account(account_id)
+                except Exception:
+                    logger.warning("failed_to_deactivate_rules_after_close_all", extra={"account_id": account_id})
+
             logger.info("close_all_positions_done", extra={"account_id": account_id, "total": len(positions), "closed": closed, "failed": failed, "elapsed_ms": int((time.monotonic() - t0) * 1000)})
 
             return {
@@ -320,6 +328,10 @@ class ClosePositionsService:
         if not rule or rule["account_id"] != account_id:
             return False
         return await self._db.delete_close_rule(rule_id)
+
+    async def deactivate_all_rules(self, account_id: str) -> int:
+        """Expire all active/paused rules for an account. Returns count deactivated."""
+        return await self._db.deactivate_rules_for_account(account_id)
 
     async def list_executions(self, account_id: str, page: int = 1, limit: int = 20) -> dict:
         return await self._db.list_close_executions(account_id, page, limit)
