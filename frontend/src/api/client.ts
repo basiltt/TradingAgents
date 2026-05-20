@@ -893,6 +893,14 @@ export const accountsApi = {
   closeAllPositions: (accountId: string, signal?: AbortSignal) =>
     mutate<CloseAllResult>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/positions/close-all`, undefined, signal),
 
+  /** POST /api/v1/accounts/master-close-all — kill switch: close all positions & rules across ALL accounts. */
+  masterCloseAll: (signal?: AbortSignal) =>
+    mutate<MasterCloseAllResult>("POST", `/api/v1/accounts/master-close-all`, undefined, signal ?? AbortSignal.timeout(120_000)),
+
+  /** POST /api/v1/accounts/demo-reset-balance — set all demo accounts to a target USDT balance. */
+  demoResetBalance: (targetBalance: number, signal?: AbortSignal) =>
+    mutate<DemoResetBalanceResult>("POST", `/api/v1/accounts/demo-reset-balance`, { target_balance: targetBalance }, signal ?? AbortSignal.timeout(120_000)),
+
   /** GET /api/v1/accounts/:id/close-rules — list close rules. */
   getCloseRules: (accountId: string, signal?: AbortSignal) =>
     request<CloseRule[]>(`/api/v1/accounts/${encodeURIComponent(accountId)}/close-rules`, undefined, signal),
@@ -1042,6 +1050,35 @@ export interface CloseAllResult {
     error?: string;
   }>;
   execution_id: string;
+}
+
+export interface MasterCloseAllResult {
+  accounts_processed: number;
+  total_positions_closed: number;
+  accounts_failed: number;
+  results: Array<{
+    account_id: string;
+    name: string;
+    status: "closed" | "skipped" | "error";
+    closed?: number;
+    failed?: number;
+    reason?: string;
+  }>;
+}
+
+export interface DemoResetBalanceResult {
+  target_balance: number;
+  accounts_processed: number;
+  success: number;
+  results: Array<{
+    account_id: string;
+    name: string;
+    status: "added" | "reduced" | "unchanged" | "error";
+    amount?: number;
+    new_balance?: number;
+    balance?: number;
+    reason?: string;
+  }>;
 }
 
 export interface CloseExecution {

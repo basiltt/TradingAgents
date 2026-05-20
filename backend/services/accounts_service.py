@@ -120,6 +120,10 @@ class AccountsService:
             except RuntimeError:
                 pass
 
+    def invalidate_all_caches(self) -> None:
+        """Clear all cached wallet/position data so the next poll fetches fresh state."""
+        self._cache.clear()
+
     def _can_refresh(self, account_id: str, cooldown: float = _REFRESH_COOLDOWN_S) -> bool:
         """Return True if cooldown has elapsed since last refresh for this account."""
         last = self._refresh_locks.get(account_id, 0)

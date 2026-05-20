@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid as _uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -11,6 +12,8 @@ from pydantic import ValidationError
 from backend.rate_limit import check_rate_limit as _check_rate_limit
 from backend.schemas import CreateCloseRuleRequest, UpdateCloseRuleRequest
 from backend.services.bybit_client import BybitAPIError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["close-positions"])
 
@@ -45,6 +48,46 @@ async def close_all_positions(request: Request, account_id: str):
         return JSONResponse({"detail": msg, "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
         return JSONResponse({"detail": f"Exchange error (code {e.ret_code})", "code": "BYBIT_ERROR"}, 502)
+
+
+@router.post("/accounts/master-close-all")
+async def master_close_all(request: Request):
+    """Kill switch: close all positions and delete all rules across ALL accounts."""
+    svc = _get_service(request)
+    accounts_svc = getattr(request.app.state, "accounts_service", None)
+    if accounts_svc is None:
+        raise HTTPException(503, detail="Accounts service not available")
+
+    accounts = await accounts_svc.list_accounts()
+    active_accounts = [a for a in accounts if a.get("is_active")]
+
+    results = []
+    for acct in active_accounts:
+        acct_id = acct["id"]
+        acct_name = acct.get("label", "")
+        try:
+            result = await svc.close_all_positions(acct_id)
+            results.append({"account_id": acct_id, "name": acct_name, "status": "closed", "closed": result.get("closed", 0), "failed": result.get("failed", 0)})
+        except ValueError as e:
+            msg = str(e)
+            if "in progress" in msg.lower():
+                results.append({"account_id": acct_id, "name": acct_name, "status": "skipped", "reason": msg})
+            else:
+                results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": msg})
+        except BybitAPIError as e:
+            results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": f"Exchange error ({e.ret_code})"})
+        except Exception as e:
+            logger.exception("master_close_all failed for %s", acct_id)
+            results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": str(e)})
+
+    total_closed = sum(r.get("closed", 0) for r in results)
+    total_failed = sum(1 for r in results if r["status"] == "error")
+    return {
+        "accounts_processed": len(results),
+        "total_positions_closed": total_closed,
+        "accounts_failed": total_failed,
+        "results": results,
+    }
 
 
 @router.post("/accounts/{account_id}/close-rules")

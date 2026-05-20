@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid as _uuid
 from datetime import date, datetime, timezone
@@ -537,3 +538,55 @@ async def cancel_trade(request: Request, account_id: str, trade_id: str):
     except BybitAPIError as e:
         logger.error("cancel_trade_bybit_error", extra={"account_id": account_id, "trade_id": trade_id, "ret_msg": e.ret_msg[:200]})
         return JSONResponse({"detail": e.ret_msg, "code": "EXCHANGE_REJECTION"}, 502)
+
+
+@router.post("/accounts/demo-reset-balance")
+async def demo_reset_balance(request: Request):
+    """Set USDT balance for all demo accounts to a target amount by applying the difference."""
+    svc = _get_service(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body"}, 400)
+
+    try:
+        target = float(body.get("target_balance", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"detail": "target_balance must be a number"}, 400)
+    if target <= 0 or target > 100000:
+        return JSONResponse({"detail": "target_balance must be between 0.01 and 100000"}, 400)
+
+    accounts = await svc.list_accounts()
+    demo_accounts = [a for a in accounts if a.get("account_type") == "demo" and a.get("is_active")]
+
+    if not demo_accounts:
+        return JSONResponse({"detail": "No active demo accounts found"}, 404)
+
+    results = []
+    for i, acct in enumerate(demo_accounts):
+        acct_id = acct["id"]
+        acct_name = acct.get("label", "")
+        try:
+            client = await svc.get_client(acct_id)
+            wallet = await client.get_wallet_balance()
+            current_balance = float(wallet.get("totalWalletBalance") or "0")
+            diff = target - current_balance
+            if abs(diff) < 0.01:
+                results.append({"account_id": acct_id, "name": acct_name, "status": "unchanged", "balance": current_balance})
+                continue
+            if diff > 0:
+                await client.demo_apply_money("USDT", str(round(diff, 2)))
+                results.append({"account_id": acct_id, "name": acct_name, "status": "added", "amount": round(diff, 2), "new_balance": target})
+            else:
+                await client.demo_apply_money("USDT", str(round(abs(diff), 2)), reduce=True)
+                results.append({"account_id": acct_id, "name": acct_name, "status": "reduced", "amount": round(abs(diff), 2), "new_balance": target})
+            if i < len(demo_accounts) - 1:
+                await asyncio.sleep(0.5)
+        except BybitAPIError as e:
+            results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": e.ret_msg})
+        except Exception as e:
+            results.append({"account_id": acct_id, "name": acct_name, "status": "error", "reason": str(e)})
+
+    svc.invalidate_all_caches()
+    success_count = sum(1 for r in results if r["status"] in ("added", "reduced", "unchanged"))
+    return {"target_balance": target, "accounts_processed": len(results), "success": success_count, "results": results}
