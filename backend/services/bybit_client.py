@@ -170,6 +170,9 @@ class BybitClient:
                     logger.error(f"Bybit network error on {path} after {_MAX_RETRIES} attempts")
                     raise BybitAPIError(-1, "Network error")
 
+                if data is None:
+                    raise BybitAPIError(-1, "Empty response from Bybit API")
+
                 ret_code = data.get("retCode", -1)
                 ret_msg = str(data.get("retMsg", "")).lower()
 

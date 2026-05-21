@@ -27,6 +27,11 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   const [activeTab, setActiveTab] = useState("wallet");
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [credKey, setCredKey] = useState("");
+  const [credSecret, setCredSecret] = useState("");
+  const [credSaving, setCredSaving] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,20 +79,147 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   if (error) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate({ to: "/accounts" })}
-            className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Account Detail</h1>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate({ to: "/accounts" })}
+              className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Account Detail</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowCredentials(true)}
+              className="px-4 py-2 rounded-xl text-sm font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all"
+            >
+              Update Credentials
+            </button>
+            <button
+              disabled={deleting}
+              onClick={() => setDeleteConfirm(true)}
+              className="px-4 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50"
+            >
+              {deleting ? "Deleting..." : "Delete Account"}
+            </button>
+          </div>
         </div>
         <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
           <p className="text-destructive text-sm">{error}</p>
         </div>
+
+        {/* Update Credentials Dialog */}
+        {showCredentials && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !credSaving && setShowCredentials(false)} />
+            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
+              <h3 className="text-lg font-bold">Update API Credentials</h3>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="API Key"
+                  value={credKey}
+                  onChange={(e) => setCredKey(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <input
+                  type="password"
+                  placeholder="API Secret"
+                  value={credSecret}
+                  onChange={(e) => setCredSecret(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
+              {credError && <p className="text-destructive text-xs">{credError}</p>}
+              <div className="flex items-center gap-2.5 pt-1">
+                <button
+                  onClick={() => setShowCredentials(false)}
+                  disabled={credSaving}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!credKey.trim() || !credSecret.trim()) {
+                      setCredError("Both fields are required");
+                      return;
+                    }
+                    setCredSaving(true);
+                    setCredError(null);
+                    try {
+                      await accountsApi.updateCredentials(accountId, { api_key: credKey.trim(), api_secret: credSecret.trim() });
+                      setShowCredentials(false);
+                      setCredKey("");
+                      setCredSecret("");
+                      window.location.reload();
+                    } catch (e: unknown) {
+                      const err = e as { detail?: string; message?: string };
+                      setCredError(err.detail || err.message || "Failed to update");
+                    } finally {
+                      setCredSaving(false);
+                    }
+                  }}
+                  disabled={credSaving}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {credSaving && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Dialog */}
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !deleting && setDeleteConfirm(false)} />
+            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
+              <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
+                <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold mb-1">Delete account?</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  This will permanently remove this account and all its data. This cannot be undone.
+                </p>
+              </div>
+              <div className="flex items-center gap-2.5 pt-1">
+                <button
+                  onClick={() => setDeleteConfirm(false)}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setDeleting(true);
+                    try {
+                      await accountsApi.delete(accountId);
+                      dispatch(removeAccount(accountId));
+                      navigate({ to: "/accounts" });
+                    } catch {
+                      setDeleting(false);
+                      setDeleteConfirm(false);
+                    }
+                  }}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
