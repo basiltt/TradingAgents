@@ -1,5 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  KeyRound,
+  Settings2,
+  SlidersHorizontal,
+} from "lucide-react";
 import { apiClient } from "@/api/client";
+import { AppearanceControls } from "@/components/layout/AppearanceControls";
+import { PageHeader } from "@/components/layout/PageHeader";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 export function ConfigPage() {
@@ -10,135 +25,170 @@ export function ConfigPage() {
   });
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-10">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">System Configuration</h1>
-        <p className="text-xs text-muted-foreground mt-1.5 font-medium uppercase tracking-wider">
-          Active configuration values, credential status, and environment overrides
-        </p>
-      </div>
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        eyebrow="System Settings"
+        title="Configuration, environment state, and appearance controls."
+        description="Review the active backend configuration, validate overrides, and tune the redesigned interface from the same operational surface."
+        stats={[
+          {
+            label: "Resolved values",
+            value: String(Object.keys(data?.resolved ?? {}).length),
+            tone: "accent",
+          },
+          {
+            label: "Overrides",
+            value: String(Object.keys(data?.overrides ?? {}).length),
+            tone: "success",
+          },
+        ]}
+      />
+
+      <AppearanceControls />
 
       {isLoading ? (
-        <div className="space-y-4">
-          <div className="h-40 rounded-2xl bg-muted/20 animate-pulse border border-border/30" />
-          <div className="h-32 rounded-2xl bg-muted/20 animate-pulse border border-border/30" />
+        <div className="grid gap-4 lg:grid-cols-[1.25fr_0.9fr]">
+          <Card className="min-h-96 animate-pulse" />
+          <Card className="min-h-72 animate-pulse" />
         </div>
       ) : isError || !data ? (
-        <div className="glass-card border border-destructive/20 bg-destructive/5 rounded-2xl p-6 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0 border border-destructive/15">
-            <svg className="w-5 h-5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-destructive">Error: Failed to fetch environment configuration</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Check connection state to the pipeline engine gateway.</p>
-          </div>
-        </div>
+        <Card className="border-destructive/20 bg-destructive/6">
+          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+            <div className="flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-destructive/10 text-destructive shadow-[var(--shadow-soft)]">
+              <AlertTriangle className="size-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-destructive">
+                Failed to fetch runtime configuration
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The backend settings endpoint is unavailable. Verify the local runtime and
+                try again.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       ) : (
         <>
-          {/* Resolved Config */}
-          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 flex items-center justify-between gap-4 border-b border-border/30 bg-muted/20">
-              <div className="flex items-center gap-2.5">
-                <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Resolved Environment</h4>
-                  <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-0.5">Active variables inside run context</p>
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <ResolvedConfigCard values={data.resolved} />
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-warning/12 text-warning shadow-[var(--shadow-soft)]">
+                    <KeyRound className="size-5" />
+                  </div>
+                  <div>
+                    <CardTitle>Exchange Connectivity</CardTitle>
+                    <CardDescription>
+                      Bybit credentials remain optional unless live execution is enabled.
+                    </CardDescription>
+                  </div>
                 </div>
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-0.75 rounded-full border border-border/30 bg-muted/40 text-muted-foreground">
-                {Object.keys(data.resolved).length} Parameters
-              </span>
-            </div>
-
-            <div className="divide-y divide-border/20 max-h-[500px] overflow-y-auto no-scrollbar">
-              {Object.entries(data.resolved).map(([key, value], i) => (
-                <div
-                  key={key}
-                  className={cn(
-                    "flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-6 px-6 py-3.5 text-xs transition-colors hover:bg-muted/15",
-                    i % 2 === 0 ? "bg-muted/5" : ""
-                  )}
-                >
-                  <span className="font-mono text-muted-foreground/80 sm:w-64 sm:shrink-0 font-bold select-all">{key}</span>
-                  <span className="font-mono break-all font-semibold text-foreground/90 flex-1">
-                    {String(value) === "***" ? (
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/15">Masked Credentials</span>
-                    ) : (
-                      String(value)
-                    )}
-                  </span>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm text-muted-foreground">
+                <p className="leading-6">
+                  TradingAgents uses public Bybit endpoints for market context and can operate
+                  in read-only mode without private account credentials.
+                </p>
+                <div className="rounded-[calc(var(--radius)*1.25)] border border-border/60 bg-muted/20 p-4">
+                  <p className="section-eyebrow">Optional variables</p>
+                  <div className="mt-3 space-y-2 font-mono text-xs text-foreground">
+                    <p>BYBIT_API_KEY</p>
+                    <p>BYBIT_API_SECRET</p>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bybit Credentials Info */}
-          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6 space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-                <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Crypto Futures Exchange Integration</h4>
-                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-0.5">Bybit connectivity details</p>
-              </div>
-            </div>
-
-            <div className="text-xs space-y-3 pl-10.5">
-              <p className="text-muted-foreground leading-relaxed max-w-2xl font-medium">
-                Analysis utilizes the Bybit public endpoints to stream real-time price feeds. Private keys are not mandatory unless live routing of execution actions is requested.
-              </p>
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-xs font-bold text-muted-foreground/80 w-36 select-all">BYBIT_API_KEY</span>
-                <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-muted/40 text-muted-foreground border border-border/20">Optional Public Mode</span>
-              </div>
-              <p className="text-[10px] text-muted-foreground/75 leading-relaxed font-semibold">
-                Set <code className="font-mono bg-muted/60 text-foreground px-1.5 py-0.5 rounded border border-border/10">BYBIT_API_KEY</code> and <code className="font-mono bg-muted/60 text-foreground px-1.5 py-0.5 rounded border border-border/10">BYBIT_API_SECRET</code> environment flags to unlock private portfolios.
-              </p>
-            </div>
+                <p className="leading-6">
+                  Set the private credentials only when portfolio access, order routing, or
+                  account-specific features are required.
+                </p>
+              </CardContent>
+            </Card>
           </div>
 
           {Object.keys(data.overrides).length > 0 && (
-            <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-6 py-4 flex items-center justify-between gap-4 border-b border-border/30 bg-muted/20">
-                <div className="flex items-center gap-2.5">
-                  <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-emerald-500/12 text-emerald-500 shadow-[var(--shadow-soft)]">
+                    <SlidersHorizontal className="size-5" />
+                  </div>
                   <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Active Overrides</h4>
-                    <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-0.5">Parameters shadowing default definitions</p>
+                    <CardTitle>Active Overrides</CardTitle>
+                    <CardDescription>
+                      These values currently shadow the repository defaults.
+                    </CardDescription>
                   </div>
                 </div>
-                <span className="text-[9px] font-black uppercase tracking-wider px-2.5 py-0.75 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-500 shadow-sm">
-                  {Object.keys(data.overrides).length} overrides active
-                </span>
-              </div>
-              <div className="divide-y divide-border/20">
-                {Object.entries(data.overrides).map(([key, value], i) => (
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {Object.entries(data.overrides).map(([key, value], index) => (
                   <div
                     key={key}
                     className={cn(
-                      "flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-6 px-6 py-3.5 text-xs transition-colors hover:bg-muted/15",
-                      i % 2 === 0 ? "bg-muted/5" : ""
+                      "grid gap-1 rounded-[calc(var(--radius)*1.2)] border border-border/50 px-4 py-3 md:grid-cols-[minmax(0,18rem)_1fr] md:items-center",
+                      index % 2 === 0 ? "bg-muted/15" : "bg-card/55",
                     )}
                   >
-                    <span className="font-mono text-muted-foreground/80 sm:w-64 sm:shrink-0 font-bold select-all">{key}</span>
-                    <span className="font-mono break-all font-black text-emerald-500">{String(value)}</span>
+                    <span className="font-mono text-xs font-semibold text-muted-foreground">
+                      {key}
+                    </span>
+                    <span className="font-mono text-sm font-semibold text-emerald-500 break-all">
+                      {String(value)}
+                    </span>
                   </div>
                 ))}
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           )}
         </>
       )}
     </div>
+  );
+}
+
+function ResolvedConfigCard({ values }: { values: Record<string, unknown> }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+            <Settings2 className="size-5" />
+          </div>
+          <div>
+            <CardTitle>Resolved Environment</CardTitle>
+            <CardDescription>
+              The live backend values currently injected into the runtime.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="custom-scrollbar max-h-[38rem] space-y-2 overflow-y-auto pr-1">
+          {Object.entries(values).map(([key, value], index) => (
+            <div
+              key={key}
+              className={cn(
+                "grid gap-1 rounded-[calc(var(--radius)*1.2)] border border-border/50 px-4 py-3 md:grid-cols-[minmax(0,18rem)_1fr] md:items-center",
+                index % 2 === 0 ? "bg-muted/15" : "bg-card/55",
+              )}
+            >
+              <span className="font-mono text-xs font-semibold text-muted-foreground">
+                {key}
+              </span>
+              <span className="font-mono text-sm font-semibold text-foreground break-all">
+                {String(value) === "***" ? (
+                  <span className="inline-flex items-center rounded-full border border-warning/20 bg-warning/12 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-warning">
+                    Masked secret
+                  </span>
+                ) : (
+                  String(value)
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -1,101 +1,211 @@
-import { useEffect, useCallback } from "react";
-import { Outlet, Link } from "@tanstack/react-router";
-import { useAppSelector, useAppDispatch } from "@/store";
-import { toggleSidebar, setSidebarOpen, setTheme } from "@/store/ui-slice";
-import { useThemeEffect } from "@/hooks/useThemeEffect";
+import { useEffect } from "react";
+import { Link, Outlet, useLocation } from "@tanstack/react-router";
+import type { LucideIcon } from "lucide-react";
+import {
+  ActivitySquare,
+  ArrowLeftRight,
+  ChartColumnBig,
+  Clock3,
+  Database,
+  Home,
+  Menu,
+  Radar,
+  ScanSearch,
+  Settings2,
+  Sparkles,
+  Wallet,
+  Waypoints,
+  X,
+} from "lucide-react";
 import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
+import { useThemeEffect } from "@/hooks/useThemeEffect";
+import { useAppDispatch, useAppSelector } from "@/store";
+import { setSidebarOpen, toggleSidebar } from "@/store/ui-slice";
+import { AppearanceControls } from "@/components/layout/AppearanceControls";
+import { cn } from "@/lib/utils";
 
-function NavLink({
-  to,
-  icon,
-  children,
-}: {
+interface NavItem {
+  label: string;
   to: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
+  description: string;
+  icon: LucideIcon;
+  matches: (pathname: string) => boolean;
+}
+
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+const navSections: NavSection[] = [
+  {
+    title: "Overview",
+    items: [
+      {
+        label: "Home",
+        to: "/",
+        description: "Command center, quick actions, and current activity.",
+        icon: Home,
+        matches: (pathname) => pathname === "/",
+      },
+    ],
+  },
+  {
+    title: "Research",
+    items: [
+      {
+        label: "New Analysis",
+        to: "/analysis/new",
+        description: "Launch a fresh agent workflow with configurable depth and models.",
+        icon: Sparkles,
+        matches: (pathname) => pathname.startsWith("/analysis/"),
+      },
+      {
+        label: "Analysis History",
+        to: "/history",
+        description: "Inspect saved runs, archived reports, and completed reasoning trails.",
+        icon: ActivitySquare,
+        matches: (pathname) => pathname.startsWith("/history"),
+      },
+      {
+        label: "New Scan",
+        to: "/scanner",
+        description: "Batch scan crypto markets with automation and filter controls.",
+        icon: Radar,
+        matches: (pathname) => pathname === "/scanner",
+      },
+      {
+        label: "Scan History",
+        to: "/scanner/history",
+        description: "Review completed scans, result snapshots, and execution summaries.",
+        icon: ScanSearch,
+        matches: (pathname) =>
+          pathname.startsWith("/scanner/history") ||
+          (/^\/scanner\/[^/]+$/.test(pathname) &&
+            pathname !== "/scanner" &&
+            pathname !== "/scanner/schedules"),
+      },
+      {
+        label: "Scheduled Scans",
+        to: "/scanner/schedules",
+        description: "Automate repeated scan jobs, schedules, and execution windows.",
+        icon: Clock3,
+        matches: (pathname) => pathname.startsWith("/scanner/schedules"),
+      },
+    ],
+  },
+  {
+    title: "Portfolio",
+    items: [
+      {
+        label: "Accounts",
+        to: "/accounts",
+        description: "Manage trading accounts, balances, positions, and controls.",
+        icon: Wallet,
+        matches: (pathname) => pathname.startsWith("/accounts"),
+      },
+      {
+        label: "Performance",
+        to: "/analytics",
+        description: "Track equity, drawdown, monthly performance, and portfolio health.",
+        icon: ChartColumnBig,
+        matches: (pathname) => pathname.startsWith("/analytics"),
+      },
+      {
+        label: "Trades",
+        to: "/trades",
+        description: "Inspect trade streams, filters, statuses, and close actions.",
+        icon: ArrowLeftRight,
+        matches: (pathname) => pathname.startsWith("/trades"),
+      },
+      {
+        label: "Strategies",
+        to: "/strategies",
+        description: "Build reusable strategy definitions and execution templates.",
+        icon: Waypoints,
+        matches: (pathname) => pathname.startsWith("/strategies"),
+      },
+      {
+        label: "Cycles",
+        to: "/cycles",
+        description: "Review cycle automation, progress states, and managed trade batches.",
+        icon: ActivitySquare,
+        matches: (pathname) => pathname.startsWith("/cycles"),
+      },
+    ],
+  },
+  {
+    title: "System",
+    items: [
+      {
+        label: "Config",
+        to: "/config",
+        description: "View resolved environment state, overrides, and UI appearance controls.",
+        icon: Settings2,
+        matches: (pathname) => pathname.startsWith("/config"),
+      },
+      {
+        label: "Memory",
+        to: "/memory",
+        description: "Browse long-term decision logs, confidence records, and reasoning history.",
+        icon: Database,
+        matches: (pathname) => pathname.startsWith("/memory"),
+      },
+    ],
+  },
+];
+
+const navItems = navSections.flatMap((section) => section.items);
+
+function SidebarLink({
+  item,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  active: boolean;
+  onNavigate: () => void;
 }) {
-  const dispatch = useAppDispatch();
-  const closeSidebar = useCallback(
-    () => dispatch(setSidebarOpen(false)),
-    [dispatch],
-  );
+  const Icon = item.icon;
 
   return (
     <Link
-      to={to}
-      className="group/nav relative flex items-center gap-3.5 px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-all duration-300 hover:translate-x-1 active:scale-[0.98] min-h-[44px]"
-      activeProps={{
-        className: "nav-active shadow-sm",
-        "aria-current": "page" as const,
-      }}
-      activeOptions={{ exact: true }}
-      onClick={closeSidebar}
+      to={item.to}
+      onClick={onNavigate}
+      className={cn(
+        "group/nav relative flex min-h-[3.15rem] items-center gap-3 rounded-[calc(var(--radius)*1.35)] border px-3.5 py-3",
+        active
+          ? "border-primary/25 bg-primary/12 text-foreground shadow-[var(--shadow-accent)]"
+          : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-sidebar-accent/85 hover:text-foreground",
+      )}
     >
-      {({ isActive }) => (
-        <>
-          {isActive && (
-            <span className="absolute inset-0 rounded-xl bg-primary shadow-lg shadow-primary/20 glow-primary transition-all duration-300" />
-          )}
-          <span
-            className={`relative z-10 w-5 h-5 flex items-center justify-center shrink-0 transition-colors duration-300 ${
-              isActive ? "text-white" : "text-sidebar-foreground/70 group-hover/nav:text-primary"
-            }`}
-          >
-            {icon}
-          </span>
-          <span
-            className={`relative z-10 transition-colors duration-300 ${
-              isActive ? "text-white" : "text-sidebar-foreground/80 group-hover/nav:text-foreground"
-            }`}
-          >
-            {children}
-          </span>
-          {!isActive && (
-            <span className="absolute inset-0 rounded-xl bg-sidebar-accent/50 opacity-0 group-hover/nav:opacity-100 transition-all duration-300" />
-          )}
-        </>
+      <span
+        className={cn(
+          "flex size-10 shrink-0 items-center justify-center rounded-2xl transition-all",
+          active
+            ? "gradient-primary text-primary-foreground shadow-[var(--shadow-accent)]"
+            : "bg-card/80 text-muted-foreground group-hover/nav:text-foreground",
+        )}
+      >
+        <Icon className="size-4.5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold tracking-tight">
+          {item.label}
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+          {item.description}
+        </span>
+      </span>
+      {active && (
+        <span className="h-8 w-1 rounded-full bg-primary shadow-[var(--shadow-accent)]" />
       )}
     </Link>
   );
 }
 
-function ThemeToggle() {
-  const theme = useAppSelector((s) => s.ui.theme);
-  const dispatch = useAppDispatch();
-
-  const nextTheme = () => {
-    const order = ["light", "dark", "system"] as const;
-    const idx = order.indexOf(theme);
-    dispatch(setTheme(order[(idx + 1) % order.length]));
-  };
-
-  return (
-    <button
-      onClick={nextTheme}
-      className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-semibold text-sidebar-foreground/75 hover:text-foreground hover:bg-sidebar-accent/50 transition-all duration-200 active:scale-[0.97] cursor-pointer touch-target"
-      aria-label={`Theme: ${theme}. Click to change.`}
-    >
-      <span className="w-5 h-5 flex items-center justify-center shrink-0 text-primary">
-        {theme === "dark" ? (
-          <svg className="w-4.5 h-4.5 animate-[spin_0.8s_ease-out_1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-          </svg>
-        ) : theme === "light" ? (
-          <svg className="w-4.5 h-4.5 animate-[spin_0.8s_ease-out_1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-        ) : (
-          <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-        )}
-      </span>
-      <span className="capitalize">{theme} Mode</span>
-    </button>
-  );
-}
-
 export function RootLayout() {
+  const pathname = useLocation({ select: (location) => location.pathname });
   const sidebarOpen = useAppSelector((s) => s.ui.sidebarOpen);
   const dispatch = useAppDispatch();
 
@@ -103,262 +213,166 @@ export function RootLayout() {
   useAccountWebSocket();
 
   useEffect(() => {
-    if (!sidebarOpen) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") dispatch(setSidebarOpen(false));
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        dispatch(setSidebarOpen(false));
+      }
     };
+
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [sidebarOpen, dispatch]);
+  }, [dispatch]);
+
+  useEffect(() => {
+    dispatch(setSidebarOpen(false));
+  }, [pathname, dispatch]);
+
+  const currentItem =
+    navItems.find((item) => item.matches(pathname)) ??
+    navItems[0];
+  const currentSection =
+    navSections.find((section) =>
+      section.items.some((item) => item.matches(pathname)),
+    ) ?? navSections[0];
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden animate-fade-in-up">
-      {/* Mobile hamburger */}
-      <button
-        className="md:hidden fixed top-4 left-4 z-50 w-11 h-11 flex items-center justify-center rounded-xl bg-card/90 border border-border/40 shadow-md hover:bg-accent active:scale-90 transition-all cursor-pointer"
-        onClick={() => dispatch(toggleSidebar())}
-        aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
-      >
-        <svg className="w-5 h-5 text-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          {sidebarOpen ? (
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          ) : (
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+    <div className="app-shell animate-fade-in-up">
+      <div className="relative lg:grid lg:grid-cols-[var(--app-sidebar-width)_minmax(0,1fr)]">
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-40 w-[min(92vw,var(--app-sidebar-width))] p-3 transition-transform duration-300 lg:sticky lg:top-0 lg:h-svh lg:w-auto lg:translate-x-0",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full",
           )}
-        </svg>
-      </button>
-
-      {/* Sidebar */}
-      <nav
-        aria-label="Main navigation"
-        className={`w-64 border-r border-sidebar-border bg-sidebar/95 backdrop-blur-lg flex flex-col shrink-0
-          fixed md:static inset-y-0 left-0 z-40
-          ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
-          transition-transform duration-300 ease-out shadow-xl md:shadow-none`}
-      >
-        {/* Logo / Brand */}
-        <div className="px-6 py-6 border-b border-sidebar-border/60">
-          <Link to="/" className="flex items-center gap-3.5 group">
-            <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg shadow-primary/10 group-hover:shadow-primary/20 group-hover:scale-105 transition-all duration-300" style={{background: 'linear-gradient(135deg, oklch(0.55 var(--theme-chroma) var(--theme-hue)), oklch(0.62 var(--theme-chroma) calc(var(--theme-hue) + 20)))'}}>
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
+          aria-label="Primary navigation"
+        >
+          <div className="glass flex h-[calc(100svh-1.5rem)] flex-col overflow-hidden rounded-[calc(var(--radius)*1.9)] p-3">
+            <div className="flex items-center justify-between gap-3 border-b border-sidebar-border/70 px-3 py-3">
+              <Link to="/" className="flex min-w-0 items-center gap-3">
+                <span className="gradient-primary flex size-12 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.4)] text-primary-foreground shadow-[var(--shadow-accent)]">
+                  <Sparkles className="size-5" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-lg font-semibold tracking-tight text-sidebar-foreground">
+                    TradingAgents
+                  </span>
+                  <span className="section-eyebrow block text-sidebar-foreground/70">
+                    Adaptive Trading Workspace
+                  </span>
+                </span>
+              </Link>
+              <button
+                type="button"
+                className="touch-target inline-flex items-center justify-center rounded-2xl border border-border/60 bg-card/65 text-muted-foreground lg:hidden"
+                onClick={() => dispatch(setSidebarOpen(false))}
+                aria-label="Close navigation"
+              >
+                <X className="size-4.5" />
+              </button>
             </div>
-            <div>
-              <h1 className="text-base font-bold text-sidebar-foreground leading-tight tracking-tight">TradingAgents</h1>
-              <p className="text-[10px] text-primary/70 font-bold uppercase tracking-wider mt-0.5">AI Engine</p>
+
+            <div className="custom-scrollbar flex-1 space-y-7 overflow-y-auto px-2 py-4">
+              {navSections.map((section) => (
+                <section key={section.title} className="space-y-2.5">
+                  <p className="section-eyebrow px-2.5">{section.title}</p>
+                  <div className="space-y-1.5">
+                    {section.items.map((item) => (
+                      <SidebarLink
+                        key={item.to}
+                        item={item}
+                        active={item.matches(pathname)}
+                        onNavigate={() => dispatch(setSidebarOpen(false))}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
-          </Link>
+
+            <div className="border-t border-sidebar-border/70 px-2 pt-3">
+              <AppearanceControls compact />
+            </div>
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          <header className="sticky top-0 z-30 px-3 pt-3 sm:px-5 lg:px-6">
+            <div className="glass rounded-[calc(var(--radius)*1.9)] px-3 sm:px-5">
+              <div className="flex min-h-[var(--app-topbar-height)] items-center gap-3">
+                <button
+                  type="button"
+                  className="touch-target inline-flex items-center justify-center rounded-2xl border border-border/60 bg-card/65 text-foreground shadow-[var(--shadow-soft)] lg:hidden"
+                  onClick={() => dispatch(toggleSidebar())}
+                  aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
+                >
+                  <Menu className="size-4.5" />
+                </button>
+
+                <div className="min-w-0 flex-1">
+                  <p className="section-eyebrow">{currentSection.title}</p>
+                  <div className="mt-1 flex items-center gap-3">
+                    <h1 className="truncate text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+                      {currentItem.label}
+                    </h1>
+                    <span className="hidden rounded-full border border-border/70 bg-card/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:inline-flex">
+                      Responsive workspace
+                    </span>
+                  </div>
+                  <p className="mt-1 hidden truncate text-sm text-muted-foreground sm:block">
+                    {currentItem.description}
+                  </p>
+                </div>
+
+                <div className="hidden items-center gap-2 xl:flex">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-500">
+                    <span className="size-2 rounded-full bg-emerald-500 animate-status-halo" />
+                    Local runtime live
+                  </span>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <main className="px-3 pb-10 pt-4 sm:px-5 lg:px-6">
+            <div className="mx-auto w-full max-w-[var(--app-max-width)]">
+              <Outlet />
+            </div>
+          </main>
         </div>
+      </div>
 
-        {/* Nav links */}
-        <div className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto custom-scrollbar">
-          <p className="px-4 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
-            Dashboard
-          </p>
-          <NavLink
-            to="/"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-            }
-          >
-            Home
-          </NavLink>
-
-          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
-            Analysis
-          </p>
-          <NavLink
-            to="/analysis/new"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            }
-          >
-            New Analysis
-          </NavLink>
-          <NavLink
-            to="/history"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          >
-            Analysis History
-          </NavLink>
-
-          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
-            Market Scanner
-          </p>
-          <NavLink
-            to="/scanner"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            }
-          >
-            New Scan
-          </NavLink>
-          <NavLink
-            to="/scanner/history"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-            }
-          >
-            Scan History
-          </NavLink>
-          <NavLink
-            to="/scanner/schedules"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          >
-            Scheduled Scans
-          </NavLink>
-
-          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
-            Accounts
-          </p>
-          <NavLink
-            to="/accounts"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-              </svg>
-            }
-          >
-            Accounts
-          </NavLink>
-          <NavLink
-            to="/analytics"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-              </svg>
-            }
-          >
-            Performance
-          </NavLink>
-
-          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
-            Trading
-          </p>
-          <NavLink
-            to="/trades"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-              </svg>
-            }
-          >
-            Trades
-          </NavLink>
-          <NavLink
-            to="/strategies"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-              </svg>
-            }
-          >
-            Strategies
-          </NavLink>
-          <NavLink
-            to="/cycles"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            }
-          >
-            Cycles
-          </NavLink>
-
-          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
-            Settings
-          </p>
-          <NavLink
-            to="/config"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            }
-          >
-            Config
-          </NavLink>
-          <NavLink
-            to="/memory"
-            icon={
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-              </svg>
-            }
-          >
-            Memory
-          </NavLink>
-        </div>
-
-        {/* Footer */}
-        <div className="px-4 py-4 border-t border-sidebar-border/60">
-          <ThemeToggle />
-        </div>
-      </nav>
-
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div
-          className="md:hidden fixed inset-0 bg-black/55 backdrop-blur-[3px] z-30 transition-all duration-300 ease-in-out"
-          role="button"
-          tabIndex={0}
-          aria-label="Close navigation"
-          onClick={() => dispatch(setSidebarOpen(false))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ")
-              dispatch(setSidebarOpen(false));
-          }}
-        />
-      )}
-
-      {/* Main content */}
-      <main className="flex-1 overflow-auto custom-scrollbar bg-background">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-20 md:pt-6 pb-6 h-full">
-          <Outlet />
-        </div>
-      </main>
+      <div
+        className={cn(
+          "fixed inset-0 z-30 bg-[oklch(0.16_0.012_var(--surface-hue)_/_0.52)] backdrop-blur-sm transition-opacity duration-300 lg:hidden",
+          sidebarOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+        )}
+        onClick={() => dispatch(setSidebarOpen(false))}
+        aria-hidden="true"
+      />
     </div>
   );
 }
 
 export function NotFound() {
   return (
-    <div className="flex items-center justify-center h-[70vh] animate-fade-in-up">
-      <div className="text-center space-y-5 p-8 rounded-2xl glass-card max-w-sm">
-        <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center text-primary glow-primary">
-          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+    <div className="flex min-h-[70vh] items-center justify-center py-10">
+      <div className="page-hero glass-card max-w-xl overflow-hidden rounded-[calc(var(--radius)*2)] border border-border/60 p-8 text-center">
+        <div className="mx-auto flex size-18 items-center justify-center rounded-[calc(var(--radius)*1.6)] bg-primary/12 text-primary shadow-[var(--shadow-accent)]">
+          <Radar className="size-8" />
         </div>
-        <h2 className="text-2xl font-bold tracking-tight">Page Not Found</h2>
-        <p className="text-muted-foreground text-sm leading-relaxed">
-          The page you're looking for does not exist or has been relocated.
+        <p className="section-eyebrow mt-6">Navigation Error</p>
+        <h2 className="mt-2 text-3xl font-semibold tracking-tight">Page not found</h2>
+        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+          This workspace route does not exist anymore or the underlying record was removed.
+          Return to the main dashboard to continue from a stable surface.
         </p>
-        <Link
-          to="/"
-          className="inline-flex items-center justify-center w-full h-11 px-5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90 active:scale-[0.98] shadow-lg shadow-primary/15 transition-all duration-200"
-        >
-          Return to Dashboard
-        </Link>
+        <div className="mt-6 flex justify-center">
+          <Link
+            to="/"
+            className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-primary/20 bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+          >
+            Return to dashboard
+          </Link>
+        </div>
       </div>
     </div>
   );

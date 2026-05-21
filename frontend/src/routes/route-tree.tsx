@@ -1,4 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
+import { Suspense, lazy, type ReactNode } from "react";
 import {
   createRootRoute,
   createRoute,
@@ -6,23 +7,102 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { RootLayout, NotFound } from "@/components/layout/RootLayout";
-import { ConfigForm } from "@/components/analysis/ConfigForm";
-import { AnalysisDashboard } from "@/components/analysis/AnalysisDashboard";
-import { HomeDashboard } from "@/components/dashboard/HomeDashboard";
-import { HistoryList } from "@/components/dashboard/HistoryList";
-import { ConfigPage as ConfigPageComponent } from "@/components/config/ConfigPage";
-import { MemoryPage as MemoryPageComponent } from "@/components/config/MemoryPage";
-import { ScannerPage as ScannerPageComponent } from "@/components/scanner/ScannerPage";
-import { ScanHistoryPage } from "@/components/scanner/ScanHistoryPage";
-import { ScanDetailPage } from "@/components/scanner/ScanDetailPage";
-import { ScheduledScansPage as ScheduledScansPageComponent } from "@/components/scanner/ScheduledScansPage";
-import { AccountsDashboard } from "@/components/accounts/AccountsDashboard";
-import { AccountDetailView } from "@/components/accounts/AccountDetailView";
-import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
-import { StrategiesPage as StrategiesPageComponent } from "@/components/strategies/StrategiesPage";
-import { CycleListPage } from "@/components/cycles/CycleListPage";
-import { CycleDetailPage } from "@/components/cycles/CycleDetailPage";
-import TradesPage from "@/components/trades/TradesPage";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const ConfigForm = lazy(() =>
+  import("@/components/analysis/ConfigForm").then((module) => ({
+    default: module.ConfigForm,
+  })),
+);
+const AnalysisDashboard = lazy(() =>
+  import("@/components/analysis/AnalysisDashboard").then((module) => ({
+    default: module.AnalysisDashboard,
+  })),
+);
+const HomeDashboard = lazy(() =>
+  import("@/components/dashboard/HomeDashboard").then((module) => ({
+    default: module.HomeDashboard,
+  })),
+);
+const HistoryList = lazy(() =>
+  import("@/components/dashboard/HistoryList").then((module) => ({
+    default: module.HistoryList,
+  })),
+);
+const ConfigPageComponent = lazy(() =>
+  import("@/components/config/ConfigPage").then((module) => ({
+    default: module.ConfigPage,
+  })),
+);
+const MemoryPageComponent = lazy(() =>
+  import("@/components/config/MemoryPage").then((module) => ({
+    default: module.MemoryPage,
+  })),
+);
+const ScannerPageComponent = lazy(() =>
+  import("@/components/scanner/ScannerPage").then((module) => ({
+    default: module.ScannerPage,
+  })),
+);
+const ScanHistoryPage = lazy(() =>
+  import("@/components/scanner/ScanHistoryPage").then((module) => ({
+    default: module.ScanHistoryPage,
+  })),
+);
+const ScanDetailPage = lazy(() =>
+  import("@/components/scanner/ScanDetailPage").then((module) => ({
+    default: module.ScanDetailPage,
+  })),
+);
+const ScheduledScansPageComponent = lazy(() =>
+  import("@/components/scanner/ScheduledScansPage").then((module) => ({
+    default: module.ScheduledScansPage,
+  })),
+);
+const AccountsDashboard = lazy(() =>
+  import("@/components/accounts/AccountsDashboard").then((module) => ({
+    default: module.AccountsDashboard,
+  })),
+);
+const AccountDetailView = lazy(() =>
+  import("@/components/accounts/AccountDetailView").then((module) => ({
+    default: module.AccountDetailView,
+  })),
+);
+const AnalyticsDashboard = lazy(() =>
+  import("@/components/analytics/AnalyticsDashboard").then((module) => ({
+    default: module.AnalyticsDashboard,
+  })),
+);
+const StrategiesPageComponent = lazy(() =>
+  import("@/components/strategies/StrategiesPage").then((module) => ({
+    default: module.StrategiesPage,
+  })),
+);
+const CycleListPage = lazy(() =>
+  import("@/components/cycles/CycleListPage").then((module) => ({
+    default: module.CycleListPage,
+  })),
+);
+const CycleDetailPage = lazy(() =>
+  import("@/components/cycles/CycleDetailPage").then((module) => ({
+    default: module.CycleDetailPage,
+  })),
+);
+const TradesPageComponent = lazy(() => import("@/components/trades/TradesPage"));
+
+function RouteLoading() {
+  return (
+    <div className="space-y-4 pb-8">
+      <Skeleton className="h-48 rounded-[calc(var(--radius)*2)]" />
+      <Skeleton className="h-72 rounded-[calc(var(--radius)*1.8)]" />
+    </div>
+  );
+}
+
+function RouteSuspense({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<RouteLoading />}>{children}</Suspense>;
+}
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -30,75 +110,145 @@ const rootRoute = createRootRoute({
 });
 
 function HomePage() {
-  return <HomeDashboard />;
+  return (
+    <RouteSuspense>
+      <HomeDashboard />
+    </RouteSuspense>
+  );
 }
 
 function AnalysisNewPage() {
   return (
-    <div className="max-w-2xl mx-auto py-4">
-      <ConfigForm />
-    </div>
+    <RouteSuspense>
+      <div className="mx-auto w-full py-2 sm:py-4">
+        <ConfigForm />
+      </div>
+    </RouteSuspense>
   );
 }
 
 function AnalysisRunPage() {
   const { runId } = useParams({ from: "/analysis/$runId" });
-  return <AnalysisDashboard runId={runId} />;
+  return (
+    <RouteSuspense>
+      <AnalysisDashboard runId={runId} />
+    </RouteSuspense>
+  );
 }
 
 function HistoryPage() {
-  return <HistoryList />;
+  return (
+    <RouteSuspense>
+      <HistoryList />
+    </RouteSuspense>
+  );
 }
 
 function ConfigPage() {
-  return <ConfigPageComponent />;
+  return (
+    <RouteSuspense>
+      <ConfigPageComponent />
+    </RouteSuspense>
+  );
 }
 
 function MemoryPage() {
-  return <MemoryPageComponent />;
+  return (
+    <RouteSuspense>
+      <MemoryPageComponent />
+    </RouteSuspense>
+  );
 }
 
 function ScannerPage() {
-  return <ScannerPageComponent />;
+  return (
+    <RouteSuspense>
+      <ScannerPageComponent />
+    </RouteSuspense>
+  );
 }
 
 function ScannerHistoryPage() {
-  return <ScanHistoryPage />;
+  return (
+    <RouteSuspense>
+      <ScanHistoryPage />
+    </RouteSuspense>
+  );
 }
 
 function ScheduledScansPage() {
-  return <ScheduledScansPageComponent />;
+  return (
+    <RouteSuspense>
+      <ScheduledScansPageComponent />
+    </RouteSuspense>
+  );
 }
 
 function ScannerDetailPage() {
   const { scanId } = useParams({ from: "/scanner/$scanId" });
-  return <ScanDetailPage scanId={scanId} />;
+  return (
+    <RouteSuspense>
+      <ScanDetailPage scanId={scanId} />
+    </RouteSuspense>
+  );
 }
 
 function AccountsPage() {
-  return <AccountsDashboard />;
+  return (
+    <RouteSuspense>
+      <AccountsDashboard />
+    </RouteSuspense>
+  );
 }
 
 function AccountDetailPage() {
   const { accountId } = useParams({ from: "/accounts/$accountId" });
-  return <AccountDetailView accountId={accountId} />;
+  return (
+    <RouteSuspense>
+      <AccountDetailView accountId={accountId} />
+    </RouteSuspense>
+  );
 }
 
 function PerformancePage() {
-  return <AnalyticsDashboard />;
+  return (
+    <RouteSuspense>
+      <AnalyticsDashboard />
+    </RouteSuspense>
+  );
 }
 
 function StrategiesPage() {
-  return <StrategiesPageComponent />;
+  return (
+    <RouteSuspense>
+      <StrategiesPageComponent />
+    </RouteSuspense>
+  );
 }
 
 function CyclesPage() {
-  return <CycleListPage />;
+  return (
+    <RouteSuspense>
+      <CycleListPage />
+    </RouteSuspense>
+  );
 }
 
 function CyclesDetailPage() {
   const { cycleId } = useParams({ from: "/cycles/$cycleId" });
-  return <CycleDetailPage cycleId={cycleId} />;
+  return (
+    <RouteSuspense>
+      <CycleDetailPage cycleId={cycleId} />
+    </RouteSuspense>
+  );
+}
+
+function TradesPage() {
+  return (
+    <RouteSuspense>
+      <TradesPageComponent />
+    </RouteSuspense>
+  );
 }
 
 

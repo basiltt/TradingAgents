@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ErrorBoundary } from "react-error-boundary";
+import { History, RadioTower, Waves, WifiOff } from "lucide-react";
 import { useAppSelector, useAppDispatch } from "@/store";
 import { setActiveTab } from "@/store/trades-slice";
 import { selectActiveTradesList } from "@/components/trades/selectors";
@@ -9,7 +10,9 @@ import { useTradePolling } from "@/components/trades/hooks/useTradePolling";
 import { useTradeFilters } from "@/components/trades/hooks/useTradeFilters";
 import { useTradeHistory } from "@/components/trades/hooks/useTradeHistory";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TradesTable } from "@/components/trades/TradesTable";
 import { TradeStats } from "@/components/trades/TradeStats";
@@ -19,12 +22,14 @@ import { CloseAllConfirmation } from "@/components/trades/CloseAllConfirmation";
 import { TradeDetailPanel } from "@/components/trades/TradeDetailPanel";
 import { WsDisconnectBanner } from "@/components/trades/WsDisconnectBanner";
 import { ACTIVE_STATUSES } from "@/components/trades/types";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { cn } from "@/lib/utils";
 
 function TableSkeleton() {
   return (
-    <div className="space-y-1">
+    <div className="grid gap-3">
       {Array.from({ length: 6 }, (_, i) => (
-        <Skeleton key={i} className="h-10 w-full rounded" />
+        <Skeleton key={i} className="h-12 rounded-[calc(var(--radius)*1.25)]" />
       ))}
     </div>
   );
@@ -32,23 +37,39 @@ function TableSkeleton() {
 
 function TableError({ resetErrorBoundary }: { resetErrorBoundary?: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-      <p className="text-sm font-medium">Failed to load trades</p>
-      {resetErrorBoundary && (
-        <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={resetErrorBoundary}>Retry</Button>
-      )}
-    </div>
+    <Card className="border-dashed">
+      <CardContent className="flex flex-col items-center justify-center gap-3 p-8 text-center">
+        <p className="section-eyebrow">Trade feed</p>
+        <h3 className="text-xl font-semibold tracking-tight">Failed to load trades</h3>
+        <p className="max-w-xl text-sm text-muted-foreground">
+          The trading stream could not be rendered. Retry the table without leaving the current workspace.
+        </p>
+        {resetErrorBoundary ? (
+          <Button variant="outline" size="sm" onClick={resetErrorBoundary}>
+            Retry
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
 function FullPageError({ resetErrorBoundary }: { resetErrorBoundary?: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-      <p className="text-base font-medium">Something went wrong</p>
-      {resetErrorBoundary && (
-        <Button variant="outline" className="mt-4 text-xs" onClick={resetErrorBoundary}>Reload</Button>
-      )}
-    </div>
+    <Card className="border-dashed">
+      <CardContent className="flex min-h-[55vh] flex-col items-center justify-center gap-3 p-8 text-center">
+        <p className="section-eyebrow">Execution workspace</p>
+        <h2 className="text-2xl font-semibold tracking-tight">Something went wrong</h2>
+        <p className="max-w-xl text-sm text-muted-foreground">
+          The trade desk hit an unexpected error while rendering. Reload the page surface to recover.
+        </p>
+        {resetErrorBoundary ? (
+          <Button variant="outline" onClick={resetErrorBoundary}>
+            Reload
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -63,19 +84,19 @@ function ActiveTradesView() {
   const accountActiveCount = activeTrades.filter((t) => t.account_id === accountId).length;
 
   return (
-    <div className="space-y-2">
-      {hasActiveTrades && accountId && (
+    <div className="space-y-4">
+      {hasActiveTrades && accountId ? (
         <div className="flex justify-end">
           <Button
-            variant="ghost"
+            variant="destructive"
             size="sm"
-            className="h-7 text-[10px] font-bold uppercase tracking-wider text-destructive hover:bg-destructive/10 rounded-xl cursor-pointer"
+            className="w-full sm:w-auto"
             onClick={() => setCloseAllOpen(true)}
           >
-            Close All ({accountActiveCount})
+            Close all ({accountActiveCount})
           </Button>
         </div>
-      )}
+      ) : null}
       <TradesTable trades={activeTrades} />
       <CloseAllConfirmation
         accountId={accountId}
@@ -88,7 +109,8 @@ function ActiveTradesView() {
 
 function HistoryTradesView() {
   const filters = useAppSelector((s) => s.trades.filters);
-  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } = useTradeHistory(filters, true);
+  const { data, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
+    useTradeHistory(filters, true);
 
   const allTrades = data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -96,23 +118,36 @@ function HistoryTradesView() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground">
-        <p className="text-xs font-semibold uppercase tracking-wider">Failed to load trade history.</p>
-        <Button variant="outline" size="sm" className="mt-3 text-xs rounded-xl cursor-pointer" onClick={() => refetch()}>Retry</Button>
-      </div>
+      <Card className="border-dashed">
+        <CardContent className="flex flex-col items-center justify-center gap-3 p-8 text-center">
+          <p className="section-eyebrow">History stream</p>
+          <h3 className="text-xl font-semibold tracking-tight">Trade history is unavailable</h3>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            Historical trades could not be loaded for the current filter set.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <TradesTable trades={allTrades} />
-      {hasNextPage && (
+      {hasNextPage ? (
         <div className="flex justify-center pt-2">
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground rounded-xl cursor-pointer" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
             {isFetchingNextPage ? "Loading..." : "Load more"}
           </Button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -126,7 +161,7 @@ export default function TradesPage() {
   const lastUpdated = useAppSelector((s) => s.trades.lastUpdated);
   const accounts = useAppSelector((s) => s.accounts.dashboard);
   const accountsStatus = useAppSelector((s) => s.accounts.status);
-
+  const activeTrades = useAppSelector(selectActiveTradesList);
 
   useTradePolling(wsConnected);
   useTradeFilters();
@@ -135,79 +170,140 @@ export default function TradesPage() {
     fetchAllActiveTrades(dispatch);
   }, [dispatch]);
 
-  // Mobile is now supported - no blocking gate
+  const openPositions = activeTrades.filter((trade) =>
+    ACTIVE_STATUSES.includes(trade.status),
+  ).length;
 
   if (accounts.length === 0 && accountsStatus !== "idle" && accountsStatus !== "loading") {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <p className="text-sm font-medium">No accounts connected</p>
-        <p className="text-xs mt-1.5">Connect a trading account to get started.</p>
-        <Button variant="outline" size="sm" className="mt-4 text-xs rounded-xl cursor-pointer" onClick={() => navigate({ to: "/accounts" })}>
-          Go to Accounts
-        </Button>
-      </div>
+      <Card className="border-dashed">
+        <CardContent className="flex min-h-[55vh] flex-col items-center justify-center gap-4 p-8 text-center">
+          <p className="section-eyebrow">Execution workspace</p>
+          <h2 className="text-2xl font-semibold tracking-tight">No accounts connected</h2>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            Connect a trading account before opening the trade desk so positions, orders, and
+            close actions have a live execution target.
+          </p>
+          <Button variant="outline" onClick={() => navigate({ to: "/accounts" })}>
+            Go to accounts
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <ErrorBoundary FallbackComponent={FullPageError}>
-      <div className="space-y-6 max-w-5xl mx-auto py-4 px-4 md:px-6">
-        {!wsConnected && <WsDisconnectBanner lastUpdated={lastUpdated} />}
+      <div className="space-y-6 pb-8">
+        {!wsConnected ? <WsDisconnectBanner lastUpdated={lastUpdated} /> : null}
 
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border/20 pb-3">
-          <div>
-            <h1 className="text-xl font-black tracking-tight flex items-center gap-2">
-              <svg className="w-5.5 h-5.5 text-primary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" />
-              </svg>
-              Positions &amp; Orders
-            </h1>
-            <p className="text-[10px] text-muted-foreground mt-0.5 font-bold uppercase tracking-wider">
-              Monitor and manage trade executions
-            </p>
+        <PageHeader
+          eyebrow="Execution workspace"
+          title="Trades and position control"
+          description="Monitor live positions, review archived fills, and trigger close actions from a single responsive trade desk tuned for touch and wide-screen workflows."
+          stats={[
+            {
+              label: "Open positions",
+              value: String(openPositions),
+              tone: openPositions > 0 ? "accent" : "neutral",
+            },
+            {
+              label: "Stream",
+              value: wsConnected ? "Live" : "Reconnect",
+              tone: wsConnected ? "success" : "warning",
+            },
+            {
+              label: "Connected accounts",
+              value: String(accounts.length),
+              tone: "neutral",
+            },
+            {
+              label: "Visible mode",
+              value: activeTab === "active" ? "Active book" : "History",
+              tone: "accent",
+            },
+          ]}
+        >
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">Touch-friendly filters</Badge>
+            <Badge variant="outline">Real-time execution surface</Badge>
+            <Badge variant="outline">History and live book tabs</Badge>
           </div>
-          <div className="flex items-center gap-2">
-            {wsConnected && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400">Live</span>
-              </div>
-            )}
-          </div>
-        </div>
+        </PageHeader>
 
         <TradeStats />
 
-        <Tabs value={activeTab} onValueChange={(tab) => dispatch(setActiveTab(tab as "active" | "history"))}>
-          <div className="flex items-center justify-between border-b border-border/30 pb-0">
-            <TabsList className="bg-transparent p-0 h-auto gap-0">
-              <TabsTrigger
-                value="active"
-                className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground text-muted-foreground/70 data-[state=active]:shadow-none cursor-pointer"
-              >
-                Active
-              </TabsTrigger>
-              <TabsTrigger
-                value="history"
-                className="text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground text-muted-foreground/70 data-[state=active]:shadow-none cursor-pointer"
-              >
-                History
-              </TabsTrigger>
-            </TabsList>
-          </div>
-          <TradeFilters />
-          <TabsContent value="active" className="mt-0">
-            <ErrorBoundary FallbackComponent={TableError}>
-              {isFetching ? <TableSkeleton /> : <ActiveTradesView />}
-            </ErrorBoundary>
-          </TabsContent>
-          <TabsContent value="history" className="mt-0">
-            <ErrorBoundary FallbackComponent={TableError}>
-              <HistoryTradesView />
-            </ErrorBoundary>
-          </TabsContent>
+        <Tabs
+          value={activeTab}
+          onValueChange={(tab) => dispatch(setActiveTab(tab as "active" | "history"))}
+        >
+          <Card className="overflow-visible">
+            <CardContent className="space-y-5 p-4 sm:p-5">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="space-y-2">
+                  <p className="section-eyebrow">Trade explorer</p>
+                  <h2 className="text-2xl font-semibold tracking-tight">
+                    Switch between active execution and archived fills.
+                  </h2>
+                  <p className="max-w-3xl text-sm text-muted-foreground">
+                    Filters, close actions, and bulk selection stay accessible across mobile,
+                    laptop, and ultra-wide layouts.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                      wsConnected
+                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500"
+                        : "border-amber-500/20 bg-amber-500/10 text-amber-500",
+                    )}
+                  >
+                    {wsConnected ? (
+                      <RadioTower className="size-3.5" />
+                    ) : (
+                      <WifiOff className="size-3.5" />
+                    )}
+                    {wsConnected ? "Live feed" : "Reconnecting"}
+                  </span>
+
+                  <TabsList className="grid w-full min-w-[15rem] grid-cols-2 rounded-[calc(var(--radius)*1.35)] bg-muted/35 p-1 shadow-none sm:w-auto">
+                    <TabsTrigger
+                      value="active"
+                      className="rounded-[calc(var(--radius)*1.1)] text-[11px] font-semibold uppercase tracking-[0.18em] data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-[var(--shadow-soft)]"
+                    >
+                      <Waves className="size-3.5" />
+                      Active
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="history"
+                      className="rounded-[calc(var(--radius)*1.1)] text-[11px] font-semibold uppercase tracking-[0.18em] data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-[var(--shadow-soft)]"
+                    >
+                      <History className="size-3.5" />
+                      History
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+              </div>
+
+              <TradeFilters />
+
+              <TabsContent value="active" className="mt-0">
+                <ErrorBoundary FallbackComponent={TableError}>
+                  {isFetching ? <TableSkeleton /> : <ActiveTradesView />}
+                </ErrorBoundary>
+              </TabsContent>
+
+              <TabsContent value="history" className="mt-0">
+                <ErrorBoundary FallbackComponent={TableError}>
+                  <HistoryTradesView />
+                </ErrorBoundary>
+              </TabsContent>
+            </CardContent>
+          </Card>
         </Tabs>
+
         <CloseTradeModal />
         <TradeDetailPanel />
       </div>

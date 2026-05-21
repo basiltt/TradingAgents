@@ -65,6 +65,8 @@ describe("ConfigPage", () => {
       ),
     );
     render(<ConfigPage />, { wrapper: createWrapper() });
-    expect(await screen.findByText(/error/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/failed to fetch runtime configuration/i),
+    ).toBeInTheDocument();
   });
 });

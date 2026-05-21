@@ -36,7 +36,7 @@ describe("routing", () => {
   it("renders home page at /", async () => {
     renderWithRouter("/");
     expect(
-      await screen.findByRole("heading", { name: /welcome to tradingagents/i }),
+      await screen.findByRole("heading", { name: /autonomous trading research/i }),
     ).toBeInTheDocument();
   });
 
@@ -48,7 +48,7 @@ describe("routing", () => {
   it("renders analysis new page", async () => {
     renderWithRouter("/analysis/new");
     expect(
-      await screen.findByLabelText(/ticker/i),
+      await screen.findByRole("heading", { name: /new analysis run/i }),
     ).toBeInTheDocument();
   });
 
@@ -69,7 +69,7 @@ describe("routing", () => {
   it("renders memory page", async () => {
     renderWithRouter("/memory");
     expect(
-      await screen.findByRole("heading", { name: /memory/i }),
+      await screen.findByRole("heading", { name: /historical decisions/i }),
     ).toBeInTheDocument();
   });
 
@@ -83,7 +83,7 @@ describe("routing", () => {
   it("sidebar has accessible label", async () => {
     renderWithRouter("/");
     expect(
-      await screen.findByRole("navigation", { name: /main navigation/i }),
+      await screen.findByRole("complementary", { name: /primary navigation/i }),
     ).toBeInTheDocument();
   });
 });

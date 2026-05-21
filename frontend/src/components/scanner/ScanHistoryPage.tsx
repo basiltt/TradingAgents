@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDurationBetween } from "@/lib/format";
 import { Link } from "@tanstack/react-router";
 import { apiClient, type ScanStatus } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function getScannerWsUrl(): string {
@@ -151,51 +153,35 @@ export function ScanHistoryPage() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scan History</h1>
-          <p className="text-sm text-muted-foreground mt-1.5">
-            Browse and manage your market scan results
-          </p>
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        eyebrow="Research archive"
+        title="Scan history command center"
+        description="Browse completed and cancelled scans, delete stale artifacts, and reopen result sets from a responsive archive tuned for dense market research workflows."
+        actions={
+          <Link
+            to="/scanner"
+            className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.2)] border border-primary/25 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            New scan
+          </Link>
+        }
+        stats={[
+          { label: "Total scans", value: String(totalScans), tone: "accent" },
+          { label: "Completed", value: String(completedScans), tone: completedScans ? "success" : "neutral" },
+          { label: "Running", value: String(runningScans), tone: runningScans ? "accent" : "neutral" },
+          { label: "Buy signals", value: String(totalBuy), tone: totalBuy ? "success" : "neutral" },
+        ]}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{totalSell} sell signals</Badge>
+          <Badge variant="outline">Delete preview protection</Badge>
+          <Badge variant="outline">Responsive archive cards</Badge>
         </div>
-        <Link
-          to="/scanner"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 active:scale-[0.98] transition-all shadow-lg shadow-primary/25 shrink-0 self-start sm:self-auto"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          New Scan
-        </Link>
-      </div>
-
-      {/* Stats row */}
-      {totalScans > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-5">
-            <div className="text-2xl font-bold tabular-nums">{totalScans}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Total Scans</div>
-          </div>
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 glass-card backdrop-blur-sm p-5">
-            <div className="text-2xl font-bold tabular-nums text-emerald-500">{completedScans}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Completed</div>
-          </div>
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 glass-card backdrop-blur-sm p-5">
-            <div className="text-2xl font-bold tabular-nums text-blue-500">{runningScans}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Running</div>
-          </div>
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 glass-card backdrop-blur-sm p-5">
-            <div className="text-2xl font-bold tabular-nums text-emerald-500">{totalBuy}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Buy Signals</div>
-          </div>
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 glass-card backdrop-blur-sm p-5">
-            <div className="text-2xl font-bold tabular-nums text-red-500">{totalSell}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Sell Signals</div>
-          </div>
-        </div>
-      )}
+      </PageHeader>
 
       {/* Empty state */}
       {scans.length === 0 ? (

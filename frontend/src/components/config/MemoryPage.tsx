@@ -1,125 +1,183 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { BrainCircuit, Database, RefreshCw, TriangleAlert } from "lucide-react";
 import { apiClient } from "@/api/client";
+import { PageHeader } from "@/components/layout/PageHeader";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+
+const PAGE_SIZE = 25;
 
 export function MemoryPage() {
   const [page, setPage] = useState(1);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["memory", page],
-    queryFn: ({ signal }) => apiClient.getMemory({ page, limit: 25 }, signal),
+    queryFn: ({ signal }) => apiClient.getMemory({ page, limit: PAGE_SIZE }, signal),
     staleTime: 30_000,
   });
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-10">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Cognitive Memory Log</h1>
-        <p className="text-xs text-muted-foreground mt-1.5 font-medium uppercase tracking-wider">
-          Explore historical trading decisions, confidence metrics, and LLM agent reasoning outputs
-        </p>
-      </div>
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        eyebrow="Agent Memory"
+        title="Historical decisions, confidence records, and long-term reasoning context."
+        description="Use the redesigned memory log to review what the agents decided, how confident they were, and whether each record resolved cleanly."
+        stats={[
+          { label: "Loaded page", value: String(page), tone: "accent" },
+          { label: "Records", value: String(data?.total ?? 0), tone: "neutral" },
+        ]}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">Paginated browsing</Badge>
+          <Badge variant="outline">Readable decision cards</Badge>
+          <Badge variant="outline">Mobile-first spacing</Badge>
+        </div>
+      </PageHeader>
 
       {isLoading ? (
-        <div className="space-y-3.5">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-20 w-full rounded-2xl bg-muted/20 animate-pulse border border-border/30" />
+        <div className="grid gap-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Card key={index} className="min-h-28 animate-pulse" />
           ))}
         </div>
       ) : isError || !data ? (
-        <div className="glass-card border border-destructive/20 bg-destructive/5 rounded-2xl p-6 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0 border border-destructive/15">
-            <svg className="w-5 h-5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-destructive">Failed to fetch cognitive memory log</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Could not establish connection. Check backend services.</p>
-          </div>
-        </div>
+        <Card className="border-destructive/20 bg-destructive/6">
+          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+            <div className="flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-destructive/10 text-destructive shadow-[var(--shadow-soft)]">
+              <TriangleAlert className="size-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-destructive">
+                Memory service unavailable
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The backend did not return the memory log. Verify the API runtime and reload
+                the page.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       ) : data.items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/40 p-16 text-center bg-muted/5">
-          <div className="w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-5 border border-border/30">
-            <svg className="w-8 h-8 text-muted-foreground/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-            </svg>
-          </div>
-          <h3 className="text-sm font-bold uppercase tracking-wider mb-1.5">No memories yet</h3>
-          <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
-            Run standard ticker analysis configurations to generate execution history logs.
-          </p>
-        </div>
+        <Card>
+          <CardContent className="grid gap-5 p-8 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
+            <div className="gradient-primary flex size-14 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <Database className="size-6" />
+            </div>
+            <div className="space-y-2">
+              <p className="section-eyebrow">No records yet</p>
+              <h2 className="text-2xl font-semibold tracking-tight">The memory log is still empty.</h2>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                Run one or more analyses to generate long-term entries for decisions,
+                reasoning summaries, and confidence outcomes.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       ) : (
         <>
-          <div className="space-y-3">
-            {data.items.map((entry, i) => {
-              const dec = entry.decision.toLowerCase();
-              const decStyle =
-                dec === "buy" || dec === "long" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
-                dec === "sell" || dec === "short" ? "bg-red-500/10 text-red-500 border-red-500/20" :
-                "bg-amber-500/10 text-amber-500 border-amber-500/20";
+          <div className="grid gap-4">
+            {data.items.map((entry, index) => {
+              const decision = entry.decision.toLowerCase();
+              const decisionTone =
+                decision === "buy" || decision === "long"
+                  ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500"
+                  : decision === "sell" || decision === "short"
+                    ? "border-destructive/20 bg-destructive/10 text-destructive"
+                    : "border-warning/20 bg-warning/12 text-warning";
 
               return (
-                <div key={`${entry.ticker}-${entry.date}-${i}`} className="glass-card border border-border/40 bg-card/65 rounded-2xl shadow-sm transition-all duration-300 hover:border-border/60 hover:bg-card/85 p-5">
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    <div className="flex items-start gap-4 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-muted/80 flex items-center justify-center shrink-0 border border-border/10">
-                        <span className="font-mono font-black text-xs text-foreground">{entry.ticker.slice(0, 4)}</span>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-black font-mono text-sm tracking-tight">{entry.ticker}</span>
-                          <span className="text-[10px] text-muted-foreground/70 font-semibold uppercase tracking-wider">{entry.date}</span>
-                          <span className={cn("text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-sm", decStyle)}>
-                            {entry.decision}
-                          </span>
-                          <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border/30">
-                            Conf: {entry.confidence}
-                          </span>
+                <Card key={`${entry.ticker}-${entry.date}-${index}`}>
+                  <CardHeader className="gap-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex min-w-0 items-start gap-4">
+                        <div className="flex size-12 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+                          <BrainCircuit className="size-5" />
                         </div>
-                        {entry.reasoning && (
-                          <p className="text-xs text-foreground/80 font-medium leading-relaxed mt-2 select-text">{entry.reasoning}</p>
-                        )}
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <CardTitle className="font-mono text-xl tracking-[0.04em]">
+                              {entry.ticker}
+                            </CardTitle>
+                            <Badge variant="outline">{entry.date}</Badge>
+                            <span
+                              className={cn(
+                                "inline-flex min-h-6 items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                                decisionTone,
+                              )}
+                            >
+                              {entry.decision}
+                            </span>
+                          </div>
+                          {entry.reasoning ? (
+                            <CardDescription className="max-w-3xl text-sm leading-6">
+                              {entry.reasoning}
+                            </CardDescription>
+                          ) : (
+                            <CardDescription>No reasoning snapshot was stored for this entry.</CardDescription>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid min-w-[12rem] gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                        <StatPill label="Confidence" value={entry.confidence} />
+                        <StatPill label="Status" value={entry.status} />
                       </div>
                     </div>
-                    <span className={cn(
-                      "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0 sm:ml-auto self-start",
-                      entry.status === "resolved" ? "bg-primary/10 text-primary border-primary/20" : "bg-muted/30 text-muted-foreground border-border/20"
-                    )}>
-                      {entry.status}
-                    </span>
-                  </div>
-                </div>
+                  </CardHeader>
+                </Card>
               );
             })}
           </div>
 
-          {data.total > 25 && (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-4 border-t border-border/20">
-              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                Showing page {data.page} of {Math.ceil(data.total / 25)} ({data.total} cognitive records)
-              </p>
-              <div className="flex gap-2">
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  className="px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl border border-border/40 hover:bg-muted disabled:opacity-40 transition-all cursor-pointer"
-                >
-                  Prev
-                </button>
-                <button
-                  disabled={page * 25 >= data.total}
-                  onClick={() => setPage((p) => p + 1)}
-                  className="px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl border border-border/40 hover:bg-muted disabled:opacity-40 transition-all cursor-pointer"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
+          {data.total > PAGE_SIZE && (
+            <Card>
+              <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="section-eyebrow">Pagination</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Showing page {data.page} of {Math.ceil(data.total / PAGE_SIZE)} from {data.total} stored records.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={page <= 1}
+                    onClick={() => setPage((value) => value - 1)}
+                    className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-border/70 bg-card/75 px-4 py-3 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)] disabled:opacity-40"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={page * PAGE_SIZE >= data.total}
+                    onClick={() => setPage((value) => value + 1)}
+                    className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-primary/20 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)] disabled:opacity-40"
+                  >
+                    <RefreshCw className="mr-2 size-4" />
+                    Next page
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[calc(var(--radius)*1.2)] border border-border/60 bg-muted/20 px-4 py-3 shadow-[var(--shadow-soft)]">
+      <p className="section-eyebrow">{label}</p>
+      <p className="mt-2 text-sm font-semibold tracking-tight text-foreground">{value}</p>
     </div>
   );
 }

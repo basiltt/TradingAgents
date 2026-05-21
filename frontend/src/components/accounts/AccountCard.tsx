@@ -203,14 +203,20 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
   return (
     <>
       <div
-        className="group rounded-2xl border border-border/40 bg-card hover:bg-card/80 hover:border-border/70 transition-all duration-200 hover:shadow-lg hover:shadow-black/5 cursor-pointer overflow-hidden"
+        className="group relative overflow-hidden rounded-[calc(var(--radius)*1.7)] border border-border/60 bg-card/72 shadow-[var(--shadow-soft)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-[var(--shadow-card-hover)] cursor-pointer"
         onClick={() => navigate({ to: "/accounts/$accountId", params: { accountId: card.id } })}
       >
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent opacity-75" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,oklch(0.72_var(--accent-chroma)_var(--accent-hue)_/_0.08),transparent_42%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+        <div className="relative flex items-center justify-between px-5 pt-5 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <h3 className="font-semibold text-sm truncate">{card.label}</h3>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium uppercase tracking-wider border ${
+            <div className="space-y-1">
+              <p className="section-eyebrow">Trading account</p>
+              <h3 className="font-semibold text-sm truncate">{card.label}</h3>
+            </div>
+            <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium uppercase tracking-[0.18em] border ${
               card.account_type === "live"
                 ? "border-amber-500/30 text-amber-500 bg-amber-500/[0.06]"
                 : "border-blue-500/30 text-blue-500 bg-blue-500/[0.06]"
@@ -231,14 +237,14 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
             <div ref={menuRef} className="relative" onClick={(e) => e.stopPropagation()}>
               <button
                 aria-label={`Account actions for ${card.label}`}
-                className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/30 transition-colors"
+                className="p-2 rounded-xl border border-transparent bg-card/55 text-muted-foreground/50 hover:border-border/60 hover:text-foreground hover:bg-card/85 transition-colors"
                 onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
               >
                 <MoreVertical className="w-4 h-4" />
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] rounded-xl border border-border/50 bg-popover shadow-xl shadow-black/20 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="absolute right-0 top-full mt-2 z-50 min-w-[220px] rounded-[calc(var(--radius)*1.3)] border border-border/60 bg-popover/95 shadow-[var(--shadow-popover)] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 backdrop-blur-xl">
                   <button
                     className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-sm transition-colors ${
                       hasPositions
@@ -320,7 +326,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-2.5 border-t border-border/20 bg-muted/[0.03]">
+        <div className="relative flex items-center justify-between px-5 py-3 border-t border-border/40 bg-muted/[0.06]">
           {card.last_connected_at ? (
             <span className="text-[10px] text-muted-foreground/50">
               Updated {new Date(card.last_connected_at).toLocaleString(undefined, {

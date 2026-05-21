@@ -151,7 +151,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                     setCredSaving(true);
                     setCredError(null);
                     try {
-                      await accountsApi.updateCredentials(accountId, { api_key: credKey.trim(), api_secret: credSecret.trim() });
+                      await accountsApi.rotateCredentials(accountId, { api_key: credKey.trim(), api_secret: credSecret.trim() });
                       setShowCredentials(false);
                       setCredKey("");
                       setCredSecret("");

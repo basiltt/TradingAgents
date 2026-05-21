@@ -6,6 +6,10 @@ import { setDashboard, setFilterType, setLoading, setError } from "@/store/accou
 import { useAccountPolling } from "@/hooks/useAccountPolling";
 import { AccountCard } from "./AccountCard";
 import { AddAccountDialog } from "./AddAccountDialog";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** Top-level accounts dashboard: fetches account cards, displays stats/filters, and renders AccountCard grid. */
@@ -114,16 +118,23 @@ export function AccountsDashboard() {
   const allPositionsCount = dashboard.reduce((sum, c) => sum + (c.positions_count || 0), 0);
   const allActiveCount = dashboard.filter((c) => c.status === "active").length;
   const hasDemoAccounts = dashboard.some((c) => c.account_type === "demo");
+  const demoAccountIds = dashboard
+    .filter((c) => c.account_type === "demo" && c.is_active)
+    .map((c) => c.id);
 
   if (status === "loading" && dashboard.length === 0) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-10 w-56" />
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-28 rounded-2xl" />)}
+      <div className="space-y-6 pb-8">
+        <Skeleton className="h-48 rounded-[calc(var(--radius)*2)]" />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-28 rounded-[calc(var(--radius)*1.6)]" />
+          ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-56 rounded-2xl" />)}
+        <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-72 rounded-[calc(var(--radius)*1.7)]" />
+          ))}
         </div>
       </div>
     );
@@ -131,137 +142,148 @@ export function AccountsDashboard() {
 
   if (status === "error" && dashboard.length === 0) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Trading Accounts</h1>
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
-          <p className="text-destructive text-sm">{error || "Failed to load accounts."}</p>
-          <button
-            onClick={() => fetchDashboard()}
-            className="mt-4 px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:brightness-110 transition-all"
-          >
-            Retry
-          </button>
-        </div>
+      <div className="space-y-6 pb-8">
+        <PageHeader
+          eyebrow="Portfolio control"
+          title="Accounts command center"
+          description={error || "The account surface could not be loaded. Retry without leaving the portfolio workspace."}
+          actions={
+            <Button variant="outline" onClick={() => fetchDashboard()}>
+              Retry
+            </Button>
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Trading Accounts</h1>
-          <p className="text-sm text-muted-foreground mt-1.5">
-            Monitor and manage your connected trading accounts
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
-          {hasDemoAccounts && (
-            <button
-              onClick={() => { setResetOpen(true); setResetSelectedIds(dashboard.filter(c => c.account_type === "demo" && c.is_active).map(c => c.id)); }}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-500 font-medium text-sm hover:bg-amber-500/20 active:scale-[0.98] transition-all"
-            >
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        eyebrow="Portfolio control"
+        title="Accounts command center"
+        description="Monitor every connected account, reset demo capital, and trigger protective actions from a responsive portfolio surface built for touch devices and large-screen oversight."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {hasDemoAccounts ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setResetOpen(true);
+                  setResetSelectedIds(demoAccountIds);
+                }}
+                className="border-amber-500/25 bg-amber-500/10 text-amber-500 hover:bg-amber-500/15 hover:text-amber-500"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Reset balance
+              </Button>
+            ) : null}
+            {allPositionsCount > 0 ? (
+              <Button
+                variant="destructive"
+                onClick={() => setKillOpen(true)}
+                className="border-red-500/25 bg-red-500/10 text-red-500 hover:bg-red-500/15 hover:text-red-500"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                Close all
+              </Button>
+            ) : null}
+            <Button onClick={() => setAddOpen(true)}>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
-              Reset Balance
-            </button>
-          )}
-          {allPositionsCount > 0 && (
-            <button
-              onClick={() => setKillOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-500/30 bg-red-500/10 text-red-500 font-medium text-sm hover:bg-red-500/20 active:scale-[0.98] transition-all"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              Close All
-            </button>
-          )}
-          <button
-            onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 active:scale-[0.98] transition-all shadow-lg shadow-primary/25"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Add Account
-          </button>
+              Add account
+            </Button>
+          </div>
+        }
+        stats={[
+          {
+            label: "Equity",
+            value: `$${totalEquity.toFixed(2)}`,
+            tone: "neutral",
+          },
+          {
+            label: "Today's PnL",
+            value: `$${totalTodayPnl.toFixed(2)}`,
+            tone: totalTodayPnl >= 0 ? "success" : "danger",
+          },
+          {
+            label: "Unrealised PnL",
+            value: `$${totalPnl.toFixed(2)}`,
+            tone: totalPnl >= 0 ? "success" : "danger",
+          },
+          { label: "Open positions", value: String(totalPositions), tone: "neutral" },
+        ]}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{dashboard.length} linked accounts</Badge>
+          <Badge variant="outline">{activeCount} active in scope</Badge>
+          <Badge variant="outline">{allActiveCount} active feeds</Badge>
+          {hasDemoAccounts ? <Badge variant="outline">Demo reset enabled</Badge> : null}
         </div>
-      </div>
+      </PageHeader>
 
-      {/* Stats row */}
-      {filtered.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="rounded-2xl border border-border/50 bg-card p-5">
-            <div className="text-2xl font-bold tabular-nums">${totalEquity.toFixed(2)}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Total Equity</div>
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <p className="section-eyebrow">Dashboard scope</p>
+            <h2 className="text-2xl font-semibold tracking-tight">
+              Filter account cohorts without losing live context.
+            </h2>
+            <p className="max-w-3xl text-sm text-muted-foreground">
+              Switch between all, demo, and live account groups while preserving touch-friendly
+              actions and dense account telemetry.
+            </p>
           </div>
-          <div className={`rounded-2xl border p-5 ${totalPnl >= 0 ? "border-emerald-500/20 bg-emerald-500/[0.04]" : "border-red-500/20 bg-red-500/[0.04]"}`}>
-            <div className={`text-2xl font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-              ${totalPnl.toFixed(2)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Unrealised PnL</div>
+          <div className="flex flex-wrap gap-2">
+            {(["all", "demo", "live"] as const).map((type) => (
+              <Button
+                key={type}
+                variant={filterType === type ? "default" : "outline"}
+                size="sm"
+                onClick={() => dispatch(setFilterType(type))}
+              >
+                {type.charAt(0).toUpperCase() + type.slice(1)}
+              </Button>
+            ))}
           </div>
-          <div className={`rounded-2xl border p-5 ${totalTodayPnl >= 0 ? "border-emerald-500/20 bg-emerald-500/[0.04]" : "border-red-500/20 bg-red-500/[0.04]"}`}>
-            <div className={`text-2xl font-bold tabular-nums ${totalTodayPnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
-              ${totalTodayPnl.toFixed(2)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Today's PnL</div>
-          </div>
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] p-5">
-            <div className="text-2xl font-bold tabular-nums text-blue-500">{activeCount}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Active</div>
-          </div>
-          <div className="rounded-2xl border border-border/50 bg-card p-5">
-            <div className="text-2xl font-bold tabular-nums">{totalPositions}</div>
-            <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Positions</div>
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="flex items-center gap-1.5 p-1 rounded-xl bg-muted/50 w-fit">
-        {(["all", "demo", "live"] as const).map((type) => (
-          <button
-            key={type}
-            onClick={() => dispatch(setFilterType(type))}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-              filterType === type
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {type.charAt(0).toUpperCase() + type.slice(1)}
-          </button>
-        ))}
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Empty state */}
       {filtered.length === 0 && status !== "loading" && (
-        <div className="rounded-2xl border border-dashed border-border/60 p-16 text-center">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
-            <svg className="w-8 h-8 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold mb-1.5">No accounts connected</h3>
-          <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto">
-            Connect your Bybit trading account to start monitoring your portfolio in real-time.
-          </p>
-          <button
-            onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/25"
-          >
-            Connect Account
-          </button>
-        </div>
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center gap-4 p-10 text-center sm:p-14">
+            <div className="gradient-primary flex size-16 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </div>
+            <div className="space-y-2">
+              <p className="section-eyebrow">Ready state</p>
+              <h2 className="text-2xl font-semibold tracking-tight">
+                {dashboard.length ? "No accounts match the current filter" : "No accounts connected"}
+              </h2>
+              <p className="max-w-xl text-sm text-muted-foreground">
+                {dashboard.length
+                  ? "Change the dashboard scope to reveal a different cohort of accounts."
+                  : "Connect your Bybit trading account to start monitoring equity, exposure, and execution controls in real time."}
+              </p>
+            </div>
+            <Button onClick={() => setAddOpen(true)}>
+              Connect account
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       {/* Account Cards */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {filtered.map((card) => (
             <AccountCard key={card.id} card={card} onRefresh={fetchDashboard} />
           ))}

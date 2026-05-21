@@ -21,6 +21,8 @@ import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } fro
 import { cn } from "@/lib/utils";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -400,27 +402,32 @@ export function ScheduledScansPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto py-4 px-4 md:px-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
-            <svg className="w-6 h-6 text-primary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        eyebrow="Automation schedules"
+        title="Scheduled scan automation"
+        description="Create recurring scan jobs, resume paused routines, and keep execution visibility high across touch devices, laptops, and large trading displays."
+        actions={
+          <Button onClick={openCreate} className="shrink-0 gap-1.5">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            Scheduled Scans
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Automate your market scans with flexible scheduling options.
-          </p>
+            New schedule
+          </Button>
+        }
+        stats={[
+          { label: "Active", value: String(activeCount), tone: activeCount ? "success" : "neutral" },
+          { label: "Paused", value: String(pausedCount), tone: pausedCount ? "warning" : "neutral" },
+          { label: "Errors", value: String(errorCount), tone: errorCount ? "danger" : "neutral" },
+          { label: "Completed", value: String(completedCount), tone: "neutral" },
+        ]}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{cancelledCount} cancelled schedules</Badge>
+          <Badge variant="outline">Run-now control</Badge>
+          <Badge variant="outline">Create and edit dialogs</Badge>
         </div>
-        <Button onClick={openCreate} className="shrink-0 gap-1.5 self-start sm:self-auto">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          New Schedule
-        </Button>
-      </div>
+      </PageHeader>
 
       {/* Stats bar */}
       {!isLoading && schedules.length > 0 && (

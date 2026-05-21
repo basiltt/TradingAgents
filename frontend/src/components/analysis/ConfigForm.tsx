@@ -447,14 +447,14 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 animate-fade-in-up pb-10">
+    <div className="mx-auto w-full max-w-[min(var(--app-max-width),88rem)] space-y-8 animate-fade-in-up pb-10">
       <div>
         <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">New Analysis Run</h1>
         <p className="text-sm text-muted-foreground mt-2 font-medium">Configure and deploy custom multi-agent trading analysis pipelines.</p>
       </div>
 
       {/* Progress Stepper */}
-      <div className="flex items-center justify-between max-w-md mx-auto mb-6 px-4">
+      <div className="mx-auto mb-6 flex max-w-xl items-center justify-between px-4">
         {[
           { stepNum: 1, title: "Target Asset" },
           { stepNum: 2, title: "Analyst Team" },

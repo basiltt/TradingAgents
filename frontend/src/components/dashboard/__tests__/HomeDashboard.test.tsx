@@ -38,14 +38,18 @@ describe("HomeDashboard", () => {
   it("shows welcome and start CTA when no active runs", () => {
     const { wrapper } = createWrapper(false);
     render(<HomeDashboard />, { wrapper });
-    expect(screen.getByText(/welcome/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /new analysis/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /autonomous trading research/i }),
+    ).toBeInTheDocument();
+    const startLinks = screen.getAllByRole("link", { name: /start analysis/i });
+    expect(startLinks.length).toBeGreaterThan(0);
+    expect(startLinks[0]).toHaveAttribute("href", "/analysis/new");
   });
 
   it("shows active analysis cards", () => {
     const { wrapper } = createWrapper(true);
     render(<HomeDashboard />, { wrapper });
     expect(screen.getByText(/spy/i)).toBeInTheDocument();
-    expect(screen.getByText(/running/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/running/i).length).toBeGreaterThan(0);
   });
 });

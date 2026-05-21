@@ -20,6 +20,10 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
+vi.mock("@/hooks/useAccountPolling", () => ({
+  useAccountPolling: vi.fn(),
+}));
+
 import { accountsApi } from "@/api/client";
 
 function createStore() {
@@ -98,7 +102,7 @@ describe("AccountsDashboard", () => {
     const store = createStore();
     renderWithStore(store);
     await waitFor(() => {
-      expect(screen.getByText("Add Account")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /add account/i })).toBeInTheDocument();
     });
   });
 

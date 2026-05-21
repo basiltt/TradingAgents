@@ -1,15 +1,33 @@
 "use client"
 
-import { useTheme } from "next-themes"
+import { useEffect, useState, type CSSProperties } from "react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
+import { useAppSelector } from "@/store"
+import { resolveThemeMode } from "@/lib/theme"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  const themeMode = useAppSelector((s) => s.ui.theme)
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark")
+      ? "dark"
+      : "light"
+  )
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
+    const applyTheme = () => {
+      setTheme(resolveThemeMode(themeMode, mediaQuery.matches))
+    }
+
+    applyTheme()
+    mediaQuery.addEventListener("change", applyTheme)
+    return () => mediaQuery.removeEventListener("change", applyTheme)
+  }, [themeMode])
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={theme}
       className="toaster group"
       icons={{
         success: (
@@ -33,12 +51,15 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--popover)",
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
-        } as React.CSSProperties
+          "--border-radius": "calc(var(--radius) * 1.25)",
+        } as CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          toast:
+            "cn-toast rounded-3xl border border-border/70 bg-popover/92 backdrop-blur-xl shadow-[var(--shadow-popover)]",
+          title: "font-semibold tracking-tight",
+          description: "text-muted-foreground",
         },
       }}
       {...props}

@@ -21,13 +21,15 @@ function createWrapper() {
 describe("MemoryPage", () => {
   it("renders memory page heading", () => {
     render(<MemoryPage />, { wrapper: createWrapper() });
-    expect(screen.getByRole("heading", { name: /memory/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /historical decisions/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows empty state when no memories", async () => {
     render(<MemoryPage />, { wrapper: createWrapper() });
     await waitFor(() => {
-      expect(screen.getByText(/no memories yet/i)).toBeInTheDocument();
+      expect(screen.getByText(/memory log is still empty/i)).toBeInTheDocument();
     });
   });
 });
