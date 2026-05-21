@@ -30,14 +30,14 @@ export function EquityCurveChart({ snapshots }: Props) {
       <AreaChart data={data}>
         <defs>
           <linearGradient id={`eq-${gradId}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="oklch(0.55 0.2 285)" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="oklch(0.55 0.2 285)" stopOpacity={0} />
+            <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
         <XAxis
           dataKey="date"
-          tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
           tickLine={false}
           axisLine={false}
           tickFormatter={(v: string) => {
@@ -50,7 +50,7 @@ export function EquityCurveChart({ snapshots }: Props) {
           }}
         />
         <YAxis
-          tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
           tickLine={false}
           axisLine={false}
           domain={[minEquity, maxEquity]}
@@ -61,7 +61,7 @@ export function EquityCurveChart({ snapshots }: Props) {
             backgroundColor: "var(--card)",
             border: "1px solid var(--border)",
             borderRadius: "12px",
-            fontSize: 12,
+            fontSize: 11,
           }}
           formatter={(value: unknown, name: unknown) => [
             Number(value) < 0 ? `-$${Math.abs(Number(value)).toFixed(2)}` : `$${Number(value).toFixed(2)}`,
@@ -90,7 +90,7 @@ export function EquityCurveChart({ snapshots }: Props) {
         <Area
           type="monotone"
           dataKey="equity"
-          stroke="oklch(0.55 0.2 285)"
+          stroke="var(--primary)"
           strokeWidth={2}
           fill={`url(#eq-${gradId})`}
           dot={false}

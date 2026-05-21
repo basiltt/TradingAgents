@@ -101,25 +101,25 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
   };
 
   return (
-    <div className="rounded-2xl border border-border/40 bg-card">
+    <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-3 w-full text-left px-5 py-4"
+        className="w-full flex items-center gap-3 px-5 py-4 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
       >
-        <svg className={cn("w-4 h-4 text-muted-foreground transition-transform", expanded && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        <svg className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 shrink-0", expanded && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        <span className="text-sm font-semibold">Auto-Trade Execution</span>
+        <span>Auto-Trade Execution</span>
         {value.length > 0 && (
-          <span className="ml-auto text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full">
+          <span className="ml-auto text-[10px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2.5 py-0.5 rounded-xl">
             {value.length} account{value.length > 1 ? "s" : ""}
           </span>
         )}
       </button>
 
       {expanded && (
-        <div className="px-5 pb-5 space-y-4">
+        <div className="px-5 pb-5 space-y-4 border-t border-border/20 pt-4">
           {value.map((config, idx) => (
             <AutoTradeCard
               key={idx}
@@ -132,7 +132,7 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
               onRemove={() => removeConfig(idx)}
             />
           ))}
-          <Button type="button" variant="outline" size="sm" onClick={addConfig} className="w-full border-dashed border-border/50 text-muted-foreground hover:text-foreground">
+          <Button type="button" variant="outline" size="sm" onClick={addConfig} className="w-full border-dashed border-border/40 text-muted-foreground hover:text-foreground cursor-pointer">
             + Add Trading Account
           </Button>
         </div>
@@ -159,7 +159,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
   const slPriceMove = (config.stop_loss_pct / leverageNum).toFixed(2);
 
   return (
-    <div className="rounded-xl border border-border/30 bg-muted/20 p-5 space-y-5">
+    <div className="rounded-xl border border-border/30 bg-muted/10 backdrop-blur-sm p-5 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Account #{index + 1}</span>
@@ -202,19 +202,19 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label className="text-xs text-muted-foreground">Direction</Label>
-          <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40">
+          <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40 p-[2px] bg-muted/20">
             <button
               type="button"
-              className={cn("flex-1 py-2 text-xs font-medium transition-colors",
-                config.direction === "straight" ? "bg-purple-600 text-white" : "bg-muted/30 text-muted-foreground hover:bg-muted/50")}
+              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
+                config.direction === "straight" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
               onClick={() => onChange({ direction: "straight" })}
             >
               Straight
             </button>
             <button
               type="button"
-              className={cn("flex-1 py-2 text-xs font-medium transition-colors",
-                config.direction === "reverse" ? "bg-purple-600 text-white" : "bg-muted/30 text-muted-foreground hover:bg-muted/50")}
+              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
+                config.direction === "reverse" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
               onClick={() => onChange({ direction: "reverse" })}
             >
               Reverse
@@ -226,19 +226,19 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
         </div>
         <div>
           <Label className="text-xs text-muted-foreground">Execution Mode</Label>
-          <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40">
+          <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40 p-[2px] bg-muted/20">
             <button
               type="button"
-              className={cn("flex-1 py-2 text-xs font-medium transition-colors",
-                config.execution_mode === "immediate" ? "bg-purple-600 text-white" : "bg-muted/30 text-muted-foreground hover:bg-muted/50")}
+              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
+                config.execution_mode === "immediate" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
               onClick={() => onChange({ execution_mode: "immediate" })}
             >
               Immediate
             </button>
             <button
               type="button"
-              className={cn("flex-1 py-2 text-xs font-medium transition-colors",
-                config.execution_mode === "batch" ? "bg-purple-600 text-white" : "bg-muted/30 text-muted-foreground hover:bg-muted/50")}
+              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
+                config.execution_mode === "batch" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
               onClick={() => onChange({ execution_mode: "batch" })}
             >
               Batch
@@ -438,7 +438,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
               onChange={(e) => onChange({ skip_if_positions_open: e.target.checked })}
               className="sr-only peer"
             />
-            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
+            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-primary peer-checked:border-primary transition-colors" />
             <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
           </div>
           <div>
@@ -454,7 +454,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
               onChange={(e) => onChange({ fill_to_max_trades: e.target.checked })}
               className="sr-only peer"
             />
-            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
+            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-primary peer-checked:border-primary transition-colors" />
             <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
           </div>
           <div>
@@ -470,7 +470,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
               onChange={(e) => onChange({ close_on_profit_pct: e.target.checked ? 50 : null })}
               className="sr-only peer"
             />
-            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
+            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-primary peer-checked:border-primary transition-colors" />
             <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
           </div>
           <div className="flex-1">

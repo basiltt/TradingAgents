@@ -174,23 +174,23 @@ export function ScanHistoryPage() {
       {/* Stats row */}
       {totalScans > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="rounded-2xl border border-border/50 bg-card p-5">
+          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-5">
             <div className="text-2xl font-bold tabular-nums">{totalScans}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Total Scans</div>
           </div>
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 glass-card backdrop-blur-sm p-5">
             <div className="text-2xl font-bold tabular-nums text-emerald-500">{completedScans}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Completed</div>
           </div>
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.04] p-5">
+          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 glass-card backdrop-blur-sm p-5">
             <div className="text-2xl font-bold tabular-nums text-blue-500">{runningScans}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Running</div>
           </div>
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 glass-card backdrop-blur-sm p-5">
             <div className="text-2xl font-bold tabular-nums text-emerald-500">{totalBuy}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Buy Signals</div>
           </div>
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] p-5">
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 glass-card backdrop-blur-sm p-5">
             <div className="text-2xl font-bold tabular-nums text-red-500">{totalSell}</div>
             <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-medium">Sell Signals</div>
           </div>
@@ -231,10 +231,10 @@ export function ScanHistoryPage() {
               <Link
                 key={scan.scan_id}
                 to={`/scanner/${scan.scan_id}`}
-                className="group rounded-2xl border border-border/40 bg-card hover:border-border/60 transition-all duration-300 hover:shadow-xl hover:shadow-primary/5 block overflow-hidden relative"
+                className="group rounded-2xl border border-border/50 bg-card/65 glass-card hover:border-primary/30 transition-all duration-300 hover:shadow-xl hover:shadow-primary/5 block overflow-hidden relative active:scale-[0.99] backdrop-blur-sm"
               >
                 {/* Subtle gradient overlay on hover */}
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.02] via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.03] via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
                 {/* Header */}
                 <div className="relative flex items-center justify-between px-5 pt-5 pb-2">
@@ -381,7 +381,7 @@ export function ScanHistoryPage() {
             className="absolute inset-0 bg-black/60 backdrop-blur-md"
             onClick={() => !deleteMutation.isPending && setDeleteConfirm(null)}
           />
-          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
+          <div className="relative bg-card/85 border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5 backdrop-blur-md">
             <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
               <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />

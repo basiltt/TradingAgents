@@ -173,22 +173,22 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       {/* Header - hidden when embedded in a tab */}
       {!embedded && (
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Performance Analytics</h1>
-            <p className="text-sm text-muted-foreground mt-1.5">
-              Track your trading performance with detailed metrics and charts
+            <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">Performance Analytics</h1>
+            <p className="text-sm text-muted-foreground mt-1.5 font-medium">
+              Track your trading performance with detailed metrics and charts.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-3.5 shrink-0">
             <button
               onClick={() => setShowCleanup(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-muted text-foreground font-medium text-sm hover:bg-muted/80 transition-all"
+              className="inline-flex items-center gap-2 px-4.5 py-2.5 rounded-xl bg-muted/60 border border-border/40 text-foreground font-bold text-xs uppercase tracking-wider hover:bg-muted/80 active:scale-95 transition-all duration-200 cursor-pointer"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
               Cleanup
@@ -197,9 +197,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
               onClick={handleTakeSnapshot}
               disabled={snapshotting}
               aria-label="Take performance snapshot"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 active:scale-[0.98] transition-all shadow-lg shadow-primary/25 disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4.5 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-xs uppercase tracking-wider hover:scale-[1.02] active:scale-98 transition-all duration-300 shadow-lg shadow-primary/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
@@ -213,12 +213,12 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
       <div className="flex flex-wrap items-center gap-4">
         {/* Live / Demo toggle */}
         {!accountId && (
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/50">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/60 border border-border/40">
             {(["live", "demo"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => { setAccountType(t); setSelectedAccount("portfolio"); setAccounts([]); }}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 capitalize ${
+                className={`px-4 py-1.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
                   accountType === t
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -241,15 +241,15 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         )}
 
         {/* Period selector */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-muted/50 overflow-x-auto max-w-full">
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/60 border border-border/40 overflow-x-auto max-w-full">
           {PERIODS.map((p) => (
             <button
               key={p}
               onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all duration-200 cursor-pointer ${
                 period === p
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground/80 hover:text-foreground"
               }`}
             >
               {p}
@@ -258,17 +258,17 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         </div>
 
         {/* Auto-snapshot indicator */}
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-muted-foreground/85 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl ml-auto sm:ml-0">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          Auto-capturing every 5 min
+          Auto-capturing every 5m
         </div>
 
         {/* Snapshot button when embedded */}
         {embedded && (
-          <>
+          <div className="flex items-center gap-2 ml-auto">
             <button
               onClick={() => setShowCleanup(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted text-foreground font-medium text-xs hover:bg-muted/80 transition-all"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted text-foreground font-bold text-xs uppercase tracking-wider hover:bg-muted/80 transition-all cursor-pointer"
             >
               Cleanup
             </button>
@@ -276,18 +276,18 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
               onClick={handleTakeSnapshot}
               disabled={snapshotting}
               aria-label="Take performance snapshot"
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary text-white font-medium text-xs hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground font-bold text-xs uppercase tracking-wider hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer shadow shadow-primary/10"
             >
               {snapshotting ? "Capturing..." : "Take Snapshot"}
             </button>
-          </>
+          </div>
         )}
       </div>
 
       {/* Error state */}
       {error && (
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-6 text-center">
-          <p className="text-destructive text-sm">{error}</p>
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-6 text-center animate-fade-in">
+          <p className="text-destructive text-sm font-semibold">{error}</p>
           <button
             onClick={() => {
               setError(null);
@@ -297,7 +297,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
               manualAbortRef.current = controller;
               fetchDataRef.current(controller.signal);
             }}
-            className="mt-3 px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:brightness-110 transition-all"
+            className="mt-3.5 px-4.5 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer shadow-lg shadow-primary/15"
           >
             Retry
           </button>
@@ -315,73 +315,93 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
           <Skeleton className="h-48 rounded-2xl" />
         </div>
       ) : !error && snapshots.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/60 p-16 text-center">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
-            <svg className="w-8 h-8 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="glass-card border border-dashed border-border/70 p-16 text-center rounded-2xl bg-card/65">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/60 flex items-center justify-center mb-5 border border-border/40">
+            <svg className="w-8 h-8 text-muted-foreground/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold mb-1.5">No performance data yet</h3>
-          <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
+          <h3 className="text-lg font-bold mb-1.5">No performance data yet</h3>
+          <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto font-medium">
             Click "Take Snapshot" to capture your current account state. Do this daily to build your performance history.
           </p>
           <button
             onClick={handleTakeSnapshot}
             disabled={snapshotting}
             aria-label="Take performance snapshot"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/25 disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-xs uppercase tracking-wider hover:scale-[1.02] active:scale-98 transition-all shadow-lg shadow-primary/20 disabled:opacity-50 cursor-pointer"
           >
             {snapshotting ? "Capturing..." : "Take First Snapshot"}
           </button>
         </div>
       ) : !error ? (
-        <>
+        <div className="space-y-4 animate-fade-in">
           {snapshots.length > 0 && (() => {
             const latest = snapshots[snapshots.length - 1];
             const fmt = (v: number) => v < 0 ? `-$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
             const items = [
               { label: "Balance", value: latest.wallet_balance, color: "" },
               { label: "Equity", value: latest.equity, color: "" },
-              { label: "Unrealized P&L", value: latest.unrealised_pnl, color: latest.unrealised_pnl >= 0 ? "text-emerald-400" : "text-red-400" },
-              { label: "Realized P&L", value: latest.realised_pnl, color: latest.realised_pnl >= 0 ? "text-emerald-400" : "text-red-400" },
+              { label: "Unrealized P&L", value: latest.unrealised_pnl, color: latest.unrealised_pnl >= 0 ? "text-emerald-500 dark:text-emerald-400" : "text-destructive" },
+              { label: "Realized P&L", value: latest.realised_pnl, color: latest.realised_pnl >= 0 ? "text-emerald-500 dark:text-emerald-400" : "text-destructive" },
             ];
             return (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {items.map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-border/50 bg-card p-4">
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{item.label}</p>
-                    <p className={`text-xl font-bold tabular-nums ${item.color || "text-foreground"}`}>{fmt(item.value)}</p>
+                  <div key={item.label} className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-4.5 rounded-2xl shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-extrabold mb-1">{item.label}</p>
+                    <p className={`text-xl font-black tabular-nums tracking-tight ${item.color || "text-foreground"}`}>{fmt(item.value)}</p>
                   </div>
                 ))}
               </div>
             );
           })()}
-
+ 
           {analytics && <KpiCards analytics={analytics} />}
-
-          <div className="rounded-2xl border border-border/50 bg-card p-5">
-            <h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wider">Equity Curve</h3>
+ 
+          <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-5 rounded-2xl shadow-sm">
+            <h3 className="text-xs font-black mb-4 text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+              <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+              Equity Curve
+            </h3>
             <EquityCurveChart snapshots={snapshots} />
           </div>
-
+ 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-2xl border border-border/50 bg-card p-5">
-              <h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wider">Drawdown</h3>
+            <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-5 rounded-2xl shadow-sm">
+              <h3 className="text-xs font-black mb-4 text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                </svg>
+                Drawdown
+              </h3>
               <DrawdownChart snapshots={snapshots} />
             </div>
-            <div className="rounded-2xl border border-border/50 bg-card p-5">
-              <h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wider">Realized P&L</h3>
+            <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-5 rounded-2xl shadow-sm">
+              <h3 className="text-xs font-black mb-4 text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 8h6m-6 4h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Realized P&L
+              </h3>
               <DailyPnlChart snapshots={snapshots} />
             </div>
           </div>
-
-          <div className="rounded-2xl border border-border/50 bg-card p-5">
-            <h3 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wider">Monthly P&L</h3>
+ 
+          <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-5 rounded-2xl shadow-sm">
+            <h3 className="text-xs font-black mb-4 text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+              <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Monthly P&L
+            </h3>
             <MonthlyPnlGrid snapshots={snapshots} />
           </div>
-        </>
+        </div>
       ) : null}
-
+ 
       {/* Cleanup Dialog */}
       {showCleanup && (
         <CleanupDialog

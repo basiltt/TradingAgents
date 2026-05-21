@@ -36,53 +36,58 @@ function ConfigSummary({ config }: { config: Record<string, unknown> }) {
   if (!deepModel && !quickModel && !provider) return null;
 
   return (
-    <div className="rounded-xl border border-border/50 bg-card/50 px-4 py-2.5">
+    <div className="glass-card border border-border/40 rounded-2xl bg-card/40 transition-all duration-300 hover:border-border/60">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-3 w-full text-left flex-wrap"
+        className="flex items-center gap-3 w-full text-left px-5 py-4 flex-wrap cursor-pointer"
       >
-        <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-        {provider && (
-          <span className="text-xs font-medium text-muted-foreground capitalize">{provider}</span>
-        )}
-        {!!config.workflow_mode && (
-          <span className={cn(
-            "px-1.5 py-0.5 rounded font-semibold text-[10px] uppercase tracking-wide",
-            config.workflow_mode === "quick_trade"
-              ? "bg-amber-500/15 text-amber-400"
-              : "bg-emerald-500/15 text-emerald-400",
-          )}>
-            {config.workflow_mode === "quick_trade" ? "Quick Trade" : "Deep Analysis"}
-          </span>
-        )}
-        {deepModel && (
-          <span className="inline-flex items-center gap-1.5 text-xs">
-            <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-semibold text-[10px] uppercase tracking-wide">Deep</span>
-            <span className="font-mono font-medium">{deepModel}</span>
-          </span>
-        )}
-        {quickModel && (
-          <span className="inline-flex items-center gap-1.5 text-xs">
-            <span className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 font-semibold text-[10px] uppercase tracking-wide">Quick</span>
-            <span className="font-mono font-medium">{quickModel}</span>
-          </span>
-        )}
+        <div className="w-8 h-8 rounded-lg bg-muted/50 flex items-center justify-center text-muted-foreground shrink-0">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12.75 3.03v.568c0 .334.148.65.405.864l4.038 3.348a.507.507 0 00.325.122h.001c.276 0 .5-.224.5-.5V3.03M21 21v-4.5m0 0l-3-3m3 3l3-3M2.25 12a9.75 9.75 0 1119.5 0M9 9.75h.008v.008H9V9.75zm.563 0h.008v.008H9.563V9.75zm.562 0H11v.008h-.875V9.75zm.563 0h.008v.008H11.25V9.75zm.562 0h.008v.008h-.008V9.75zm.563 0h.008v.008H12.38V9.75zm.562 0h.008v.008h-.008V9.75zm.563 0h.008v.008H13.5V9.75zm.562 0h.008v.008h-.008V9.75z" />
+          </svg>
+        </div>
+        
+        <div className="flex items-center gap-2 flex-wrap">
+          {provider && (
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/90 bg-muted/40 px-2 py-0.5 rounded border border-border/20">{provider}</span>
+          )}
+          {!!config.workflow_mode && (
+            <span className={cn(
+              "px-2 py-0.5 rounded font-extrabold text-[10px] uppercase tracking-wider border",
+              config.workflow_mode === "quick_trade"
+                ? "bg-amber-500/10 border-amber-500/25 text-amber-500"
+                : "bg-emerald-500/10 border-emerald-500/25 text-emerald-500",
+            )}>
+              {config.workflow_mode === "quick_trade" ? "Quick Trade" : "Deep Analysis"}
+            </span>
+          )}
+          {deepModel && (
+            <span className="inline-flex items-center gap-1.5 text-xs">
+              <span className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/25 text-purple-500 font-extrabold text-[10px] uppercase tracking-wider">Deep Model</span>
+              <span className="font-mono font-bold text-foreground/80">{deepModel}</span>
+            </span>
+          )}
+          {quickModel && (
+            <span className="inline-flex items-center gap-1.5 text-xs">
+              <span className="px-2 py-0.5 rounded bg-sky-500/10 border border-sky-500/25 text-sky-500 font-extrabold text-[10px] uppercase tracking-wider">Quick Model</span>
+              <span className="font-mono font-bold text-foreground/80">{quickModel}</span>
+            </span>
+          )}
+        </div>
+
         {extras.length > 0 && (
-          <svg className={`w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className={`w-4 h-4 text-muted-foreground/60 ml-auto shrink-0 transition-transform duration-300 ${open ? "rotate-180 text-foreground" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         )}
       </button>
       {open && extras.length > 0 && (
-        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-1.5 text-xs border-t border-border/50 pt-2">
+        <div className="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs border-t border-border/30 pt-4 animate-fade-in">
           {extras.map(([k, v]) => (
-            <div key={k} className="flex gap-1.5 min-w-0">
-              <span className="text-muted-foreground shrink-0">{k}:</span>
-              <span className="font-medium truncate">{v}</span>
+            <div key={k} className="flex flex-col gap-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/75 font-semibold">{k}</span>
+              <span className="font-bold text-foreground truncate">{v}</span>
             </div>
           ))}
         </div>
@@ -201,28 +206,28 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
   const isLoadingTerminalData = isTerminal && !hasLiveData && (isLoadingSnapshot || isLoadingReport);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
       {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 pb-4 border-b border-border/20">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <button
               type="button"
               onClick={() => window.history.back()}
-              className="w-8 h-8 rounded-xl bg-muted/60 hover:bg-muted flex items-center justify-center shrink-0 transition-colors"
+              className="w-10 h-10 rounded-xl bg-card border border-border/50 hover:bg-muted flex items-center justify-center shrink-0 transition-all duration-200 active:scale-95 cursor-pointer shadow-sm"
               title="Go back"
             >
-              <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 shadow-inner">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
-              {runDetails?.ticker ? `${runDetails.ticker} Analysis` : "Analysis"}
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground bg-clip-text">
+              {runDetails?.ticker ? `Analysis: ${runDetails.ticker} Pipeline` : "Analysis Pipeline Run"}
             </h1>
             <AnalysisStatusBadge status={
               ["completed", "failed", "cancelled"].includes(wsData?.progress?.phase ?? "")
@@ -239,7 +244,7 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
               <ReconnectionIndicator status={status} attempt={attempt} />
             </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-1 font-mono truncate">{runId}</p>
+          <p className="text-xs text-muted-foreground mt-1.5 font-mono select-all w-fit bg-muted/30 px-2 py-0.5 rounded border border-border/10">ID: {runId}</p>
         </div>
         <div className="hidden sm:block shrink-0">
           <ReconnectionIndicator status={status} attempt={attempt} />
@@ -253,41 +258,41 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
 
       {/* Running indicator */}
       {!isTerminal && !isLoading && (
-        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-primary animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 shadow-sm animate-pulse-slow">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <svg className="w-5 h-5 text-primary animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="text-sm font-medium text-primary">Analysis in progress...</span>
+            <span className="text-sm font-bold text-primary uppercase tracking-wider">Pipeline Engine active</span>
           </div>
-          <div className="h-1.5 rounded-full bg-primary/10 overflow-hidden sm:flex-1">
-            <div className="h-full w-1/3 rounded-full bg-primary/60 animate-[indeterminate_1.5s_ease-in-out_infinite]" />
+          <div className="h-2 rounded-full bg-primary/10 overflow-hidden sm:flex-1 w-full">
+            <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-primary to-purple-500 animate-[indeterminate_1.5s_ease-in-out_infinite]" />
           </div>
         </div>
       )}
 
       {isLoading || isLoadingTerminalData ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-[72px] rounded-xl" />
+              <Skeleton key={i} className="h-20 rounded-2xl" />
             ))}
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Skeleton className="h-56 rounded-xl" />
-            <Skeleton className="h-56 rounded-xl" />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Skeleton className="h-[28rem] rounded-2xl" />
+            <Skeleton className="h-[28rem] rounded-2xl" />
           </div>
           {/* Report skeleton — taller to represent multiple sections */}
-          <div className="space-y-2">
-            <Skeleton className="h-10 w-48 rounded-xl" />
-            <Skeleton className="h-64 rounded-xl" />
+          <div className="space-y-3">
+            <Skeleton className="h-12 w-48 rounded-xl" />
+            <Skeleton className="h-96 rounded-2xl" />
           </div>
         </div>
       ) : (
         <>
           <StatsBar stats={stats} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 md:gap-4 items-stretch">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 items-stretch">
             <AgentStatusTable agents={agents} isLoading={isLoadingSnapshot} config={parsedConfig} />
             <MessagesPanel messages={messages} isLoading={isLoadingSnapshot} />
           </div>

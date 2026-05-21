@@ -6,11 +6,11 @@ interface Props {
 
 function KpiCard({ label, value, color, suffix = "" }: { label: string; value: string | number; color?: string; suffix?: string }) {
   return (
-    <div className="rounded-2xl border border-border/50 bg-card p-4">
-      <div className={`text-xl font-bold tabular-nums ${color || ""}`}>
+    <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-4 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.01]">
+      <div className={`text-xl font-black tracking-tight tabular-nums ${color || "text-foreground"}`}>
         {value}{suffix}
       </div>
-      <div className="text-[11px] text-muted-foreground mt-1 uppercase tracking-wider font-medium">{label}</div>
+      <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">{label}</div>
     </div>
   );
 }

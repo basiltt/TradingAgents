@@ -23,9 +23,9 @@ function NavLink({
   return (
     <Link
       to={to}
-      className="group/nav relative flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-200"
+      className="group/nav relative flex items-center gap-3.5 px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-all duration-300 hover:translate-x-1 active:scale-[0.98] min-h-[44px]"
       activeProps={{
-        className: "nav-active",
+        className: "nav-active shadow-sm",
         "aria-current": "page" as const,
       }}
       activeOptions={{ exact: true }}
@@ -33,30 +33,25 @@ function NavLink({
     >
       {({ isActive }) => (
         <>
+          {isActive && (
+            <span className="absolute inset-0 rounded-xl bg-primary shadow-lg shadow-primary/20 glow-primary transition-all duration-300" />
+          )}
           <span
-            className="absolute inset-0 rounded-lg transition-colors"
-            style={
-              isActive
-                ? { backgroundColor: "var(--primary)" }
-                : undefined
-            }
-          />
-          <span
-            className={`relative z-10 w-5 h-5 flex items-center justify-center shrink-0 ${
-              isActive ? "text-white" : "text-sidebar-foreground/80 group-hover/nav:text-sidebar-foreground"
+            className={`relative z-10 w-5 h-5 flex items-center justify-center shrink-0 transition-colors duration-300 ${
+              isActive ? "text-white" : "text-sidebar-foreground/70 group-hover/nav:text-primary"
             }`}
           >
             {icon}
           </span>
           <span
-            className={`relative z-10 ${
-              isActive ? "text-white" : "text-sidebar-foreground/80 group-hover/nav:text-sidebar-foreground"
+            className={`relative z-10 transition-colors duration-300 ${
+              isActive ? "text-white" : "text-sidebar-foreground/80 group-hover/nav:text-foreground"
             }`}
           >
             {children}
           </span>
           {!isActive && (
-            <span className="absolute inset-0 rounded-lg bg-sidebar-accent opacity-0 group-hover/nav:opacity-100 transition-opacity" />
+            <span className="absolute inset-0 rounded-xl bg-sidebar-accent/50 opacity-0 group-hover/nav:opacity-100 transition-all duration-300" />
           )}
         </>
       )}
@@ -77,23 +72,25 @@ function ThemeToggle() {
   return (
     <button
       onClick={nextTheme}
-      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+      className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-semibold text-sidebar-foreground/75 hover:text-foreground hover:bg-sidebar-accent/50 transition-all duration-200 active:scale-[0.97] cursor-pointer touch-target"
       aria-label={`Theme: ${theme}. Click to change.`}
     >
-      {theme === "dark" ? (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-        </svg>
-      ) : theme === "light" ? (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      ) : (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
-      )}
-      <span className="capitalize">{theme}</span>
+      <span className="w-5 h-5 flex items-center justify-center shrink-0 text-primary">
+        {theme === "dark" ? (
+          <svg className="w-4.5 h-4.5 animate-[spin_0.8s_ease-out_1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+        ) : theme === "light" ? (
+          <svg className="w-4.5 h-4.5 animate-[spin_0.8s_ease-out_1]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+        ) : (
+          <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        )}
+      </span>
+      <span className="capitalize">{theme} Mode</span>
     </button>
   );
 }
@@ -115,14 +112,14 @@ export function RootLayout() {
   }, [sidebarOpen, dispatch]);
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen bg-background overflow-hidden animate-fade-in-up">
       {/* Mobile hamburger */}
       <button
-        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-card border shadow-sm hover:bg-accent transition-colors"
+        className="md:hidden fixed top-4 left-4 z-50 w-11 h-11 flex items-center justify-center rounded-xl bg-card/90 border border-border/40 shadow-md hover:bg-accent active:scale-90 transition-all cursor-pointer"
         onClick={() => dispatch(toggleSidebar())}
         aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
       >
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <svg className="w-5 h-5 text-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           {sidebarOpen ? (
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           ) : (
@@ -134,29 +131,29 @@ export function RootLayout() {
       {/* Sidebar */}
       <nav
         aria-label="Main navigation"
-        className={`w-64 border-r border-sidebar-border bg-sidebar flex flex-col shrink-0
-          ${sidebarOpen ? "flex" : "hidden"} md:flex
+        className={`w-64 border-r border-sidebar-border bg-sidebar/95 backdrop-blur-lg flex flex-col shrink-0
           fixed md:static inset-y-0 left-0 z-40
-          transition-transform duration-300`}
+          ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+          transition-transform duration-300 ease-out shadow-xl md:shadow-none`}
       >
         {/* Logo / Brand */}
-        <div className="px-5 py-5 border-b border-sidebar-border">
-          <Link to="/" className="flex items-center gap-3 group">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow" style={{background: 'linear-gradient(135deg, oklch(0.45 0.24 285), oklch(0.50 0.18 310)'}}>
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="px-6 py-6 border-b border-sidebar-border/60">
+          <Link to="/" className="flex items-center gap-3.5 group">
+            <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg shadow-primary/10 group-hover:shadow-primary/20 group-hover:scale-105 transition-all duration-300" style={{background: 'linear-gradient(135deg, oklch(0.55 var(--theme-chroma) var(--theme-hue)), oklch(0.62 var(--theme-chroma) calc(var(--theme-hue) + 20)))'}}>
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
             </div>
             <div>
-              <h1 className="text-base font-bold text-sidebar-foreground leading-tight">TradingAgents</h1>
-              <p className="text-[11px] text-sidebar-foreground/50 font-medium">AI-Powered Analysis</p>
+              <h1 className="text-base font-bold text-sidebar-foreground leading-tight tracking-tight">TradingAgents</h1>
+              <p className="text-[10px] text-primary/70 font-bold uppercase tracking-wider mt-0.5">AI Engine</p>
             </div>
           </Link>
         </div>
 
         {/* Nav links */}
-        <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+        <div className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto custom-scrollbar">
+          <p className="px-4 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
             Dashboard
           </p>
           <NavLink
@@ -170,7 +167,7 @@ export function RootLayout() {
             Home
           </NavLink>
 
-          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
             Analysis
           </p>
           <NavLink
@@ -194,14 +191,14 @@ export function RootLayout() {
             Analysis History
           </NavLink>
 
-          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
             Market Scanner
           </p>
           <NavLink
             to="/scanner"
             icon={
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="w-full h-full">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             }
           >
@@ -228,7 +225,7 @@ export function RootLayout() {
             Scheduled Scans
           </NavLink>
 
-          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
             Accounts
           </p>
           <NavLink
@@ -252,7 +249,7 @@ export function RootLayout() {
             Performance
           </NavLink>
 
-          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
             Trading
           </p>
           <NavLink
@@ -286,7 +283,7 @@ export function RootLayout() {
             Cycles
           </NavLink>
 
-          <p className="px-3 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+          <p className="px-4 mt-6 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/40">
             Settings
           </p>
           <NavLink
@@ -313,7 +310,7 @@ export function RootLayout() {
         </div>
 
         {/* Footer */}
-        <div className="px-3 py-3 border-t border-sidebar-border space-y-1">
+        <div className="px-4 py-4 border-t border-sidebar-border/60">
           <ThemeToggle />
         </div>
       </nav>
@@ -321,7 +318,7 @@ export function RootLayout() {
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="md:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-30 transition-opacity"
+          className="md:hidden fixed inset-0 bg-black/55 backdrop-blur-[3px] z-30 transition-all duration-300 ease-in-out"
           role="button"
           tabIndex={0}
           aria-label="Close navigation"
@@ -334,8 +331,8 @@ export function RootLayout() {
       )}
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 md:pt-6 pb-6">
+      <main className="flex-1 overflow-auto custom-scrollbar bg-background">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-20 md:pt-6 pb-6 h-full">
           <Outlet />
         </div>
       </main>
@@ -345,22 +342,22 @@ export function RootLayout() {
 
 export function NotFound() {
   return (
-    <div className="flex items-center justify-center h-[60vh]">
-      <div className="text-center space-y-4">
-        <div className="w-16 h-16 mx-auto rounded-2xl bg-muted flex items-center justify-center">
-          <svg className="w-8 h-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+    <div className="flex items-center justify-center h-[70vh] animate-fade-in-up">
+      <div className="text-center space-y-5 p-8 rounded-2xl glass-card max-w-sm">
+        <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center text-primary glow-primary">
+          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
-        <h2 className="text-2xl font-bold">Page Not Found</h2>
-        <p className="text-muted-foreground">
-          The page you're looking for doesn't exist.
+        <h2 className="text-2xl font-bold tracking-tight">Page Not Found</h2>
+        <p className="text-muted-foreground text-sm leading-relaxed">
+          The page you're looking for does not exist or has been relocated.
         </p>
         <Link
           to="/"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
+          className="inline-flex items-center justify-center w-full h-11 px-5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90 active:scale-[0.98] shadow-lg shadow-primary/15 transition-all duration-200"
         >
-          Go home
+          Return to Dashboard
         </Link>
       </div>
     </div>

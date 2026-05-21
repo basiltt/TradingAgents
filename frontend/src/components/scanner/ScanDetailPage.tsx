@@ -16,13 +16,13 @@ import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 function ScoreBar({ score }: { score: number }) {
   const abs = Math.min(Math.abs(score), 10);
   const pct = (abs / 10) * 100;
-  const color = score > 0 ? "bg-emerald-500" : score < 0 ? "bg-red-500" : "bg-muted-foreground";
+  const color = score > 0 ? "bg-emerald-500" : score < 0 ? "bg-red-500" : "bg-muted-foreground/60";
   return (
-    <div className="flex items-center gap-2 w-24">
-      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${pct}%` }} />
+    <div className="flex items-center gap-2.5 w-24">
+      <div className="flex-1 h-2.5 rounded-full bg-muted/30 overflow-hidden border border-border/20 p-[1px]">
+        <div className={cn("h-full rounded-full transition-all duration-500", color)} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-mono w-6 text-right">{score > 0 ? "+" : ""}{score}</span>
+      <span className="text-xs font-mono font-bold tracking-tight w-6 text-right tabular-nums">{score > 0 ? "+" : ""}{score}</span>
     </div>
   );
 }
@@ -57,22 +57,26 @@ function CollapsibleSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <Card>
+    <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm rounded-2xl shadow-sm overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-5 py-4 text-left hover:bg-muted/30 transition-colors"
+        className="w-full flex items-center gap-2.5 w-full text-left px-6 py-4.5 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
       >
         <svg
-          className={cn("w-4 h-4 text-muted-foreground transition-transform", open && "rotate-90")}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground shrink-0", open && "rotate-90")}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        <span className={cn("w-2.5 h-2.5 rounded-full", dotColor)} />
-        <span className="font-semibold text-sm">{title} ({count})</span>
+        <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", dotColor)} />
+        <span>{title} ({count})</span>
       </button>
-      {open && <CardContent className="pt-0 pb-4">{children}</CardContent>}
-    </Card>
+      {open && (
+        <div className="border-t border-border/20">
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -90,36 +94,38 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-border/50 text-xs text-muted-foreground">
-            <th className="text-left px-4 py-2.5 font-medium">#</th>
-            <th className="text-left px-4 py-2.5 font-medium">Symbol</th>
-            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Signal</th>
-            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Confidence</th>
-            <th className="text-left px-4 py-2.5 font-medium">Strength</th>
-            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Status</th>
-            <th className="text-right px-4 py-2.5 font-medium"></th>
+          <tr className="border-b border-border/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground/80 bg-muted/5">
+            <th className="text-left px-5 py-3.5 font-black">#</th>
+            <th className="text-left px-5 py-3.5 font-black">Symbol</th>
+            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Signal</th>
+            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Confidence</th>
+            <th className="text-left px-5 py-3.5 font-black">Strength</th>
+            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Status</th>
+            <th className="text-right px-5 py-3.5 font-black"></th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-border/10">
           {results.map((r, i) => {
             const dir = DIRECTION_CONFIG[r.direction] ?? DIRECTION_CONFIG.unknown;
             const copied = copiedTicker === r.ticker;
             return (
-              <tr key={r.ticker} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
-                <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
-                <td className="px-4 py-3">
+              <tr key={r.ticker} className="hover:bg-muted/15 transition-colors group">
+                <td className="px-5 py-3.5 text-muted-foreground font-mono text-xs">{i + 1}</td>
+                <td className="px-5 py-3.5">
                   <button
                     type="button"
                     onClick={() => handleCopy(r.ticker)}
                     title="Tap to copy"
                     className={cn(
-                      "font-mono font-semibold transition-all duration-150 rounded px-1 -mx-1 active:scale-95",
-                      copied ? "text-emerald-400 bg-emerald-500/10" : "hover:text-primary hover:bg-primary/10",
+                      "font-mono font-bold transition-all duration-150 rounded-lg px-2 py-1 -mx-2 active:scale-95 cursor-pointer border border-transparent text-sm",
+                      copied
+                        ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+                        : "text-foreground group-hover:text-primary hover:bg-primary/10 hover:border-primary/20",
                     )}
                   >
                     {copied ? (
-                      <span className="flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                         {r.ticker}
@@ -127,39 +133,39 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                     ) : r.ticker}
                   </button>
                 </td>
-                <td className="px-4 py-3 hidden md:table-cell">
-                  <span className={cn("px-2 py-0.5 rounded text-xs font-bold", dir.bg, dir.color)}>
+                <td className="px-5 py-3.5 hidden md:table-cell">
+                  <span className={cn("px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border", dir.bg, dir.color, dir.label === "Buy" ? "border-emerald-500/20" : dir.label === "Sell" ? "border-red-500/20" : "border-border/40")}>
                     {dir.label}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-xs capitalize hidden md:table-cell">{r.confidence}</td>
-                <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
-                <td className="px-4 py-3 hidden md:table-cell">
+                <td className="px-5 py-3.5 text-xs font-semibold capitalize hidden md:table-cell text-muted-foreground">{r.confidence}</td>
+                <td className="px-5 py-3.5"><ScoreBar score={r.score} /></td>
+                <td className="px-5 py-3.5 hidden md:table-cell">
                   {r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger>
-                          <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs cursor-help">
+                          <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-[10px] font-bold uppercase tracking-wider cursor-help rounded-xl border border-destructive/20">
                             {r.status}
                           </Badge>
                         </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-sm">
+                        <TooltipContent side="top" className="max-w-sm bg-popover/95 border-border/50 text-xs font-semibold leading-relaxed rounded-xl shadow-xl backdrop-blur-md">
                           {r.decision_summary}
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   ) : (
-                    <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs">
+                    <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-[10px] font-bold uppercase tracking-wider rounded-xl border border-border/30">
                       {r.status}
                     </Badge>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-2">
+                <td className="px-5 py-3.5 text-right">
+                  <div className="flex items-center justify-end gap-2.5">
                     {isCrypto && onTrade && (r.direction === "buy" || r.direction === "sell") && (
                       tradedSymbols?.has(r.ticker) ? (
-                        <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium inline-flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
                           Traded
@@ -167,7 +173,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       ) : (
                         <button
                           onClick={() => onTrade(r.ticker, r.direction as "buy" | "sell")}
-                          className="text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
+                          className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all cursor-pointer active:scale-95"
                         >
                           Trade
                         </button>
@@ -177,7 +183,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       <Link
                         to="/analysis/$runId"
                         params={{ runId: r.run_id }}
-                        className="text-xs text-primary hover:underline"
+                        className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-xl bg-muted/20 text-foreground hover:bg-muted/40 transition-all border border-border/30"
                       >
                         View
                       </Link>
@@ -186,11 +192,11 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>
-                            <span className="text-xs text-muted-foreground hover:text-foreground cursor-help underline decoration-dotted">
+                            <span className="text-xs font-bold text-muted-foreground hover:text-foreground cursor-help underline decoration-dotted">
                               Why?
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent side="left" className="max-w-sm">
+                          <TooltipContent side="left" className="max-w-sm bg-popover/95 border-border/50 text-xs font-semibold leading-relaxed rounded-xl shadow-xl backdrop-blur-md">
                             {r.decision_summary}
                           </TooltipContent>
                         </Tooltip>
@@ -354,61 +360,73 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
       </div>
 
       {/* Status card */}
-      <Card>
-        <CardContent className="py-5">
+      <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm rounded-2xl shadow-sm overflow-hidden p-6 space-y-6">
+        <div>
           <div className="flex items-center gap-3 mb-3">
             {scan.status === "completed" ? (
-              <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
             ) : scan.status === "running" ? (
-              <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20">
+                <svg className="w-4 h-4 text-primary animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              </div>
             ) : (
-              <svg className="w-5 h-5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <div className="w-8 h-8 rounded-xl bg-destructive/10 flex items-center justify-center border border-destructive/20">
+                <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
             )}
-            <span className="font-semibold capitalize">{scan.status === "completed" ? "Scan Complete" : scan.status}</span>
+            <span className="text-sm font-black uppercase tracking-wider">{scan.status === "completed" ? "Scan Complete" : scan.status}</span>
             {scan.completed_at && (
-              <span className="text-sm text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono tabular-nums">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
                 {formatDurationBetween(scan.started_at, scan.completed_at)}
               </span>
             )}
           </div>
 
-          <div className="text-xs text-muted-foreground mb-3">
+          <div className="text-xs text-muted-foreground/60 uppercase tracking-wider font-semibold">
             {scan.completed + scan.failed} / {scan.total} symbols &bull; {formatDate(scan.started_at)}
           </div>
+        </div>
 
-          {scan.status === "running" && (
-            <div className="mb-4">
-              <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>{scan.completed + scan.failed} / {scan.total}</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-              </div>
+        {scan.status === "running" && (
+          <div className="space-y-2">
+            <div className="flex justify-between text-[10px] font-black uppercase tracking-wider text-muted-foreground/80">
+              <span>{scan.completed + scan.failed} / {scan.total} symbols</span>
+              <span>{progress}%</span>
             </div>
-          )}
-
-          {/* Summary boxes */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-center">
-              <div className="text-2xl font-bold text-emerald-500">{buyResults.length}</div>
-              <div className="text-xs text-muted-foreground mt-1">Buy Signals</div>
-            </div>
-            <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-center">
-              <div className="text-2xl font-bold text-red-500">{sellResults.length}</div>
-              <div className="text-xs text-muted-foreground mt-1">Sell Signals</div>
-            </div>
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-center">
-              <div className="text-2xl font-bold text-amber-500">{holdResults.length}</div>
-              <div className="text-xs text-muted-foreground mt-1">Hold / Neutral</div>
+            <div className="h-3 rounded-full bg-muted/50 overflow-hidden p-[2px] border border-border/25">
+              <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${progress}%` }} />
             </div>
           </div>
-        </CardContent>
-      </Card>
+        )}
+
+        {/* Summary boxes */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-4 text-center">
+            <div className="text-3xl font-black text-emerald-500 leading-none">{buyResults.length}</div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Buy Signals</div>
+          </div>
+          <div className="rounded-2xl bg-red-500/5 border border-red-500/15 p-4 text-center">
+            <div className="text-3xl font-black text-red-500 leading-none">{sellResults.length}</div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Sell Signals</div>
+          </div>
+          <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-4 text-center col-span-2 sm:col-span-1">
+            <div className="text-3xl font-black text-amber-500 leading-none">{holdResults.length}</div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Hold / Neutral</div>
+          </div>
+        </div>
+      </div>
 
       {/* Filters */}
       {results.length > 0 && (
@@ -457,7 +475,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => !deleteMutation.isPending && setDeleteConfirm(null)}
           />
-          <div className="relative bg-card border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 space-y-4">
+          <div className="relative bg-card/85 border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5 backdrop-blur-md">
             <h3 className="text-lg font-bold text-destructive flex items-center gap-2">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />

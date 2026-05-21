@@ -61,11 +61,12 @@ export function CloseTradeModal() {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="space-y-3.5">
           <div className="flex gap-2">
             <Button
               variant={mode === "full" ? "default" : "outline"}
               size="sm"
+              className="rounded-xl flex-1 h-9 cursor-pointer"
               onClick={() => setMode("full")}
             >
               Full Close
@@ -73,6 +74,7 @@ export function CloseTradeModal() {
             <Button
               variant={mode === "partial" ? "default" : "outline"}
               size="sm"
+              className="rounded-xl flex-1 h-9 cursor-pointer"
               onClick={() => setMode("partial")}
             >
               Partial Close
@@ -80,8 +82,8 @@ export function CloseTradeModal() {
           </div>
 
           {mode === "partial" && (
-            <div>
-              <label className="text-xs text-muted-foreground">
+            <div className="space-y-1">
+              <label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/60">
                 Quantity (max {trade?.filled_qty})
               </label>
               <Input
@@ -92,17 +94,19 @@ export function CloseTradeModal() {
                 value={qtyInput}
                 onChange={(e) => setQtyInput(e.target.value)}
                 placeholder="Enter quantity..."
+                className="mt-1 h-10 bg-background/50 border-border/40 focus:border-primary/50 rounded-xl"
               />
             </div>
           )}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+          <Button variant="outline" className="rounded-xl cursor-pointer" onClick={handleClose}>
             Cancel
           </Button>
           <Button
             variant="destructive"
+            className="rounded-xl cursor-pointer"
             disabled={submitting || !!pending || !isValidPartial || !trade}
             onClick={handleConfirm}
           >
