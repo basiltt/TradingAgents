@@ -115,7 +115,7 @@ export function NeuSidebar({
       depth="raised"
       radius="lg"
       padding="md"
-      className={cn("flex h-full flex-col gap-5", mode === "mobile-sheet" && "min-h-0")}
+      className={cn("flex h-full min-h-0 flex-col gap-5", mode === "mobile-sheet" && "min-h-0")}
     >
       <div className="flex items-center gap-3">
         <div className="inline-flex size-12 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-accent shadow-[var(--neu-shadow-pill)]">
@@ -132,7 +132,7 @@ export function NeuSidebar({
         {!collapsed ? <div className="ml-auto">{headerSlot}</div> : null}
       </div>
 
-      <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-lg)] p-3 space-y-5">
+      <div className="neu-scrollbar neu-surface-base neu-surface-inset flex-1 min-h-0 overflow-auto rounded-[var(--neu-radius-lg)] p-3 pr-2 space-y-5">
         {sections.map((section) => (
           <section key={section.title} className="space-y-2">
             {!collapsed ? (
@@ -473,7 +473,7 @@ export function NeuAppearanceStudio({
                   active ? "neu-surface-accent shadow-[var(--neu-shadow-float)]" : "neu-surface-raised neu-interactive",
                 )}
               >
-                <div className="h-18 rounded-[var(--neu-radius-sm)]" style={{ background: getNeuAccentPreview(accent) }} />
+                <div className="h-18 rounded-[var(--neu-radius-sm)]" style={{ background: getNeuAccentPreview(theme, accent) }} />
                 {!compact ? (
                   <div className="p-2.5">
                     <p className="text-sm font-semibold">{neuAccentDefinitions[accent].label}</p>
@@ -526,8 +526,10 @@ export function NeuAppShell({
       className="grid min-h-screen gap-4 lg:grid-cols-[var(--neu-shell-sidebar-width)_minmax(0,1fr)]"
       style={{ ["--neu-shell-sidebar-width" as string]: sidebarWidth }}
     >
-      <aside className="hidden lg:block" aria-label="Primary navigation">
-        {sidebar}
+      <aside className="hidden self-start lg:block" aria-label="Primary navigation">
+        <div className="lg:fixed lg:left-5 lg:top-5 lg:z-20 lg:h-[calc(100vh-2.5rem)] lg:w-[var(--neu-shell-sidebar-width)]">
+          {sidebar}
+        </div>
       </aside>
       <div className={cn("min-w-0 space-y-4", contentClassName)}>
         {topbar}

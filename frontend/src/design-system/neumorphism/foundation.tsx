@@ -106,7 +106,7 @@ export function NeuThemeScope({
       data-neu-mode={mode}
       data-neu-accent={accent}
       data-neu-contrast={contrast}
-      className={cn("neu-theme neu-app-bg relative isolate overflow-hidden", className)}
+      className={cn("neu-theme neu-app-bg relative isolate overflow-x-hidden overflow-y-visible", className)}
     >
       {children}
     </div>

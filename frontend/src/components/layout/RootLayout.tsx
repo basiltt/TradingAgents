@@ -22,7 +22,6 @@ import {
 import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
 import { AppCommandPalette } from "@/components/layout/AppCommandPalette";
 import { AppMarketBar } from "@/components/layout/AppMarketBar";
-import { AppearanceControls } from "@/components/layout/AppearanceControls";
 import { MobileDock } from "@/components/layout/MobileDock";
 import { getActiveNavigation, navSections } from "@/components/layout/navigation";
 import { useAppDispatch, useAppSelector } from "@/store";
@@ -78,7 +77,6 @@ export function RootLayout() {
     <NeuSidebar
       sections={sections}
       collapsed={sidebarCollapsed}
-      footer={<AppearanceControls compact />}
       headerSlot={<NeuStatusPill label="live" tone="success" animated />}
     />
   );
@@ -97,7 +95,6 @@ export function RootLayout() {
         <NeuSidebar
           sections={sections}
           mode="mobile-sheet"
-          footer={<AppearanceControls compact />}
           headerSlot={<NeuStatusPill label="touch ready" tone="accent" />}
         />
       </div>
