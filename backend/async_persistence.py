@@ -161,6 +161,26 @@ async def _schema_v26_triggers(conn) -> None:
 
 _MigrationSQL = Union[str, Callable[[Any], Coroutine[Any, Any, None]]]
 
+
+async def _fix_source_constraint(conn) -> None:
+    """Drop all CHECK constraints on trades.source column and re-add with correct values."""
+    rows = await conn.fetch("""
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_attribute att ON att.attnum = ANY(con.conkey) AND att.attrelid = con.conrelid
+        WHERE con.conrelid = 'trades'::regclass
+          AND att.attname = 'source'
+          AND con.contype = 'c'
+          AND con.conname != 'chk_source_id'
+    """)
+    for row in rows:
+        await conn.execute(f'ALTER TABLE trades DROP CONSTRAINT {row["conname"]}')
+    await conn.execute(
+        "ALTER TABLE trades ADD CONSTRAINT trades_source_check "
+        "CHECK (source IN ('manual', 'cycle', 'scanner'))"
+    )
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -460,6 +480,7 @@ ALTER TABLE trades ADD CONSTRAINT chk_source_id CHECK (
 ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_source_check;
 ALTER TABLE trades ADD CONSTRAINT trades_source_check CHECK (source IN ('manual', 'cycle', 'scanner'))
 """),
+    (31, _fix_source_constraint),
 ]
 
 
