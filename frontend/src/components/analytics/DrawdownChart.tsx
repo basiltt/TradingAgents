@@ -22,14 +22,14 @@ export function DrawdownChart({ snapshots }: Props) {
       <AreaChart data={data}>
         <defs>
           <linearGradient id={`dd-${gradId}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+            <stop offset="5%" stopColor="var(--destructive)" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="var(--destructive)" stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
         <XAxis
           dataKey="date"
-          tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
           tickLine={false}
           axisLine={false}
           tickFormatter={(v: string) => {
@@ -42,7 +42,7 @@ export function DrawdownChart({ snapshots }: Props) {
           }}
         />
         <YAxis
-          tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+          tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
           tickLine={false}
           axisLine={false}
           domain={[minDD, 0]}
@@ -53,7 +53,7 @@ export function DrawdownChart({ snapshots }: Props) {
             backgroundColor: "var(--card)",
             border: "1px solid var(--border)",
             borderRadius: "12px",
-            fontSize: 12,
+            fontSize: 11,
           }}
           formatter={(value: unknown) => [`${Number(value).toFixed(2)}%`, "Drawdown"]}
           labelFormatter={(label: unknown) => {
@@ -70,7 +70,7 @@ export function DrawdownChart({ snapshots }: Props) {
         <Area
           type="monotone"
           dataKey="drawdown"
-          stroke="#ef4444"
+          stroke="var(--destructive)"
           strokeWidth={1.5}
           fill={`url(#dd-${gradId})`}
           dot={false}

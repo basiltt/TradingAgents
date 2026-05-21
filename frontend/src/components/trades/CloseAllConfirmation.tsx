@@ -59,10 +59,10 @@ export function CloseAllConfirmation({
           This will send close orders for all open and pending trades. This action cannot be undone.
         </p>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={isClosing}>
+          <Button variant="outline" className="rounded-xl cursor-pointer" onClick={onClose} disabled={isClosing}>
             Cancel
           </Button>
-          <Button variant="destructive" onClick={handleConfirm} disabled={isClosing || !accountId}>
+          <Button variant="destructive" className="rounded-xl cursor-pointer" onClick={handleConfirm} disabled={isClosing || !accountId}>
             {isClosing ? "Closing..." : "Close All"}
           </Button>
         </DialogFooter>

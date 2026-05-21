@@ -160,7 +160,7 @@ function ScheduleCard({
   const isRunning = s.is_running;
 
   return (
-    <div className="group relative rounded-2xl border border-border/30 bg-card hover:border-border/60 transition-all duration-200 hover:shadow-lg hover:shadow-black/5 overflow-hidden">
+    <div className="group relative rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 overflow-hidden active:scale-[0.995]">
       {/* Subtle top accent line */}
       <div className={cn(
         "absolute top-0 left-0 right-0 h-[2px] opacity-60",
@@ -175,7 +175,7 @@ function ScheduleCard({
       <div className="p-5">
         <div className="flex items-start gap-4">
           {/* Type icon */}
-          <div className={cn("shrink-0 mt-0.5 w-10 h-10 rounded-xl flex items-center justify-center bg-muted/50 border border-border/30", typeInfo.color)}>
+          <div className={cn("shrink-0 mt-0.5 w-10 h-10 rounded-xl flex items-center justify-center bg-muted/15 border border-border/30 backdrop-blur-sm", typeInfo.color)}>
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
             </svg>
@@ -425,59 +425,59 @@ export function ScheduledScansPage() {
       {/* Stats bar */}
       {!isLoading && schedules.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-              <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+              <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground">{activeCount}</p>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Active</p>
+              <p className="text-lg font-bold text-foreground leading-none">{activeCount}</p>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Active</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center">
-              <svg className="w-4.5 h-4.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+              <svg className="w-4.5 h-4.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground">{pausedCount}</p>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Paused</p>
+              <p className="text-lg font-bold text-foreground leading-none">{pausedCount}</p>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Paused</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-red-500/10 flex items-center justify-center">
-              <svg className="w-4.5 h-4.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-500/10 flex items-center justify-center border border-red-500/20">
+              <svg className="w-4.5 h-4.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground">{errorCount}</p>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Errors</p>
+              <p className="text-lg font-bold text-foreground leading-none">{errorCount}</p>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Errors</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center">
-              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center border border-zinc-500/20">
+              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground">{cancelledCount}</p>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Cancelled</p>
+              <p className="text-lg font-bold text-foreground leading-none">{cancelledCount}</p>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Cancelled</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/30 bg-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center">
-              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center border border-zinc-500/20">
+              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground">{completedCount}</p>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider">Completed</p>
+              <p className="text-lg font-bold text-foreground leading-none">{completedCount}</p>
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Completed</p>
             </div>
           </div>
         </div>

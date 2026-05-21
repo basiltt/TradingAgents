@@ -176,20 +176,20 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all text-sm",
+        "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all text-xs font-bold uppercase tracking-wider cursor-pointer border-l-2",
         active
-          ? cn("bg-muted/30 font-semibold", isDecision ? "text-yellow-400" : "text-foreground")
-          : "text-muted-foreground hover:text-foreground/80 hover:bg-muted/15",
+          ? cn("bg-primary/10 border-primary text-foreground shadow-sm")
+          : "border-transparent text-muted-foreground hover:text-foreground/80 hover:bg-muted/10",
       )}
     >
       <div className={cn(
-        "w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-colors",
+        "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 transition-colors",
         active ? meta.bg : "bg-transparent",
       )}>
         {meta.icon && (
           <svg
             className={cn("w-3.5 h-3.5", active ? meta.accent : "text-muted-foreground/50")}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d={meta.icon} />
           </svg>
@@ -197,7 +197,7 @@ function TabButton({
       </div>
       <span className="truncate">{meta.label}</span>
       {isDecision && (
-        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0" />
+        <span className="ml-auto w-1.5 h-1.5 rounded-full bg-yellow-400 flex-shrink-0 animate-pulse" />
       )}
     </button>
   );
@@ -312,37 +312,42 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
     : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
-          <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <div className="flex items-center gap-3 pb-2">
+        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shadow-inner">
+          <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         </div>
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Analysis Report</h2>
-          <p className="text-xs text-muted-foreground/50 mt-0.5">
-            {entries.length} section{entries.length !== 1 ? "s" : ""}
+          <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">Analysis Reports Workspace</h2>
+          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">
+            {entries.length} Compiled agent phase{entries.length !== 1 ? "s" : ""}
           </p>
         </div>
       </div>
 
       {/* Data quality warnings banner */}
       {dataWarnings.length > 0 && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-          <div className="flex items-start gap-2">
-            <svg className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
+        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 px-5 py-4 shadow-sm animate-pulse-slow">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0 border border-amber-500/20">
+              <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
             <div>
-              <p className="text-sm font-medium text-amber-500">Data Quality Warning</p>
-              <p className="text-xs text-amber-500/70 mt-1">
-                Some data sources were unavailable during this analysis. Results may be incomplete.
+              <p className="text-xs font-bold text-amber-500 uppercase tracking-wider">Market Feeds Quality Alert</p>
+              <p className="text-[11px] text-amber-500/75 mt-1 leading-relaxed">
+                Some third-party market data feeds failed to fetch in parallel. Fallbacks were automatically queried, but review specific sections for coverage.
               </p>
-              <ul className="mt-2 space-y-1">
+              <ul className="mt-2.5 space-y-1 pl-1">
                 {dataWarnings.map((w, i) => (
-                  <li key={i} className="text-xs text-amber-500/60">{w.replace(/\[ERROR\]\s*/g, "")}</li>
+                  <li key={i} className="text-[10px] font-mono text-amber-500/70 flex items-center gap-1.5">
+                    <span className="w-1 h-1 rounded-full bg-amber-500" />
+                    {w.replace(/\[ERROR\]\s*/g, "")}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -363,10 +368,10 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
                 defaultOpen={isDecision || isTrader}
                 storageKey={`collapse:report:${section}`}
                 title={
-                  <span className={cn("text-sm font-semibold flex items-center gap-2", isDecision ? "text-yellow-400" : "text-foreground")}>
-                    <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0", meta.bg)}>
+                  <span className={cn("text-xs font-bold uppercase tracking-wider flex items-center gap-2", isDecision ? "text-yellow-400" : "text-foreground")}>
+                    <div className={cn("w-6 h-6 rounded-md flex items-center justify-center shrink-0 border border-current/10", meta.bg)}>
                       {meta.icon && (
-                        <svg className={cn("w-3.5 h-3.5", meta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <svg className={cn("w-3.5 h-3.5", meta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                           <path strokeLinecap="round" strokeLinejoin="round" d={meta.icon} />
                         </svg>
                       )}
@@ -391,14 +396,14 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
       </div>
 
       {/* Desktop: sidebar + content layout */}
-      <div className="hidden md:flex rounded-xl border border-border/40 bg-card/20 overflow-hidden min-h-[500px]">
+      <div className="hidden md:flex rounded-2xl border border-border/50 bg-card/65 glass shadow-sm overflow-hidden h-[600px]">
         {/* Sidebar tabs */}
-        <div className="w-52 flex-shrink-0 border-r border-border/30 bg-muted/5 py-2 overflow-y-auto">
+        <div className="w-56 flex-shrink-0 border-r border-border/30 bg-muted/5 py-3 overflow-y-auto">
           {sortedGroups.map(([group, groupEntries]) => (
             <div key={group}>
               <SidebarGroupLabel name={group} />
               {groupEntries.map(([section]) => (
-                <div key={section} className="px-1.5">
+                <div key={section} className="px-2 py-0.5">
                   <TabButton
                     section={section}
                     active={effectiveTab === section}
@@ -411,36 +416,39 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
         </div>
 
         {/* Content area */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto flex flex-col">
           {activeContent && activeMeta ? (
-            <div>
-              <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-sm border-b border-border/25 px-7 py-4 flex items-center gap-3">
-                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", activeMeta.bg)}>
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="sticky top-0 z-10 bg-card/85 backdrop-blur-md border-b border-border/35 px-8 py-4 flex items-center gap-3 shrink-0">
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center border border-current/15 shadow-sm", activeMeta.bg)}>
                   {activeMeta.icon && (
-                    <svg className={cn("w-4 h-4", activeMeta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg className={cn("w-4.5 h-4.5", activeMeta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d={activeMeta.icon} />
                     </svg>
                   )}
                 </div>
                 <h3 className={cn(
-                  "text-base font-semibold",
-                  effectiveTab === "final_trade_decision" ? "text-yellow-400" : "text-foreground",
+                  "text-sm font-bold uppercase tracking-wider",
+                  effectiveTab === "final_trade_decision" ? "text-yellow-400" : "text-foreground/90",
                 )}>
                   {activeMeta.label}
                 </h3>
               </div>
-              {effectiveTab === "trader" && tradeCardData && (
-                <div className="px-7 pt-6 sm:px-8 sm:pt-7">
-                  <TradingCard data={tradeCardData} />
+              
+              <div className="flex-1 overflow-y-auto">
+                {effectiveTab === "trader" && tradeCardData && (
+                  <div className="px-8 pt-6 sm:px-10 sm:pt-8">
+                    <TradingCard data={tradeCardData} />
+                  </div>
+                )}
+                <div className="px-8 py-6 sm:px-10 sm:py-8">
+                  <MarkdownContent content={activeContent} />
                 </div>
-              )}
-              <div className="px-7 py-6 sm:px-8 sm:py-7">
-                <MarkdownContent content={activeContent} />
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-center h-full text-muted-foreground/40 text-sm">
-              Select a section to view
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/50 text-xs font-bold uppercase tracking-wider">
+              Select a section to view reports
             </div>
           )}
         </div>

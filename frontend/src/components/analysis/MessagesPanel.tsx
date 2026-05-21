@@ -1,9 +1,7 @@
 import { memo, useRef, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MobileCollapse } from "./MobileCollapse";
 
@@ -126,9 +124,11 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
     return () => clearInterval(interval);
   }, [messages.length]);
 
-  const countBadge = messages.length > 0
-    ? <Badge variant="secondary" className="text-xs">{messages.length}</Badge>
-    : null;
+  const countBadge = messages.length > 0 ? (
+    <span className="inline-flex items-center text-[10px] font-black bg-muted/80 text-foreground px-2 py-0.5 rounded-full border border-border/30">
+      {messages.length}
+    </span>
+  ) : null;
 
   const renderBody = (scrollClassName: string) => (
     <>
@@ -136,39 +136,39 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
         {announced > 0 ? `${announced} new messages` : ""}
       </span>
       {isLoading ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="rounded-lg border border-border/50 p-3 space-y-2">
+            <div key={i} className="rounded-xl border border-border/30 p-4 space-y-3 bg-muted/20">
               <Skeleton className="h-5 w-28 rounded-md" />
-              <Skeleton className="h-3 w-full rounded" />
-              <Skeleton className="h-3 w-4/5 rounded" />
+              <Skeleton className="h-3.5 w-full rounded" />
+              <Skeleton className="h-3.5 w-4/5 rounded" />
             </div>
           ))}
         </div>
       ) : messages.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-10 min-h-[12rem] text-center">
-          <div className="w-12 h-12 rounded-xl bg-muted/80 flex items-center justify-center mb-3 ring-1 ring-border/50">
+        <div className="flex flex-col items-center justify-center py-12 text-center h-full">
+          <div className="w-14 h-14 rounded-2xl bg-muted/50 flex items-center justify-center mb-4 border border-border/20 shadow-inner">
             <svg className="w-6 h-6 text-muted-foreground animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
           </div>
-          <p className="text-sm font-medium text-muted-foreground">No messages yet</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Messages will stream in as agents work</p>
+          <p className="text-sm font-bold text-foreground/80">No messages yet</p>
+          <p className="text-xs text-muted-foreground mt-1">Messages will stream in as agents execute pipeline tasks.</p>
         </div>
       ) : (
         <ScrollArea className={scrollClassName} role="log">
-          <div className="space-y-2 pr-4">
+          <div className="space-y-3 pr-3">
             {messages.map((msg) => {
               const cfg = SENDER_CONFIG[msg.sender];
               const colorClass = cfg?.color ?? "text-primary";
               const bgClass = cfg?.bg ?? "bg-muted";
               return (
-                <div key={msg.seq} className="rounded-lg border border-border/50 p-3 hover:bg-muted/30 transition-colors">
-                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-md ${bgClass} ${colorClass}`}>
+                <div key={msg.seq} className="rounded-xl border border-border/30 p-4 bg-muted/15 hover:bg-muted/35 hover:border-border/50 transition-all duration-300 shadow-sm">
+                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                    <span className={`inline-flex items-center text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border border-current/15 ${bgClass} ${colorClass}`}>
                       {formatSender(msg.sender)}
                     </span>
-                    <span className="text-[11px] text-muted-foreground font-mono">#{msg.seq}</span>
+                    <span className="text-[9px] text-muted-foreground font-mono font-bold">SEQ #{msg.seq}</span>
                   </div>
                   <MessageContent content={msg.content} />
                 </div>
@@ -182,34 +182,36 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
   );
 
   return (
-    <div className="md:h-0 md:min-h-[max(28rem,100%)] flex flex-col">
+    <div className="h-full">
       {/* Mobile: collapsible */}
       <MobileCollapse
         defaultOpen
         storageKey="collapse:messages"
         className="md:hidden"
         title={
-          <span className="text-sm font-semibold flex items-center gap-2">
+          <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
             <MsgIcon />
-            Messages
+            Pipeline Logs
           </span>
         }
         badge={countBadge}
       >
-        <div className="p-3">{renderBody("h-[28rem]")}</div>
+        <div className="p-4">{renderBody("h-[28rem]")}</div>
       </MobileCollapse>
 
-      {/* Desktop: Card that stretches to match sibling via grid */}
-      <Card className="hidden md:flex md:flex-col h-full">
-        <CardHeader className="pb-3 shrink-0">
-          <CardTitle className="text-base flex items-center gap-2">
+      {/* Desktop: Glass Card */}
+      <div className="hidden md:flex md:flex-col h-full glass-card border border-border/50 rounded-2xl p-5 bg-card/65 shadow-sm min-h-[460px]">
+        <div className="flex items-center justify-between pb-4 border-b border-border/30 mb-4 shrink-0">
+          <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2 text-foreground/90">
             <MsgIcon />
-            Messages
-            {countBadge && <div className="ml-auto">{countBadge}</div>}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex-1 min-h-0">{renderBody("min-h-[28rem] h-full")}</CardContent>
-      </Card>
+            Real-Time Messages Feed
+          </h3>
+          {countBadge}
+        </div>
+        <div className="flex-1 min-h-0">
+          {renderBody("h-[380px]")}
+        </div>
+      </div>
     </div>
   );
 });

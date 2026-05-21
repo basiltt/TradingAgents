@@ -1,5 +1,4 @@
 import { memo } from "react";
-import { Card, CardContent } from "@/components/ui/card";
 import { MobileCollapse } from "./MobileCollapse";
 
 interface Stats {
@@ -21,19 +20,15 @@ function formatNumber(n: number): string {
 
 function StatCard({ label, value, icon, iconColor }: { label: string; value: string; icon: React.ReactNode; iconColor?: string }) {
   return (
-    <Card className="shadow-sm">
-      <CardContent className="pt-4 pb-3">
-        <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconColor ?? "bg-muted text-muted-foreground"}`}>
-            {icon}
-          </div>
-          <div>
-            <p className="text-lg font-bold leading-tight tracking-tight">{value}</p>
-            <p className="text-[11px] text-muted-foreground font-medium">{label}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="glass-card border border-border/40 bg-card/65 rounded-2xl p-5 shadow-sm flex items-center gap-4 transition-all duration-300 hover:scale-[1.02] hover:border-border/60 hover:bg-card/85">
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-inner ${iconColor ?? "bg-muted text-muted-foreground"}`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-2xl font-black leading-none tracking-tight text-foreground tabular-nums">{value}</p>
+        <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">{label}</p>
+      </div>
+    </div>
   );
 }
 
@@ -41,29 +36,25 @@ const STAT_LABELS = ["Tokens In", "Tokens Out", "LLM Calls", "Tool Calls"];
 
 export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
   const grid = (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
       {stats === null ? (
         STAT_LABELS.map((label) => (
-          <Card key={label}>
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-muted animate-pulse" />
-                <div>
-                  <p className="text-lg font-bold leading-tight text-muted-foreground">--</p>
-                  <p className="text-[11px] text-muted-foreground font-medium">{label}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div key={label} className="glass-card border border-border/30 bg-card/45 rounded-2xl p-5 shadow-sm flex items-center gap-4">
+            <div className="w-11 h-11 rounded-xl bg-muted animate-pulse shrink-0" />
+            <div className="space-y-1.5 flex-1">
+              <div className="h-5 w-12 bg-muted rounded animate-pulse text-transparent select-none">--</div>
+              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{label}</p>
+            </div>
+          </div>
         ))
       ) : (
         <>
           <StatCard
             label="Tokens In"
             value={formatNumber(stats.tokens_in)}
-            iconColor="bg-blue-500/10 text-blue-600 dark:text-blue-400"
+            iconColor="bg-blue-500/10 text-blue-500 border border-blue-500/15"
             icon={
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
               </svg>
             }
@@ -71,9 +62,9 @@ export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
           <StatCard
             label="Tokens Out"
             value={formatNumber(stats.tokens_out)}
-            iconColor="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+            iconColor="bg-emerald-500/10 text-emerald-500 border border-emerald-500/15"
             icon={
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
               </svg>
             }
@@ -81,9 +72,9 @@ export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
           <StatCard
             label="LLM Calls"
             value={formatNumber(stats.llm_calls)}
-            iconColor="bg-primary/10 text-primary"
+            iconColor="bg-primary/10 text-primary border border-primary/15"
             icon={
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             }
@@ -91,9 +82,9 @@ export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
           <StatCard
             label="Tool Calls"
             value={formatNumber(stats.tool_calls)}
-            iconColor="bg-amber-500/10 text-amber-600 dark:text-amber-400"
+            iconColor="bg-amber-500/10 text-amber-500 border border-amber-500/15"
             icon={
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
@@ -106,14 +97,14 @@ export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
 
   return (
     <MobileCollapse
-      defaultOpen={false}
+      defaultOpen={true}
       storageKey="collapse:stats"
       title={
-        <span className="text-sm font-semibold flex items-center gap-2">
-          <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+          <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
-          Stats
+          Resource Statistics
         </span>
       }
     >

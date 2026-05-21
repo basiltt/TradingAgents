@@ -21,11 +21,11 @@ export function TradeStats() {
     const totalExposure = trades.reduce((acc, t) => acc + (t.qty * (t.entry_price ?? 0)), 0);
 
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         <Metric
           label="Positions"
           value={String(aggregates.tradeCount)}
-          sub={<span className="text-[10px]"><span className="text-emerald-400">{longCount}L</span> <span className="text-muted-foreground/60">/</span> <span className="text-red-400">{shortCount}S</span></span>}
+          sub={<span className="text-[10px] font-medium"><span className="text-emerald-400">{longCount}L</span> <span className="text-muted-foreground/40 px-1">|</span> <span className="text-red-400">{shortCount}S</span></span>}
         />
         <Metric
           label="Total PnL"
@@ -52,9 +52,9 @@ export function TradeStats() {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         {Array.from({ length: 5 }, (_, i) => (
-          <div key={i} className="bg-card p-4">
+          <div key={i} className="rounded-xl border border-border/50 bg-card/65 backdrop-blur-sm p-4">
             <Skeleton className="h-3 w-12 mb-2" />
             <Skeleton className="h-6 w-16" />
           </div>
@@ -64,7 +64,7 @@ export function TradeStats() {
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-px rounded-xl overflow-hidden border border-border/60 bg-border/60">
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
       <Metric label="Total Trades" value={String(stats?.total_trades ?? 0)} />
       <Metric label="Open" value={String(stats?.open_count ?? 0)} valueColor="profit" />
       <Metric label="Win Rate" value={`${((stats?.win_rate ?? 0) * 100).toFixed(1)}%`} valueColor={((stats?.win_rate ?? 0)) >= 0.5 ? "profit" : "loss"} />
@@ -86,15 +86,15 @@ function Metric({
   valueColor?: "profit" | "loss" | "neutral";
 }) {
   const colorMap = {
-    profit: "text-emerald-400",
-    loss: "text-red-400",
-    neutral: "text-foreground",
+    profit: "text-emerald-400 font-bold",
+    loss: "text-red-400 font-bold",
+    neutral: "text-foreground font-semibold",
   };
 
   return (
-    <div className="bg-card px-4 py-3.5 flex flex-col gap-1">
-      <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">{label}</span>
-      <span className={`text-lg font-semibold font-mono tabular-nums leading-none ${colorMap[valueColor]}`}>{value}</span>
+    <div className="rounded-xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card px-4 py-3.5 flex flex-col gap-1.5 hover:border-primary/25 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300">
+      <span className="text-[10px] font-black uppercase tracking-[0.08em] text-muted-foreground/60 leading-none">{label}</span>
+      <span className={`text-lg font-mono tabular-nums leading-none ${colorMap[valueColor]}`}>{value}</span>
       {sub && <div className="mt-0.5">{sub}</div>}
     </div>
   );

@@ -87,13 +87,13 @@ function saveScannerSettings(s: ScannerSettings) {
 function ScoreBar({ score }: { score: number }) {
   const abs = Math.min(Math.abs(score), 10);
   const pct = (abs / 10) * 100;
-  const color = score > 0 ? "bg-emerald-500" : score < 0 ? "bg-red-500" : "bg-muted-foreground";
+  const color = score > 0 ? "bg-emerald-500" : score < 0 ? "bg-red-500" : "bg-muted-foreground/60";
   return (
-    <div className="flex items-center gap-2 w-24">
-      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${pct}%` }} />
+    <div className="flex items-center gap-2.5 w-24">
+      <div className="flex-1 h-2.5 rounded-full bg-muted/30 overflow-hidden border border-border/20 p-[1px]">
+        <div className={cn("h-full rounded-full transition-all duration-500", color)} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs font-mono w-6 text-right">{score > 0 ? "+" : ""}{score}</span>
+      <span className="text-xs font-mono font-bold tracking-tight w-6 text-right tabular-nums">{score > 0 ? "+" : ""}{score}</span>
     </div>
   );
 }
@@ -482,53 +482,57 @@ export function ScannerPage() {
               </div>
             </div>
           )}
-          <div className="rounded-2xl border border-border/40 bg-card">
-            <div className="px-5 pt-5 pb-3">
-              <h2 className="text-base font-semibold flex items-center gap-2">
-                <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6 space-y-6">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
+                <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                Scan Configuration
-              </h2>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Scan Configuration</h4>
+                <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-0.5">Parameters for scanning and analysis</p>
+              </div>
             </div>
-            <div className="px-5 pb-5 space-y-5">
+
+            <div className="space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium">Analysis Date</Label>
-                  <Input type="date" value={analysisDate} max={getToday()} onChange={(e) => setAnalysisDate(e.target.value)} />
-                  <p className="text-xs text-muted-foreground">Historical date for analysis</p>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Analysis Date</Label>
+                  <Input type="date" value={analysisDate} max={getToday()} onChange={(e) => setAnalysisDate(e.target.value)} className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5" />
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Historical date for analysis</p>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium">Kline Interval</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Kline Interval</Label>
                   <Select value={interval} onValueChange={(v) => setInterval(v as CryptoInterval)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
+                    <SelectTrigger className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-card border-border/50 rounded-xl">
                       {CRYPTO_INTERVALS.map((i) => (
-                        <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+                        <SelectItem key={i.value} value={i.value} className="text-xs focus:bg-muted rounded-lg">{i.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">Candlestick interval for technicals</p>
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Candlestick interval for technicals</p>
                 </div>
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium">LLM Provider</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">LLM Provider</Label>
                   <Select value={provider} onValueChange={(value) => { if (value !== null) setProvider(value); }}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
+                    <SelectTrigger className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-card border-border/50 rounded-xl">
                       {PROVIDERS.map((p) => (
-                        <SelectItem key={p} value={p}>{p}</SelectItem>
+                        <SelectItem key={p} value={p} className="text-xs focus:bg-muted rounded-lg">{p}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">AI provider for agent reasoning</p>
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">AI provider for agent reasoning</p>
                 </div>
               </div>
 
               {/* Workflow Mode Toggle */}
               <div className="flex flex-col gap-2">
-                <Label className="font-medium">Workflow Mode</Label>
-                <div className="flex rounded-lg border overflow-hidden" role="radiogroup" aria-label="Workflow mode">
+                <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Workflow Mode</Label>
+                <div className="flex h-9.5 bg-background/50 border border-border/40 p-1 rounded-xl items-center gap-1 select-none" role="radiogroup" aria-label="Workflow mode">
                   {([
                     { value: "quick_trade" as const, label: "Quick Trade" },
                     { value: "deep_analysis" as const, label: "Deep Analysis" },
@@ -538,18 +542,19 @@ export function ScannerPage() {
                       type="button"
                       role="radio"
                       aria-checked={workflowMode === opt.value}
-                      className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+                      className={cn(
+                        "flex-1 h-7.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer active:scale-95",
                         workflowMode === opt.value
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted/50 hover:bg-muted"
-                      }`}
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground/80 hover:text-foreground hover:bg-muted/15"
+                      )}
                       onClick={() => setWorkflowMode(opt.value)}
                     >
                       {opt.label}
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                   {workflowMode === "quick_trade"
                     ? "Analysts → Research Debate → Trade Card"
                     : "Full pipeline with risk debate, compliance & portfolio management"}
@@ -564,18 +569,18 @@ export function ScannerPage() {
                     id="scanner_ta_prefilter"
                     checked={taPrefilterEnabled}
                     onChange={(e) => setTaPrefilterEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded border-input"
+                    className="h-4 w-4 rounded border-border/40 accent-primary cursor-pointer"
                   />
-                  <Label htmlFor="scanner_ta_prefilter" className="font-medium cursor-pointer">
+                  <Label htmlFor="scanner_ta_prefilter" className="text-[11px] font-bold uppercase tracking-wider cursor-pointer">
                     Smart Pre-Screen
                   </Label>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider leading-relaxed">
                   Run TA analysis first per symbol. Skips LLM calls for assets with no clear signal — saves costs on bulk scans.
                 </p>
                 {taPrefilterEnabled && (
                   <div className="flex items-center gap-2 mt-1">
-                    <Label htmlFor="scanner_ta_threshold" className="text-xs whitespace-nowrap">Threshold</Label>
+                    <Label htmlFor="scanner_ta_threshold" className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Threshold</Label>
                     <Input
                       id="scanner_ta_threshold"
                       type="number"
@@ -583,16 +588,16 @@ export function ScannerPage() {
                       max={100}
                       value={taPrefilterThreshold}
                       onChange={(e) => setTaPrefilterThreshold(Number(e.target.value))}
-                      className="w-20 h-7 text-xs"
+                      className="w-20 h-8 text-xs bg-background/50 border-border/40 focus:border-primary/50 rounded-xl"
                     />
-                    <span className="text-xs text-muted-foreground">/ 100</span>
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">/ 100</span>
                   </div>
                 )}
               </div>
 
               {/* Analyst team */}
               <div className="flex flex-col gap-2">
-                <Label className="font-medium">Analyst Team</Label>
+                <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Analyst Team</Label>
                 <div className="flex flex-wrap gap-2">
                   {CRYPTO_ANALYSTS.map((a) => {
                     const active = analysts.includes(a);
@@ -603,15 +608,15 @@ export function ScannerPage() {
                         type="button"
                         onClick={() => toggleAnalyst(a)}
                         className={cn(
-                          "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
+                          "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all cursor-pointer active:scale-95",
                           active
                             ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                            : "bg-muted/50 text-muted-foreground border-border hover:border-primary/50 hover:text-foreground",
+                            : "bg-muted/15 text-muted-foreground/80 border-border/40 hover:border-primary/30 hover:text-foreground",
                         )}
                       >
-                        <span className={cn("w-3.5 h-3.5 rounded border-2 flex items-center justify-center transition-colors", active ? "border-primary-foreground bg-primary-foreground/20" : "border-current")}>
+                        <span className={cn("w-3 h-3 rounded-md border flex items-center justify-center transition-colors", active ? "border-primary-foreground bg-primary-foreground/20" : "border-muted-foreground/50")}>
                           {active && (
-                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
+                            <svg className="w-2 h-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                             </svg>
                           )}
@@ -621,7 +626,7 @@ export function ScannerPage() {
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                   Select which analyst agents to include ({analysts.length}/{CRYPTO_ANALYSTS.length})
                 </p>
               </div>
@@ -629,26 +634,24 @@ export function ScannerPage() {
           </div>
 
           {/* Workflow Settings — collapsible */}
-          <div className="rounded-2xl border border-border/40 bg-card">
-            <div className="px-5 py-4">
-              <button
-                type="button"
-                onClick={() => setShowWorkflow(!showWorkflow)}
-                className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
-              >
-                <svg className={cn("w-4 h-4 transition-transform duration-200", showWorkflow && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                </svg>
-                Workflow Settings
-              </button>
-            </div>
+          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowWorkflow(!showWorkflow)}
+              className="w-full flex items-center gap-2.5 px-6 py-4.5 text-left hover:bg-muted/15 transition-colors cursor-pointer select-none"
+            >
+              <svg className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 shrink-0", showWorkflow && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              <svg className="w-4 h-4 text-primary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              </svg>
+              <span className="text-xs font-bold uppercase tracking-wider text-foreground">Workflow Settings</span>
+            </button>
             {showWorkflow && (
-              <div className="px-5 pb-5 pt-2 space-y-4">
+              <div className="px-6 pb-6 pt-2 space-y-5 border-t border-border/20">
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium">Research Depth</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Research Depth</Label>
                   <div className="flex items-center gap-3">
                     <input
                       type="range"
@@ -657,51 +660,51 @@ export function ScannerPage() {
                       step={1}
                       value={researchDepth}
                       onChange={(e) => setResearchDepth(Number(e.target.value))}
-                      className="flex-1 accent-primary"
+                      className="flex-1 accent-primary h-1 bg-muted rounded-lg appearance-none cursor-pointer"
                     />
-                    <span className="text-sm font-mono w-4 text-right">{researchDepth}</span>
+                    <span className="text-xs font-mono font-bold w-4 text-right">{researchDepth}</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">1 = Quick scan, 5 = Deep analysis</p>
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">1 = Quick scan, 5 = Deep analysis</p>
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium">Output Language</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Output Language</Label>
                   <Select value={outputLanguage} onValueChange={(value) => { if (value !== null) setOutputLanguage(value); }}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
+                    <SelectTrigger className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-card border-border/50 rounded-xl">
                       {LANGUAGES.map((l) => (
-                        <SelectItem key={l} value={l}>{l}</SelectItem>
+                        <SelectItem key={l} value={l} className="text-xs focus:bg-muted rounded-lg">{l}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">Language for the final report (agent debate stays in English)</p>
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Language for the final report (agent debate stays in English)</p>
                 </div>
 
                 <div className={`grid ${workflowMode === "quick_trade" ? "grid-cols-1" : "grid-cols-2"} gap-4`}>
                   <div className="flex flex-col gap-2">
-                    <Label className="font-medium text-sm">Max Debate Rounds</Label>
-                    <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} />
-                    <p className="text-xs text-muted-foreground">Bull vs Bear debate iterations</p>
+                    <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Max Debate Rounds</Label>
+                    <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5" />
+                    <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Bull vs Bear debate iterations</p>
                   </div>
                   {workflowMode !== "quick_trade" && (
-                  <div className="flex flex-col gap-2">
-                    <Label className="font-medium text-sm">Max Risk Rounds</Label>
-                    <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} />
-                    <p className="text-xs text-muted-foreground">Risk team discussion iterations</p>
-                  </div>
+                    <div className="flex flex-col gap-2">
+                      <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Max Risk Rounds</Label>
+                      <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5" />
+                      <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Risk team discussion iterations</p>
+                    </div>
                   )}
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium text-sm">Max Recursion Limit</Label>
-                  <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} />
-                  <p className="text-xs text-muted-foreground">Upper bound on LangGraph recursion steps</p>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Max Recursion Limit</Label>
+                  <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5" />
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Upper bound on LangGraph recursion steps</p>
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <Label className="font-medium text-sm">Max Parallel Analyses</Label>
-                  <Input type="number" min={1} max={15} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(15, Math.max(1, Number(e.target.value))))} />
-                  <p className="text-xs text-muted-foreground">How many symbols to analyse concurrently (1–15)</p>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Max Parallel Analyses</Label>
+                  <Input type="number" min={1} max={15} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(15, Math.max(1, Number(e.target.value))))} className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5" />
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">How many symbols to analyse concurrently (1–15)</p>
                 </div>
 
                 <label className="flex items-start gap-3 cursor-pointer">
@@ -709,11 +712,11 @@ export function ScannerPage() {
                     type="checkbox"
                     checked={checkpointEnabled}
                     onChange={(e) => setCheckpointEnabled(e.target.checked)}
-                    className="mt-1 w-4 h-4 rounded border-border accent-primary"
+                    className="mt-1 w-4 h-4 rounded border-border/40 accent-primary cursor-pointer"
                   />
                   <div>
-                    <span className="font-medium text-sm">Enable Checkpoints</span>
-                    <p className="text-xs text-muted-foreground">Save state after each step so crashed runs can resume</p>
+                    <span className="text-xs font-bold uppercase tracking-wider text-foreground">Enable Checkpoints</span>
+                    <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider leading-relaxed mt-0.5">Save state after each step so crashed runs can resume</p>
                   </div>
                 </label>
               </div>
@@ -721,27 +724,25 @@ export function ScannerPage() {
           </div>
 
           {/* LLM & Proxy section — collapsible */}
-          <div className="rounded-2xl border border-border/40 bg-card">
-            <div className="px-5 py-4">
-              <button
-                type="button"
-                onClick={() => setShowLlm(!showLlm)}
-                className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
-              >
-                <svg className={cn("w-4 h-4 transition-transform duration-200", showLlm && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-                LLM &amp; Proxy Settings
-              </button>
-            </div>
+          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowLlm(!showLlm)}
+              className="w-full flex items-center gap-2.5 px-6 py-4.5 text-left hover:bg-muted/15 transition-colors cursor-pointer select-none"
+            >
+              <svg className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 shrink-0", showLlm && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              <svg className="w-4 h-4 text-primary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              <span className="text-xs font-bold uppercase tracking-wider text-foreground">LLM &amp; Proxy Settings</span>
+            </button>
             {showLlm && (
-              <div className="px-5 pb-5 pt-2 space-y-4">
+              <div className="px-6 pb-6 pt-2 space-y-5 border-t border-border/20">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <Label className="font-medium">Backend URL / Proxy Endpoint</Label>
+                    <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Backend URL / Proxy Endpoint</Label>
                     <ConnBadge status={conn.status} latency={conn.latency} error={conn.errorMsg} />
                   </div>
                   <div className="relative" ref={endpointsRef}>
@@ -750,13 +751,13 @@ export function ScannerPage() {
                       onChange={(e) => setBackendUrl(e.target.value)}
                       onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
                       placeholder="Enter your LLM provider override URL"
-                      className="pr-9 placeholder:text-muted-foreground/40"
+                      className="pr-9 placeholder:text-muted-foreground/35 bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"
                     />
                     {endpoints.length > 1 && (
                       <button
                         type="button"
                         onClick={() => setShowEndpoints(!showEndpoints)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted transition-colors"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-muted transition-colors cursor-pointer"
                       >
                         <svg className={cn("w-4 h-4 text-muted-foreground transition-transform", showEndpoints && "rotate-180")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -764,31 +765,31 @@ export function ScannerPage() {
                       </button>
                     )}
                     {showEndpoints && endpoints.length > 1 && (
-                      <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                      <div className="absolute z-50 mt-1.5 w-full rounded-xl border border-border/50 bg-popover shadow-xl overflow-hidden max-h-48 overflow-y-auto backdrop-blur-md">
                         {endpoints.map((ep) => (
                           <div
                             key={ep.url}
                             className={cn(
-                              "flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-muted transition-colors",
-                              ep.url === backendUrl && "bg-primary/10 text-primary",
+                              "flex items-center justify-between px-3.5 py-2.5 text-xs cursor-pointer hover:bg-muted transition-colors",
+                              ep.url === backendUrl && "bg-primary/10 text-primary font-bold",
                             )}
                           >
                             <button
                               type="button"
-                              className="flex-1 text-left truncate font-mono text-xs"
+                              className="flex-1 text-left truncate font-mono text-[11px]"
                               onClick={() => selectEndpoint(ep)}
                             >
                               {ep.url}
-                              {ep.deepModel && <span className="ml-2 text-muted-foreground">({ep.deepModel})</span>}
+                              {ep.deepModel && <span className="ml-2 text-muted-foreground font-normal">({ep.deepModel})</span>}
                             </button>
                             {ep.url !== backendUrl && (
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.url); }}
-                                className="ml-2 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                                className="ml-2 p-1 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0 cursor-pointer"
                                 title="Remove endpoint"
                               >
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                               </button>
@@ -798,16 +799,16 @@ export function ScannerPage() {
                       </div>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Custom API endpoint. Models are fetched from <code className="text-[11px] px-1 py-0.5 rounded bg-muted">/v1/models</code> automatically.
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                    Custom API endpoint. Models are fetched from <code className="text-[10px] px-1.5 py-0.5 rounded bg-muted/65 font-mono text-foreground font-normal">/v1/models</code> automatically.
                     {remoteIds.length > 0 && (
-                      <span className="ml-1 text-primary">{remoteIds.length} models loaded</span>
+                      <span className="ml-1.5 text-primary">{remoteIds.length} models loaded</span>
                     )}
                   </p>
                 </div>
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <Label className="font-medium">API Key</Label>
+                    <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">API Key</Label>
                     {llmApiKey.trim() && <ConnBadge status={conn.status} latency={null} error={conn.errorMsg} label="Authenticated" />}
                   </div>
                   <Input
@@ -815,62 +816,63 @@ export function ScannerPage() {
                     value={llmApiKey}
                     onChange={(e) => setLlmApiKey(e.target.value)}
                     placeholder="Provider API key (overrides env var)"
+                    className="bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                     Optional. Overrides the environment variable for the selected provider.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <Label className="font-medium">Deep Think Model</Label>
+                    <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Deep Think Model</Label>
                     <ModelSelect
                       options={deepOptions}
                       value={deepModel}
                       onChange={(value) => setDeepModel(value ?? "")}
                       placeholder="Select model..."
                     />
-                    <p className="text-xs text-muted-foreground">Model for complex reasoning tasks</p>
+                    <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Model for complex reasoning tasks</p>
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Label className="font-medium">Quick Think Model</Label>
+                    <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Quick Think Model</Label>
                     <ModelSelect
                       options={quickOptions}
                       value={quickModel}
                       onChange={(value) => setQuickModel(value ?? "")}
                       placeholder="Select model..."
                     />
-                    <p className="text-xs text-muted-foreground">Model for fast, lightweight tasks</p>
+                    <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Model for fast, lightweight tasks</p>
                   </div>
                 </div>
 
                 {/* LLM Concurrency Limit */}
                 <div className="flex flex-col gap-2 pt-2">
-                  <Label className="font-medium">LLM Concurrency Limit</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">LLM Concurrency Limit</Label>
                   <Input
                     type="number"
                     min={0}
                     max={100}
                     value={llmMaxConcurrent}
                     onChange={(e) => saveLlmConcurrency(Number(e.target.value))}
-                    className="w-32"
+                    className="w-32 bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                     Max concurrent LLM API calls. Set to 0 for unlimited (pay-as-you-go plans).
                   </p>
                 </div>
 
                 {/* LLM Minimum Spacing */}
                 <div className="flex flex-col gap-2 pt-2">
-                  <Label className="font-medium">Minimum Spacing</Label>
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Minimum Spacing</Label>
                   <Input
                     type="number"
                     min={0}
                     max={60000}
                     value={llmMinSpacingMs}
                     onChange={(e) => saveLlmMinSpacing(Number(e.target.value))}
-                    className="w-32"
+                    className="w-32 bg-background/50 border-border/40 focus:border-primary/50 text-xs rounded-xl h-9.5"
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                     Minimum milliseconds between consecutive LLM API calls. Set to 0 for no spacing.
                   </p>
                 </div>
@@ -879,15 +881,13 @@ export function ScannerPage() {
           </div>
 
           {/* Agent Model Overrides */}
-          <div className="rounded-2xl border border-border/40 bg-card">
-            <div className="px-5 pb-5 pt-5">
-              <AgentModelOverrides
-                assetType="crypto"
-                modelOptions={deepOptions}
-                overrides={agentModelOverrides}
-                onChange={setAgentModelOverrides}
-              />
-            </div>
+          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6">
+            <AgentModelOverrides
+              assetType="crypto"
+              modelOptions={deepOptions}
+              overrides={agentModelOverrides}
+              onChange={setAgentModelOverrides}
+            />
           </div>
 
           {/* Auto-Trade Accounts */}
@@ -897,12 +897,12 @@ export function ScannerPage() {
           <Button
             onClick={handleStart}
             disabled={startMutation.isPending || analysts.length === 0}
-            className="w-full h-12 text-base font-semibold"
+            className="w-full h-12 text-sm font-black uppercase tracking-wider rounded-xl transition-all active:scale-95 cursor-pointer shadow-lg hover:shadow-primary/20 flex items-center justify-center gap-2"
             size="lg"
           >
             {startMutation.isPending ? (
               <>
-                <svg className="w-5 h-5 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 animate-spin text-current" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
@@ -910,7 +910,7 @@ export function ScannerPage() {
               </>
             ) : (
               <>
-                <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 Start Full Market Scan
@@ -918,7 +918,7 @@ export function ScannerPage() {
             )}
           </Button>
           {startMutation.isError && (
-            <p className="text-xs text-destructive text-center">
+            <p className="text-xs text-destructive text-center font-semibold">
               Failed to start scan: {(startMutation.error as Error).message}
             </p>
           )}
@@ -927,31 +927,30 @@ export function ScannerPage() {
 
       {/* Progress */}
       {scan && scan.status !== "cancelled" && (
-        <div className="rounded-2xl border border-border/40 bg-card">
-          <div className="px-5 py-5 space-y-5">
+        <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6 space-y-6">
+          <div className="space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 {isRunning && (
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20">
                     <svg className="w-4 h-4 text-primary animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
                   </div>
                 )}
                 {scan.status === "completed" && (
-                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
                     <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
                 )}
                 <div>
-                  <h3 className="font-semibold flex items-center gap-3">
+                  <h3 className="text-sm font-black uppercase tracking-wider flex items-center gap-2.5">
                     {isRunning ? "Scanning Market..." : scan.status === "completed" ? "Scan Complete" : scan.status === "cancelled" ? "Scan Cancelled" : "Scan Failed"}
                     <ScanDurationBadge startedAt={scan.started_at} completedAt={scan.completed_at} isRunning={isRunning} />
                   </h3>
-
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -961,7 +960,7 @@ export function ScannerPage() {
                     variant="outline"
                     onClick={() => cancelMutation.mutate(scan.scan_id)}
                     disabled={cancelMutation.isPending}
-                    className="text-xs text-destructive border-destructive/30 hover:bg-destructive/10"
+                    className="text-xs font-bold uppercase tracking-wider text-destructive border-destructive/30 hover:bg-destructive/10 rounded-xl px-3 py-1 cursor-pointer"
                   >
                     Cancel
                   </Button>
@@ -976,13 +975,13 @@ export function ScannerPage() {
 
             {/* Progress bar */}
             <div className="space-y-2">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>{scan.completed + scan.failed} / {scan.total} symbols</span>
+              <div className="flex justify-between text-[10px] font-black uppercase tracking-wider text-muted-foreground/80">
+                <span>{scan.completed + scan.failed} / {scan.total} symbols completed</span>
                 <span>{scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0}%</span>
               </div>
-              <div className="h-2.5 rounded-full bg-muted overflow-hidden">
+              <div className="h-3 rounded-full bg-muted/50 overflow-hidden p-[2px] border border-border/25">
                 <div
-                  className="h-full rounded-full bg-primary transition-all duration-500"
+                  className="h-full rounded-full bg-primary transition-all duration-500 shadow-sm shadow-primary/30"
                   style={{ width: `${scan.total > 0 ? ((scan.completed + scan.failed) / scan.total) * 100 : 0}%` }}
                 />
               </div>
@@ -990,45 +989,45 @@ export function ScannerPage() {
 
             {/* Stats row */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-3 text-center">
-                <p className="text-2xl font-bold text-emerald-500">{buyResults.length}</p>
-                <p className="text-xs text-muted-foreground">Buy Signals</p>
+              <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-4 text-center">
+                <p className="text-3xl font-black text-emerald-500 leading-none">{buyResults.length}</p>
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Buy Signals</p>
               </div>
-              <div className="rounded-lg bg-red-500/5 border border-red-500/10 p-3 text-center">
-                <p className="text-2xl font-bold text-red-500">{sellResults.length}</p>
-                <p className="text-xs text-muted-foreground">Sell Signals</p>
+              <div className="rounded-2xl bg-red-500/5 border border-red-500/15 p-4 text-center">
+                <p className="text-3xl font-black text-red-500 leading-none">{sellResults.length}</p>
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Sell Signals</p>
               </div>
-              <div className="rounded-lg bg-amber-500/5 border border-amber-500/10 p-3 text-center">
-                <p className="text-2xl font-bold text-amber-500">{holdResults.length}</p>
-                <p className="text-xs text-muted-foreground">Hold / Neutral</p>
+              <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-4 text-center col-span-2 sm:col-span-1">
+                <p className="text-3xl font-black text-amber-500 leading-none">{holdResults.length}</p>
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Hold / Neutral</p>
               </div>
             </div>
 
             {/* Auto-trade results */}
             {scan.auto_trade_results && scan.auto_trade_results.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Auto-Trade Executions</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2 text-center">
-                    <p className="text-lg font-bold text-emerald-500">
+              <div className="space-y-3 pt-2 border-t border-border/10">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Auto-Trade Executions</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/10 p-2.5 text-center">
+                    <p className="text-lg font-black text-emerald-500 leading-none">
                       {scan.auto_trade_results.filter(r => r.status === "success").length}
                     </p>
-                    <p className="text-[10px] text-muted-foreground">Executed</p>
+                    <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground/60 mt-1">Executed</p>
                   </div>
-                  <div className="rounded-lg bg-red-500/5 border border-red-500/10 p-2 text-center">
-                    <p className="text-lg font-bold text-red-500">
+                  <div className="rounded-xl bg-red-500/5 border border-red-500/10 p-2.5 text-center">
+                    <p className="text-lg font-black text-red-500 leading-none">
                       {scan.auto_trade_results.filter(r => r.status === "failed").length}
                     </p>
-                    <p className="text-[10px] text-muted-foreground">Failed</p>
+                    <p className="text-[9px] font-black uppercase tracking-wider text-muted-foreground/60 mt-1">Failed</p>
                   </div>
                 </div>
-                <div className="max-h-32 overflow-y-auto space-y-1">
+                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
                   {scan.auto_trade_results.map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs px-2 py-1 rounded bg-muted/30" title={r.error || undefined}>
-                      <span className="font-mono flex-shrink-0">{r.symbol}</span>
-                      <span className={cn("flex-shrink-0", r.side === "buy" ? "text-emerald-500" : "text-red-500")}>{r.side}</span>
-                      <span className="text-muted-foreground truncate text-[10px]">{accountLabelMap[r.account_id] || r.account_id.slice(0, 8)}</span>
-                      <span className={cn("ml-auto flex-shrink-0", r.status === "success" ? "text-emerald-400" : "text-red-400")}>
+                    <div key={i} className="flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-muted/20 border border-border/15 font-medium" title={r.error || undefined}>
+                      <span className="font-mono font-bold text-foreground flex-shrink-0">{r.symbol}</span>
+                      <span className={cn("flex-shrink-0 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded", r.side === "buy" ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400")}>{r.side}</span>
+                      <span className="text-muted-foreground truncate text-[10px] font-semibold">{accountLabelMap[r.account_id] || r.account_id.slice(0, 8)}</span>
+                      <span className={cn("ml-auto flex-shrink-0 text-sm font-black", r.status === "success" ? "text-emerald-400" : "text-red-400")}>
                         {r.status === "success" ? "✓" : "✗"}
                       </span>
                     </div>
@@ -1039,13 +1038,13 @@ export function ScannerPage() {
 
             {/* Auto-trade account summaries (stopped reasons, rule failures) */}
             {scan.auto_trade_summaries && scan.auto_trade_summaries.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">Account Status</p>
-                <div className="space-y-1">
+              <div className="space-y-2 pt-2 border-t border-border/10">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Account Status</p>
+                <div className="space-y-1.5">
                   {scan.auto_trade_summaries.filter((s: any) => s.stopped_reason).map((s: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 text-[10px] px-2 py-1 rounded bg-amber-500/5 border border-amber-500/10">
-                      <span className="text-muted-foreground">{accountLabelMap[s.account_id] || s.account_id?.slice(0, 8)}</span>
-                      <span className="text-amber-400 ml-auto">{s.stopped_reason?.replace(/_/g, ' ')}</span>
+                    <div key={i} className="flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-amber-500/5 border border-amber-500/15">
+                      <span className="text-muted-foreground font-semibold">{accountLabelMap[s.account_id] || s.account_id?.slice(0, 8)}</span>
+                      <span className="text-amber-400 font-bold ml-auto text-[10px] uppercase tracking-wider">{s.stopped_reason?.replace(/_/g, ' ')}</span>
                     </div>
                   ))}
                 </div>
@@ -1054,11 +1053,11 @@ export function ScannerPage() {
 
             {/* Current batch tickers */}
             {isRunning && scan.current_tickers.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground font-medium">Currently analyzing:</p>
+              <div className="space-y-2 pt-2 border-t border-border/10">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/80">Currently analyzing:</p>
                 <div className="flex flex-wrap gap-1.5">
                   {scan.current_tickers.map((t) => (
-                    <Badge key={t} variant="outline" className="text-xs font-mono gap-1.5">
+                    <Badge key={t} variant="outline" className="text-xs font-mono font-bold tracking-wider px-2 py-1 rounded-xl bg-background/50 border-border/30 gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                       {t}
                     </Badge>
@@ -1225,20 +1224,20 @@ function CollapsibleResultCard({
   }
 
   return (
-    <div className={cn("rounded-2xl border border-border/40 bg-card", className)}>
-      <div className="px-5 py-4">
-        <button type="button" onClick={toggle} className="flex items-center gap-2 w-full text-left">
-          <svg className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-base font-semibold flex items-center gap-2">
-            <span className={cn("w-2 h-2 rounded-full", COLOR_MAP[color] ?? "bg-muted-foreground")} />
-            {title}
-          </span>
-        </button>
-      </div>
+    <div className={cn("glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden", className)}>
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex items-center gap-2.5 w-full text-left px-6 py-4.5 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
+      >
+        <svg className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground shrink-0", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+        <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", COLOR_MAP[color] ?? "bg-muted-foreground")} />
+        <span>{title}</span>
+      </button>
       {open && (
-        <div className="p-0">
+        <div className="border-t border-border/20">
           {children}
         </div>
       )}
@@ -1280,38 +1279,38 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-border/50 text-xs text-muted-foreground">
-            <th className="text-left px-4 py-2.5 font-medium">#</th>
-            <th className="text-left px-4 py-2.5 font-medium">Symbol</th>
-            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Signal</th>
-            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Confidence</th>
-            <th className="text-left px-4 py-2.5 font-medium">Strength</th>
-            <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Status</th>
-            <th className="text-right px-4 py-2.5 font-medium"></th>
+          <tr className="border-b border-border/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground/80 bg-muted/5">
+            <th className="text-left px-5 py-3.5 font-black">#</th>
+            <th className="text-left px-5 py-3.5 font-black">Symbol</th>
+            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Signal</th>
+            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Confidence</th>
+            <th className="text-left px-5 py-3.5 font-black">Strength</th>
+            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Status</th>
+            <th className="text-right px-5 py-3.5 font-black"></th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-border/10">
           {results.map((r, i) => {
             const dir = DIRECTION_CONFIG[r.direction] ?? DIRECTION_CONFIG.unknown;
             const copied = copiedTicker === r.ticker;
             return (
-              <tr key={r.ticker} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
-                <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
-                <td className="px-4 py-3">
+              <tr key={r.ticker} className="hover:bg-muted/15 transition-colors group">
+                <td className="px-5 py-3.5 text-muted-foreground font-mono text-xs">{i + 1}</td>
+                <td className="px-5 py-3.5">
                   <button
                     type="button"
                     onClick={() => handleCopy(r.ticker)}
                     title="Tap to copy"
                     className={cn(
-                      "font-mono font-semibold transition-all duration-150 rounded px-1 -mx-1 active:scale-95",
+                      "font-mono font-bold transition-all duration-150 rounded-lg px-2 py-1 -mx-2 active:scale-95 cursor-pointer border border-transparent text-sm",
                       copied
-                        ? "text-emerald-400 bg-emerald-500/10"
-                        : "hover:text-primary hover:bg-primary/10",
+                        ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+                        : "text-foreground group-hover:text-primary hover:bg-primary/10 hover:border-primary/20",
                     )}
                   >
                     {copied ? (
-                      <span className="flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                         {r.ticker}
@@ -1319,39 +1318,39 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                     ) : r.ticker}
                   </button>
                 </td>
-                <td className="px-4 py-3 hidden md:table-cell">
-                  <span className={cn("px-2 py-0.5 rounded text-xs font-bold", dir.bg, dir.color)}>
+                <td className="px-5 py-3.5 hidden md:table-cell">
+                  <span className={cn("px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border", dir.bg, dir.color, dir.label === "Buy" ? "border-emerald-500/20" : dir.label === "Sell" ? "border-red-500/20" : "border-border/40")}>
                     {dir.label}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-xs capitalize hidden md:table-cell">{r.confidence}</td>
-                <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
-                <td className="px-4 py-3 hidden md:table-cell">
+                <td className="px-5 py-3.5 text-xs font-semibold capitalize hidden md:table-cell text-muted-foreground">{r.confidence}</td>
+                <td className="px-5 py-3.5"><ScoreBar score={r.score} /></td>
+                <td className="px-5 py-3.5 hidden md:table-cell">
                   {r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger>
-                          <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs cursor-help">
+                          <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-[10px] font-bold uppercase tracking-wider cursor-help rounded-xl border border-destructive/20">
                             {r.status}
                           </Badge>
                         </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-sm">
+                        <TooltipContent side="top" className="max-w-sm bg-popover/95 border-border/50 text-xs font-semibold leading-relaxed rounded-xl shadow-xl backdrop-blur-md">
                           {r.decision_summary}
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   ) : (
-                    <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-xs">
+                    <Badge variant={r.status === "completed" ? "secondary" : "destructive"} className="text-[10px] font-bold uppercase tracking-wider rounded-xl border border-border/30">
                       {r.status}
                     </Badge>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-2">
+                <td className="px-5 py-3.5 text-right">
+                  <div className="flex items-center justify-end gap-2.5">
                     {isCrypto && onTrade && (r.direction === "buy" || r.direction === "sell") && (
                       tradedSymbols?.has(r.ticker) ? (
-                        <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-medium inline-flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
                           Traded
@@ -1359,7 +1358,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       ) : (
                         <button
                           onClick={() => onTrade(r.ticker, r.direction as "buy" | "sell")}
-                          className="text-xs px-2 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 font-medium transition-colors"
+                          className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all cursor-pointer active:scale-95"
                         >
                           Trade
                         </button>
@@ -1369,7 +1368,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       <Link
                         to="/analysis/$runId"
                         params={{ runId: r.run_id }}
-                        className="text-xs text-primary hover:underline"
+                        className="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-xl bg-muted/20 text-foreground hover:bg-muted/40 transition-all border border-border/30"
                       >
                         View
                       </Link>
@@ -1378,11 +1377,11 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>
-                            <span className="text-xs text-muted-foreground hover:text-foreground cursor-help underline decoration-dotted">
+                            <span className="text-xs font-bold text-muted-foreground hover:text-foreground cursor-help underline decoration-dotted">
                               Why?
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent side="left" className="max-w-sm">
+                          <TooltipContent side="left" className="max-w-sm bg-popover/95 border-border/50 text-xs font-semibold leading-relaxed rounded-xl shadow-xl backdrop-blur-md">
                             {r.decision_summary}
                           </TooltipContent>
                         </Tooltip>

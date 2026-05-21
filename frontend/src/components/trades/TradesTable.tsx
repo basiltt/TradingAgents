@@ -96,12 +96,12 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
 
   if (sorted.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-muted-foreground rounded-xl border border-border/40 bg-card/40">
-        <div className="w-10 h-10 rounded-full border border-border/60 flex items-center justify-center mb-3">
-          <svg className="w-4 h-4 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+      <div className="flex flex-col items-center justify-center py-24 text-muted-foreground rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card">
+        <div className="w-14 h-14 rounded-2xl bg-muted/15 flex items-center justify-center mb-4 border border-border/30 backdrop-blur-sm">
+          <svg className="w-6 h-6 text-muted-foreground/45" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
         </div>
-        <p className="text-xs font-medium">No positions</p>
-        <p className="text-[11px] mt-0.5 text-muted-foreground/60">Active trades will appear here</p>
+        <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">No positions</h3>
+        <p className="text-[10px] mt-1 text-muted-foreground/60 uppercase tracking-wider font-semibold">Active trades will appear here</p>
       </div>
     );
   }
@@ -115,7 +115,7 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 text-[11px] px-2 text-destructive hover:bg-destructive/10"
+              className="h-6 text-[11px] px-2 text-destructive hover:bg-destructive/10 cursor-pointer"
               onClick={handleBulkClose}
             >
               Close All
@@ -123,7 +123,7 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 text-[11px] px-2"
+              className="h-6 text-[11px] px-2 cursor-pointer"
               onClick={() => setSelectedIds(new Set())}
             >
               Deselect
@@ -131,14 +131,14 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
           </div>
         </div>
       )}
-      <div className="rounded-xl border border-border/50 overflow-hidden bg-card/60 overflow-x-auto">
+      <div className="rounded-xl border border-border/50 overflow-hidden bg-card/65 backdrop-blur-sm glass-card overflow-x-auto shadow-lg shadow-black/5">
         <table className="w-full text-left min-w-[800px]">
           <thead>
-            <tr className="bg-muted/20">
+            <tr className="bg-muted/15 border-b border-border/20">
               {COLUMNS.map((col) => (
                 <th
                   key={col.key || "actions"}
-                  className={`px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60 ${col.width ?? ""} ${col.key && col.key !== "__select" ? "cursor-pointer hover:text-muted-foreground transition-colors select-none" : ""}`}
+                  className={`px-4 py-3 text-[10px] font-black uppercase tracking-[0.1em] text-muted-foreground/60 ${col.width ?? ""} ${col.key && col.key !== "__select" ? "cursor-pointer hover:text-muted-foreground transition-colors select-none" : ""}`}
                   onClick={() => handleSort(col.key)}
                 >
                   {col.key === "__select" ? (
@@ -146,7 +146,7 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
                       type="checkbox"
                       checked={allSelected}
                       onChange={toggleAll}
-                      className="w-3 h-3 rounded-sm border-border/60 accent-primary cursor-pointer"
+                      className="w-3.5 h-3.5 rounded-md border-border/60 accent-primary cursor-pointer"
                     />
                   ) : (
                     <span className="inline-flex items-center gap-0.5">
@@ -161,13 +161,12 @@ export function TradesTable({ trades }: { trades: Trade[] }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((trade, i) => (
+            {sorted.map((trade) => (
               <TradeRow
                 key={trade.id}
                 trade={trade}
                 selected={selectedIds.has(trade.id)}
                 onToggleSelect={toggleOne}
-                isLast={i === sorted.length - 1}
               />
             ))}
           </tbody>
