@@ -386,9 +386,9 @@ export function ScheduledScansPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center mb-4">
-          <svg className="w-7 h-7 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div className="w-12 h-12 rounded-[calc(var(--radius)*1.25)] bg-red-500/10 flex items-center justify-center mb-4">
+          <svg className="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
         </div>
@@ -402,7 +402,7 @@ export function ScheduledScansPage() {
   }
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Automation schedules"
         title="Scheduled scan automation"
@@ -498,9 +498,9 @@ export function ScheduledScansPage() {
           ))}
         </div>
       ) : schedules.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-20 h-20 rounded-3xl bg-muted/50 flex items-center justify-center mb-6 border border-border/30">
-            <svg className="w-10 h-10 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+        <div className="flex flex-col items-center justify-center py-18 text-center">
+          <div className="w-12 h-12 rounded-[calc(var(--radius)*1.25)] bg-muted/50 flex items-center justify-center mb-4 border border-border/30">
+            <svg className="w-6 h-6 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
@@ -923,7 +923,7 @@ function ScheduleFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="w-[95vw] sm:max-w-4xl lg:max-w-6xl max-h-[85vh] overflow-y-auto custom-scrollbar">
+      <DialogContent className="w-[95vw] sm:max-w-2xl lg:max-w-4xl max-h-[85vh] overflow-y-auto custom-scrollbar">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

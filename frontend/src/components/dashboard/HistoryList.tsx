@@ -3,6 +3,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/rea
 import { Link } from "@tanstack/react-router";
 import { apiClient } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { parseTradeCard, type TradeCardData } from "@/components/analysis/parseTradeCard";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 
@@ -335,96 +336,84 @@ export function HistoryList() {
   const runningCount = allItems.filter((i) => i.status === "running").length;
 
   return (
-    <div className="space-y-6 pb-10">
-      {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">Analysis History</h1>
-          <p className="text-sm text-muted-foreground mt-1.5 font-medium">
-            Browse past analyses and their results.
+    <div className="space-y-5 pb-8">
+      <PageHeader
+        eyebrow="Research archive"
+        title="Analysis History"
+        description="Browse prior runs, review trade-card confidence, and pivot across filtered reasoning records from one denser archive surface."
+        stats={[
+          { label: "Total Runs", value: String(allItems.length), tone: "neutral" },
+          { label: "Completed", value: String(completedCount), tone: "success" },
+          { label: "Running", value: String(runningCount), tone: runningCount > 0 ? "accent" : "neutral" },
+          { label: "Buy Signals", value: String(buyCount), tone: buyCount > 0 ? "success" : "neutral" },
+        ]}
+        actions={
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             {allItems.length > 0 && (
-              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-muted/70 text-foreground border border-border/40 font-bold">
-                {filtered.length !== allItems.length
-                  ? `${filtered.length} of ${allItems.length}`
-                  : `${allItems.length} total`}
-              </span>
-            )}
-            {(signalFilter.size > 0 || confidenceRange !== "any") && !allBatchesLoaded && (
-              <span className="ml-2 text-muted-foreground text-xs animate-pulse font-semibold">Loading scores…</span>
-            )}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          {allItems.length > 0 && (
-            confirmDeleteAll ? (
-              <div className="flex items-center gap-2 bg-destructive/5 border border-destructive/20 p-1.5 rounded-xl">
+              confirmDeleteAll ? (
+                <div className="flex items-center gap-2 rounded-[calc(var(--radius)*1.2)] border border-destructive/20 bg-destructive/5 p-1.5">
+                  <button
+                    onClick={() => deleteAllMutation.mutate()}
+                    disabled={deleteAllMutation.isPending}
+                    className="touch-target inline-flex items-center gap-1.5 rounded-[calc(var(--radius)*0.95)] bg-destructive px-3 py-1.75 text-xs font-extrabold uppercase tracking-wider text-destructive-foreground transition-all hover:brightness-110 active:scale-95 disabled:opacity-50"
+                  >
+                    {deleteAllMutation.isPending && (
+                      <div className="h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    )}
+                    {deleteAllMutation.isPending ? "Deleting…" : "Confirm Delete"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteAll(false)}
+                    className="touch-target rounded-[calc(var(--radius)*0.95)] border border-border/40 bg-muted px-3 py-1.75 text-xs font-extrabold uppercase tracking-wider text-foreground transition-all hover:bg-muted/80 active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
                 <button
-                  onClick={() => deleteAllMutation.mutate()}
-                  disabled={deleteAllMutation.isPending}
-                  className="px-3.5 py-2 text-xs font-extrabold uppercase tracking-wider rounded-lg bg-destructive text-destructive-foreground hover:brightness-110 active:scale-95 disabled:opacity-50 transition-all inline-flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setConfirmDeleteAll(true)}
+                  className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm text-destructive shadow-[var(--shadow-soft)] transition-all hover:bg-destructive/10 hover:border-destructive/30"
+                  title="Delete All Analyses"
                 >
-                  {deleteAllMutation.isPending && (
-                    <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  )}
-                  {deleteAllMutation.isPending ? "Deleting…" : "Confirm Delete"}
+                  <svg className="size-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
                 </button>
-                <button
-                  onClick={() => setConfirmDeleteAll(false)}
-                  className="px-3.5 py-2 text-xs font-extrabold uppercase tracking-wider rounded-lg bg-muted text-foreground hover:bg-muted/80 active:scale-95 transition-all cursor-pointer border border-border/40"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setConfirmDeleteAll(true)}
-                className="p-2.5 rounded-xl border border-destructive/20 text-destructive bg-destructive/5 hover:bg-destructive/10 hover:border-destructive/30 active:scale-95 transition-all cursor-pointer"
-                title="Delete All Analyses"
-              >
-                <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            )
-          )}
-          <Link
-            to="/analysis/new"
-            className="inline-flex items-center gap-2 px-4.5 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-xs uppercase tracking-wider hover:scale-[1.02] active:scale-98 transition-all duration-200 shadow-lg shadow-primary/20 cursor-pointer"
-          >
-            <svg className="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New Analysis
-          </Link>
+              )
+            )}
+            <Link
+              to="/analysis/new"
+              className="touch-target inline-flex items-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-primary/20 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+            >
+              <svg className="size-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New Analysis
+            </Link>
+          </div>
+        }
+      >
+        <div className="flex flex-wrap gap-2">
+          {allItems.length > 0 ? (
+            <span className="inline-flex min-h-8 items-center rounded-full border border-border/60 bg-card/68 px-3 py-1 text-xs font-semibold text-muted-foreground shadow-[var(--shadow-soft)]">
+              {filtered.length !== allItems.length ? `${filtered.length} of ${allItems.length}` : `${allItems.length} total`}
+            </span>
+          ) : null}
+          {activeFilterCount > 0 ? (
+            <span className="inline-flex min-h-8 items-center rounded-full border border-border/60 bg-card/68 px-3 py-1 text-xs font-semibold text-muted-foreground shadow-[var(--shadow-soft)]">
+              {activeFilterCount} active filters
+            </span>
+          ) : null}
+          <span className="inline-flex min-h-8 items-center rounded-full border border-border/60 bg-card/68 px-3 py-1 text-xs font-semibold text-muted-foreground shadow-[var(--shadow-soft)]">
+            {sellCount} sell signals
+          </span>
+          {(signalFilter.size > 0 || confidenceRange !== "any") && !allBatchesLoaded ? (
+            <span className="inline-flex min-h-8 items-center rounded-full border border-border/60 bg-card/68 px-3 py-1 text-xs font-semibold text-muted-foreground shadow-[var(--shadow-soft)]">
+              Loading score tape…
+            </span>
+          ) : null}
         </div>
-      </div>
-
-      {/* Stats row */}
-      {allItems.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-          <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-4.5 rounded-2xl shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
-            <div className="text-2xl font-black tracking-tight tabular-nums">{allItems.length}</div>
-            <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">Total Run</div>
-          </div>
-          <div className="glass-card border border-emerald-500/20 bg-emerald-500/[0.03] p-4.5 rounded-2xl shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
-            <div className="text-2xl font-black tracking-tight tabular-nums text-emerald-500 dark:text-emerald-400">{completedCount}</div>
-            <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">Completed</div>
-          </div>
-          <div className="glass-card border border-primary/20 bg-primary/[0.03] p-4.5 rounded-2xl shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
-            <div className="text-2xl font-black tracking-tight tabular-nums text-primary">{runningCount}</div>
-            <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">Running</div>
-          </div>
-          <div className="glass-card border border-emerald-500/20 bg-emerald-500/[0.03] p-4.5 rounded-2xl shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
-            <div className="text-2xl font-black tracking-tight tabular-nums text-emerald-500 dark:text-emerald-400">{buyCount}</div>
-            <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">Buy Signals</div>
-          </div>
-          <div className="glass-card border border-destructive/20 bg-destructive/[0.03] p-4.5 rounded-2xl shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
-            <div className="text-2xl font-black tracking-tight tabular-nums text-destructive">{sellCount}</div>
-            <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">Sell Signals</div>
-          </div>
-        </div>
-      )}
+      </PageHeader>
 
       {/* ── Search + Filters + Sort ── */}
       {allItems.length > 0 && (
@@ -440,13 +429,13 @@ export function HistoryList() {
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0); }}
                 placeholder="Search by ticker or run ID…"
-                className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-border/50 bg-card/65 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all font-medium"
+                className="w-full pl-10 pr-4 py-2 text-sm rounded-xl border border-border/50 bg-card/65 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all font-medium"
               />
             </div>
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as SortOption)}
-              className="shrink-0 px-3 py-2.5 text-xs rounded-xl border border-border/50 bg-card/65 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-bold uppercase tracking-wider cursor-pointer [&>option]:bg-card [&>option]:text-foreground"
+              className="shrink-0 px-3 py-2 text-xs rounded-xl border border-border/50 bg-card/65 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-bold uppercase tracking-wider cursor-pointer [&>option]:bg-card [&>option]:text-foreground"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -505,7 +494,7 @@ export function HistoryList() {
 
           {/* Advanced Filters Panel */}
           {showAdvancedFilters && (
-            <div className="glass-card border border-border/50 bg-card/70 backdrop-blur-sm p-5 rounded-2xl shadow-lg space-y-4 animate-slide-in">
+            <div className="glass-card border border-border/50 bg-card/70 backdrop-blur-sm p-4.5 rounded-2xl shadow-lg space-y-4 animate-slide-in">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">Configure Filter Metrics</span>
                 {activeFilterCount > 0 && (
@@ -610,9 +599,9 @@ export function HistoryList() {
           ))}
         </div>
       ) : isError ? (
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center animate-fade-in">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-destructive/10 flex items-center justify-center mb-4 border border-destructive/15">
-            <svg className="w-7 h-7 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-6 text-center animate-fade-in">
+          <div className="w-12 h-12 mx-auto rounded-[calc(var(--radius)*1.25)] bg-destructive/10 flex items-center justify-center mb-4 border border-destructive/15">
+            <svg className="w-6 h-6 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
@@ -620,9 +609,9 @@ export function HistoryList() {
           <p className="text-sm text-muted-foreground font-medium">Could not connect to the API. Is the backend server running?</p>
         </div>
       ) : allItems.length === 0 ? (
-        <div className="glass-card border border-dashed border-border/70 p-16 text-center rounded-2xl bg-card/65 animate-fade-in">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/60 flex items-center justify-center mb-5 border border-border/40">
-            <svg className="w-8 h-8 text-muted-foreground/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="glass-card border border-dashed border-border/70 p-8 text-center rounded-2xl bg-card/65 animate-fade-in">
+          <div className="w-12 h-12 mx-auto rounded-[calc(var(--radius)*1.25)] bg-muted/60 flex items-center justify-center mb-4 border border-border/40">
+            <svg className="w-6 h-6 text-muted-foreground/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
@@ -630,12 +619,12 @@ export function HistoryList() {
           <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto font-medium">
             Start your first analysis to see results here.
           </p>
-          <Link to="/analysis/new" className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-xs uppercase tracking-wider hover:scale-[1.02] active:scale-98 transition-all shadow-lg shadow-primary/20 cursor-pointer">
+          <Link to="/analysis/new" className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-xs uppercase tracking-wider hover:scale-[1.02] active:scale-98 transition-all shadow-lg shadow-primary/20 cursor-pointer">
             New Analysis
           </Link>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="glass-card border border-dashed border-border/70 p-12 text-center rounded-2xl bg-card/65">
+        <div className="glass-card border border-dashed border-border/70 p-8 text-center rounded-2xl bg-card/65">
           <p className="text-sm text-muted-foreground font-medium">No results match your selected filter criteria.</p>
         </div>
       ) : (

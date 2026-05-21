@@ -44,7 +44,7 @@ export function CycleListPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6 pb-8">
+      <div className="space-y-5 pb-7">
         <Skeleton className="h-48 rounded-[calc(var(--radius)*2)]" />
         <Skeleton className="h-72 rounded-[calc(var(--radius)*1.8)]" />
       </div>
@@ -53,7 +53,7 @@ export function CycleListPage() {
 
   if (error) {
     return (
-      <div className="space-y-6 pb-8">
+      <div className="space-y-5 pb-7">
         <PageHeader
           eyebrow="Automation cycles"
           title="Cycle orchestration dashboard"
@@ -70,7 +70,7 @@ export function CycleListPage() {
   }
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Automation cycles"
         title="Cycle orchestration dashboard"
@@ -78,7 +78,7 @@ export function CycleListPage() {
         actions={
           <Link
             to="/scanner/history"
-            className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.2)] border border-primary/25 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+            className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-primary/25 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
           >
             <Waypoints className="size-4" />
             Start from scan history
@@ -100,13 +100,13 @@ export function CycleListPage() {
 
       {items.length === 0 ? (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center gap-4 p-10 text-center sm:p-14">
-            <div className="gradient-primary flex size-16 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
-              <Waypoints className="size-7" />
+          <CardContent className="flex flex-col items-center justify-center gap-4 p-6 text-center sm:p-8">
+            <div className="gradient-primary flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.45)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <Waypoints className="size-5.5" />
             </div>
             <div className="space-y-2">
               <p className="section-eyebrow">Ready state</p>
-              <h2 className="text-2xl font-semibold tracking-tight">No trading cycles yet</h2>
+              <h2 className="text-xl font-semibold tracking-tight">No trading cycles yet</h2>
               <p className="max-w-xl text-sm text-muted-foreground">
                 Launch a new cycle from scan history to track progress, failures, and managed trade
                 batches from this dashboard.
@@ -114,7 +114,7 @@ export function CycleListPage() {
             </div>
             <Link
               to="/scanner/history"
-              className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.2)] border border-border/70 bg-card/75 px-4 py-3 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
+              className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-border/70 bg-card/75 px-3.5 py-2.5 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
             >
               Open scan history
               <ArrowRight className="size-4" />

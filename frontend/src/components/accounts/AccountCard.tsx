@@ -210,7 +210,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,oklch(0.72_var(--accent-chroma)_var(--accent-hue)_/_0.08),transparent_42%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
         {/* Header */}
-        <div className="relative flex items-center justify-between px-5 pt-5 pb-3">
+        <div className="relative flex items-center justify-between px-4.5 pt-4.5 pb-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="space-y-1">
               <p className="section-eyebrow">Trading account</p>
@@ -279,16 +279,16 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
         </div>
 
         {card.status === "error" && card.last_error && (
-          <div className="mx-5 mb-2 px-3 py-1.5 rounded-lg bg-red-500/[0.06] border border-red-500/15">
+          <div className="mx-4.5 mb-2 px-3 py-1.5 rounded-lg bg-red-500/[0.06] border border-red-500/15">
             <p className="text-[11px] text-red-500 truncate">{card.last_error}</p>
           </div>
         )}
 
         {/* Equity highlight */}
         {card.total_equity != null && (
-          <div className="px-5 pb-2">
+          <div className="px-4.5 pb-2">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-bold tabular-nums tracking-tight">${equity.toFixed(2)}</span>
+              <span className="text-xl font-bold tabular-nums tracking-tight">${equity.toFixed(2)}</span>
               <DirectionIcon dir={directions?.equity} />
             </div>
             <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-medium">Equity</span>
@@ -297,7 +297,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
 
         {/* Rule indicators — compact inline rows */}
         {card.total_equity != null && rules.length > 0 && (
-          <div className="px-5 pb-3 space-y-1.5">
+          <div className="px-4.5 pb-2.5 space-y-1.5">
             {rules.map((r, i) => <RuleIndicator key={i} rule={r} />)}
           </div>
         )}
@@ -326,7 +326,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
         )}
 
         {/* Footer */}
-        <div className="relative flex items-center justify-between px-5 py-3 border-t border-border/40 bg-muted/[0.06]">
+        <div className="relative flex items-center justify-between px-4.5 py-2.5 border-t border-border/40 bg-muted/[0.06]">
           {card.last_connected_at ? (
             <span className="text-[10px] text-muted-foreground/50">
               Updated {new Date(card.last_connected_at).toLocaleString(undefined, {

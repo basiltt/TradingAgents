@@ -60,7 +60,7 @@ function CollapsibleSection({
     <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm rounded-2xl shadow-sm overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2.5 w-full text-left px-6 py-4.5 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
+        className="w-full flex items-center gap-2.5 w-full text-left px-4.5 py-3.5 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
       >
         <svg
           className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground shrink-0", open && "rotate-90")}
@@ -95,13 +95,13 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground/80 bg-muted/5">
-            <th className="text-left px-5 py-3.5 font-black">#</th>
-            <th className="text-left px-5 py-3.5 font-black">Symbol</th>
-            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Signal</th>
-            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Confidence</th>
-            <th className="text-left px-5 py-3.5 font-black">Strength</th>
-            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Status</th>
-            <th className="text-right px-5 py-3.5 font-black"></th>
+            <th className="text-left px-4 py-3 font-black">#</th>
+            <th className="text-left px-4 py-3 font-black">Symbol</th>
+            <th className="text-left px-4 py-3 font-black hidden md:table-cell">Signal</th>
+            <th className="text-left px-4 py-3 font-black hidden md:table-cell">Confidence</th>
+            <th className="text-left px-4 py-3 font-black">Strength</th>
+            <th className="text-left px-4 py-3 font-black hidden md:table-cell">Status</th>
+            <th className="text-right px-4 py-3 font-black"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border/10">
@@ -110,8 +110,8 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
             const copied = copiedTicker === r.ticker;
             return (
               <tr key={r.ticker} className="hover:bg-muted/15 transition-colors group">
-                <td className="px-5 py-3.5 text-muted-foreground font-mono text-xs">{i + 1}</td>
-                <td className="px-5 py-3.5">
+                <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
+                <td className="px-4 py-3">
                   <button
                     type="button"
                     onClick={() => handleCopy(r.ticker)}
@@ -133,14 +133,14 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                     ) : r.ticker}
                   </button>
                 </td>
-                <td className="px-5 py-3.5 hidden md:table-cell">
+                <td className="px-4 py-3 hidden md:table-cell">
                   <span className={cn("px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border", dir.bg, dir.color, dir.label === "Buy" ? "border-emerald-500/20" : dir.label === "Sell" ? "border-red-500/20" : "border-border/40")}>
                     {dir.label}
                   </span>
                 </td>
-                <td className="px-5 py-3.5 text-xs font-semibold capitalize hidden md:table-cell text-muted-foreground">{r.confidence}</td>
-                <td className="px-5 py-3.5"><ScoreBar score={r.score} /></td>
-                <td className="px-5 py-3.5 hidden md:table-cell">
+                <td className="px-4 py-3 text-xs font-semibold capitalize hidden md:table-cell text-muted-foreground">{r.confidence}</td>
+                <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
+                <td className="px-4 py-3 hidden md:table-cell">
                   {r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
@@ -160,7 +160,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                     </Badge>
                   )}
                 </td>
-                <td className="px-5 py-3.5 text-right">
+                <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2.5">
                     {isCrypto && onTrade && (r.direction === "buy" || r.direction === "sell") && (
                       tradedSymbols?.has(r.ticker) ? (
@@ -285,7 +285,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
           Back to history
         </Link>
         <Card>
-          <CardContent className="py-8 text-center text-destructive">
+          <CardContent className="py-6 text-center text-destructive">
             Scan not found or failed to load.
           </CardContent>
         </Card>
@@ -311,7 +311,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             </svg>
             Back to history
           </Link>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-xl font-bold flex items-center gap-2">
             <svg className="w-6 h-6 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
@@ -360,7 +360,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
       </div>
 
       {/* Status card */}
-      <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm rounded-2xl shadow-sm overflow-hidden p-6 space-y-6">
+      <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm rounded-2xl shadow-sm overflow-hidden p-5 space-y-5">
         <div>
           <div className="flex items-center gap-3 mb-3">
             {scan.status === "completed" ? (
@@ -413,16 +413,16 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
 
         {/* Summary boxes */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-4 text-center">
-            <div className="text-3xl font-black text-emerald-500 leading-none">{buyResults.length}</div>
+          <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-3.5 text-center">
+            <div className="text-2xl font-black text-emerald-500 leading-none">{buyResults.length}</div>
             <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Buy Signals</div>
           </div>
-          <div className="rounded-2xl bg-red-500/5 border border-red-500/15 p-4 text-center">
-            <div className="text-3xl font-black text-red-500 leading-none">{sellResults.length}</div>
+          <div className="rounded-2xl bg-red-500/5 border border-red-500/15 p-3.5 text-center">
+            <div className="text-2xl font-black text-red-500 leading-none">{sellResults.length}</div>
             <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Sell Signals</div>
           </div>
-          <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-4 text-center col-span-2 sm:col-span-1">
-            <div className="text-3xl font-black text-amber-500 leading-none">{holdResults.length}</div>
+          <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-3.5 text-center col-span-2 sm:col-span-1">
+            <div className="text-2xl font-black text-amber-500 leading-none">{holdResults.length}</div>
             <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Hold / Neutral</div>
           </div>
         </div>
@@ -475,7 +475,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => !deleteMutation.isPending && setDeleteConfirm(null)}
           />
-          <div className="relative bg-card/85 border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5 backdrop-blur-md">
+          <div className="relative bg-card/85 border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4 backdrop-blur-md">
             <h3 className="text-lg font-bold text-destructive flex items-center gap-2">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />

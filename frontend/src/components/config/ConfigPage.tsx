@@ -25,7 +25,7 @@ export function ConfigPage() {
   });
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="System Settings"
         title="Configuration, environment state, and appearance controls."
@@ -53,9 +53,9 @@ export function ConfigPage() {
         </div>
       ) : isError || !data ? (
         <Card className="border-destructive/20 bg-destructive/6">
-          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
-            <div className="flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-destructive/10 text-destructive shadow-[var(--shadow-soft)]">
-              <AlertTriangle className="size-5" />
+          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+            <div className="flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-destructive/10 text-destructive shadow-[var(--shadow-soft)]">
+              <AlertTriangle className="size-4.5" />
             </div>
             <div>
               <h2 className="text-lg font-semibold tracking-tight text-destructive">
@@ -75,8 +75,8 @@ export function ConfigPage() {
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-3">
-                  <div className="flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-warning/12 text-warning shadow-[var(--shadow-soft)]">
-                    <KeyRound className="size-5" />
+                  <div className="flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-warning/12 text-warning shadow-[var(--shadow-soft)]">
+                    <KeyRound className="size-4.5" />
                   </div>
                   <div>
                     <CardTitle>Exchange Connectivity</CardTitle>
@@ -110,8 +110,8 @@ export function ConfigPage() {
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-3">
-                  <div className="flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-emerald-500/12 text-emerald-500 shadow-[var(--shadow-soft)]">
-                    <SlidersHorizontal className="size-5" />
+                  <div className="flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-emerald-500/12 text-emerald-500 shadow-[var(--shadow-soft)]">
+                    <SlidersHorizontal className="size-4.5" />
                   </div>
                   <div>
                     <CardTitle>Active Overrides</CardTitle>
@@ -126,7 +126,7 @@ export function ConfigPage() {
                   <div
                     key={key}
                     className={cn(
-                      "grid gap-1 rounded-[calc(var(--radius)*1.2)] border border-border/50 px-4 py-3 md:grid-cols-[minmax(0,18rem)_1fr] md:items-center",
+                      "grid gap-1 rounded-[calc(var(--radius)*1.1)] border border-border/50 px-3.5 py-2.5 md:grid-cols-[minmax(0,16rem)_1fr] md:items-center",
                       index % 2 === 0 ? "bg-muted/15" : "bg-card/55",
                     )}
                   >
@@ -152,8 +152,8 @@ function ResolvedConfigCard({ values }: { values: Record<string, unknown> }) {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
-            <Settings2 className="size-5" />
+          <div className="flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+            <Settings2 className="size-4.5" />
           </div>
           <div>
             <CardTitle>Resolved Environment</CardTitle>
@@ -169,7 +169,7 @@ function ResolvedConfigCard({ values }: { values: Record<string, unknown> }) {
             <div
               key={key}
               className={cn(
-                "grid gap-1 rounded-[calc(var(--radius)*1.2)] border border-border/50 px-4 py-3 md:grid-cols-[minmax(0,18rem)_1fr] md:items-center",
+                "grid gap-1 rounded-[calc(var(--radius)*1.1)] border border-border/50 px-3.5 py-2.5 md:grid-cols-[minmax(0,16rem)_1fr] md:items-center",
                 index % 2 === 0 ? "bg-muted/15" : "bg-card/55",
               )}
             >

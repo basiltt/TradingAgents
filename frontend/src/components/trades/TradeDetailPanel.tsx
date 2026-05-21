@@ -70,7 +70,7 @@ export function TradeDetailPanel() {
               </div>
             </div>
 
-            <div className="px-5 py-5 space-y-4">
+            <div className="px-4.5 py-4 space-y-4">
               {/* PnL Hero */}
               <div className="rounded-xl bg-card/65 backdrop-blur-sm border border-border/40 p-4">
                 <div className="grid grid-cols-2 gap-4">

@@ -93,9 +93,9 @@ const TradesPageComponent = lazy(() => import("@/components/trades/TradesPage"))
 
 function RouteLoading() {
   return (
-    <div className="space-y-4 pb-8">
-      <Skeleton className="h-48 rounded-[calc(var(--radius)*2)]" />
-      <Skeleton className="h-72 rounded-[calc(var(--radius)*1.8)]" />
+    <div className="space-y-4 pb-7">
+      <Skeleton className="h-40 rounded-[calc(var(--radius)*1.8)]" />
+      <Skeleton className="h-60 rounded-[calc(var(--radius)*1.6)]" />
     </div>
   );
 }

@@ -124,7 +124,7 @@ export function AccountsDashboard() {
 
   if (status === "loading" && dashboard.length === 0) {
     return (
-      <div className="space-y-6 pb-8">
+      <div className="space-y-5 pb-7">
         <Skeleton className="h-48 rounded-[calc(var(--radius)*2)]" />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => (
@@ -142,7 +142,7 @@ export function AccountsDashboard() {
 
   if (status === "error" && dashboard.length === 0) {
     return (
-      <div className="space-y-6 pb-8">
+      <div className="space-y-5 pb-7">
         <PageHeader
           eyebrow="Portfolio control"
           title="Accounts command center"
@@ -158,7 +158,7 @@ export function AccountsDashboard() {
   }
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Portfolio control"
         title="Accounts command center"
@@ -231,7 +231,7 @@ export function AccountsDashboard() {
         <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-2">
             <p className="section-eyebrow">Dashboard scope</p>
-            <h2 className="text-2xl font-semibold tracking-tight">
+            <h2 className="text-xl font-semibold tracking-tight">
               Filter account cohorts without losing live context.
             </h2>
             <p className="max-w-3xl text-sm text-muted-foreground">
@@ -257,15 +257,15 @@ export function AccountsDashboard() {
       {/* Empty state */}
       {filtered.length === 0 && status !== "loading" && (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center gap-4 p-10 text-center sm:p-14">
-            <div className="gradient-primary flex size-16 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
-              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <CardContent className="flex flex-col items-center justify-center gap-4 p-6 text-center sm:p-8">
+            <div className="gradient-primary flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.45)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <svg className="w-5.5 h-5.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
               </svg>
             </div>
             <div className="space-y-2">
               <p className="section-eyebrow">Ready state</p>
-              <h2 className="text-2xl font-semibold tracking-tight">
+              <h2 className="text-xl font-semibold tracking-tight">
                 {dashboard.length ? "No accounts match the current filter" : "No accounts connected"}
               </h2>
               <p className="max-w-xl text-sm text-muted-foreground">
@@ -296,7 +296,7 @@ export function AccountsDashboard() {
       {killOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!killLoading) { setKillOpen(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); } }} />
-          <div className="relative glass-card hover:transform-none hover:translate-y-0 rounded-2xl p-6 w-full max-w-md shadow-2xl mx-4 bg-card/75 backdrop-blur-md border border-border/40">
+          <div className="relative glass-card hover:transform-none hover:translate-y-0 rounded-2xl p-5 w-full max-w-md shadow-2xl mx-4 bg-card/75 backdrop-blur-md border border-border/40">
             {!killLoading && !killResult ? (
               <>
                 <div className="flex items-center gap-3.5 mb-4">
@@ -332,7 +332,7 @@ export function AccountsDashboard() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => setKillOpen(false)}
-                    className="flex-1 h-11 px-4 py-2.5 rounded-xl border border-border text-xs font-bold uppercase tracking-wider hover:bg-muted/40 transition-all cursor-pointer active:scale-95"
+                    className="flex-1 h-10 px-4 py-2 rounded-xl border border-border text-xs font-bold uppercase tracking-wider hover:bg-muted/40 transition-all cursor-pointer active:scale-95"
                   >
                     Cancel
                   </button>
@@ -353,7 +353,7 @@ export function AccountsDashboard() {
                         setKillLoading(false);
                       }
                     }}
-                    className="flex-1 h-11 px-4 py-2.5 rounded-xl bg-red-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-red-700 active:scale-95 transition-all shadow-lg shadow-red-600/15 cursor-pointer"
+                    className="flex-1 h-10 px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-red-700 active:scale-95 transition-all shadow-lg shadow-red-600/15 cursor-pointer"
                   >
                     Close Everything
                   </button>
@@ -437,7 +437,7 @@ export function AccountsDashboard() {
                 </div>
                 <button
                   onClick={() => { setKillOpen(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); }}
-                  className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer active:scale-95 shadow-lg shadow-primary/15"
+                  className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer active:scale-95 shadow-lg shadow-primary/15"
                 >
                   Done
                 </button>
@@ -451,7 +451,7 @@ export function AccountsDashboard() {
       {resetOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { if (!resetLoading) { setResetOpen(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); } }} />
-          <div className="relative glass-card hover:transform-none hover:translate-y-0 rounded-2xl p-6 w-full max-w-md shadow-2xl mx-4 bg-card/75 backdrop-blur-md border border-border/40">
+          <div className="relative glass-card hover:transform-none hover:translate-y-0 rounded-2xl p-5 w-full max-w-md shadow-2xl mx-4 bg-card/75 backdrop-blur-md border border-border/40">
             {!resetLoading && !resetResult ? (
               <>
                 <div className="flex items-center gap-3.5 mb-4">
@@ -474,7 +474,7 @@ export function AccountsDashboard() {
                     min="1"
                     max="100000"
                     step="1"
-                    className="w-full h-11 px-4 py-2.5 rounded-xl border border-border/40 bg-muted/20 text-sm font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all duration-200"
+                    className="w-full h-10 px-4 py-2 rounded-xl border border-border/40 bg-muted/20 text-sm font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all duration-200"
                     placeholder="100"
                   />
                   <p className="text-[10px] text-muted-foreground/70">Max: 100,000 USDT per Bybit demo limits</p>
@@ -512,7 +512,7 @@ export function AccountsDashboard() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => { setResetOpen(false); setResetSelectedIds([]); }}
-                    className="flex-1 h-11 px-4 py-2.5 rounded-xl border border-border text-xs font-bold uppercase tracking-wider hover:bg-muted/40 transition-all cursor-pointer active:scale-95"
+                    className="flex-1 h-10 px-4 py-2 rounded-xl border border-border text-xs font-bold uppercase tracking-wider hover:bg-muted/40 transition-all cursor-pointer active:scale-95"
                   >
                     Cancel
                   </button>
@@ -539,7 +539,7 @@ export function AccountsDashboard() {
                       }
                     }}
                     disabled={!resetAmount || parseFloat(resetAmount) <= 0 || resetSelectedIds.length === 0}
-                    className="flex-1 h-11 px-4 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-amber-700 active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-amber-600/15 cursor-pointer"
+                    className="flex-1 h-10 px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-amber-700 active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-amber-600/15 cursor-pointer"
                   >
                     Set Balance
                   </button>
@@ -621,7 +621,7 @@ export function AccountsDashboard() {
                 </div>
                 <button
                   onClick={() => { setResetOpen(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); setResetSelectedIds([]); }}
-                  className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer active:scale-95 shadow-lg shadow-primary/15"
+                  className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer active:scale-95 shadow-lg shadow-primary/15"
                 >
                   Done
                 </button>

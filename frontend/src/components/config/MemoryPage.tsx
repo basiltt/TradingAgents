@@ -24,7 +24,7 @@ export function MemoryPage() {
   });
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Agent Memory"
         title="Historical decisions, confidence records, and long-term reasoning context."
@@ -49,12 +49,12 @@ export function MemoryPage() {
         </div>
       ) : isError || !data ? (
         <Card className="border-destructive/20 bg-destructive/6">
-          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
-            <div className="flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-destructive/10 text-destructive shadow-[var(--shadow-soft)]">
-              <TriangleAlert className="size-5" />
+          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+            <div className="flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-destructive/10 text-destructive shadow-[var(--shadow-soft)]">
+              <TriangleAlert className="size-4.5" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold tracking-tight text-destructive">
+              <h2 className="text-base font-semibold tracking-tight text-destructive">
                 Memory service unavailable
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -66,13 +66,13 @@ export function MemoryPage() {
         </Card>
       ) : data.items.length === 0 ? (
         <Card>
-          <CardContent className="grid gap-5 p-8 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
-            <div className="gradient-primary flex size-14 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
-              <Database className="size-6" />
+          <CardContent className="grid gap-4 p-6 md:grid-cols-[auto_minmax(0,1fr)] md:items-center">
+            <div className="gradient-primary flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.45)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <Database className="size-5.5" />
             </div>
             <div className="space-y-2">
               <p className="section-eyebrow">No records yet</p>
-              <h2 className="text-2xl font-semibold tracking-tight">The memory log is still empty.</h2>
+              <h2 className="text-xl font-semibold tracking-tight">The memory log is still empty.</h2>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                 Run one or more analyses to generate long-term entries for decisions,
                 reasoning summaries, and confidence outcomes.
@@ -97,12 +97,12 @@ export function MemoryPage() {
                   <CardHeader className="gap-4">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="flex min-w-0 items-start gap-4">
-                        <div className="flex size-12 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
-                          <BrainCircuit className="size-5" />
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+                          <BrainCircuit className="size-4.5" />
                         </div>
                         <div className="min-w-0 space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <CardTitle className="font-mono text-xl tracking-[0.04em]">
+                            <CardTitle className="font-mono text-lg tracking-[0.04em]">
                               {entry.ticker}
                             </CardTitle>
                             <Badge variant="outline">{entry.date}</Badge>
@@ -175,7 +175,7 @@ export function MemoryPage() {
 
 function StatPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[calc(var(--radius)*1.2)] border border-border/60 bg-muted/20 px-4 py-3 shadow-[var(--shadow-soft)]">
+    <div className="rounded-[calc(var(--radius)*1.1)] border border-border/60 bg-muted/20 px-3.5 py-2.5 shadow-[var(--shadow-soft)]">
       <p className="section-eyebrow">{label}</p>
       <p className="mt-2 text-sm font-semibold tracking-tight text-foreground">{value}</p>
     </div>

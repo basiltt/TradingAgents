@@ -23,16 +23,16 @@ const buttonVariants = cva(
       },
       size: {
         default:
-          "h-10 gap-2 px-4 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
-        xs: "h-8 gap-1 rounded-[calc(var(--radius)*1.05)] px-3 text-xs has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5 [&_svg:not([class*='size-'])]:size-3.5",
-        sm: "h-9 gap-1.5 rounded-[calc(var(--radius)*1.1)] px-3.5 text-[0.82rem] has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3 [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-11 gap-2 px-5 text-sm has-data-[icon=inline-end]:pr-4 has-data-[icon=inline-start]:pl-4",
-        icon: "size-10",
+          "h-9 gap-1.5 px-3.5 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
+        xs: "h-7 gap-1 rounded-[calc(var(--radius)*1.02)] px-2.5 text-[0.72rem] has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-8 gap-1.5 rounded-[calc(var(--radius)*1.06)] px-3 text-[0.78rem] has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5 [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-10 gap-2 px-4.5 text-sm has-data-[icon=inline-end]:pr-3.5 has-data-[icon=inline-start]:pl-3.5",
+        icon: "size-9",
         "icon-xs":
-          "size-8 rounded-[calc(var(--radius)*1.05)] [&_svg:not([class*='size-'])]:size-3.5",
+          "size-7 rounded-[calc(var(--radius)*1.02)] [&_svg:not([class*='size-'])]:size-3.5",
         "icon-sm":
-          "size-9 rounded-[calc(var(--radius)*1.1)]",
-        "icon-lg": "size-11",
+          "size-8 rounded-[calc(var(--radius)*1.06)]",
+        "icon-lg": "size-10",
       },
     },
     defaultVariants: {

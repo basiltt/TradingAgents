@@ -18,6 +18,7 @@ import { useConnectivityCheck } from "@/hooks/useConnectivityCheck";
 import { getModelOptions } from "@/lib/model-catalog";
 import { ConnBadge } from "@/components/ui/conn-badge";
 import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
@@ -415,58 +416,73 @@ export function ScannerPage() {
   const handleTrade = isCrypto ? (symbol: string, direction: "buy" | "sell") => setTradeTarget({ symbol, direction }) : undefined;
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto py-4">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <svg className="w-6 h-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            Market Scanner
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Scan all available Bybit USDT perpetual futures and find the best trading opportunities.
-          </p>
-        </div>
-        {activeScanId && isDone && (
-          <div className="flex items-center gap-2 shrink-0">
+    <div className="page-shell space-y-5 py-3">
+      <PageHeader
+        eyebrow="Scanner desk"
+        title="Market Scanner"
+        description="Sweep the Bybit USDT perpetual universe, review signal strength, and route the strongest setups from a denser scanner workstation."
+        stats={[
+          {
+            label: "Mode",
+            value: workflowMode === "quick_trade" ? "Quick Trade" : "Deep Analysis",
+            tone: workflowMode === "quick_trade" ? "warning" : "success",
+          },
+          {
+            label: "Interval",
+            value: interval,
+            tone: "accent",
+          },
+          {
+            label: "Analysts",
+            value: String(analysts.length),
+            tone: analysts.length > 0 ? "success" : "neutral",
+          },
+          {
+            label: "Scan State",
+            value: activeScanId ? (isDone ? "Ready" : "Running") : "Idle",
+            tone: activeScanId ? (isDone ? "success" : "accent") : "neutral",
+          },
+        ]}
+        actions={
+          <div className="flex flex-wrap gap-2">
             <Link
               to="/scanner/history"
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
+              className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-border/70 bg-card/72 px-3.5 py-2.5 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="mr-2 size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               History
             </Link>
-            <Button variant="outline" onClick={() => setActiveScanId(null)}>
-              <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              New Scan
-            </Button>
+            {activeScanId && isDone ? (
+              <Button variant="outline" onClick={() => setActiveScanId(null)}>
+                <svg className="mr-1.5 size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New Scan
+              </Button>
+            ) : null}
           </div>
-        )}
-        {!activeScanId && (
-          <Link
-            to="/scanner/history"
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors shrink-0"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            History
-          </Link>
-        )}
-      </div>
+        }
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{provider} provider</Badge>
+          <Badge variant="outline">{maxParallel} max parallel</Badge>
+          {taPrefilterEnabled ? (
+            <Badge variant="outline">TA prefilter {taPrefilterThreshold}</Badge>
+          ) : (
+            <Badge variant="outline">Prefilter off</Badge>
+          )}
+          <ConnBadge status={conn.status} latency={conn.latency} error={conn.errorMsg} />
+        </div>
+      </PageHeader>
 
       {/* Config */}
       {!activeScanId && (
         <div className="space-y-4">
           {lostScan && (
             <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5">
-              <div className="flex items-center gap-3 px-5 py-4">
+              <div className="flex items-center gap-3 px-4 py-3">
                 <svg className="w-5 h-5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
@@ -482,7 +498,7 @@ export function ScannerPage() {
               </div>
             </div>
           )}
-          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6 space-y-6">
+          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-5 space-y-5">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center border border-primary/20">
                 <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -638,7 +654,7 @@ export function ScannerPage() {
             <button
               type="button"
               onClick={() => setShowWorkflow(!showWorkflow)}
-              className="w-full flex items-center gap-2.5 px-6 py-4.5 text-left hover:bg-muted/15 transition-colors cursor-pointer select-none"
+              className="w-full flex items-center gap-2.5 px-4.5 py-3.5 text-left hover:bg-muted/15 transition-colors cursor-pointer select-none"
             >
               <svg className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 shrink-0", showWorkflow && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -649,7 +665,7 @@ export function ScannerPage() {
               <span className="text-xs font-bold uppercase tracking-wider text-foreground">Workflow Settings</span>
             </button>
             {showWorkflow && (
-              <div className="px-6 pb-6 pt-2 space-y-5 border-t border-border/20">
+              <div className="px-5 pb-5 pt-2 space-y-4.5 border-t border-border/20">
                 <div className="flex flex-col gap-2">
                   <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Research Depth</Label>
                   <div className="flex items-center gap-3">
@@ -728,7 +744,7 @@ export function ScannerPage() {
             <button
               type="button"
               onClick={() => setShowLlm(!showLlm)}
-              className="w-full flex items-center gap-2.5 px-6 py-4.5 text-left hover:bg-muted/15 transition-colors cursor-pointer select-none"
+              className="w-full flex items-center gap-2.5 px-4.5 py-3.5 text-left hover:bg-muted/15 transition-colors cursor-pointer select-none"
             >
               <svg className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 shrink-0", showLlm && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -739,7 +755,7 @@ export function ScannerPage() {
               <span className="text-xs font-bold uppercase tracking-wider text-foreground">LLM &amp; Proxy Settings</span>
             </button>
             {showLlm && (
-              <div className="px-6 pb-6 pt-2 space-y-5 border-t border-border/20">
+              <div className="px-5 pb-5 pt-2 space-y-4.5 border-t border-border/20">
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/90">Backend URL / Proxy Endpoint</Label>
@@ -881,7 +897,7 @@ export function ScannerPage() {
           </div>
 
           {/* Agent Model Overrides */}
-          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6">
+          <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-5">
             <AgentModelOverrides
               assetType="crypto"
               modelOptions={deepOptions}
@@ -897,7 +913,7 @@ export function ScannerPage() {
           <Button
             onClick={handleStart}
             disabled={startMutation.isPending || analysts.length === 0}
-            className="w-full h-12 text-sm font-black uppercase tracking-wider rounded-xl transition-all active:scale-95 cursor-pointer shadow-lg hover:shadow-primary/20 flex items-center justify-center gap-2"
+            className="w-full h-10 text-sm font-black uppercase tracking-wider rounded-xl transition-all active:scale-95 cursor-pointer shadow-lg hover:shadow-primary/20 flex items-center justify-center gap-2"
             size="lg"
           >
             {startMutation.isPending ? (
@@ -927,7 +943,7 @@ export function ScannerPage() {
 
       {/* Progress */}
       {scan && scan.status !== "cancelled" && (
-        <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-6 space-y-6">
+        <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden p-5 space-y-5">
           <div className="space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -989,16 +1005,16 @@ export function ScannerPage() {
 
             {/* Stats row */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-4 text-center">
-                <p className="text-3xl font-black text-emerald-500 leading-none">{buyResults.length}</p>
+              <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-3.5 text-center">
+                <p className="text-2xl font-black text-emerald-500 leading-none">{buyResults.length}</p>
                 <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Buy Signals</p>
               </div>
-              <div className="rounded-2xl bg-red-500/5 border border-red-500/15 p-4 text-center">
-                <p className="text-3xl font-black text-red-500 leading-none">{sellResults.length}</p>
+              <div className="rounded-2xl bg-red-500/5 border border-red-500/15 p-3.5 text-center">
+                <p className="text-2xl font-black text-red-500 leading-none">{sellResults.length}</p>
                 <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Sell Signals</p>
               </div>
-              <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-4 text-center col-span-2 sm:col-span-1">
-                <p className="text-3xl font-black text-amber-500 leading-none">{holdResults.length}</p>
+              <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-3.5 text-center col-span-2 sm:col-span-1">
+                <p className="text-2xl font-black text-amber-500 leading-none">{holdResults.length}</p>
                 <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/75 mt-2">Hold / Neutral</p>
               </div>
             </div>
@@ -1228,7 +1244,7 @@ function CollapsibleResultCard({
       <button
         type="button"
         onClick={toggle}
-        className="flex items-center gap-2.5 w-full text-left px-6 py-4.5 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
+        className="flex items-center gap-2.5 w-full text-left px-4.5 py-3.5 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
       >
         <svg className={cn("w-4 h-4 transition-transform duration-200 text-muted-foreground shrink-0", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -1280,13 +1296,13 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border/20 text-[10px] font-black uppercase tracking-wider text-muted-foreground/80 bg-muted/5">
-            <th className="text-left px-5 py-3.5 font-black">#</th>
-            <th className="text-left px-5 py-3.5 font-black">Symbol</th>
-            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Signal</th>
-            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Confidence</th>
-            <th className="text-left px-5 py-3.5 font-black">Strength</th>
-            <th className="text-left px-5 py-3.5 font-black hidden md:table-cell">Status</th>
-            <th className="text-right px-5 py-3.5 font-black"></th>
+            <th className="text-left px-4 py-3 font-black">#</th>
+            <th className="text-left px-4 py-3 font-black">Symbol</th>
+            <th className="text-left px-4 py-3 font-black hidden md:table-cell">Signal</th>
+            <th className="text-left px-4 py-3 font-black hidden md:table-cell">Confidence</th>
+            <th className="text-left px-4 py-3 font-black">Strength</th>
+            <th className="text-left px-4 py-3 font-black hidden md:table-cell">Status</th>
+            <th className="text-right px-4 py-3 font-black"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border/10">
@@ -1295,8 +1311,8 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
             const copied = copiedTicker === r.ticker;
             return (
               <tr key={r.ticker} className="hover:bg-muted/15 transition-colors group">
-                <td className="px-5 py-3.5 text-muted-foreground font-mono text-xs">{i + 1}</td>
-                <td className="px-5 py-3.5">
+                <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
+                <td className="px-4 py-3">
                   <button
                     type="button"
                     onClick={() => handleCopy(r.ticker)}
@@ -1318,14 +1334,14 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                     ) : r.ticker}
                   </button>
                 </td>
-                <td className="px-5 py-3.5 hidden md:table-cell">
+                <td className="px-4 py-3 hidden md:table-cell">
                   <span className={cn("px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider border", dir.bg, dir.color, dir.label === "Buy" ? "border-emerald-500/20" : dir.label === "Sell" ? "border-red-500/20" : "border-border/40")}>
                     {dir.label}
                   </span>
                 </td>
-                <td className="px-5 py-3.5 text-xs font-semibold capitalize hidden md:table-cell text-muted-foreground">{r.confidence}</td>
-                <td className="px-5 py-3.5"><ScoreBar score={r.score} /></td>
-                <td className="px-5 py-3.5 hidden md:table-cell">
+                <td className="px-4 py-3 text-xs font-semibold capitalize hidden md:table-cell text-muted-foreground">{r.confidence}</td>
+                <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
+                <td className="px-4 py-3 hidden md:table-cell">
                   {r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
@@ -1345,7 +1361,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                     </Badge>
                   )}
                 </td>
-                <td className="px-5 py-3.5 text-right">
+                <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2.5">
                     {isCrypto && onTrade && (r.direction === "buy" || r.direction === "sell") && (
                       tradedSymbols?.has(r.ticker) ? (

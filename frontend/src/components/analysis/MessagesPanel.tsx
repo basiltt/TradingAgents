@@ -147,7 +147,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
         </div>
       ) : messages.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center h-full">
-          <div className="w-14 h-14 rounded-2xl bg-muted/50 flex items-center justify-center mb-4 border border-border/20 shadow-inner">
+          <div className="w-12 h-12 rounded-[calc(var(--radius)*1.25)] bg-muted/50 flex items-center justify-center mb-4 border border-border/20 shadow-inner">
             <svg className="w-6 h-6 text-muted-foreground animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>

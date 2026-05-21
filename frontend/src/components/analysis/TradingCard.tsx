@@ -145,7 +145,7 @@ export const TradingCard = memo(function TradingCard({ data }: { data: TradeCard
   return (
     <div className="glass-card border border-border/50 bg-card/65 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-4 border-b border-border/30">
+      <div className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 border-b border-border/30">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shadow-inner">
             <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>

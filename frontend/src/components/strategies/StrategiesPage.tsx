@@ -163,7 +163,7 @@ export function StrategiesPage() {
   );
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Strategy library"
         title="Reusable trading strategy system"
@@ -265,9 +265,9 @@ export function StrategiesPage() {
         </div>
       ) : error ? (
         <Card className="border-destructive/25">
-          <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
+          <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
             <p className="section-eyebrow">Strategy library</p>
-            <h2 className="text-2xl font-semibold tracking-tight">Failed to load strategies</h2>
+            <h2 className="text-xl font-semibold tracking-tight">Failed to load strategies</h2>
             <p className="max-w-xl text-sm text-muted-foreground">{error}</p>
             <Button variant="outline" onClick={fetchStrategies}>
               Retry
@@ -276,13 +276,13 @@ export function StrategiesPage() {
         </Card>
       ) : !filtered.length ? (
         <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center gap-4 p-10 text-center sm:p-14">
-            <div className="gradient-primary flex size-16 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
-              <Waypoints className="size-7" />
+          <CardContent className="flex flex-col items-center justify-center gap-4 p-6 text-center sm:p-8">
+            <div className="gradient-primary flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.45)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <Waypoints className="size-5.5" />
             </div>
             <div className="space-y-2">
               <p className="section-eyebrow">Ready state</p>
-              <h2 className="text-2xl font-semibold tracking-tight">No strategies found</h2>
+              <h2 className="text-xl font-semibold tracking-tight">No strategies found</h2>
               <p className="max-w-xl text-sm text-muted-foreground">
                 {strategies.length
                   ? "Adjust the current filters to reveal matching strategy templates."
@@ -400,13 +400,13 @@ function StrategyCard({
     <Card className="h-full">
       <CardHeader className="gap-4">
         <div className="flex items-start gap-4">
-          <div className="gradient-primary flex size-12 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.4)] text-primary-foreground shadow-[var(--shadow-accent)]">
-            <Waypoints className="size-5" />
+          <div className="gradient-primary flex size-10 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.25)] text-primary-foreground shadow-[var(--shadow-accent)]">
+            <Waypoints className="size-4.5" />
           </div>
 
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="text-lg">{strategy.name}</CardTitle>
+              <CardTitle className="text-base">{strategy.name}</CardTitle>
               <Badge variant={statusVariant}>{strategy.status}</Badge>
               <span
                 className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${CATEGORY_COLORS[strategy.category]}`}
@@ -481,11 +481,11 @@ function Metric({
   } as const;
 
   return (
-    <div className="rounded-[calc(var(--radius)*1.25)] border border-border/60 bg-muted/16 p-3">
+    <div className="rounded-[calc(var(--radius)*1.15)] border border-border/60 bg-muted/16 p-2.5">
       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         {label}
       </p>
-      <p className={`mt-2 text-lg font-semibold tracking-tight ${colorMap[tone]}`}>
+      <p className={`mt-1.5 text-base font-semibold tracking-tight ${colorMap[tone]}`}>
         {value}
       </p>
     </div>

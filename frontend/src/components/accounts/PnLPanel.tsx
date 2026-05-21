@@ -13,7 +13,7 @@ function dateStr(offset: number): string {
 function PnlCard({ label, summary, loading, accent }: { label: string; summary: PnlSummary | null; loading?: boolean; accent?: string }) {
   if (loading) {
     return (
-      <div className="rounded-2xl border border-border/40 bg-card p-5 space-y-3">
+      <div className="rounded-2xl border border-border/40 bg-card p-4.5 space-y-2.5">
         <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">{label}</span>
         <div className="h-7 w-24 animate-pulse bg-muted rounded-lg" />
         <div className="h-3 w-32 animate-pulse bg-muted rounded" />
@@ -22,7 +22,7 @@ function PnlCard({ label, summary, loading, accent }: { label: string; summary: 
   }
   if (!summary) {
     return (
-      <div className="rounded-2xl border border-border/40 bg-card p-5 space-y-3">
+      <div className="rounded-2xl border border-border/40 bg-card p-4.5 space-y-2.5">
         <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">{label}</span>
         <p className="text-lg font-bold text-muted-foreground/30">—</p>
       </div>
@@ -31,11 +31,11 @@ function PnlCard({ label, summary, loading, accent }: { label: string; summary: 
   const pnl = parseFloat(summary.total_pnl) || 0;
   const isPositive = pnl >= 0;
   return (
-    <div className={`rounded-2xl border bg-card p-5 space-y-3 ${
+    <div className={`rounded-2xl border bg-card p-4.5 space-y-2.5 ${
       accent ? `border-${accent}-500/20` : "border-border/40"
     }`}>
       <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">{label}</span>
-      <p className={`text-2xl font-bold tabular-nums tracking-tight ${isPositive ? "text-emerald-500" : "text-red-500"}`}>
+      <p className={`text-xl font-bold tabular-nums tracking-tight ${isPositive ? "text-emerald-500" : "text-red-500"}`}>
         {isPositive ? "+" : ""}${pnl.toFixed(2)}
       </p>
       <div className="flex items-center gap-3">
@@ -55,7 +55,7 @@ function PnlCard({ label, summary, loading, accent }: { label: string; summary: 
 
 function StatCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="rounded-2xl border border-border/40 bg-card p-5 space-y-2">
+    <div className="rounded-2xl border border-border/40 bg-card p-4.5 space-y-2">
       <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">{label}</span>
       <p className={`text-xl font-bold tabular-nums tracking-tight ${color ?? ""}`}>{value}</p>
     </div>
@@ -121,14 +121,14 @@ export function PnLPanel({ accountId }: PnLPanelProps) {
 
   if (!accountId) {
     return (
-      <div className="rounded-2xl border border-border/40 bg-card p-12 text-center">
+      <div className="rounded-2xl border border-border/40 bg-card p-8 text-center">
         <p className="text-sm text-muted-foreground/60">No PnL data available</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* PnL Overview */}
       <div>
         <h3 className="text-sm font-semibold text-muted-foreground/80 uppercase tracking-wider mb-4">PnL Overview</h3>
@@ -144,7 +144,7 @@ export function PnLPanel({ accountId }: PnLPanelProps) {
         <div>
           <h3 className="text-sm font-semibold text-muted-foreground/80 uppercase tracking-wider mb-4">7-Day Breakdown</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div className="rounded-2xl border border-border/40 bg-card p-5 space-y-2">
+            <div className="rounded-2xl border border-border/40 bg-card p-4.5 space-y-2">
               <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Win Rate</span>
               <p className="text-xl font-bold tabular-nums tracking-tight">{weekPnl.win_rate.toFixed(1)}%</p>
               {/* Win/loss bar */}
@@ -171,7 +171,7 @@ export function PnLPanel({ accountId }: PnLPanelProps) {
       {/* Custom Range */}
       <div>
         <h3 className="text-sm font-semibold text-muted-foreground/80 uppercase tracking-wider mb-4">Custom Range</h3>
-        <div className="rounded-2xl border border-border/40 bg-card p-5 space-y-4">
+        <div className="rounded-2xl border border-border/40 bg-card p-4.5 space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
             <input
               type="date"
@@ -193,7 +193,7 @@ export function PnLPanel({ accountId }: PnLPanelProps) {
             <button
               onClick={fetchCustom}
               disabled={loadingCustom}
-              className="px-5 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:brightness-110 active:scale-[0.98] transition-all shadow-lg shadow-primary/25 disabled:opacity-50"
+              className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:brightness-110 active:scale-[0.98] transition-all shadow-lg shadow-primary/25 disabled:opacity-50"
             >
               {loadingCustom ? (
                 <div className="flex items-center gap-2">

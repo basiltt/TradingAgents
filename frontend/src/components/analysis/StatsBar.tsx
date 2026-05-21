@@ -20,12 +20,12 @@ function formatNumber(n: number): string {
 
 function StatCard({ label, value, icon, iconColor }: { label: string; value: string; icon: React.ReactNode; iconColor?: string }) {
   return (
-    <div className="glass-card border border-border/40 bg-card/65 rounded-2xl p-5 shadow-sm flex items-center gap-4 transition-all duration-300 hover:scale-[1.02] hover:border-border/60 hover:bg-card/85">
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-inner ${iconColor ?? "bg-muted text-muted-foreground"}`}>
+    <div className="glass-card border border-border/40 bg-card/65 rounded-2xl p-4 shadow-sm flex items-center gap-3.5 transition-all duration-300 hover:scale-[1.02] hover:border-border/60 hover:bg-card/85">
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner ${iconColor ?? "bg-muted text-muted-foreground"}`}>
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-2xl font-black leading-none tracking-tight text-foreground tabular-nums">{value}</p>
+        <p className="text-xl font-black leading-none tracking-tight text-foreground tabular-nums">{value}</p>
         <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">{label}</p>
       </div>
     </div>
@@ -36,11 +36,11 @@ const STAT_LABELS = ["Tokens In", "Tokens Out", "LLM Calls", "Tool Calls"];
 
 export const StatsBar = memo(function StatsBar({ stats }: StatsBarProps) {
   const grid = (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
       {stats === null ? (
         STAT_LABELS.map((label) => (
-          <div key={label} className="glass-card border border-border/30 bg-card/45 rounded-2xl p-5 shadow-sm flex items-center gap-4">
-            <div className="w-11 h-11 rounded-xl bg-muted animate-pulse shrink-0" />
+          <div key={label} className="glass-card border border-border/30 bg-card/45 rounded-2xl p-4 shadow-sm flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-muted animate-pulse shrink-0" />
             <div className="space-y-1.5 flex-1">
               <div className="h-5 w-12 bg-muted rounded animate-pulse text-transparent select-none">--</div>
               <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">{label}</p>

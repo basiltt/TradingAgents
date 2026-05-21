@@ -53,7 +53,7 @@ export function HomeDashboard() {
   const failedCount = entries.filter(([, run]) => run.status === "failed").length;
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Trading Workspace"
         title="Autonomous trading research, portfolio oversight, and scanner automation in one adaptive UI."
@@ -62,13 +62,13 @@ export function HomeDashboard() {
           <>
             <Link
               to="/analysis/new"
-              className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-primary/20 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+              className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-primary/20 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
             >
               Start analysis
             </Link>
             <Link
               to="/scanner"
-              className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-border/70 bg-card/75 px-4 py-3 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
+              className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-border/70 bg-card/75 px-3.5 py-2.5 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
             >
               Open scanner
             </Link>
@@ -94,9 +94,9 @@ export function HomeDashboard() {
           return (
             <Link key={card.title} to={card.to} className="block">
               <Card className="h-full hover:-translate-y-1">
-                <CardHeader className="space-y-4">
-                  <div className="flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
-                    <Icon className="size-5" />
+                <CardHeader className="space-y-3">
+                  <div className="flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+                    <Icon className="size-4.5" />
                   </div>
                   <div className="space-y-2">
                     <CardTitle>{card.title}</CardTitle>
@@ -120,7 +120,7 @@ export function HomeDashboard() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="section-eyebrow">Live activity</p>
-              <h2 className="text-2xl font-semibold tracking-tight">Active analysis queue</h2>
+              <h2 className="text-xl font-semibold tracking-tight">Active analysis queue</h2>
             </div>
             <Link to="/history" className="text-sm font-semibold text-primary">
               View full history
@@ -134,7 +134,7 @@ export function HomeDashboard() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="section-eyebrow">Pipeline run</p>
-                        <CardTitle className="mt-2 font-mono text-2xl tracking-[0.04em]">
+                        <CardTitle className="mt-2 font-mono text-xl tracking-[0.04em]">
                           {run.ticker}
                         </CardTitle>
                       </div>
@@ -142,7 +142,7 @@ export function HomeDashboard() {
                         {run.status}
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-2 rounded-[calc(var(--radius)*1.25)] border border-border/60 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-border/60 bg-muted/20 px-2.5 py-1.5 text-[0.82rem] text-muted-foreground">
                       <Activity className="size-4 text-primary" />
                       <span className="truncate">
                         {run.currentAgent ? `${run.currentAgent} is currently active` : "Waiting for orchestration"}
@@ -168,13 +168,13 @@ export function HomeDashboard() {
         </section>
       ) : (
         <Card className="overflow-hidden border-dashed">
-          <CardContent className="grid gap-5 p-6 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center">
-            <div className="gradient-primary flex size-14 items-center justify-center rounded-[calc(var(--radius)*1.6)] text-primary-foreground shadow-[var(--shadow-accent)]">
-              <Sparkles className="size-6" />
+          <CardContent className="grid gap-4 p-5 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center">
+            <div className="gradient-primary flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.45)] text-primary-foreground shadow-[var(--shadow-accent)]">
+              <Sparkles className="size-5.5" />
             </div>
             <div className="space-y-2">
               <p className="section-eyebrow">Ready state</p>
-              <h2 className="text-2xl font-semibold tracking-tight">No active runs yet</h2>
+              <h2 className="text-xl font-semibold tracking-tight">No active runs yet</h2>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                 Launch a new analysis to stream agent reasoning, monitor progress, and capture the final report from the redesigned workspace.
               </p>
@@ -182,13 +182,13 @@ export function HomeDashboard() {
             <div className="flex flex-wrap gap-3 md:justify-end">
               <Link
                 to="/analysis/new"
-                className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-primary/20 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+                className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-primary/20 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
               >
                 Start analysis
               </Link>
               <Link
                 to="/scanner"
-                className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-border/70 bg-card/75 px-4 py-3 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
+                className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-border/70 bg-card/75 px-3.5 py-2.5 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
               >
                 Explore scanner
               </Link>

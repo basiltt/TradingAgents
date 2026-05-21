@@ -7,8 +7,8 @@ interface PositionsTableProps {
 export function PositionsTable({ positions }: PositionsTableProps) {
   if (positions.length === 0) {
     return (
-      <div className="rounded-2xl border border-border/40 bg-card p-12 text-center">
-        <div className="w-12 h-12 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4">
+      <div className="rounded-2xl border border-border/40 bg-card p-8 text-center">
+        <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-muted/50 flex items-center justify-center mx-auto mb-4">
           <svg className="w-6 h-6 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
@@ -25,7 +25,7 @@ export function PositionsTable({ positions }: PositionsTableProps) {
   return (
     <div className="space-y-4">
       {/* Summary strip */}
-      <div className="flex items-center gap-6 px-1">
+      <div className="flex items-center gap-4 px-1">
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-muted-foreground/50 uppercase tracking-wider font-semibold">Total PnL</span>
           <span className={`text-sm font-bold tabular-nums ${totalPnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
@@ -47,14 +47,14 @@ export function PositionsTable({ positions }: PositionsTableProps) {
         <table className="w-full text-sm min-w-[700px]">
           <thead>
             <tr className="border-b border-border/30">
-              <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>
-              <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Side</th>
-              <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Size</th>
-              <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Entry</th>
-              <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Mark</th>
-              <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">PnL</th>
-              <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Leverage</th>
-              <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Liq. Price</th>
+            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>
+            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Side</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Size</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Entry</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Mark</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">PnL</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Leverage</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Liq. Price</th>
             </tr>
           </thead>
           <tbody>
@@ -67,10 +67,10 @@ export function PositionsTable({ positions }: PositionsTableProps) {
 
               return (
                 <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/[0.04] transition-colors">
-                  <td className="px-5 py-3.5">
+                  <td className="px-4 py-3">
                     <span className="font-semibold">{p.symbol}</span>
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-4 py-3">
                     <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider border ${
                       isLong
                         ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/[0.08]"
@@ -79,16 +79,16 @@ export function PositionsTable({ positions }: PositionsTableProps) {
                       {isLong ? "Long" : "Short"}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-right font-medium tabular-nums">{p.size}</td>
-                  <td className="px-5 py-3.5 text-right tabular-nums text-muted-foreground">{parseFloat(p.avgPrice).toFixed(2)}</td>
-                  <td className="px-5 py-3.5 text-right font-medium tabular-nums">{mark.toFixed(2)}</td>
-                  <td className={`px-5 py-3.5 text-right font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                  <td className="px-4 py-3 text-right font-medium tabular-nums">{p.size}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{parseFloat(p.avgPrice).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right font-medium tabular-nums">{mark.toFixed(2)}</td>
+                  <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                     {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
                   </td>
-                  <td className="px-5 py-3.5 text-right">
+                  <td className="px-4 py-3 text-right">
                     <span className="text-xs px-2 py-0.5 rounded-md bg-muted/50 font-medium tabular-nums">{p.leverage}x</span>
                   </td>
-                  <td className="px-5 py-3.5 text-right">
+                  <td className="px-4 py-3 text-right">
                     {liq > 0 ? (
                       <div className="flex items-center justify-end gap-2">
                         <span className={`font-medium tabular-nums ${

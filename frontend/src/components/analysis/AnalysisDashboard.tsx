@@ -9,6 +9,7 @@ import { ReportPanel } from "./ReportPanel";
 import { StatsBar } from "./StatsBar";
 import { ReconnectionIndicator } from "./ReconnectionIndicator";
 import { AnalysisStatusBadge } from "./AnalysisStatusBadge";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +41,7 @@ function ConfigSummary({ config }: { config: Record<string, unknown> }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-3 w-full text-left px-5 py-4 flex-wrap cursor-pointer"
+        className="flex items-center gap-3 w-full text-left px-4 py-3.5 flex-wrap cursor-pointer"
       >
         <div className="w-8 h-8 rounded-lg bg-muted/50 flex items-center justify-center text-muted-foreground shrink-0">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -83,7 +84,7 @@ function ConfigSummary({ config }: { config: Record<string, unknown> }) {
         )}
       </button>
       {open && extras.length > 0 && (
-        <div className="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs border-t border-border/30 pt-4 animate-fade-in">
+        <div className="px-4 pb-4.5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs border-t border-border/30 pt-3.5 animate-fade-in">
           {extras.map(([k, v]) => (
             <div key={k} className="flex flex-col gap-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10">
               <span className="text-[10px] uppercase tracking-wider text-muted-foreground/75 font-semibold">{k}</span>
@@ -204,52 +205,75 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
 
   // Terminal run whose snapshot/report is still being fetched from the backend
   const isLoadingTerminalData = isTerminal && !hasLiveData && (isLoadingSnapshot || isLoadingReport);
+  const effectiveRunStatus =
+    ["completed", "failed", "cancelled"].includes(wsData?.progress?.phase ?? "")
+      ? (wsData?.progress?.phase ?? runDetails?.status ?? "running")
+      : (runDetails?.status ?? "running");
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 pb-4 border-b border-border/20">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-3 flex-wrap">
+    <div className="page-shell space-y-5 pb-8">
+      <PageHeader
+        eyebrow="Research pipeline"
+        title={runDetails?.ticker ? `Analysis: ${runDetails.ticker} Pipeline` : "Analysis Pipeline Run"}
+        description="Monitor live agent output, track reconnect state, and review the final decision package from a single run console."
+        stats={[
+          {
+            label: "Feed",
+            value: status === "connected" ? "Live" : status === "connecting" ? "Syncing" : "Replay",
+            tone: status === "connected" ? "success" : "warning",
+          },
+          {
+            label: "Agents",
+            value: String(Object.keys(agents).length),
+            tone: "accent",
+          },
+          {
+            label: "Messages",
+            value: String(messages.length),
+            tone: "neutral",
+          },
+          {
+            label: "Reports",
+            value: String(Object.keys(reports).length),
+            tone: isTerminal ? "success" : "neutral",
+          },
+        ]}
+        actions={
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => window.history.back()}
-              className="w-10 h-10 rounded-xl bg-card border border-border/50 hover:bg-muted flex items-center justify-center shrink-0 transition-all duration-200 active:scale-95 cursor-pointer shadow-sm"
+              className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-border/70 bg-card/72 px-3.5 py-2.5 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)]"
               title="Go back"
             >
-              <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <svg className="mr-2 size-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
+              Back
             </button>
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 shadow-inner">
-              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
+            <div className="hidden sm:block">
+              <ReconnectionIndicator status={status} attempt={attempt} />
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground bg-clip-text">
-              {runDetails?.ticker ? `Analysis: ${runDetails.ticker} Pipeline` : "Analysis Pipeline Run"}
-            </h1>
-            <AnalysisStatusBadge status={
-              ["completed", "failed", "cancelled"].includes(wsData?.progress?.phase ?? "")
-                ? wsData!.progress!.phase
-                : runDetails?.status
-            } />
+          </div>
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <AnalysisStatusBadge status={effectiveRunStatus} />
+          <span className="inline-flex min-h-8 items-center rounded-full border border-border/60 bg-card/68 px-3 py-1 text-xs font-semibold text-muted-foreground shadow-[var(--shadow-soft)]">
             <DurationBadge
               startedAt={runDetails?.started_at}
               completedAt={runDetails?.completed_at}
               isTerminal={isTerminal}
             />
-            {/* Reconnection indicator inline on mobile, pushed right on sm+ */}
-            <div className="sm:hidden">
-              <ReconnectionIndicator status={status} attempt={attempt} />
-            </div>
+          </span>
+          <span className="inline-flex min-h-8 items-center rounded-full border border-border/60 bg-card/68 px-3 py-1 font-mono text-xs text-muted-foreground shadow-[var(--shadow-soft)]">
+            ID: {runId}
+          </span>
+          <div className="sm:hidden">
+            <ReconnectionIndicator status={status} attempt={attempt} />
           </div>
-          <p className="text-xs text-muted-foreground mt-1.5 font-mono select-all w-fit bg-muted/30 px-2 py-0.5 rounded border border-border/10">ID: {runId}</p>
         </div>
-        <div className="hidden sm:block shrink-0">
-          <ReconnectionIndicator status={status} attempt={attempt} />
-        </div>
-      </div>
+      </PageHeader>
 
       {/* Config summary */}
       {Object.keys(parsedConfig).length > 0 && (
@@ -258,7 +282,7 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
 
       {/* Running indicator */}
       {!isTerminal && !isLoading && (
-        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 shadow-sm animate-pulse-slow">
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3.5 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 shadow-sm animate-pulse-slow">
           <div className="flex items-center gap-2.5 shrink-0">
             <svg className="w-5 h-5 text-primary animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

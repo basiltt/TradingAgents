@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { useAppSelector } from "@/store";
-import { applyPalette, persistAppearance, resolveThemeMode } from "@/lib/theme";
+import { applyContrast, applyPalette, persistAppearance, resolveThemeMode } from "@/lib/theme";
 
 export function useThemeEffect() {
   const theme = useAppSelector((s) => s.ui.theme);
   const palette = useAppSelector((s) => s.ui.palette);
+  const contrast = useAppSelector((s) => s.ui.contrast);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -26,6 +27,7 @@ export function useThemeEffect() {
   useEffect(() => {
     const root = document.documentElement;
     applyPalette(root, palette);
-    persistAppearance(theme, palette);
-  }, [theme, palette]);
+    applyContrast(root, contrast);
+    persistAppearance(theme, palette, contrast);
+  }, [contrast, palette, theme]);
 }

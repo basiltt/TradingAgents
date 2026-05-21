@@ -38,7 +38,7 @@ function TableSkeleton() {
 function TableError({ resetErrorBoundary }: { resetErrorBoundary?: () => void }) {
   return (
     <Card className="border-dashed">
-      <CardContent className="flex flex-col items-center justify-center gap-3 p-8 text-center">
+      <CardContent className="flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="section-eyebrow">Trade feed</p>
         <h3 className="text-xl font-semibold tracking-tight">Failed to load trades</h3>
         <p className="max-w-xl text-sm text-muted-foreground">
@@ -57,9 +57,9 @@ function TableError({ resetErrorBoundary }: { resetErrorBoundary?: () => void })
 function FullPageError({ resetErrorBoundary }: { resetErrorBoundary?: () => void }) {
   return (
     <Card className="border-dashed">
-      <CardContent className="flex min-h-[55vh] flex-col items-center justify-center gap-3 p-8 text-center">
+      <CardContent className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="section-eyebrow">Execution workspace</p>
-        <h2 className="text-2xl font-semibold tracking-tight">Something went wrong</h2>
+        <h2 className="text-xl font-semibold tracking-tight">Something went wrong</h2>
         <p className="max-w-xl text-sm text-muted-foreground">
           The trade desk hit an unexpected error while rendering. Reload the page surface to recover.
         </p>
@@ -119,7 +119,7 @@ function HistoryTradesView() {
   if (error) {
     return (
       <Card className="border-dashed">
-        <CardContent className="flex flex-col items-center justify-center gap-3 p-8 text-center">
+        <CardContent className="flex flex-col items-center justify-center gap-3 p-6 text-center">
           <p className="section-eyebrow">History stream</p>
           <h3 className="text-xl font-semibold tracking-tight">Trade history is unavailable</h3>
           <p className="max-w-xl text-sm text-muted-foreground">
@@ -177,9 +177,9 @@ export default function TradesPage() {
   if (accounts.length === 0 && accountsStatus !== "idle" && accountsStatus !== "loading") {
     return (
       <Card className="border-dashed">
-        <CardContent className="flex min-h-[55vh] flex-col items-center justify-center gap-4 p-8 text-center">
+        <CardContent className="flex min-h-[50vh] flex-col items-center justify-center gap-4 p-6 text-center">
           <p className="section-eyebrow">Execution workspace</p>
-          <h2 className="text-2xl font-semibold tracking-tight">No accounts connected</h2>
+          <h2 className="text-xl font-semibold tracking-tight">No accounts connected</h2>
           <p className="max-w-xl text-sm text-muted-foreground">
             Connect a trading account before opening the trade desk so positions, orders, and
             close actions have a live execution target.
@@ -194,7 +194,7 @@ export default function TradesPage() {
 
   return (
     <ErrorBoundary FallbackComponent={FullPageError}>
-      <div className="space-y-6 pb-8">
+      <div className="space-y-5 pb-7">
         {!wsConnected ? <WsDisconnectBanner lastUpdated={lastUpdated} /> : null}
 
         <PageHeader
@@ -242,7 +242,7 @@ export default function TradesPage() {
               <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                 <div className="space-y-2">
                   <p className="section-eyebrow">Trade explorer</p>
-                  <h2 className="text-2xl font-semibold tracking-tight">
+                  <h2 className="text-xl font-semibold tracking-tight">
                     Switch between active execution and archived fills.
                   </h2>
                   <p className="max-w-3xl text-sm text-muted-foreground">

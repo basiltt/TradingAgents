@@ -1,5 +1,6 @@
 export type ThemeMode = "light" | "dark" | "system";
 export type ThemePalette = "aurora" | "lagoon" | "ember" | "verdant";
+export type ThemeContrast = "standard" | "high";
 
 export interface ThemePaletteDefinition {
   key: ThemePalette;
@@ -22,12 +23,15 @@ export interface ThemePaletteDefinition {
 }
 
 export const DEFAULT_THEME_MODE: ThemeMode = "system";
-export const DEFAULT_THEME_PALETTE: ThemePalette = "aurora";
+export const DEFAULT_THEME_PALETTE: ThemePalette = "lagoon";
+export const DEFAULT_THEME_CONTRAST: ThemeContrast = "standard";
 
 export const THEME_STORAGE_KEY = "tradingagents-ui-theme";
 export const PALETTE_STORAGE_KEY = "tradingagents-ui-palette";
+export const CONTRAST_STORAGE_KEY = "tradingagents-ui-contrast";
 
 export const themeModeOrder = ["light", "dark", "system"] as const;
+export const themeContrastOrder = ["standard", "high"] as const;
 
 export const themePalettes = {
   aurora: {
@@ -122,6 +126,10 @@ export function isThemePalette(value: unknown): value is ThemePalette {
   return typeof value === "string" && value in themePalettes;
 }
 
+export function isThemeContrast(value: unknown): value is ThemeContrast {
+  return typeof value === "string" && themeContrastOrder.includes(value as ThemeContrast);
+}
+
 export function getStoredThemeMode(): ThemeMode {
   if (!canUseDom()) return DEFAULT_THEME_MODE;
   const value = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -132,6 +140,12 @@ export function getStoredThemePalette(): ThemePalette {
   if (!canUseDom()) return DEFAULT_THEME_PALETTE;
   const value = window.localStorage.getItem(PALETTE_STORAGE_KEY);
   return isThemePalette(value) ? value : DEFAULT_THEME_PALETTE;
+}
+
+export function getStoredThemeContrast(): ThemeContrast {
+  if (!canUseDom()) return DEFAULT_THEME_CONTRAST;
+  const value = window.localStorage.getItem(CONTRAST_STORAGE_KEY);
+  return isThemeContrast(value) ? value : DEFAULT_THEME_CONTRAST;
 }
 
 export function resolveThemeMode(
@@ -173,10 +187,19 @@ export function applyPalette(
   return palette;
 }
 
-export function persistAppearance(theme: ThemeMode, palette: ThemePalette) {
+export function applyContrast(root: HTMLElement, contrast: ThemeContrast) {
+  root.dataset.contrast = contrast;
+}
+
+export function persistAppearance(
+  theme: ThemeMode,
+  palette: ThemePalette,
+  contrast: ThemeContrast,
+) {
   if (!canUseDom()) return;
   window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   window.localStorage.setItem(PALETTE_STORAGE_KEY, palette);
+  window.localStorage.setItem(CONTRAST_STORAGE_KEY, contrast);
 }
 
 export function getPalettePreview(paletteKey: ThemePalette): string {

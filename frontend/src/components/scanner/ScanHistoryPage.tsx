@@ -144,8 +144,8 @@ export function ScanHistoryPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Scan History</h1>
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Scan History</h1>
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-5 text-center">
           <p className="text-destructive text-sm">Failed to load scan history.</p>
         </div>
       </div>
@@ -153,7 +153,7 @@ export function ScanHistoryPage() {
   }
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-7">
       <PageHeader
         eyebrow="Research archive"
         title="Scan history command center"
@@ -161,7 +161,7 @@ export function ScanHistoryPage() {
         actions={
           <Link
             to="/scanner"
-            className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.2)] border border-primary/25 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+            className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-primary/25 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -185,9 +185,9 @@ export function ScanHistoryPage() {
 
       {/* Empty state */}
       {scans.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/60 p-16 text-center">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
-            <svg className="w-8 h-8 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center">
+          <div className="w-12 h-12 mx-auto rounded-[calc(var(--radius)*1.25)] bg-muted/50 flex items-center justify-center mb-4">
+            <svg className="w-6 h-6 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
@@ -197,7 +197,7 @@ export function ScanHistoryPage() {
           </p>
           <Link
             to="/scanner"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/25"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white font-medium text-sm hover:brightness-110 transition-all shadow-lg shadow-primary/25"
           >
             Start Scan
           </Link>
@@ -223,7 +223,7 @@ export function ScanHistoryPage() {
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.03] via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
                 {/* Header */}
-                <div className="relative flex items-center justify-between px-5 pt-5 pb-2">
+                <div className="relative flex items-center justify-between px-4 pt-4 pb-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ring-1 ring-inset ${
                       scan.status === "completed" ? "bg-emerald-500/10 ring-emerald-500/20" :
@@ -276,9 +276,9 @@ export function ScanHistoryPage() {
                 </div>
 
                 {/* Results highlight */}
-                <div className="relative px-5 pb-1">
+                <div className="relative px-4 pb-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-extrabold tabular-nums tracking-tight">{total}</span>
+                    <span className="text-2xl font-extrabold tabular-nums tracking-tight">{total}</span>
                     <span className="text-sm text-muted-foreground/40 font-medium">results</span>
                     {scan.interval && (
                       <span className="ml-auto px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20 text-[10px] font-bold text-primary uppercase tracking-wider">
@@ -289,7 +289,7 @@ export function ScanHistoryPage() {
                 </div>
 
                 {/* Scan progress bar */}
-                <div className="relative px-5 pb-4 pt-1.5">
+                <div className="relative px-4 pb-3.5 pt-1.5">
                   <div className="flex items-center gap-2.5">
                     <div className="flex-1 h-1.5 rounded-full bg-muted/20 overflow-hidden">
                       {(() => {
@@ -313,7 +313,7 @@ export function ScanHistoryPage() {
 
                 {/* Running scan extra progress */}
                 {scan.status === "running" && (
-                  <div className="mx-5 mb-3 rounded-lg bg-blue-500/[0.06] border border-blue-500/10 px-3 py-2">
+                  <div className="mx-4 mb-3 rounded-lg bg-blue-500/[0.06] border border-blue-500/10 px-3 py-2">
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[10px] text-blue-400 font-semibold uppercase tracking-wider">Scanning...</span>
                       <span className="text-[10px] text-blue-400/70 font-mono tabular-nums">{progress}%</span>
@@ -327,7 +327,7 @@ export function ScanHistoryPage() {
                 )}
 
                 {/* Signal metrics */}
-                <div className="relative grid grid-cols-3 gap-2.5 px-5 pb-4">
+                <div className="relative grid grid-cols-3 gap-2 px-4 pb-3.5">
                   <div className="rounded-xl bg-emerald-500/[0.05] border border-emerald-500/10 px-3 py-2.5 text-center">
                     <div className={`text-base font-bold tabular-nums ${buy > 0 ? "text-emerald-500" : "text-muted-foreground/30"}`}>{buy}</div>
                     <div className="text-[9px] text-muted-foreground/50 uppercase tracking-wider font-semibold mt-0.5">Buy</div>
@@ -343,7 +343,7 @@ export function ScanHistoryPage() {
                 </div>
 
                 {/* Footer */}
-                <div className="relative flex items-center justify-between px-5 py-2.5 border-t border-border/20">
+                <div className="relative flex items-center justify-between px-4 py-2.25 border-t border-border/20">
                   <span className="text-[11px] text-muted-foreground/40 font-medium">
                     {formatDate(scan.started_at)}
                   </span>
@@ -367,9 +367,9 @@ export function ScanHistoryPage() {
             className="absolute inset-0 bg-black/60 backdrop-blur-md"
             onClick={() => !deleteMutation.isPending && setDeleteConfirm(null)}
           />
-          <div className="relative bg-card/85 border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5 backdrop-blur-md">
-            <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
-              <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="relative bg-card/85 border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4 backdrop-blur-md">
+            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
+              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
             </div>
@@ -404,14 +404,14 @@ export function ScanHistoryPage() {
               <button
                 onClick={() => setDeleteConfirm(null)}
                 disabled={deleteMutation.isPending}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => deleteMutation.mutate(deleteConfirm.scanId)}
                 disabled={deleteConfirm.loading || deleteMutation.isPending}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {deleteMutation.isPending && (
                   <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

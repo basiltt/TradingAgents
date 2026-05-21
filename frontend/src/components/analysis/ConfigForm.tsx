@@ -16,6 +16,8 @@ import { getModelOptions } from "@/lib/model-catalog";
 import { ConnBadge } from "@/components/ui/conn-badge";
 import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
 import { ModelSelect } from "@/components/ui/model-select";
+import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { WatchlistPanel } from "./WatchlistPanel";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "./AgentModelOverrides";
 import { cn } from "@/lib/utils";
@@ -447,14 +449,50 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[min(var(--app-max-width),88rem)] space-y-8 animate-fade-in-up pb-10">
-      <div>
-        <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">New Analysis Run</h1>
-        <p className="text-sm text-muted-foreground mt-2 font-medium">Configure and deploy custom multi-agent trading analysis pipelines.</p>
-      </div>
+    <div className="page-shell space-y-6 animate-fade-in-up pb-8">
+      <PageHeader
+        eyebrow="Research launchpad"
+        title="New Analysis Run"
+        description="Configure asset scope, analyst composition, and execution models from a denser multi-step builder tuned for both laptops and touch devices."
+        stats={[
+          {
+            label: "Asset Class",
+            value: watchedAssetType === "crypto" ? "Crypto" : "Stock",
+            tone: "accent",
+          },
+          {
+            label: "Analysts",
+            value: String(watchedAnalysts.length),
+            tone: watchedAnalysts.length > 0 ? "success" : "neutral",
+          },
+          {
+            label: "Workflow",
+            value: watchedWorkflowMode === "quick_trade" ? "Quick Trade" : "Deep Analysis",
+            tone: watchedWorkflowMode === "quick_trade" ? "warning" : "success",
+          },
+          {
+            label: "Provider",
+            value: selectedProvider || "Auto",
+            tone: "neutral",
+          },
+        ]}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{watchedTicker ? `Ticker ${watchedTicker.toUpperCase()}` : "Ticker pending"}</Badge>
+          <Badge variant="outline">{watchedLang || "English"} output</Badge>
+          {watchedAssetType === "crypto" && watchedInterval ? (
+            <Badge variant="outline">{watchedInterval} interval</Badge>
+          ) : null}
+          <ConnBadge
+            status={backendConn.status}
+            latency={backendConn.latency}
+            error={backendConn.errorMsg}
+          />
+        </div>
+      </PageHeader>
 
       {/* Progress Stepper */}
-      <div className="mx-auto mb-6 flex max-w-xl items-center justify-between px-4">
+      <div className="glass-card mb-5 flex w-full items-center justify-between gap-2 rounded-[calc(var(--radius)*1.65)] border border-border/60 px-3.5 py-3 sm:px-5">
         {[
           { stepNum: 1, title: "Target Asset" },
           { stepNum: 2, title: "Analyst Team" },
@@ -479,7 +517,7 @@ export function ConfigForm() {
             >
               <div
                 className={cn(
-                  "w-9 h-9 rounded-xl flex items-center justify-center border font-bold text-xs transition-all duration-300",
+                  "flex h-10 w-10 items-center justify-center rounded-[calc(var(--radius)*1.1)] border font-bold text-xs transition-all duration-300",
                   step === s.stepNum
                     ? "bg-primary border-primary text-primary-foreground shadow-lg shadow-primary/20 scale-110"
                     : step > s.stepNum
@@ -497,7 +535,7 @@ export function ConfigForm() {
               </div>
               <span
                 className={cn(
-                  "text-[9px] font-black uppercase tracking-wider transition-all",
+                  "text-[9px] font-black uppercase tracking-[0.24em] transition-all text-center",
                   step === s.stepNum ? "text-foreground" : "text-muted-foreground"
                 )}
               >
@@ -507,7 +545,7 @@ export function ConfigForm() {
             {idx < 2 && (
               <div
                 className={cn(
-                  "h-[2px] flex-1 mx-4 rounded transition-all duration-500",
+                  "mx-3 h-[2px] flex-1 rounded-full transition-all duration-500 sm:mx-4",
                   step > s.stepNum ? "bg-emerald-500/30" : "bg-border/30"
                 )}
               />
@@ -516,11 +554,11 @@ export function ConfigForm() {
         ))}
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-6">
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
         {/* Step 1: Target Asset */}
         {(step === 1 || isTest) && (
           <div className="glass-card border border-border/50 rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in">
-            <div className="px-6 pt-6 pb-4 border-b border-border/40">
+            <div className="px-5 pt-5 pb-3.5 border-b border-border/40">
               <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
                 <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
@@ -528,7 +566,7 @@ export function ConfigForm() {
                 Core Target Settings
               </h2>
             </div>
-            <div className="flex flex-col gap-6 p-6">
+            <div className="flex flex-col gap-5 p-5">
               {/* Asset Type Toggle */}
               <div className="flex flex-col gap-2">
                 <Label className="font-bold text-xs uppercase tracking-wider text-muted-foreground">Asset Type</Label>
@@ -662,7 +700,7 @@ export function ConfigForm() {
                           onChange={(v) => field.onChange(v)}
                           placeholder="Search Bybit pairs (e.g. BTCUSDT)..."
                           loading={symbolsLoading}
-                          className="font-mono text-base tracking-wide h-11"
+                          className="font-mono text-sm tracking-wide h-10"
                         />
                       )}
                     />
@@ -670,7 +708,7 @@ export function ConfigForm() {
                     <Input
                       id="ticker"
                       placeholder="e.g. AAPL, SPY, MSFT"
-                      className="font-mono text-base tracking-widest font-extrabold uppercase h-11 bg-card"
+                      className="font-mono text-sm tracking-widest font-extrabold uppercase h-10 bg-card"
                       aria-invalid={!!errors.ticker}
                       {...register("ticker", {
                         required: "Ticker is required",
@@ -700,7 +738,7 @@ export function ConfigForm() {
                     id="analysis_date"
                     type="date"
                     max={new Date().toISOString().split("T")[0]}
-                    className="h-11 bg-card text-sm font-semibold"
+                    className="h-10 bg-card text-sm font-semibold"
                     aria-invalid={!!errors.analysis_date}
                     {...register("analysis_date", {
                       required: "Date is required",
@@ -724,7 +762,7 @@ export function ConfigForm() {
                     control={control}
                     render={({ field }) => (
                       <Select value={field.value} onValueChange={field.onChange}>
-                        <SelectTrigger className="h-11 bg-card"><SelectValue placeholder="Select interval" /></SelectTrigger>
+                        <SelectTrigger className="h-10 bg-card"><SelectValue placeholder="Select interval" /></SelectTrigger>
                         <SelectContent>
                           {CRYPTO_INTERVALS.map((i) => (
                             <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
@@ -742,7 +780,7 @@ export function ConfigForm() {
 
         {/* Step 2: Analyst Team Config */}
         {(step === 2 || isTest) && (
-          <div className="glass-card border border-border/50 rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in p-6 space-y-6">
+          <div className="glass-card border border-border/50 rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in p-5 space-y-5">
             <div className="border-b border-border/40 pb-4">
               <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
                 <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -776,7 +814,7 @@ export function ConfigForm() {
                         <label
                           key={a}
                           className={cn(
-                            "flex items-start gap-4 p-4.5 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.98] select-none",
+                            "flex items-start gap-3.5 p-4 rounded-[calc(var(--radius)*1.4)] border text-left cursor-pointer transition-all active:scale-[0.98] select-none",
                             isChecked
                               ? "bg-primary/10 border-primary/40 shadow-md shadow-primary/5 text-foreground"
                               : "bg-card/45 border-border/50 text-muted-foreground hover:bg-muted/15"
@@ -848,7 +886,7 @@ export function ConfigForm() {
                   control={control}
                   render={({ field }) => (
                     <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger className="h-11 bg-card"><SelectValue placeholder="English" /></SelectTrigger>
+                      <SelectTrigger className="h-10 bg-card"><SelectValue placeholder="English" /></SelectTrigger>
                       <SelectContent>
                         {LANGUAGES.map((l) => (
                           <SelectItem key={l} value={l}>{l}</SelectItem>
@@ -867,7 +905,7 @@ export function ConfigForm() {
         {(step === 3 || isTest) && (
           <div className="space-y-6 animate-fade-in">
             {/* LLM Options Panel */}
-            <div className="glass-card border border-border/50 rounded-2xl bg-card/65 p-6 space-y-5">
+            <div className="glass-card border border-border/50 rounded-2xl bg-card/65 p-5 space-y-4.5">
               <div className="border-b border-border/40 pb-4">
                 <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
                   <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -885,7 +923,7 @@ export function ConfigForm() {
                   control={control}
                   render={({ field }) => (
                     <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger id="provider" className="h-11 bg-card"><SelectValue placeholder="Select provider" /></SelectTrigger>
+                      <SelectTrigger id="provider" className="h-10 bg-card"><SelectValue placeholder="Select provider" /></SelectTrigger>
                       <SelectContent>
                         {PROVIDERS.map((p) => (
                           <SelectItem key={p} value={p} className="capitalize">
@@ -918,7 +956,7 @@ export function ConfigForm() {
                           placeholder={envDeepThink || "Select model"}
                         />
                       ) : (
-                        <Input placeholder={envDeepThink || "e.g. gpt-4o"} className="font-mono text-sm h-11 bg-card" value={field.value} onChange={field.onChange} />
+                        <Input placeholder={envDeepThink || "e.g. gpt-4o"} className="font-mono text-sm h-10 bg-card" value={field.value} onChange={field.onChange} />
                       )
                     }
                   />
@@ -942,7 +980,7 @@ export function ConfigForm() {
                           placeholder={envQuickThink || "Select model"}
                         />
                       ) : (
-                        <Input placeholder={envQuickThink || "e.g. gpt-4o-mini"} className="font-mono text-sm h-11 bg-card" value={field.value} onChange={field.onChange} />
+                        <Input placeholder={envQuickThink || "e.g. gpt-4o-mini"} className="font-mono text-sm h-10 bg-card" value={field.value} onChange={field.onChange} />
                       )
                     }
                   />
@@ -956,7 +994,7 @@ export function ConfigForm() {
 
             {/* Custom LLM API & Proxy Settings */}
             <div className="glass-card border border-border/50 rounded-2xl overflow-hidden bg-card/65">
-              <div className="px-6 py-5">
+              <div className="px-5 py-4">
                 <SectionToggle
                   label="LLM & Proxy Settings"
                   open={showLLM}
@@ -975,7 +1013,7 @@ export function ConfigForm() {
                           <Input
                             id="backend_url"
                             placeholder="e.g. http://localhost:8000/v1 or custom proxy url"
-                            className="font-mono text-sm pr-9 placeholder:text-muted-foreground/30 bg-card h-11"
+                            className="font-mono text-sm pr-9 placeholder:text-muted-foreground/30 bg-card h-10"
                             autoComplete="off"
                             {...register("backend_url")}
                             onFocus={() => endpoints.length > 1 && setShowEndpoints(true)}
@@ -1041,7 +1079,7 @@ export function ConfigForm() {
                         id="llm_api_key"
                         type="password"
                         placeholder="API key override (stored locally)"
-                        className="font-mono text-sm bg-card h-11"
+                        className="font-mono text-sm bg-card h-10"
                         {...register("llm_api_key")}
                       />
                       <p className="text-[10px] text-muted-foreground pl-1">
@@ -1055,7 +1093,7 @@ export function ConfigForm() {
 
             {/* Advanced Workflow Configuration */}
             <div className="glass-card border border-border/50 rounded-2xl overflow-hidden bg-card/65">
-              <div className="px-6 py-5">
+              <div className="px-5 py-4">
                 <SectionToggle label="Advanced Workflow Configuration" open={showWorkflow} onToggle={() => setShowWorkflow(!showWorkflow)} />
                 {showWorkflow && (
                   <div className="mt-5 space-y-5 pl-1 border-t border-border/30 pt-5 animate-fade-in">
@@ -1097,7 +1135,7 @@ export function ConfigForm() {
             </div>
 
             {/* Agent Model Overrides */}
-            <div className="glass-card border border-border/50 rounded-2xl bg-card/65 p-6">
+            <div className="glass-card border border-border/50 rounded-2xl bg-card/65 p-5">
               <AgentModelOverrides
                 assetType={isCrypto ? "crypto" : "stock"}
                 modelOptions={deepOptions}
@@ -1109,7 +1147,7 @@ export function ConfigForm() {
             {/* Market Data Feeds Overrides (Stock only) */}
             {!isCrypto && (
               <div className="glass-card border border-border/50 rounded-2xl overflow-hidden bg-card/65">
-                <div className="px-6 py-5">
+                <div className="px-5 py-4">
                   <SectionToggle label="Market Data Feeds Overrides" open={showData} onToggle={() => setShowData(!showData)} />
                   {showData && (
                     <div className="mt-5 space-y-4 pl-1 border-t border-border/30 pt-5 animate-fade-in">
@@ -1149,7 +1187,7 @@ export function ConfigForm() {
 
         {/* ── Submit Error ── */}
         {submitError && (
-          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4.5 text-sm text-destructive flex items-start gap-2.5 animate-pulse-slow animate-fade-in" role="alert">
+          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive flex items-start gap-2.5 animate-pulse-slow animate-fade-in" role="alert">
             <svg className="w-5 h-5 shrink-0 mt-0.5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -1164,7 +1202,7 @@ export function ConfigForm() {
               type="button"
               variant="outline"
               onClick={() => setStep((prev) => (prev - 1) as 1 | 2 | 3)}
-              className="px-6 h-12 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
+              className="px-5 h-10 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
             >
               Back
             </Button>
@@ -1181,7 +1219,7 @@ export function ConfigForm() {
                   if (isValid) setStep(3);
                 }
               }}
-              className="flex-1 h-12 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer active:scale-95 transition-all hover:scale-[1.01] shadow-lg shadow-primary/10"
+              className="flex-1 h-10 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer active:scale-95 transition-all hover:scale-[1.01] shadow-lg shadow-primary/10"
             >
               Continue
             </Button>
@@ -1189,7 +1227,7 @@ export function ConfigForm() {
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="flex-1 font-bold h-12 rounded-xl text-xs uppercase tracking-wider transition-all duration-300 hover:scale-[1.01] active:scale-[0.98] cursor-pointer shadow-lg shadow-primary/15 flex items-center justify-center gap-2"
+              className="flex-1 font-bold h-10 rounded-xl text-xs uppercase tracking-wider transition-all duration-300 hover:scale-[1.01] active:scale-[0.98] cursor-pointer shadow-lg shadow-primary/15 flex items-center justify-center gap-2"
             >
               {isSubmitting ? (
                 <>
@@ -1213,7 +1251,7 @@ export function ConfigForm() {
             <Button
               type="button"
               variant="outline"
-              className="h-12 px-6 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
+              className="h-10 px-5 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
               onClick={() => navigate({ to: "/" })}
             >
               Cancel

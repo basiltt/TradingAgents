@@ -155,9 +155,9 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-lg md:max-w-2xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl max-h-[90vh] sm:max-h-[85vh] flex flex-col overflow-hidden p-0" showCloseButton={false}>
+      <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-md md:max-w-xl lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl max-h-[90vh] sm:max-h-[85vh] flex flex-col overflow-hidden p-0" showCloseButton={false}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-4">
+        <div className="flex items-center justify-between px-5 pt-4 pb-3.5">
           <div className="flex items-center gap-4">
             <div>
               <DialogHeader>
@@ -190,7 +190,7 @@ export function StrategyFormDialog({ open, strategy, onClose, onSaved }: Props) 
         </div>
 
         {/* Scrollable body */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-3.5 custom-scrollbar">
           {mode === "quick" ? (
             <QuickModeForm
               name={name} setName={setName}

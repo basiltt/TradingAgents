@@ -55,7 +55,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-48 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
@@ -65,7 +65,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
 
   if (error || !cycle) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <Link to="/cycles" className="text-sm text-primary hover:underline flex items-center gap-1">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -73,7 +73,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
           Back to cycles
         </Link>
         <Card>
-          <CardContent className="py-8 text-center text-destructive">
+          <CardContent className="py-6 text-center text-destructive">
             <p>Cycle not found or failed to load.</p>
             <button onClick={() => refetch()} className="text-sm text-primary hover:underline mt-2">Retry</button>
           </CardContent>
@@ -85,7 +85,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   const canStop = isActive(cycle.status) && cycle.status !== "stopping";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -95,7 +95,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
             </svg>
             Back to cycles
           </Link>
-          <h1 className="text-2xl font-bold flex items-center gap-3">
+          <h1 className="text-xl font-bold flex items-center gap-3">
             Cycle #{cycle.id}
             <Badge variant={STATUS_VARIANT[cycle.status] ?? "outline"}>
               {cycle.status.replace("_", " ")}
@@ -115,7 +115,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
 
       {/* Configuration */}
       <Card>
-        <CardContent className="py-5">
+        <CardContent className="py-4.5">
           <h2 className="font-semibold text-sm mb-3">Configuration</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
             <div>
@@ -170,7 +170,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
 
       {/* Status */}
       <Card>
-        <CardContent className="py-5">
+        <CardContent className="py-4.5">
           <h2 className="font-semibold text-sm mb-3">Status</h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
             <div>
@@ -224,7 +224,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
       {/* Trades */}
       {cycle.trades && cycle.trades.length > 0 && (
         <Card>
-          <CardContent className="py-5">
+          <CardContent className="py-4.5">
             <h2 className="font-semibold text-sm mb-3">Trades ({cycle.trades.length})</h2>
             <div className="overflow-x-auto">
               <table className="w-full text-sm" aria-label="Cycle trades">
@@ -275,9 +275,9 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
             className="absolute inset-0 bg-black/60 backdrop-blur-md"
             onClick={() => !stopMutation.isPending && setConfirmStop(false)}
           />
-          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
-            <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
-              <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
+            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
+              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
             </div>
@@ -291,14 +291,14 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
               <button
                 onClick={() => setConfirmStop(false)}
                 disabled={stopMutation.isPending}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => stopMutation.mutate()}
                 disabled={stopMutation.isPending}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {stopMutation.isPending && (
                   <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

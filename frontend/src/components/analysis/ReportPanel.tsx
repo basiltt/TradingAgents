@@ -262,7 +262,7 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
               <Skeleton key={i} className="h-9 rounded-lg" />
             ))}
           </div>
-          <div className="flex-1 p-6 space-y-4">
+          <div className="flex-1 p-5 space-y-4">
             <Skeleton className="h-7 w-48 rounded-lg" />
             <Skeleton className="h-4 w-full rounded" />
             <Skeleton className="h-4 w-5/6 rounded" />
@@ -278,9 +278,9 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
   if (entries.length === 0) {
     return (
       <Card className="border-dashed border-border/30">
-        <CardContent className="py-14">
+        <CardContent className="py-10">
           <div className="flex flex-col items-center text-center">
-            <div className="w-12 h-12 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
+            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-muted/30 flex items-center justify-center mb-3">
               <svg className="w-6 h-6 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
@@ -330,7 +330,7 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
 
       {/* Data quality warnings banner */}
       {dataWarnings.length > 0 && (
-        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 px-5 py-4 shadow-sm animate-pulse-slow">
+        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 px-4.5 py-3.5 shadow-sm animate-pulse-slow">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0 border border-amber-500/20">
               <svg className="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -383,10 +383,10 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
               >
                 <div className="px-4 py-4">
                   {isTrader && tradeCardData && (
-                    <div className="mb-5">
-                      <TradingCard data={tradeCardData} />
-                    </div>
-                  )}
+                <div className="mb-4.5">
+                  <TradingCard data={tradeCardData} />
+                </div>
+              )}
                   <MarkdownContent content={content} />
                 </div>
               </MobileCollapse>
@@ -419,7 +419,7 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
         <div className="flex-1 overflow-y-auto flex flex-col">
           {activeContent && activeMeta ? (
             <div className="flex-1 flex flex-col min-h-0">
-              <div className="sticky top-0 z-10 bg-card/85 backdrop-blur-md border-b border-border/35 px-8 py-4 flex items-center gap-3 shrink-0">
+              <div className="sticky top-0 z-10 bg-card/85 backdrop-blur-md border-b border-border/35 px-5 py-3.5 flex items-center gap-3 shrink-0">
                 <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center border border-current/15 shadow-sm", activeMeta.bg)}>
                   {activeMeta.icon && (
                     <svg className={cn("w-4.5 h-4.5", activeMeta.accent)} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -437,11 +437,11 @@ export const ReportPanel = memo(function ReportPanel({ reports, isLoading }: Rep
               
               <div className="flex-1 overflow-y-auto">
                 {effectiveTab === "trader" && tradeCardData && (
-                  <div className="px-8 pt-6 sm:px-10 sm:pt-8">
+                  <div className="px-5 pt-5 sm:px-6 sm:pt-6">
                     <TradingCard data={tradeCardData} />
                   </div>
                 )}
-                <div className="px-8 py-6 sm:px-10 sm:py-8">
+                <div className="px-5 py-5 sm:px-6 sm:py-6">
                   <MarkdownContent content={activeContent} />
                 </div>
               </div>

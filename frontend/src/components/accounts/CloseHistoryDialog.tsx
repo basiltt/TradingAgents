@@ -61,7 +61,7 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border/30">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/30">
           <div>
             <h3 className="font-semibold text-base">Close History</h3>
             <p className="text-xs text-muted-foreground mt-0.5">{accountLabel}</p>
@@ -75,13 +75,13 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2.5">
+        <div className="flex-1 overflow-y-auto px-5 py-3.5 space-y-2.5">
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             </div>
           ) : executions.length === 0 ? (
-            <div className="text-center py-12">
+            <div className="text-center py-10">
               <p className="text-sm text-muted-foreground">No close history</p>
               <p className="text-xs text-muted-foreground/60 mt-1">Executions will appear here after positions are closed</p>
             </div>
@@ -92,7 +92,7 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
 
         {/* Footer / Pagination */}
         {total > limit && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-border/30">
+          <div className="flex items-center justify-between px-5 py-2.5 border-t border-border/30">
             <span className="text-xs text-muted-foreground">
               Page {page} of {totalPages}
             </span>

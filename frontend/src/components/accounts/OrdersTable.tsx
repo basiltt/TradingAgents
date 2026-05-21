@@ -7,8 +7,8 @@ interface OrdersTableProps {
 export function OrdersTable({ orders }: OrdersTableProps) {
   if (orders.length === 0) {
     return (
-      <div className="rounded-2xl border border-border/40 bg-card p-12 text-center">
-        <div className="w-12 h-12 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-4">
+      <div className="rounded-2xl border border-border/40 bg-card p-8 text-center">
+        <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-muted/50 flex items-center justify-center mx-auto mb-4">
           <svg className="w-6 h-6 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
           </svg>
@@ -23,12 +23,12 @@ export function OrdersTable({ orders }: OrdersTableProps) {
       <table className="w-full text-sm min-w-[600px]">
         <thead>
           <tr className="border-b border-border/30">
-            <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>
-            <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Side</th>
-            <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Type</th>
-            <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Qty</th>
-            <th className="text-right px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Price</th>
-            <th className="text-left px-5 py-3.5 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Status</th>
+            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>
+            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Side</th>
+            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Type</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Qty</th>
+            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Price</th>
+            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -42,8 +42,8 @@ export function OrdersTable({ orders }: OrdersTableProps) {
             };
             return (
               <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/[0.04] transition-colors">
-                <td className="px-5 py-3.5 font-semibold">{o.symbol}</td>
-                <td className="px-5 py-3.5">
+                <td className="px-4 py-3 font-semibold">{o.symbol}</td>
+                <td className="px-4 py-3">
                   <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider border ${
                     isBuy
                       ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/[0.08]"
@@ -52,16 +52,16 @@ export function OrdersTable({ orders }: OrdersTableProps) {
                     {o.side}
                   </span>
                 </td>
-                <td className="px-5 py-3.5 text-muted-foreground">
+                <td className="px-4 py-3 text-muted-foreground">
                   {o.orderType}{o.stopOrderType ? ` (${o.stopOrderType})` : ""}
                 </td>
-                <td className="px-5 py-3.5 text-right font-medium tabular-nums">{o.qty}</td>
-                <td className="px-5 py-3.5 text-right font-medium tabular-nums">
+                <td className="px-4 py-3 text-right font-medium tabular-nums">{o.qty}</td>
+                <td className="px-4 py-3 text-right font-medium tabular-nums">
                   {o.price !== "0" ? `$${parseFloat(o.price).toFixed(2)}` : (
                     <span className="text-[10px] px-2 py-0.5 rounded-md bg-muted/50 text-muted-foreground font-medium">Market</span>
                   )}
                 </td>
-                <td className="px-5 py-3.5">
+                <td className="px-4 py-3">
                   <span className={`text-[10px] px-2 py-1 rounded-full font-semibold border ${statusColors[o.orderStatus] ?? statusColors.New}`}>
                     {o.orderStatus}
                   </span>

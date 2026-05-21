@@ -127,7 +127,7 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start gap-3.5 px-6 pt-5 pb-4 border-b border-border/30">
+        <div className="flex items-start gap-3.5 px-5 pt-4 pb-3.5 border-b border-border/30">
           <div className="p-2.5 rounded-xl bg-blue-500/10 mt-0.5">
             <ShieldCheck className="w-5 h-5 text-blue-400" />
           </div>
@@ -151,16 +151,16 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="flex-1 overflow-y-auto px-5 py-3.5">
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             </div>
           ) : rules.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-4">
+            <div className="flex flex-col items-center justify-center py-10 px-4">
               <div className="relative mb-5">
-                <div className="w-16 h-16 rounded-2xl bg-muted/30 border border-border/30 flex items-center justify-center">
-                  <Activity className="w-7 h-7 text-muted-foreground/40" />
+                <div className="w-12 h-12 rounded-[calc(var(--radius)*1.25)] bg-muted/30 border border-border/30 flex items-center justify-center">
+                  <Activity className="w-5.5 h-5.5 text-muted-foreground/40" />
                 </div>
                 <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center">
                   <Plus className="w-3 h-3 text-blue-400" />
@@ -188,9 +188,9 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-border/30">
+        <div className="px-5 py-3.5 border-t border-border/30">
           <button
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/30 transition-all disabled:opacity-40 disabled:pointer-events-none"
+            className="w-full flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-medium rounded-xl bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/30 transition-all disabled:opacity-40 disabled:pointer-events-none"
             onClick={handleAddRule}
             disabled={saving === "new" || activeCount >= 10}
           >

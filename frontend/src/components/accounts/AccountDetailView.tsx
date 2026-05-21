@@ -65,7 +65,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <Skeleton className="h-10 w-56" />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
@@ -89,25 +89,25 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Account Detail</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Account Detail</h1>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowCredentials(true)}
-              className="px-4 py-2 rounded-xl text-sm font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all"
+              className="px-3.5 py-2 rounded-xl text-sm font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all"
             >
               Update Credentials
             </button>
             <button
               disabled={deleting}
               onClick={() => setDeleteConfirm(true)}
-              className="px-4 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50"
+              className="px-3.5 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50"
             >
               {deleting ? "Deleting..." : "Delete Account"}
             </button>
           </div>
         </div>
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-8 text-center">
+        <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-5 text-center">
           <p className="text-destructive text-sm">{error}</p>
         </div>
 
@@ -115,7 +115,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         {showCredentials && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !credSaving && setShowCredentials(false)} />
-            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
+            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
               <h3 className="text-lg font-bold">Update API Credentials</h3>
               <div className="space-y-3">
                 <input
@@ -123,14 +123,14 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                   placeholder="API Key"
                   value={credKey}
                   onChange={(e) => setCredKey(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full px-3.5 py-2 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
                 <input
                   type="password"
                   placeholder="API Secret"
                   value={credSecret}
                   onChange={(e) => setCredSecret(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="w-full px-3.5 py-2 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
               </div>
               {credError && <p className="text-destructive text-xs">{credError}</p>}
@@ -138,7 +138,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                 <button
                   onClick={() => setShowCredentials(false)}
                   disabled={credSaving}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -164,7 +164,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                     }
                   }}
                   disabled={credSaving}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {credSaving && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                   Save
@@ -178,9 +178,9 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         {deleteConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !deleting && setDeleteConfirm(false)} />
-            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
-              <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
-                <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
+              <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </div>
@@ -194,7 +194,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                 <button
                   onClick={() => setDeleteConfirm(false)}
                   disabled={deleting}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -211,7 +211,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                     }
                   }}
                   disabled={deleting}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {deleting && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
                   Delete
@@ -263,7 +263,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
@@ -276,7 +276,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
             </svg>
           </button>
           <div className="min-w-0">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Account Detail</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Account Detail</h1>
             <p className="text-sm text-muted-foreground/60 mt-0.5">
               {positions.length} position{positions.length !== 1 ? "s" : ""} · {orders.length} order{orders.length !== 1 ? "s" : ""}
             </p>
@@ -286,7 +286,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         <button
           disabled={deleting}
           onClick={() => setDeleteConfirm(true)}
-          className="px-4 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50 shrink-0 self-start sm:self-auto"
+          className="px-3.5 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50 shrink-0 self-start sm:self-auto"
         >
           {deleting ? "Deleting..." : "Delete Account"}
         </button>
@@ -298,7 +298,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
           {kpis.map((kpi) => (
             <div
               key={kpi.label}
-              className="rounded-2xl border border-border/40 bg-card p-5 space-y-3"
+              className="rounded-2xl border border-border/40 bg-card p-4 space-y-2.5"
             >
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">
@@ -313,7 +313,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                 </div>
               </div>
               <div>
-                <span className={`text-2xl font-bold tabular-nums tracking-tight ${
+                <span className={`text-xl font-bold tabular-nums tracking-tight ${
                   kpi.color === "emerald" ? "text-emerald-500" :
                   kpi.color === "red" ? "text-red-500" : ""
                 }`}>
@@ -399,9 +399,9 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !deleting && setDeleteConfirm(false)} />
-          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-7 max-w-sm w-full mx-4 space-y-5">
-            <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
-              <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
+            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
+              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
             </div>
@@ -415,7 +415,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
               <button
                 onClick={() => setDeleteConfirm(false)}
                 disabled={deleting}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -432,7 +432,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                   }
                 }}
                 disabled={deleting}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {deleting && (
                   <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
