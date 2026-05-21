@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from "react";
+import { Badge } from "@/components/ui/badge";
 import { ModelSelect } from "@/components/ui/model-select";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -93,61 +94,66 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
   }
 
   return (
-    <div>
+    <div className="space-y-4">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
+        className="flex w-full items-center gap-3 text-left"
       >
-        <svg
-          className={cn("w-4 h-4 transition-transform duration-200", open && "rotate-90")}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-        Agent Model Overrides
-        {overrideCount > 0 && (
-          <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            {overrideCount} override{overrideCount > 1 ? "s" : ""}
-          </span>
-        )}
+        <span className="neu-surface-base neu-surface-raised flex size-9 items-center justify-center rounded-[var(--neu-radius-md)] text-[var(--neu-accent)]">
+          <svg
+            className={cn("size-4 transition-transform duration-200", open && "rotate-90")}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold tracking-[-0.03em] text-[var(--neu-text-strong)]">Agent model overrides</div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Per-agent routing for crypto research roles</div>
+        </div>
+        <Badge variant={overrideCount > 0 ? "default" : "secondary"} className="ml-auto px-3 py-1 text-[10px] tracking-[0.16em]">
+          {overrideCount} override{overrideCount === 1 ? "" : "s"}
+        </Badge>
       </button>
 
-      {open && (
-        <div className="mt-4 space-y-3 pl-1">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground">
-              Override the model used by individual agents. Empty = uses global Deep/Quick model.
+      {open ? (
+        <div className="space-y-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <p className="max-w-2xl text-[12px] leading-6 text-[var(--neu-text-muted)]">
+              Override individual agent models when a specific analyst, trader, or portfolio role should use a different model than the global deep or quick setting.
             </p>
-            {overrideCount > 0 && (
-              <Button type="button" variant="ghost" size="sm" onClick={handleReset} className="text-xs h-7 px-2">
-                Reset All
+            {overrideCount > 0 ? (
+              <Button type="button" variant="ghost" size="xs" onClick={handleReset} className="uppercase tracking-[0.14em]">
+                Reset all
               </Button>
-            )}
+            ) : null}
           </div>
 
           <div className="grid gap-3">
             {agents.map((agent) => (
-              <div key={agent.key} className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs font-medium">{agent.label}</Label>
-                  <span className={cn(
-                    "text-[10px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide",
-                    agent.tier === "deep"
-                      ? "bg-violet-500/10 text-violet-400"
-                      : "bg-sky-500/10 text-sky-400",
-                  )}>
+              <div
+                key={agent.key}
+                className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3"
+              >
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <Label className="text-sm font-semibold text-[var(--neu-text-strong)]">{agent.label}</Label>
+                  <Badge
+                    variant={agent.tier === "deep" ? "default" : "secondary"}
+                    className={cn(
+                      "px-2.5 py-0.5 text-[10px] tracking-[0.16em]",
+                      agent.tier === "deep" && "bg-[color:color-mix(in_oklch,var(--neu-accent)_12%,var(--neu-surface-raised))]",
+                    )}
+                  >
                     {agent.tier}
-                  </span>
+                  </Badge>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="flex-1">
+
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
                     <ModelSelect
                       options={modelOptions}
                       value={overrides[agent.key] ?? ""}
@@ -155,24 +161,26 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
                       placeholder={`Default (${agent.tier})`}
                     />
                   </div>
-                  {overrides[agent.key] && (
-                    <button
+
+                  {overrides[agent.key] ? (
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon-xs"
                       onClick={() => handleChange(agent.key, "")}
-                      className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                      title="Reset to default"
+                      aria-label={`Reset ${agent.label} override`}
                     >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                       </svg>
-                    </button>
-                  )}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ))}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

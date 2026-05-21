@@ -1,5 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, type ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { ScanResultItem } from "@/api/client";
 
@@ -9,15 +12,33 @@ function toggleSet<T>(set: Set<T>, val: T): Set<T> {
   return next;
 }
 
-function FilterChip({ label, active, color, onClick }: { label: string; active: boolean; color?: string; onClick: () => void }) {
+const FILTER_TONE_CLASSES = {
+  accent: "text-[var(--neu-accent)] border-[color:color-mix(in_oklch,var(--neu-accent)_24%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-accent)_12%,var(--neu-surface-raised))]",
+  success: "text-[var(--neu-success)] border-[color:color-mix(in_oklch,var(--neu-success)_24%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-success)_12%,var(--neu-surface-raised))]",
+  danger: "text-[var(--neu-danger)] border-[color:color-mix(in_oklch,var(--neu-danger)_24%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-danger)_12%,var(--neu-surface-raised))]",
+  warning: "text-[var(--neu-warning)] border-[color:color-mix(in_oklch,var(--neu-warning)_24%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-warning)_12%,var(--neu-surface-raised))]",
+} as const;
+
+function FilterChip({
+  label,
+  active,
+  color = "accent",
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  color?: keyof typeof FILTER_TONE_CLASSES;
+  onClick: () => void;
+}) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={cn(
-        "px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
+        "neu-focus-ring inline-flex min-h-9 items-center justify-center rounded-[var(--neu-radius-pill)] border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all",
         active
-          ? `${color ?? "bg-primary/15 border-primary/40 text-primary"}`
-          : "bg-transparent border-border/40 text-muted-foreground hover:bg-muted/50",
+          ? cn("neu-surface-base neu-surface-raised shadow-[var(--neu-shadow-pill)]", FILTER_TONE_CLASSES[color])
+          : "neu-surface-base neu-surface-flat text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)] hover:text-[var(--neu-text-strong)]",
       )}
     >
       {label}
@@ -122,6 +143,25 @@ export function useScanFilters(results: ScanResultItem[], storageKey = "default"
   return { filters, update, hasActive, filtered, clearAll };
 }
 
+function FilterSection({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">
+        {label}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function ScanResultFiltersBar({
   filters,
   update,
@@ -138,93 +178,110 @@ export function ScanResultFiltersBar({
   clearAll: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-border/40 bg-card overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-3">
+    <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4 sm:p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="relative flex-1">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg
+            className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--neu-text-muted)]"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <input
+          <Input
             type="text"
-            placeholder="Search symbol..."
+            placeholder="Search symbol"
             value={filters.symbol}
             onChange={(e) => update("symbol", e.target.value)}
-            className="w-full h-9 pl-9 pr-3 rounded-lg bg-muted/30 border border-border/30 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+            className="h-11 pl-11 text-sm"
           />
         </div>
-        <button
-          onClick={() => update("showFilters", !filters.showFilters)}
-          className={cn(
-            "inline-flex items-center gap-1.5 px-3 h-9 rounded-lg text-xs font-medium border transition-colors",
-            filters.showFilters || hasActive
-              ? "bg-primary/10 border-primary/30 text-primary"
-              : "border-border/40 text-muted-foreground hover:bg-muted/50",
-          )}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-          </svg>
-          Filters
-          {hasActive && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
-        </button>
-        {hasActive && (
-          <span className="text-xs text-muted-foreground tabular-nums">{filteredCount}/{totalCount}</span>
-        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant={filters.showFilters || hasActive ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => update("showFilters", !filters.showFilters)}
+            className="min-w-[8.5rem] justify-center uppercase tracking-[0.14em]"
+          >
+            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            Filters
+            {hasActive ? <span className="size-1.5 rounded-full bg-current opacity-80" /> : null}
+          </Button>
+
+          <Badge variant="secondary" className="px-3 py-1 text-[10px] tracking-[0.16em]">
+            {filteredCount} of {totalCount}
+          </Badge>
+
+          {hasActive ? (
+            <Button type="button" variant="ghost" size="xs" onClick={clearAll} className="uppercase tracking-[0.14em]">
+              Clear
+            </Button>
+          ) : null}
+        </div>
       </div>
 
-      {filters.showFilters && (
-        <div className="px-4 pb-4 space-y-3 border-t border-border/20 pt-3">
-          <div className="space-y-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Signal</span>
-            <div className="flex flex-wrap gap-1.5">
-              <FilterChip label="Buy" active={filters.signal.has("buy")} color="bg-emerald-500/15 border-emerald-500/40 text-emerald-400" onClick={() => update("signal", toggleSet(filters.signal, "buy"))} />
-              <FilterChip label="Sell" active={filters.signal.has("sell")} color="bg-red-500/15 border-red-500/40 text-red-400" onClick={() => update("signal", toggleSet(filters.signal, "sell"))} />
-              <FilterChip label="Hold" active={filters.signal.has("hold")} color="bg-amber-500/15 border-amber-500/40 text-amber-400" onClick={() => update("signal", toggleSet(filters.signal, "hold"))} />
-            </div>
-          </div>
+      {filters.showFilters ? (
+        <div className="mt-4 border-t border-[color:var(--neu-stroke-soft)]/80 pt-4">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_1.2fr_1fr]">
+            <FilterSection label="Signal">
+              <FilterChip label="Buy" active={filters.signal.has("buy")} color="success" onClick={() => update("signal", toggleSet(filters.signal, "buy"))} />
+              <FilterChip label="Sell" active={filters.signal.has("sell")} color="danger" onClick={() => update("signal", toggleSet(filters.signal, "sell"))} />
+              <FilterChip label="Hold" active={filters.signal.has("hold")} color="warning" onClick={() => update("signal", toggleSet(filters.signal, "hold"))} />
+            </FilterSection>
 
-          <div className="space-y-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Confidence</span>
-            <div className="flex flex-wrap gap-1.5">
+            <FilterSection label="Confidence">
               {["high", "moderate", "low", "none"].map((c) => (
-                <FilterChip key={c} label={c.charAt(0).toUpperCase() + c.slice(1)} active={filters.confidence.has(c)} onClick={() => update("confidence", toggleSet(filters.confidence, c))} />
+                <FilterChip
+                  key={c}
+                  label={c.charAt(0).toUpperCase() + c.slice(1)}
+                  active={filters.confidence.has(c)}
+                  onClick={() => update("confidence", toggleSet(filters.confidence, c))}
+                />
               ))}
-            </div>
-          </div>
+            </FilterSection>
 
-          <div className="space-y-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Status</span>
-            <div className="flex flex-wrap gap-1.5">
+            <FilterSection label="Status">
               {["completed", "failed", "cancelled"].map((s) => (
-                <FilterChip key={s} label={s.charAt(0).toUpperCase() + s.slice(1)} active={filters.status.has(s)} onClick={() => update("status", toggleSet(filters.status, s))} />
+                <FilterChip
+                  key={s}
+                  label={s.charAt(0).toUpperCase() + s.slice(1)}
+                  active={filters.status.has(s)}
+                  onClick={() => update("status", toggleSet(filters.status, s))}
+                />
               ))}
-            </div>
+            </FilterSection>
           </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Min Strength</span>
-              <span className="text-xs font-mono tabular-nums text-muted-foreground">{filters.minStrength > 0 ? `>= ${filters.minStrength}` : "Any"}</span>
+          <div className="mt-4 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] px-4 py-3">
+            <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.14em]">
+              <span className="text-[var(--neu-text-muted)]">Minimum strength</span>
+              <span className="font-mono text-[var(--neu-text-strong)]">
+                {filters.minStrength > 0 ? `>= ${filters.minStrength}` : "Any"}
+              </span>
             </div>
             <input
               type="range"
-              min={0} max={10} step={1}
+              min={0}
+              max={10}
+              step={1}
               value={filters.minStrength}
               onChange={(e) => update("minStrength", Number(e.target.value))}
-              className="w-full h-1.5 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
+              className="neu-slider w-full"
             />
-            <div className="flex justify-between text-[9px] text-muted-foreground/40 px-0.5">
-              <span>0</span><span>5</span><span>10</span>
+            <div className="mt-2 flex justify-between px-1 text-[10px] text-[var(--neu-text-soft)]">
+              <span>0</span>
+              <span>5</span>
+              <span>10</span>
             </div>
           </div>
-
-          {hasActive && (
-            <button onClick={clearAll} className="text-xs text-primary hover:underline">
-              Clear all filters
-            </button>
-          )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

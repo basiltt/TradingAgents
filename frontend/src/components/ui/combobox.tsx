@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -29,30 +29,27 @@ export function Combobox({
   const listRef = useRef<HTMLDivElement>(null);
 
   const filtered = search
-    ? options.filter((o) => o.toLowerCase().includes(search.toLowerCase())).slice(0, 100)
+    ? options.filter((option) => option.toLowerCase().includes(search.toLowerCase())).slice(0, 100)
     : options.slice(0, 100);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing controlled value to local search state
     setSearch(value);
   }, [value]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting highlight when search changes
     setHighlightIdx(-1);
   }, [search]);
 
   useEffect(() => {
     if (open && wrapperRef.current) {
       const rect = wrapperRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUp(spaceBelow < 260);
+      setOpenUp(window.innerHeight - rect.bottom < 260);
     }
   }, [open]);
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
         setOpen(false);
       }
     }
@@ -62,32 +59,32 @@ export function Combobox({
 
   useEffect(() => {
     if (highlightIdx >= 0 && listRef.current) {
-      const el = listRef.current.children[highlightIdx] as HTMLElement;
-      el?.scrollIntoView({ block: "nearest" });
+      const element = listRef.current.children[highlightIdx] as HTMLElement;
+      element?.scrollIntoView({ block: "nearest" });
     }
   }, [highlightIdx]);
 
   const select = useCallback(
-    (val: string) => {
-      onChange(val);
-      setSearch(val);
+    (nextValue: string) => {
+      onChange(nextValue);
+      setSearch(nextValue);
       setOpen(false);
     },
     [onChange],
   );
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
       setOpen(true);
-      setHighlightIdx((i) => Math.min(i + 1, filtered.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlightIdx((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter" && highlightIdx >= 0 && filtered[highlightIdx]) {
-      e.preventDefault();
+      setHighlightIdx((index) => Math.min(index + 1, filtered.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightIdx((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter" && highlightIdx >= 0 && filtered[highlightIdx]) {
+      event.preventDefault();
       select(filtered[highlightIdx]);
-    } else if (e.key === "Escape") {
+    } else if (event.key === "Escape") {
       setOpen(false);
     }
   };
@@ -96,10 +93,10 @@ export function Combobox({
     <div ref={wrapperRef} className={cn("relative", className)}>
       <Input
         value={search}
-        onChange={(e) => {
-          const v = e.target.value.toUpperCase();
-          setSearch(v);
-          onChange(v);
+        onChange={(event) => {
+          const nextValue = event.target.value.toUpperCase();
+          setSearch(nextValue);
+          onChange(nextValue);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
@@ -108,41 +105,41 @@ export function Combobox({
         disabled={disabled}
         autoComplete="off"
       />
-      {loading && (
-        <div className="absolute right-3 top-1/2 -translate-y-1/2">
-          <svg className="w-4 h-4 animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
+      {loading ? (
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--neu-text-muted)]">
+          <svg className="size-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
         </div>
-      )}
-      {open && filtered.length > 0 && (
+      ) : null}
+      {open && filtered.length > 0 ? (
         <div
           ref={listRef}
           className={cn(
-            "absolute z-50 w-full max-h-60 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg",
-            openUp ? "bottom-full mb-1" : "mt-1",
+            "neu-surface-base neu-surface-raised absolute z-50 max-h-60 w-full overflow-y-auto rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-2 shadow-[var(--neu-shadow-float)]",
+            openUp ? "bottom-full mb-2" : "mt-2",
           )}
         >
-          {filtered.map((opt, i) => (
+          {filtered.map((option, index) => (
             <button
-              key={opt}
+              key={option}
               type="button"
               className={cn(
-                "w-full text-left px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground transition-colors",
-                i === highlightIdx && "bg-accent text-accent-foreground",
-                opt === value && "font-semibold text-primary",
+                "flex w-full items-center rounded-[var(--neu-radius-sm)] border border-transparent px-3 py-2 text-left text-sm transition-colors",
+                index === highlightIdx && "border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))]",
+                option === value && "font-semibold text-[var(--neu-accent)]",
               )}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                select(opt);
+              onMouseDown={(event) => {
+                event.preventDefault();
+                select(option);
               }}
             >
-              {opt}
+              {option}
             </button>
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

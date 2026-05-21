@@ -75,6 +75,59 @@
     radial-gradient(circle at 80% 10%, color-mix(in oklch, var(--neu-accent) 10%, transparent), transparent 28%);
   font-family: var(--neu-font-ink);
   color: var(--neu-text-strong);
+  --background: var(--neu-surface-base);
+  --foreground: var(--neu-text-strong);
+  --card: color-mix(in oklch, var(--neu-surface-raised) 96%, white 4%);
+  --card-foreground: var(--neu-text-strong);
+  --popover: var(--neu-surface-overlay);
+  --popover-foreground: var(--neu-text-strong);
+  --primary: var(--neu-accent);
+  --primary-foreground: var(--neu-accent-ink);
+  --secondary: color-mix(in oklch, var(--neu-surface-raised) 94%, var(--neu-highlight) 6%);
+  --secondary-foreground: var(--neu-text-strong);
+  --muted: var(--neu-surface-muted);
+  --muted-foreground: var(--neu-text-muted);
+  --accent: var(--neu-accent-muted);
+  --accent-foreground: var(--neu-accent-ink);
+  --destructive: var(--neu-danger);
+  --border: var(--neu-stroke-soft);
+  --input: var(--neu-surface-muted);
+  --ring: var(--neu-accent);
+  --sidebar: var(--neu-surface-raised);
+  --sidebar-foreground: var(--neu-text-strong);
+  --sidebar-primary: var(--neu-accent);
+  --sidebar-primary-foreground: var(--neu-accent-ink);
+  --sidebar-accent: color-mix(in oklch, var(--neu-highlight) 22%, var(--neu-surface-raised));
+  --sidebar-accent-foreground: var(--neu-text-strong);
+  --sidebar-border: var(--neu-stroke-soft);
+  --sidebar-ring: var(--neu-accent);
+  --success: var(--neu-success);
+  --warning: var(--neu-warning);
+  --danger: var(--neu-danger);
+  --radius: 1rem;
+  --glass-bg: color-mix(in oklch, var(--neu-surface-raised) 92%, var(--neu-highlight) 8%);
+  --glass-border: var(--neu-stroke-soft);
+  --shadow-card: var(--neu-shadow-raised);
+  --shadow-card-hover: var(--neu-shadow-raised-hover);
+  --shadow-soft: var(--neu-shadow-pill);
+  --shadow-accent: var(--neu-shadow-accent);
+  --shadow-popover: var(--neu-shadow-float);
+  --shadow-inset: var(--neu-shadow-inset);
+  --surface-lift-bg: color-mix(in oklch, var(--neu-surface-raised) 94%, var(--neu-highlight) 6%);
+  --surface-lift-border: var(--neu-stroke-soft);
+  --terminal-panel: color-mix(in oklch, var(--neu-surface-raised) 90%, transparent);
+  --terminal-panel-border: var(--neu-stroke-soft);
+  --terminal-track: linear-gradient(
+    145deg,
+    color-mix(in oklch, var(--neu-highlight) 16%, transparent),
+    color-mix(in oklch, var(--neu-accent) 8%, var(--neu-surface-raised)) 56%,
+    color-mix(in oklch, var(--neu-surface-muted) 94%, transparent)
+  );
+  --terminal-track-border: var(--neu-stroke-soft);
+  --terminal-grid-line: color-mix(in oklch, var(--neu-text-soft) 12%, transparent);
+  --terminal-dock-bg: color-mix(in oklch, var(--neu-surface-raised) 92%, transparent);
+  --terminal-dock-border: var(--neu-stroke-soft);
+  --eyebrow: var(--neu-text-muted);
 }
 
 .neu-theme[data-neu-mode="graphite"] {

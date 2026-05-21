@@ -78,7 +78,7 @@ export function NeuNavItem({
     </div>
   );
 
-  if (href) {
+  if (href && !onClick) {
     return (
       <a href={href} className="block" onClick={onClick}>
         {content}
@@ -159,7 +159,10 @@ export function NeuSidebar({
                   href={item.href}
                   compact={collapsed}
                   touchFriendly={mode === "mobile-sheet"}
-                  onClick={() => onNavigate?.(item.href)}
+                  onClick={() => {
+                    item.onSelect?.();
+                    onNavigate?.(item.href);
+                  }}
                 />
               ))}
             </div>
@@ -241,10 +244,20 @@ export function NeuMobileDock({
   items,
   activePath,
   onMore,
+  onNavigate,
 }: {
-  items: Array<{ id: string; label: string; icon?: React.ReactNode; href?: string; badge?: React.ReactNode }>;
+  items: Array<{
+    id: string;
+    label: string;
+    icon?: React.ReactNode;
+    href?: string;
+    badge?: React.ReactNode;
+    active?: boolean;
+    onSelect?: () => void;
+  }>;
   activePath?: string;
   onMore?: () => void;
+  onNavigate?: (href?: string) => void;
 }) {
   return (
     <NeuSurface
@@ -255,11 +268,17 @@ export function NeuMobileDock({
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)" }}
     >
       {items.slice(0, 4).map((item) => {
-        const active = item.href === activePath;
+        const active = item.active || item.href === activePath;
         return (
           <button
             key={item.id}
             type="button"
+            onClick={() => {
+              item.onSelect?.();
+              if (!item.onSelect) {
+                onNavigate?.(item.href);
+              }
+            }}
             className={cn(
               "flex min-h-[4.5rem] flex-col items-center justify-center gap-1 rounded-[var(--neu-radius-md)] px-1.5 text-[11px] font-semibold uppercase tracking-[0.14em]",
               active ? "neu-surface-base neu-surface-accent" : "neu-surface-base neu-surface-inset",
@@ -488,6 +507,7 @@ export function NeuAppShell({
   topbar,
   dock,
   mobileSidebar,
+  sidebarWidth = "18rem",
   contentClassName,
   mainClassName,
   children,
@@ -496,13 +516,19 @@ export function NeuAppShell({
   topbar: React.ReactNode;
   dock?: React.ReactNode;
   mobileSidebar?: React.ReactNode;
+  sidebarWidth?: string;
   contentClassName?: string;
   mainClassName?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid min-h-screen gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <aside className="hidden lg:block">{sidebar}</aside>
+    <div
+      className="grid min-h-screen gap-4 lg:grid-cols-[var(--neu-shell-sidebar-width)_minmax(0,1fr)]"
+      style={{ ["--neu-shell-sidebar-width" as string]: sidebarWidth }}
+    >
+      <aside className="hidden lg:block" aria-label="Primary navigation">
+        {sidebar}
+      </aside>
       <div className={cn("min-w-0 space-y-4", contentClassName)}>
         {topbar}
         <main className={cn("min-w-0", mainClassName)}>{children}</main>

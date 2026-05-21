@@ -10,6 +10,10 @@ import type {
   NeuSurfaceMode,
 } from "../types";
 
+export const NEU_MODE_STORAGE_KEY = "tradingagents-neu-mode";
+export const NEU_ACCENT_STORAGE_KEY = "tradingagents-neu-accent";
+export const NEU_CONTRAST_STORAGE_KEY = "tradingagents-neu-contrast";
+
 export interface NeuUiState {
   mode: NeuSurfaceMode;
   accent: NeuAccentPalette;
@@ -20,10 +24,55 @@ export interface NeuUiState {
   dockExpanded: boolean;
 }
 
+function canUseDom() {
+  return typeof window !== "undefined";
+}
+
+function isNeuMode(value: unknown): value is NeuSurfaceMode {
+  return value === "ivory" || value === "graphite";
+}
+
+function isNeuAccent(value: unknown): value is NeuAccentPalette {
+  return value === "cobalt" || value === "sage" || value === "amber" || value === "rose";
+}
+
+function isNeuContrast(value: unknown): value is NeuContrastMode {
+  return value === "balanced" || value === "high";
+}
+
+export function readStoredNeuMode() {
+  if (!canUseDom()) return DEFAULT_NEU_MODE;
+  const value = window.localStorage.getItem(NEU_MODE_STORAGE_KEY);
+  return isNeuMode(value) ? value : DEFAULT_NEU_MODE;
+}
+
+export function readStoredNeuAccent() {
+  if (!canUseDom()) return DEFAULT_NEU_ACCENT;
+  const value = window.localStorage.getItem(NEU_ACCENT_STORAGE_KEY);
+  return isNeuAccent(value) ? value : DEFAULT_NEU_ACCENT;
+}
+
+export function readStoredNeuContrast() {
+  if (!canUseDom()) return DEFAULT_NEU_CONTRAST;
+  const value = window.localStorage.getItem(NEU_CONTRAST_STORAGE_KEY);
+  return isNeuContrast(value) ? value : DEFAULT_NEU_CONTRAST;
+}
+
+export function persistNeuAppearance({
+  mode,
+  accent,
+  contrast,
+}: Pick<NeuUiState, "mode" | "accent" | "contrast">) {
+  if (!canUseDom()) return;
+  window.localStorage.setItem(NEU_MODE_STORAGE_KEY, mode);
+  window.localStorage.setItem(NEU_ACCENT_STORAGE_KEY, accent);
+  window.localStorage.setItem(NEU_CONTRAST_STORAGE_KEY, contrast);
+}
+
 export const initialNeuUiState: NeuUiState = {
-  mode: DEFAULT_NEU_MODE,
-  accent: DEFAULT_NEU_ACCENT,
-  contrast: DEFAULT_NEU_CONTRAST,
+  mode: readStoredNeuMode(),
+  accent: readStoredNeuAccent(),
+  contrast: readStoredNeuContrast(),
   sidebarCollapsed: false,
   mobileNavOpen: false,
   commandPaletteOpen: false,

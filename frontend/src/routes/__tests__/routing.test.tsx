@@ -8,13 +8,18 @@ import {
 import { Provider } from "react-redux";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { configureStore } from "@reduxjs/toolkit";
+import { neuUiSlice } from "@/design-system/neumorphism";
 import { routeTree } from "../route-tree";
 import { analysisSlice } from "@/store/analysis-slice";
 import { uiSlice } from "@/store/ui-slice";
 
 function renderWithRouter(initialPath: string) {
   const store = configureStore({
-    reducer: { analysis: analysisSlice.reducer, ui: uiSlice.reducer },
+    reducer: {
+      analysis: analysisSlice.reducer,
+      neuUi: neuUiSlice.reducer,
+      ui: uiSlice.reducer,
+    },
   });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -55,7 +60,7 @@ describe("routing", () => {
   it("renders config page", async () => {
     renderWithRouter("/config");
     expect(
-      await screen.findByRole("heading", { name: /configuration/i }),
+      await screen.findByRole("heading", { level: 1, name: /configuration, environment state/i }),
     ).toBeInTheDocument();
   });
 

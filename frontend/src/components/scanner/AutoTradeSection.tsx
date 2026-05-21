@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react";
+/* eslint-disable react-refresh/only-export-components */
+import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { accountsApi, type TradingAccount, type AutoTradeConfig } from "@/api/client";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +30,10 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   close_on_profit_pct: null,
 };
 
+const SEGMENT_CONTAINER_CLASS = "neu-surface-base neu-surface-inset flex min-h-12 items-center gap-1.5 rounded-[var(--neu-radius-md)] p-1.5";
+const SEGMENT_BUTTON_CLASS = "neu-focus-ring flex-1 rounded-[calc(var(--neu-radius-md)-8px)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all";
+const SECTION_CLASS = "rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] p-4";
+
 function loadConfigs(): AutoTradeConfig[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -52,11 +58,73 @@ interface AutoTradeSectionProps {
   onChange: (configs: AutoTradeConfig[]) => void;
 }
 
+interface ToggleRowProps {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  title: string;
+  description: string;
+  trailing?: ReactNode;
+}
+
+function ToggleRow({ checked, onChange, title, description, trailing }: ToggleRowProps) {
+  return (
+    <div className="flex items-start gap-3 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_10%,var(--neu-surface-raised))] px-3.5 py-3">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={cn(
+          "neu-focus-ring relative mt-0.5 flex h-7 w-12 shrink-0 items-center rounded-full border p-1 transition-colors",
+          checked
+            ? "border-[color:color-mix(in_oklch,var(--neu-accent)_24%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-surface-raised))]"
+            : "border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_12%,var(--neu-surface-muted))]",
+        )}
+      >
+        <span
+          className={cn(
+            "neu-surface-base neu-surface-raised block size-5 rounded-full transition-transform",
+            checked && "translate-x-5",
+          )}
+        />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-[var(--neu-text-strong)]">{title}</p>
+        <p className="mt-1 text-[11px] leading-5 text-[var(--neu-text-muted)]">{description}</p>
+      </div>
+      {trailing ? <div className="pt-0.5">{trailing}</div> : null}
+    </div>
+  );
+}
+
+function Notice({
+  tone,
+  children,
+}: {
+  tone: "warning" | "success" | "danger";
+  children: ReactNode;
+}) {
+  const toneClass = {
+    warning: "text-[var(--neu-warning)] border-[color:color-mix(in_oklch,var(--neu-warning)_22%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-raised))]",
+    success: "text-[var(--neu-success)] border-[color:color-mix(in_oklch,var(--neu-success)_22%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-raised))]",
+    danger: "text-[var(--neu-danger)] border-[color:color-mix(in_oklch,var(--neu-danger)_22%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-raised))]",
+  }[tone];
+
+  return (
+    <div className={cn("rounded-[var(--neu-radius-md)] border px-3.5 py-3 text-[11px] leading-5", toneClass)}>
+      {children}
+    </div>
+  );
+}
+
 export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
   const [expanded, setExpanded] = useState(value.length > 0);
 
   useEffect(() => {
-    if (value.length > 0) setExpanded(true);
+    if (value.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- keep the section expanded once configs exist
+      setExpanded(true);
+    }
   }, [value.length]);
 
   const { data: allAccounts = [], isLoading: accountsLoading } = useQuery({
@@ -68,7 +136,7 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
 
   const addConfig = () => {
     const firstAvailableAccount = accounts.find(
-      (a) => !value.some((c) => c.account_id === a.id)
+      (a) => !value.some((c) => c.account_id === a.id),
     );
     const newConfig: AutoTradeConfig = {
       ...DEFAULT_CONFIG,
@@ -101,43 +169,54 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
   };
 
   return (
-    <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card">
+    <section className="neu-surface-base neu-surface-raised overflow-hidden rounded-[var(--neu-radius-lg)]">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-3 px-5 py-4 hover:bg-muted/15 transition-colors cursor-pointer select-none font-bold text-xs uppercase tracking-wider text-foreground"
+        className="flex w-full items-center gap-3 px-5 py-4 text-left"
       >
-        <svg className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200 shrink-0", expanded && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-        <span>Auto-Trade Execution</span>
-        {value.length > 0 && (
-          <span className="ml-auto text-[10px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2.5 py-0.5 rounded-xl">
-            {value.length} account{value.length > 1 ? "s" : ""}
-          </span>
-        )}
+        <span className="neu-surface-base neu-surface-raised flex size-9 items-center justify-center rounded-[var(--neu-radius-md)] text-[var(--neu-accent)]">
+          <svg className={cn("size-4 transition-transform duration-200", expanded && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold tracking-[-0.03em] text-[var(--neu-text-strong)]">Auto-trade execution</div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Account rules, safeguards, and execution plans</div>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Badge variant={value.length > 0 ? "default" : "secondary"} className="px-3 py-1 text-[10px] tracking-[0.16em]">
+            {value.length} account{value.length === 1 ? "" : "s"}
+          </Badge>
+        </div>
       </button>
 
-      {expanded && (
-        <div className="px-5 pb-5 space-y-4 border-t border-border/20 pt-4">
-          {value.map((config, idx) => (
-            <AutoTradeCard
-              key={idx}
-              config={config}
-              index={idx}
-              accounts={accounts}
-              accountsLoading={accountsLoading}
-              onChange={(partial) => updateConfig(idx, partial)}
-              onDuplicate={() => duplicateConfig(idx)}
-              onRemove={() => removeConfig(idx)}
-            />
-          ))}
-          <Button type="button" variant="outline" size="sm" onClick={addConfig} className="w-full border-dashed border-border/40 text-muted-foreground hover:text-foreground cursor-pointer">
-            + Add Trading Account
+      {expanded ? (
+        <div className="border-t border-[color:var(--neu-stroke-soft)]/80 px-5 pb-5 pt-4">
+          <div className="space-y-4">
+            {value.map((config, idx) => (
+              <AutoTradeCard
+                key={idx}
+                config={config}
+                index={idx}
+                accounts={accounts}
+                accountsLoading={accountsLoading}
+                onChange={(partial) => updateConfig(idx, partial)}
+                onDuplicate={() => duplicateConfig(idx)}
+                onRemove={() => removeConfig(idx)}
+              />
+            ))}
+          </div>
+
+          <Button type="button" variant="outline" size="sm" onClick={addConfig} className="mt-4 w-full justify-center uppercase tracking-[0.14em]">
+            <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add trading account
           </Button>
         </div>
-      )}
-    </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -159,28 +238,38 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
   const slPriceMove = (config.stop_loss_pct / leverageNum).toFixed(2);
 
   return (
-    <div className="rounded-xl border border-border/30 bg-muted/10 backdrop-blur-sm p-5 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Account #{index + 1}</span>
-        <div className="flex gap-1">
-          <Button type="button" variant="ghost" size="sm" onClick={onDuplicate} className="h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground">
+    <article className="neu-surface-base neu-surface-inset space-y-5 rounded-[var(--neu-radius-lg)] p-5">
+      <div className="flex flex-wrap items-start gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">
+            Account {index + 1}
+          </div>
+          <div className="mt-1 text-sm font-semibold text-[var(--neu-text-strong)]">
+            {selectedAccount ? selectedAccount.label : "Configure account routing"}
+          </div>
+        </div>
+
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {selectedAccount ? (
+            <Badge variant={selectedAccount.account_type === "live" ? "destructive" : "secondary"} className="px-3 py-1 text-[10px] tracking-[0.16em]">
+              {selectedAccount.account_type}
+            </Badge>
+          ) : null}
+          <Button type="button" variant="ghost" size="xs" onClick={onDuplicate} className="uppercase tracking-[0.14em]">
             Duplicate
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={onRemove} className="h-7 px-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10">
+          <Button type="button" variant="destructive" size="xs" onClick={onRemove} className="uppercase tracking-[0.14em]">
             Remove
           </Button>
         </div>
       </div>
 
-      {/* Account Selection */}
-      <div>
-        <Label className="text-xs text-muted-foreground">Trading Account</Label>
+      <div className={SECTION_CLASS}>
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Account routing</div>
+        <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Trading account</Label>
         <Select value={config.account_id} onValueChange={(v) => v != null && onChange({ account_id: v })}>
-          <SelectTrigger className="mt-1.5">
-            <SelectValue placeholder={accountsLoading ? "Loading accounts..." : "Select account..."}>
-              {selectedAccount ? `${selectedAccount.label} (${selectedAccount.account_type})` : accountsLoading ? "Loading accounts..." : undefined}
-            </SelectValue>
+          <SelectTrigger className="mt-2 w-full">
+            <SelectValue placeholder={accountsLoading ? "Loading accounts..." : "Select account"} />
           </SelectTrigger>
           <SelectContent>
             {accounts.map((a) => (
@@ -190,149 +279,163 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             ))}
           </SelectContent>
         </Select>
-        {!config.account_id && !accountsLoading && (
-          <p className="text-[10px] text-red-400 mt-1">Required — this config will be skipped without an account</p>
-        )}
-        {selectedAccount?.account_type === "live" && (
-          <p className="text-[10px] text-amber-400 mt-1">Live account — real funds at risk</p>
-        )}
+        {!config.account_id && !accountsLoading ? (
+          <p className="mt-2 text-[11px] text-[var(--neu-danger)]">Required. This configuration is skipped until an account is assigned.</p>
+        ) : null}
+        {selectedAccount?.account_type === "live" ? (
+          <p className="mt-2 text-[11px] text-[var(--neu-warning)]">Live account selected. Orders route to real funds.</p>
+        ) : null}
       </div>
 
-      {/* Direction & Execution Mode */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <Label className="text-xs text-muted-foreground">Direction</Label>
-          <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40 p-[2px] bg-muted/20">
-            <button
-              type="button"
-              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
-                config.direction === "straight" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => onChange({ direction: "straight" })}
-            >
-              Straight
-            </button>
-            <button
-              type="button"
-              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
-                config.direction === "reverse" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => onChange({ direction: "reverse" })}
-            >
-              Reverse
-            </button>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className={SECTION_CLASS}>
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Direction logic</div>
+          <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Direction</Label>
+          <div className={cn(SEGMENT_CONTAINER_CLASS, "mt-2")}>
+            {(["straight", "reverse"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={cn(
+                  SEGMENT_BUTTON_CLASS,
+                  config.direction === value
+                    ? "neu-surface-base neu-surface-raised text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-pill)]"
+                    : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]",
+                )}
+                onClick={() => onChange({ direction: value })}
+              >
+                {value === "straight" ? "Straight" : "Reverse"}
+              </button>
+            ))}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            {config.direction === "straight" ? "Trade follows signal direction" : "Trade opposite to signal direction"}
+          <p className="mt-2 text-[11px] leading-5 text-[var(--neu-text-muted)]">
+            {config.direction === "straight" ? "Trades follow the scanner signal direction." : "Trades invert the scanner signal direction."}
           </p>
         </div>
-        <div>
-          <Label className="text-xs text-muted-foreground">Execution Mode</Label>
-          <div className="flex mt-1.5 rounded-lg overflow-hidden border border-border/40 p-[2px] bg-muted/20">
-            <button
-              type="button"
-              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
-                config.execution_mode === "immediate" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => onChange({ execution_mode: "immediate" })}
-            >
-              Immediate
-            </button>
-            <button
-              type="button"
-              className={cn("flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer",
-                config.execution_mode === "batch" ? "bg-primary text-primary-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:text-foreground")}
-              onClick={() => onChange({ execution_mode: "batch" })}
-            >
-              Batch
-            </button>
+
+        <div className={SECTION_CLASS}>
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Execution cadence</div>
+          <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Execution mode</Label>
+          <div className={cn(SEGMENT_CONTAINER_CLASS, "mt-2")}>
+            {(["immediate", "batch"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={cn(
+                  SEGMENT_BUTTON_CLASS,
+                  config.execution_mode === value
+                    ? "neu-surface-base neu-surface-raised text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-pill)]"
+                    : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]",
+                )}
+                onClick={() => onChange({ execution_mode: value })}
+              >
+                {value}
+              </button>
+            ))}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            {config.execution_mode === "immediate" ? "Execute as each signal arrives" : "Execute all after scan completes"}
+          <p className="mt-2 text-[11px] leading-5 text-[var(--neu-text-muted)]">
+            {config.execution_mode === "immediate" ? "Orders route as each approved signal arrives." : "Orders wait until the scan finishes, then route together."}
           </p>
         </div>
       </div>
 
-      {/* Trade Parameters */}
-      <div className="space-y-3">
-        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Trade Parameters</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className={SECTION_CLASS}>
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Trade parameters</div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
-            <Label className="text-xs text-muted-foreground">Leverage</Label>
-            <div className="flex items-center gap-1 mt-1.5">
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Leverage</Label>
+            <div className="mt-2 flex items-center gap-2">
               <Input
-                type="number" min={1} max={125}
+                type="number"
+                min={1}
+                max={125}
                 value={config.leverage}
                 onChange={(e) => onChange({ leverage: Math.min(125, Math.max(1, +e.target.value || 1)) })}
               />
-              <span className="text-xs text-muted-foreground">x</span>
+              <span className="text-sm text-[var(--neu-text-muted)]">x</span>
             </div>
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Capital %</Label>
-            <div className="flex items-center gap-1 mt-1.5">
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Capital %</Label>
+            <div className="mt-2 flex items-center gap-2">
               <Input
-                type="number" min={0.1} max={100} step={0.1}
+                type="number"
+                min={0.1}
+                max={100}
+                step={0.1}
                 value={config.capital_pct}
                 onChange={(e) => onChange({ capital_pct: Math.min(100, Math.max(0.1, +e.target.value || 1)) })}
               />
-              <span className="text-xs text-muted-foreground">%</span>
+              <span className="text-sm text-[var(--neu-text-muted)]">%</span>
             </div>
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Max Trades</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Max trades</Label>
             <Input
-              type="number" min={1} max={999}
+              type="number"
+              min={1}
+              max={999}
               value={config.max_trades}
               onChange={(e) => onChange({ max_trades: Math.min(999, Math.max(1, +e.target.value || 1)) })}
-              className="mt-1.5"
+              className="mt-2"
             />
           </div>
         </div>
-        <p className="text-[10px] text-muted-foreground">
-          Each trade uses {capitalPctNum}% of captured balance at {leverageNum}x leverage. Max {config.max_trades} trades per scan.
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Take profit %</Label>
+            <Input
+              type="number"
+              min={0.1}
+              max={1000}
+              step={0.1}
+              value={config.take_profit_pct}
+              onChange={(e) => onChange({ take_profit_pct: Math.min(1000, Math.max(0.1, +e.target.value || 1)) })}
+              className="mt-2"
+            />
+            <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">≈ {tpPriceMove}% price move</p>
+          </div>
+          <div>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Stop loss %</Label>
+            <Input
+              type="number"
+              min={0.1}
+              max={1000}
+              step={0.1}
+              value={config.stop_loss_pct}
+              onChange={(e) => onChange({ stop_loss_pct: Math.min(1000, Math.max(0.1, +e.target.value || 1)) })}
+              className="mt-2"
+            />
+            <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">≈ {slPriceMove}% price move</p>
+          </div>
+        </div>
+
+        <p className="mt-4 text-[11px] leading-5 text-[var(--neu-text-muted)]">
+          Each trade uses {capitalPctNum}% of captured balance at {leverageNum}x leverage, capped at {config.max_trades} total positions per scan.
         </p>
       </div>
 
-      {/* TP / SL */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <Label className="text-xs text-muted-foreground">Take Profit %</Label>
-          <Input
-            type="number" min={0.1} max={1000} step={0.1}
-            value={config.take_profit_pct}
-            onChange={(e) => onChange({ take_profit_pct: Math.min(1000, Math.max(0.1, +e.target.value || 1)) })}
-            className="mt-1.5"
-          />
-          <p className="text-[10px] text-muted-foreground mt-1">{"≈"} {tpPriceMove}% price move</p>
-        </div>
-        <div>
-          <Label className="text-xs text-muted-foreground">Stop Loss %</Label>
-          <Input
-            type="number" min={0.1} max={1000} step={0.1}
-            value={config.stop_loss_pct}
-            onChange={(e) => onChange({ stop_loss_pct: Math.min(1000, Math.max(0.1, +e.target.value || 1)) })}
-            className="mt-1.5"
-          />
-          <p className="text-[10px] text-muted-foreground mt-1">{"≈"} {slPriceMove}% price move</p>
-        </div>
-      </div>
-
-      {/* Signal Filters */}
-      <div className="space-y-3">
-        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Signal Filters</p>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className={SECTION_CLASS}>
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Signal filters</div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
-            <Label className="text-xs text-muted-foreground">Min Score</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Min score</Label>
             <Input
-              type="number" min={0} max={10} step={0.5}
+              type="number"
+              min={0}
+              max={10}
+              step={0.5}
               value={config.min_score}
               onChange={(e) => onChange({ min_score: Math.min(10, Math.max(0, +e.target.value || 0)) })}
-              className="mt-1.5"
+              className="mt-2"
             />
-            <p className="text-[10px] text-muted-foreground mt-1">0-10 scale</p>
+            <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">0 to 10 conviction threshold</p>
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Min Confidence</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Min confidence</Label>
             <Select value={config.confidence_filter} onValueChange={(v) => v != null && onChange({ confidence_filter: v as AutoTradeConfig["confidence_filter"] })}>
-              <SelectTrigger className="mt-1.5">
+              <SelectTrigger className="mt-2 w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -344,9 +447,9 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             </Select>
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Signal Sides</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Signal sides</Label>
             <Select value={config.signal_sides} onValueChange={(v) => v != null && onChange({ signal_sides: v as AutoTradeConfig["signal_sides"] })}>
-              <SelectTrigger className="mt-1.5">
+              <SelectTrigger className="mt-2 w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -357,146 +460,125 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             </Select>
           </div>
         </div>
-        <p className="text-[10px] text-muted-foreground">
-          Signals below these thresholds are skipped. Higher filters = fewer but stronger trades.
+
+        <p className="mt-4 text-[11px] leading-5 text-[var(--neu-text-muted)]">
+          Higher thresholds reduce noise and route fewer, stronger trades.
         </p>
       </div>
 
-      {/* Risk Management */}
-      <div className="space-y-3">
-        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Risk Management</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className={SECTION_CLASS}>
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Risk controls</div>
+        <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <Label className="text-xs text-muted-foreground">Max Drawdown %</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Max drawdown %</Label>
             <Input
-              type="number" min={1} max={100}
+              type="number"
+              min={1}
+              max={100}
               value={config.max_drawdown_pct}
               onChange={(e) => onChange({ max_drawdown_pct: Math.min(100, Math.max(1, +e.target.value || 1)) })}
-              className="mt-1.5"
+              className="mt-2"
             />
-            <p className="text-[10px] text-muted-foreground mt-1">Close all positions if equity drops by this %</p>
+            <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Close all positions if equity falls by this percentage.</p>
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Target Goal</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Target goal</Label>
             <Select
               value={config.target_goal_type ?? "none"}
               onValueChange={(v) => v != null && onChange({ target_goal_type: v === "none" ? null : v as AutoTradeConfig["target_goal_type"], ...(v === "none" ? { target_goal_value: null } : {}) })}
             >
-              <SelectTrigger className="mt-1.5">
+              <SelectTrigger className="mt-2 w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">None</SelectItem>
-                <SelectItem value="trade_count">Trade Count</SelectItem>
+                <SelectItem value="trade_count">Trade count</SelectItem>
                 <SelectItem value="profit_pct">Profit %</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-[10px] text-muted-foreground mt-1">
-              {config.target_goal_type === "profit_pct" ? "Close all when equity rises by target %" : config.target_goal_type === "trade_count" ? "Stop after N trades are placed" : "No automatic stop target"}
+            <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">
+              {config.target_goal_type === "profit_pct" ? "Close all once equity rises by the target percentage." : config.target_goal_type === "trade_count" ? "Stop after a fixed number of routed trades." : "No automatic target stop."}
             </p>
           </div>
         </div>
 
-        {config.target_goal_type && (
-          <div className="w-1/2">
-            <Label className="text-xs text-muted-foreground">
-              {config.target_goal_type === "profit_pct" ? "Target Profit %" : "Target Trade Count"}
+        {config.target_goal_type ? (
+          <div className="mt-4 sm:w-1/2">
+            <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">
+              {config.target_goal_type === "profit_pct" ? "Target profit %" : "Target trade count"}
             </Label>
             <Input
-              type="number" min={0.01} step={0.01}
+              type="number"
+              min={0.01}
+              step={0.01}
               value={config.target_goal_value ?? ""}
               onChange={(e) => onChange({ target_goal_value: +e.target.value || null })}
-              className="mt-1.5"
+              className="mt-2"
               placeholder={config.target_goal_type === "profit_pct" ? "e.g. 15" : "e.g. 5"}
             />
           </div>
-        )}
+        ) : null}
 
-        {config.max_drawdown_pct < 100 && (
-          <div className="rounded-lg bg-amber-500/5 border border-amber-500/10 px-3 py-2">
-            <p className="text-[10px] text-amber-400">
-              A {config.max_drawdown_pct}% equity drop rule will be created on the account when the scan starts. Visible in Account → Close Rules.
-            </p>
-          </div>
-        )}
-        {config.target_goal_type === "profit_pct" && config.target_goal_value && (
-          <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 px-3 py-2">
-            <p className="text-[10px] text-emerald-400">
-              A {config.target_goal_value}% equity rise rule will be created on the account when the scan starts. Visible in Account → Close Rules.
-            </p>
-          </div>
-        )}
+        <div className="mt-4 space-y-3">
+          {config.max_drawdown_pct < 100 ? (
+            <Notice tone="warning">
+              A {config.max_drawdown_pct}% equity drop rule is created on this account when the scan starts. Review it later in Account → Close Rules.
+            </Notice>
+          ) : null}
+          {config.target_goal_type === "profit_pct" && config.target_goal_value ? (
+            <Notice tone="success">
+              A {config.target_goal_value}% equity rise rule is created when the scan starts and becomes visible in Account → Close Rules.
+            </Notice>
+          ) : null}
+        </div>
       </div>
 
-      {/* Safety Toggles */}
-      <div className="space-y-3 pt-1 border-t border-border/20">
-        <label className="flex items-center gap-3 cursor-pointer group">
-          <div className="relative">
-            <input
-              type="checkbox"
-              checked={config.skip_if_positions_open ?? false}
-              onChange={(e) => onChange({ skip_if_positions_open: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-primary peer-checked:border-primary transition-colors" />
-            <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+      <div className={SECTION_CLASS}>
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Safety automation</div>
+        <div className="space-y-3">
+          <ToggleRow
+            checked={config.skip_if_positions_open ?? false}
+            onChange={(checked) => onChange({ skip_if_positions_open: checked })}
+            title="Skip if positions are already open"
+            description="Prevents stacking new positions on accounts that are already holding active trades."
+          />
+          <ToggleRow
+            checked={config.fill_to_max_trades ?? false}
+            onChange={(checked) => onChange({ fill_to_max_trades: checked })}
+            title="Fill to max trades"
+            description="If not enough signals pass the filters, fill the remaining slots with the next-best available setups."
+          />
+          <ToggleRow
+            checked={config.close_on_profit_pct != null && config.close_on_profit_pct > 0}
+            onChange={(checked) => onChange({ close_on_profit_pct: checked ? 50 : null })}
+            title="Close and re-trade on profit"
+            description="Closes existing positions once part of the target goal is reached, then allows the next wave of trades."
+            trailing={
+              config.close_on_profit_pct != null && config.close_on_profit_pct > 0 ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={5}
+                    value={config.close_on_profit_pct}
+                    onChange={(e) => onChange({ close_on_profit_pct: parseFloat(e.target.value) || 50 })}
+                    className="h-10 w-20 text-center"
+                  />
+                  <span className="text-[11px] text-[var(--neu-text-muted)]">%</span>
+                </div>
+              ) : null
+            }
+          />
+        </div>
+
+        {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && !config.target_goal_value ? (
+          <div className="mt-4">
+            <Notice tone="danger">Close and re-trade requires a profit target goal above so the automation has a reference threshold.</Notice>
           </div>
-          <div>
-            <span className="text-xs font-medium group-hover:text-foreground transition-colors">Skip if positions open</span>
-            <p className="text-[10px] text-muted-foreground">Don't open new trades if this account already has active positions</p>
-          </div>
-        </label>
-        <label className="flex items-center gap-3 cursor-pointer group">
-          <div className="relative">
-            <input
-              type="checkbox"
-              checked={config.fill_to_max_trades ?? false}
-              onChange={(e) => onChange({ fill_to_max_trades: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-primary peer-checked:border-primary transition-colors" />
-            <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
-          </div>
-          <div>
-            <span className="text-xs font-medium group-hover:text-foreground transition-colors">Fill to max trades</span>
-            <p className="text-[10px] text-muted-foreground">If not enough signals pass filters, fill remaining slots with the best available scores</p>
-          </div>
-        </label>
-        <label className="flex items-center gap-3 cursor-pointer group">
-          <div className="relative">
-            <input
-              type="checkbox"
-              checked={config.close_on_profit_pct != null && config.close_on_profit_pct > 0}
-              onChange={(e) => onChange({ close_on_profit_pct: e.target.checked ? 50 : null })}
-              className="sr-only peer"
-            />
-            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-primary peer-checked:border-primary transition-colors" />
-            <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
-          </div>
-          <div className="flex-1">
-            <span className="text-xs font-medium group-hover:text-foreground transition-colors">Close & re-trade on profit</span>
-            <p className="text-[10px] text-muted-foreground">Close all existing positions when this % of target profit goal is achieved, then open new trades</p>
-          </div>
-          {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && (
-            <div className="flex items-center gap-1">
-              <Input
-                type="number"
-                min={1}
-                max={100}
-                step={5}
-                value={config.close_on_profit_pct}
-                onChange={(e) => onChange({ close_on_profit_pct: parseFloat(e.target.value) || 50 })}
-                className="w-16 h-6 text-xs text-center"
-              />
-              <span className="text-[10px] text-muted-foreground">%</span>
-            </div>
-          )}
-        </label>
-        {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && !config.target_goal_value && (
-          <p className="text-[10px] text-amber-500 ml-12">Requires a Target Goal (profit_pct) to be set above</p>
-        )}
+        ) : null}
       </div>
-    </div>
+    </article>
   );
 }
 

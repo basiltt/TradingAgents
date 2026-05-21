@@ -29,6 +29,7 @@ export interface NeuNavItemData {
   badge?: ReactNode;
   active?: boolean;
   tone?: NeuTone;
+  onSelect?: () => void;
 }
 
 export interface NeuNavSection {

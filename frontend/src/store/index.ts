@@ -1,5 +1,6 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { useDispatch, useSelector } from "react-redux";
+import { neuUiSlice } from "@/design-system/neumorphism";
 import { analysisSlice } from "./analysis-slice";
 import { uiSlice } from "./ui-slice";
 import accountsReducer from "./accounts-slice";
@@ -9,6 +10,7 @@ import tradesReducer from "./trades-slice";
 export const store = configureStore({
   reducer: {
     analysis: analysisSlice.reducer,
+    neuUi: neuUiSlice.reducer,
     ui: uiSlice.reducer,
     accounts: accountsReducer,
     strategies: strategiesReducer,

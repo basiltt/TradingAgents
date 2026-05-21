@@ -35,10 +35,9 @@ function writeStorage(key: string, value: boolean) {
  */
 export function MobileCollapse({ title, badge, defaultOpen = true, storageKey, children, className }: MobileCollapseProps) {
   const [open, setOpen] = useState(() =>
-    storageKey ? readStorage(storageKey, defaultOpen) : defaultOpen
+    storageKey ? readStorage(storageKey, defaultOpen) : defaultOpen,
   );
 
-  // Sync to storage whenever open changes
   useEffect(() => {
     if (storageKey) writeStorage(storageKey, open);
   }, [open, storageKey]);
@@ -47,40 +46,41 @@ export function MobileCollapse({ title, badge, defaultOpen = true, storageKey, c
 
   return (
     <div className={className}>
-      {/* Mobile toggle header */}
       <button
         type="button"
         onClick={toggle}
-        className="md:hidden w-full flex items-center justify-between gap-2 px-4 py-3 rounded-t-xl border border-border bg-card hover:bg-muted/40 active:bg-muted/60 transition-colors"
+        className="neu-surface-base neu-surface-raised md:hidden flex w-full items-center justify-between gap-3 rounded-[var(--neu-radius-lg)] px-4 py-3.5 text-left"
         aria-expanded={open}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
           {title}
-          {badge && <div className="shrink-0">{badge}</div>}
+          {badge ? <div className="shrink-0">{badge}</div> : null}
         </div>
-        <svg
-          className={cn("w-4 h-4 text-muted-foreground shrink-0 transition-transform duration-200", open ? "rotate-180" : "rotate-0")}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
+        <span className="neu-surface-base neu-surface-inset flex size-8 shrink-0 items-center justify-center rounded-[var(--neu-radius-sm)] text-[var(--neu-text-muted)]">
+          <svg
+            className={cn("size-4 transition-transform duration-200", open ? "rotate-180" : "rotate-0")}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2.25}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </span>
       </button>
 
-      {/* Mobile body */}
       <div
         className={cn(
-          "md:hidden border border-t-0 border-border rounded-b-xl overflow-hidden transition-all duration-200",
-          open ? "max-h-[9999px] opacity-100" : "max-h-0 opacity-0 pointer-events-none",
+          "md:hidden overflow-hidden transition-all duration-200",
+          open ? "max-h-[9999px] opacity-100 pt-3" : "pointer-events-none max-h-0 opacity-0",
         )}
       >
         {children}
       </div>
 
-      {/* Desktop: always visible, no wrapper */}
       <div className="hidden md:block">
         {children}
       </div>
     </div>
   );
 }
-
