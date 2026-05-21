@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import concurrent.futures
 import gc
 import logging
@@ -27,8 +28,9 @@ from tradingagents.dataflows.coingecko_data import get_coingecko_status
 from backend.ws_manager import WSManager
 
 
-load_dotenv()
-load_dotenv(".env.enterprise", override=False)
+_project_root = Path(__file__).resolve().parent.parent
+load_dotenv(_project_root / ".env")
+load_dotenv(_project_root / ".env.enterprise", override=False)
 
 logger = logging.getLogger(__name__)
 
