@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { tradesApi } from "@/api/client";
 import { API_ACTIVE_STATUSES } from "@/components/trades/types";
 import type { Trade } from "@/components/trades/types";
@@ -44,7 +43,6 @@ function detectChanges(remote: Trade[], local: Trade[]): boolean {
 
 export function useTradePolling(enabled: boolean) {
   const dispatch = useAppDispatch();
-  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!enabled) return;
