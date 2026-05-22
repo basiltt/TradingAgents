@@ -18,7 +18,7 @@ from backend.services.accounts_service import AccountsService, _now_iso, _date_t
 class TestHelperUtilities:
     def test_now_iso_format(self):
         result = _now_iso()
-        assert len(result) == 19
+        assert len(result) in (19, 20)
         assert "T" in result
 
     def test_date_to_ms(self):

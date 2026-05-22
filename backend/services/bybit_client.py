@@ -544,3 +544,24 @@ class BybitClient:
         if not instruments:
             raise ValueError(f"No instrument info found for {symbol}")
         return instruments[0]
+
+    async def set_trading_stop(
+        self,
+        symbol: str,
+        take_profit: str | None = None,
+        stop_loss: str | None = None,
+        position_idx: int = 0,
+    ) -> dict[str, Any]:
+        """Modify TP/SL on an existing position."""
+        params: dict[str, Any] = {
+            "category": "linear",
+            "symbol": symbol,
+            "positionIdx": position_idx,
+        }
+        if take_profit is not None:
+            params["takeProfit"] = take_profit
+            params["tpTriggerBy"] = "MarkPrice"
+        if stop_loss is not None:
+            params["stopLoss"] = stop_loss
+            params["slTriggerBy"] = "MarkPrice"
+        return await self._request("POST", "/v5/position/trading-stop", params)

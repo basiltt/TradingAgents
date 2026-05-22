@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,18 @@ class CloseRuleEvaluator:
                     did_transition = await self._db.atomic_trigger_rule(rule["id"])
                     if not did_transition:
                         continue
+
+                    # BREAKEVEN_TIMEOUT: modify TP instead of closing
+                    if rule["trigger_type"] == "BREAKEVEN_TIMEOUT":
+                        try:
+                            await self._handle_breakeven_timeout(account_id, rule)
+                            await self._db.update_close_rule(rule["id"], status="executed")
+                            self._rule_failures.pop(rule["id"], None)
+                            logger.info("Breakeven timeout rule %s executed for account %s", rule["id"], account_id)
+                        except Exception:
+                            logger.exception("Breakeven timeout handler failed for rule %s", rule["id"])
+                            await self._db.update_close_rule(rule["id"], status="active")
+                        continue
                     try:
                         close_kwargs: dict[str, Any] = {}
                         if rule.get("cycle_id") and self._cycle_repo:
@@ -185,6 +197,11 @@ class CloseRuleEvaluator:
         balance: Decimal,
     ) -> bool:
         trigger_type = rule["trigger_type"]
+
+        # Time-based rules: check elapsed time, don't parse reference as Decimal
+        if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
+            return self._check_time_elapsed(rule)
+
         threshold = Decimal(rule["threshold_value"])
         reference = Decimal(rule["reference_value"]) if rule.get("reference_value") else None
 
@@ -209,3 +226,77 @@ class CloseRuleEvaluator:
 
         logger.warning("unknown_trigger_type", extra={"trigger_type": trigger_type, "rule_id": rule.get("id")})
         return False
+
+    def _check_time_elapsed(self, rule: dict) -> bool:
+        """Check if elapsed time since reference_value exceeds threshold_value hours."""
+        from datetime import datetime, timezone
+        try:
+            ref_str = rule.get("reference_value", "")
+            threshold_hours = float(rule["threshold_value"])
+            start_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            elapsed_hours = (datetime.now(timezone.utc) - start_time).total_seconds() / 3600
+            return elapsed_hours >= threshold_hours
+        except (ValueError, TypeError):
+            logger.warning("invalid_time_rule_data", extra={"rule_id": rule.get("id")})
+            return False
+
+    async def _handle_breakeven_timeout(self, account_id: str, rule: dict) -> None:
+        """Move all positions' TP to breakeven (1% unrealised PnL to cover fees)."""
+        try:
+            client = await self._accounts_service.get_client(account_id)
+            positions = await client.get_positions()
+            if not positions:
+                return
+            for pos in positions:
+                try:
+                    symbol = pos.get("symbol", "")
+                    side = pos.get("side", "")
+                    avg_price = float(pos.get("avgPrice") or pos.get("entryPrice") or "0")
+                    leverage = float(pos.get("leverage") or "1")
+                    if avg_price <= 0:
+                        continue
+
+                    # Calculate breakeven TP: 1% profit on leveraged position using Decimal
+                    avg_price_dec = Decimal(str(avg_price))
+                    leverage_dec = Decimal(str(leverage))
+                    price_move_pct = Decimal("1.0") / leverage_dec
+
+                    if side == "Buy":
+                        new_tp_dec = avg_price_dec * (Decimal("1") + price_move_pct / Decimal("100"))
+                    elif side == "Sell":
+                        new_tp_dec = avg_price_dec * (Decimal("1") - price_move_pct / Decimal("100"))
+                    else:
+                        continue
+
+                    # Fetch instrument info to get tickSize
+                    try:
+                        instrument = await client.get_instrument_info(symbol)
+                        price_filter = instrument.get("priceFilter", {})
+                        tick_size_str = price_filter.get("tickSize")
+                    except Exception:
+                        tick_size_str = None
+
+                    if tick_size_str:
+                        tick_size = Decimal(tick_size_str)
+                        rounded_tp = (new_tp_dec / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
+                        new_tp = str(rounded_tp)
+                    else:
+                        new_tp = str(round(new_tp_dec, 6))
+
+                    await client.set_trading_stop(
+                        symbol=symbol,
+                        take_profit=new_tp,
+                        position_idx=int(pos.get("positionIdx", 0)),
+                    )
+                    logger.info("breakeven_tp_set", extra={
+                        "account_id": account_id, "symbol": symbol,
+                        "side": side, "new_tp": new_tp,
+                    })
+                except Exception:
+                    logger.warning("breakeven_tp_set_failed", extra={
+                        "account_id": account_id, "symbol": pos.get("symbol"),
+                    }, exc_info=True)
+        except Exception:
+            logger.exception("breakeven_timeout_handler_failed", extra={"account_id": account_id})

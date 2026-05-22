@@ -150,3 +150,92 @@ class TestUnknownTrigger:
     def test_unknown_returns_false(self, evaluator: CloseRuleEvaluator) -> None:
         rule = _make_rule("NONSENSE", "100")
         assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
+
+
+# ---------------------------------------------------------------------------
+# BREAKEVEN_TIMEOUT & MAX_DURATION — time-based rules
+# ---------------------------------------------------------------------------
+class TestTimeBasedTriggers:
+    def test_not_elapsed_yet(self, evaluator: CloseRuleEvaluator) -> None:
+        from datetime import datetime, timezone
+        # Set reference to current time
+        ref = datetime.now(timezone.utc).isoformat()
+        rule = _make_rule("BREAKEVEN_TIMEOUT", "2", ref)
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
+
+    def test_already_elapsed(self, evaluator: CloseRuleEvaluator) -> None:
+        from datetime import datetime, timezone, timedelta
+        # Set reference to 3 hours ago
+        ref = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        rule = _make_rule("MAX_DURATION", "2", ref)
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is True
+
+    def test_invalid_reference_format(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = _make_rule("MAX_DURATION", "2", "not-a-date")
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
+
+    def test_offset_naive_datetime_fallback(self, evaluator: CloseRuleEvaluator) -> None:
+        from datetime import datetime, timezone, timedelta
+        # Generate naive datetime 3 hours ago based on UTC
+        ref = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None).isoformat()
+        rule = _make_rule("BREAKEVEN_TIMEOUT", "2", ref)
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is True
+
+
+
+@pytest.mark.asyncio
+async def test_handle_breakeven_timeout_with_tick_size():
+    from unittest.mock import AsyncMock
+    from backend.services.close_rule_evaluator import CloseRuleEvaluator
+
+    # Mock Bybit client
+    mock_client = AsyncMock()
+    mock_client.get_positions.return_value = [
+        {
+            "symbol": "BTCUSDT",
+            "side": "Buy",
+            "avgPrice": "65123.45",
+            "leverage": "20",
+            "positionIdx": 0,
+        },
+        {
+            "symbol": "ETHUSDT",
+            "side": "Sell",
+            "avgPrice": "3456.78",
+            "leverage": "10",
+            "positionIdx": 0,
+        }
+    ]
+
+    async def mock_get_instrument_info(symbol):
+        if symbol == "BTCUSDT":
+            return {"priceFilter": {"tickSize": "0.1"}}
+        elif symbol == "ETHUSDT":
+            return {"priceFilter": {"tickSize": "0.05"}}
+        return {}
+
+    mock_client.get_instrument_info.side_effect = mock_get_instrument_info
+
+    # Mock accounts service
+    mock_accounts_service = AsyncMock()
+    mock_accounts_service.get_client.return_value = mock_client
+
+    evaluator = CloseRuleEvaluator(close_service=None, accounts_service=mock_accounts_service, db=None)  # type: ignore[arg-type]
+
+    rule = {"id": "rule_1", "account_id": "acc_1"}
+    await evaluator._handle_breakeven_timeout("acc_1", rule)
+
+    # Verify set_trading_stop calls
+    mock_client.set_trading_stop.assert_any_call(
+        symbol="BTCUSDT",
+        take_profit="65156.0",
+        position_idx=0,
+    )
+
+    mock_client.set_trading_stop.assert_any_call(
+        symbol="ETHUSDT",
+        take_profit="3453.30",
+        position_idx=0,
+    )
+
+

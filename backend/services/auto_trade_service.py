@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _to_symbol(ticker: str) -> str:
+    """Normalise a ticker to a USDT-margined symbol."""
+    return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
+
+
 @dataclass
 class TradeExecution:
     account_id: str
@@ -82,10 +87,31 @@ class AutoTradeExecutor:
                 break
             try:
                 wallet = await self._accounts.get_wallet(account_id)
-                wallet_balance = float(wallet.get("totalWalletBalance") or "0")
                 unrealized = float(wallet.get("totalPerpUPL") or "0")
-                if wallet_balance > 0 and unrealized > 0:
-                    pnl_pct = (unrealized / wallet_balance) * 100
+                if unrealized <= 0:
+                    continue
+
+                # Use the reference_value from the existing EQUITY_RISE_PCT rule as the base,
+                # since the target_goal% was set relative to that balance (from the previous scan).
+                # This ensures the threshold is consistent regardless of wallet balance changes.
+                reference_balance = 0.0
+                try:
+                    existing_rules = await self._close_svc.list_rules(account_id)
+                    for rule in existing_rules:
+                        if rule.get("trigger_type") == "EQUITY_RISE_PCT" and rule.get("status") == "active":
+                            ref_val = rule.get("reference_value")
+                            if ref_val:
+                                reference_balance = float(ref_val)
+                                break
+                except Exception:
+                    pass
+
+                # Fall back to current wallet balance if no existing rule reference found
+                if reference_balance <= 0:
+                    reference_balance = float(wallet.get("totalWalletBalance") or "0")
+
+                if reference_balance > 0:
+                    pnl_pct = (unrealized / reference_balance) * 100
                     # Threshold = close_pct% of the target_goal equity rise
                     effective_threshold = (close_pct / 100) * target_goal
                     if pnl_pct >= effective_threshold:
@@ -93,6 +119,7 @@ class AutoTradeExecutor:
                             "account_id": account_id, "pnl_pct": round(pnl_pct, 2),
                             "effective_threshold": round(effective_threshold, 2),
                             "close_pct": close_pct, "target_goal": target_goal,
+                            "reference_balance": round(reference_balance, 2),
                         })
                         await self._close_svc.close_all_positions(account_id)
                         await asyncio.sleep(2)
@@ -170,6 +197,7 @@ class AutoTradeExecutor:
                                 },
                             )
                             state.close_rule_id = rule.get("id")
+                            state.created_rule_ids.append(rule.get("id"))
                             logger.info("auto_trade_close_rule_created", extra={"account_id": account_id, "rule_id": state.close_rule_id, "threshold": goal_value})
                         except Exception as e:
                             state.stopped = True
@@ -189,30 +217,76 @@ class AutoTradeExecutor:
                             },
                         )
                         state.drawdown_rule_id = rule.get("id")
+                        state.created_rule_ids.append(rule.get("id"))
                         logger.info("auto_trade_drawdown_rule_created", extra={"account_id": account_id, "rule_id": state.drawdown_rule_id, "threshold": max_drawdown})
                     except Exception as e:
                         state.stopped = True
                         state.stopped_reason = "drawdown_rule_creation_failed"
                         logger.warning("auto_trade_drawdown_rule_failed", extra={"account_id": account_id, "error": str(e)[:512]})
                         continue
+                # Breakeven timeout rule (move TP to breakeven after X hours)
+                breakeven_hours = state.config.get("breakeven_timeout_hours")
+                if breakeven_hours and breakeven_hours > 0 and self._close_svc:
+                    from datetime import datetime, timezone as tz
+                    try:
+                        rule = await self._close_svc.create_rule(
+                            account_id=account_id,
+                            rule_data={
+                                "trigger_type": "BREAKEVEN_TIMEOUT",
+                                "threshold_value": str(breakeven_hours),
+                                "reference_value": datetime.now(tz.utc).isoformat(),
+                            },
+                        )
+                        state.created_rule_ids.append(rule.get("id"))
+                        logger.info("auto_trade_breakeven_timeout_rule_created", extra={"account_id": account_id, "hours": breakeven_hours})
+                    except Exception as e:
+                        logger.warning("auto_trade_breakeven_timeout_rule_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+                # Max trade duration rule (force close all after X hours)
+                max_duration_hours = state.config.get("max_trade_duration_hours")
+                if max_duration_hours and max_duration_hours > 0 and self._close_svc:
+                    from datetime import datetime, timezone as tz
+                    try:
+                        rule = await self._close_svc.create_rule(
+                            account_id=account_id,
+                            rule_data={
+                                "trigger_type": "MAX_DURATION",
+                                "threshold_value": str(max_duration_hours),
+                                "reference_value": datetime.now(tz.utc).isoformat(),
+                            },
+                        )
+                        state.created_rule_ids.append(rule.get("id"))
+                        logger.info("auto_trade_max_duration_rule_created", extra={"account_id": account_id, "hours": max_duration_hours})
+                    except Exception as e:
+                        logger.warning("auto_trade_max_duration_rule_failed", extra={"account_id": account_id, "error": str(e)[:200]})
                 rules_created_for.add(account_id)
 
         # Propagate rule IDs and base_capital to sibling configs sharing the same account
         account_rule_map: Dict[str, tuple] = {}
         for state in self._state.values():
             aid = state.config["account_id"]
-            if state.close_rule_id or state.drawdown_rule_id or state.base_capital:
-                account_rule_map.setdefault(aid, (state.close_rule_id, state.drawdown_rule_id, state.base_capital))
+            if state.close_rule_id or state.drawdown_rule_id or state.base_capital or state.created_rule_ids:
+                if aid not in account_rule_map:
+                    account_rule_map[aid] = (state.close_rule_id, state.drawdown_rule_id, state.base_capital, list(state.created_rule_ids))
+                else:
+                    existing = account_rule_map[aid]
+                    merged_rules = list(set(existing[3] + state.created_rule_ids))
+                    account_rule_map[aid] = (
+                        state.close_rule_id or existing[0],
+                        state.drawdown_rule_id or existing[1],
+                        state.base_capital or existing[2],
+                        merged_rules,
+                    )
         for state in self._state.values():
             aid = state.config["account_id"]
             if aid in account_rule_map:
-                cr, dr, bc = account_rule_map[aid]
+                cr, dr, bc, rids = account_rule_map[aid]
                 if not state.close_rule_id and cr:
                     state.close_rule_id = cr
                 if not state.drawdown_rule_id and dr:
                     state.drawdown_rule_id = dr
                 if state.base_capital is None and bc:
                     state.base_capital = bc
+                state.created_rule_ids = list(rids)
 
     async def evaluate_result(self, result: Dict[str, Any]) -> List[TradeExecution]:
         """Evaluate one scan result against all 'immediate' mode configs. Returns executions."""
@@ -324,9 +398,6 @@ class AutoTradeExecutor:
             executions: List[TradeExecution] = []
             traded: set = set()  # (account_id, symbol) cross-config deduplication
 
-            def _to_symbol(ticker: str) -> str:
-                return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
-
             # Pre-populate traded set from strict-pass executions
             for state in self._state.values():
                 if state.config.get("execution_mode") != "immediate":
@@ -422,6 +493,8 @@ class AutoTradeExecutor:
                 account_rules[aid].add(state.close_rule_id)
             if state.drawdown_rule_id:
                 account_rules[aid].add(state.drawdown_rule_id)
+            for rid in state.created_rule_ids:
+                account_rules[aid].add(rid)
 
         # Delete rules only for accounts with zero total trades
         for aid, has_trades in account_has_trades.items():
@@ -432,6 +505,269 @@ class AutoTradeExecutor:
                     await self._close_svc.delete_rule(aid, rule_id)
                 except Exception:
                     pass
+
+    async def post_scan_recheck(self, results: List[Dict[str, Any]]) -> List[TradeExecution]:
+        """Re-check accounts at end of scan for conditions that may have changed during the 2+ hour scan.
+
+        This handles two scenarios:
+        1. Accounts where close_on_profit_pct threshold is NOW met (PnL grew during scan)
+           → close all positions, clear rules, then place new trades from scan results.
+        2. Accounts that were skipped due to positions_already_open but positions have since
+           closed (hit TP/SL/drawdown rule) → place new trades from scan results.
+        """
+        executions: List[TradeExecution] = []
+        if not results:
+            return executions
+
+        # Deduplicate results by ticker — keep the latest
+        seen: Dict[str, Dict[str, Any]] = {}
+        for r in results:
+            ticker = r.get("ticker", "")
+            if ticker:
+                seen[ticker] = r
+        unique_results = list(seen.values())
+
+        # Snapshot state under lock
+        async with self._lock:
+            accounts_to_recheck: Dict[str, List["_AccountState"]] = {}
+
+            for state in self._state.values():
+                aid = state.config.get("account_id", "")
+                if not aid:
+                    continue
+
+                needs_recheck = False
+
+                # Case 1: Account was skipped because positions were open
+                if state.stopped and state.stopped_reason == "positions_already_open":
+                    needs_recheck = True
+
+                # Case 2: Account has close_on_profit_pct and may have reached threshold during scan
+                close_pct = state.config.get("close_on_profit_pct")
+                target_goal = state.config.get("target_goal_value")
+                if close_pct and target_goal:
+                    needs_recheck = True
+
+                if needs_recheck:
+                    accounts_to_recheck.setdefault(aid, []).append(state)
+
+        if not accounts_to_recheck:
+            return executions
+
+        # Process each account outside the lock (network I/O)
+        for account_id, states in accounts_to_recheck.items():
+            try:
+                # Check current positions
+                positions = await self._accounts.get_positions(account_id)
+                has_positions = bool(positions)
+
+                # For accounts with close_on_profit_pct: check if threshold is met NOW
+                force_closed = False
+                any_close_pct = None
+                any_target_goal = None
+                for s in states:
+                    cp = s.config.get("close_on_profit_pct")
+                    tg = s.config.get("target_goal_value")
+                    if cp and tg:
+                        any_close_pct = cp
+                        any_target_goal = tg
+                        break
+
+                if has_positions and any_close_pct and any_target_goal and self._close_svc:
+                    wallet = await self._accounts.get_wallet(account_id)
+                    unrealized = float(wallet.get("totalPerpUPL") or "0")
+                    if unrealized > 0:
+                        # Get reference balance from existing rule
+                        reference_balance = 0.0
+                        try:
+                            existing_rules = await self._close_svc.list_rules(account_id)
+                            for rule in existing_rules:
+                                if rule.get("trigger_type") == "EQUITY_RISE_PCT" and rule.get("status") == "active":
+                                    ref_val = rule.get("reference_value")
+                                    if ref_val:
+                                        reference_balance = float(ref_val)
+                                        break
+                        except Exception:
+                            pass
+                        if reference_balance <= 0:
+                            reference_balance = float(wallet.get("totalWalletBalance") or "0")
+
+                        if reference_balance > 0:
+                            pnl_pct = (unrealized / reference_balance) * 100
+                            effective_threshold = (any_close_pct / 100) * any_target_goal
+                            if pnl_pct >= effective_threshold:
+                                logger.info("post_scan_force_close_triggered", extra={
+                                    "account_id": account_id, "pnl_pct": round(pnl_pct, 2),
+                                    "effective_threshold": round(effective_threshold, 2),
+                                })
+                                await self._close_svc.close_all_positions(account_id)
+                                await asyncio.sleep(2)
+                                force_closed = True
+                                has_positions = False
+
+                # If account still has positions and wasn't force-closed, skip
+                if has_positions and not force_closed:
+                    continue
+
+                # Account is now clear — reset states and place trades
+                logger.info("post_scan_recheck_trading", extra={
+                    "account_id": account_id, "force_closed": force_closed,
+                    "reason": "positions_closed_during_scan",
+                })
+
+                # Refresh balance
+                try:
+                    wallet = await self._accounts.get_wallet(account_id)
+                    balance_str = wallet.get("totalAvailableBalance") or wallet.get("totalWalletBalance") or "0"
+                    new_balance = float(balance_str)
+                except Exception:
+                    continue
+
+                if new_balance <= 0:
+                    continue
+
+                # Delete old rules and create fresh ones
+                if self._close_svc:
+                    try:
+                        await self._close_svc.delete_all_rules(account_id)
+                    except Exception:
+                        pass
+
+                # Reset state and re-create rules under lock
+                async with self._lock:
+                    for state in states:
+                        state.stopped = False
+                        state.stopped_reason = None
+                        state.trades_executed = 0
+                        state.trades_failed = 0
+                        state.trades_skipped = 0
+                        state.base_capital = new_balance
+                        state.existing_symbols = set()
+                        state.executions = []
+                        state.close_rule_id = None
+                        state.drawdown_rule_id = None
+                        state.created_rule_ids = []
+
+                # Re-create rules (only once per account, using first state with each config)
+                rules_created = False
+                for state in states:
+                    if rules_created:
+                        break
+                    if self._close_svc:
+                        # Profit target rule
+                        if state.config.get("target_goal_type") == "profit_pct":
+                            goal_value = state.config.get("target_goal_value")
+                            if goal_value and goal_value > 0:
+                                try:
+                                    rule = await self._close_svc.create_rule(
+                                        account_id=account_id,
+                                        rule_data={
+                                            "trigger_type": "EQUITY_RISE_PCT",
+                                            "threshold_value": str(goal_value),
+                                            "reference_value": str(new_balance),
+                                        },
+                                    )
+                                    async with self._lock:
+                                        for s in states:
+                                            s.close_rule_id = rule.get("id")
+                                            s.created_rule_ids.append(rule.get("id"))
+                                except Exception:
+                                    pass
+                        # Max drawdown rule
+                        max_drawdown = state.config.get("max_drawdown_pct", 100)
+                        if max_drawdown < 100:
+                            try:
+                                rule = await self._close_svc.create_rule(
+                                    account_id=account_id,
+                                    rule_data={
+                                        "trigger_type": "EQUITY_DROP_PCT",
+                                        "threshold_value": str(max_drawdown),
+                                        "reference_value": str(new_balance),
+                                    },
+                                )
+                                async with self._lock:
+                                    for s in states:
+                                        s.drawdown_rule_id = rule.get("id")
+                                        s.created_rule_ids.append(rule.get("id"))
+                            except Exception:
+                                pass
+                        # Breakeven timeout rule
+                        breakeven_hours = state.config.get("breakeven_timeout_hours")
+                        if breakeven_hours and breakeven_hours > 0:
+                            from datetime import datetime, timezone as tz
+                            try:
+                                rule = await self._close_svc.create_rule(
+                                    account_id=account_id,
+                                    rule_data={
+                                        "trigger_type": "BREAKEVEN_TIMEOUT",
+                                        "threshold_value": str(breakeven_hours),
+                                        "reference_value": datetime.now(tz.utc).isoformat(),
+                                    },
+                                )
+                                async with self._lock:
+                                    for s in states:
+                                        s.created_rule_ids.append(rule.get("id"))
+                            except Exception:
+                                pass
+                        # Max trade duration rule
+                        max_duration_hours = state.config.get("max_trade_duration_hours")
+                        if max_duration_hours and max_duration_hours > 0:
+                            from datetime import datetime, timezone as tz
+                            try:
+                                rule = await self._close_svc.create_rule(
+                                    account_id=account_id,
+                                    rule_data={
+                                        "trigger_type": "MAX_DURATION",
+                                        "threshold_value": str(max_duration_hours),
+                                        "reference_value": datetime.now(tz.utc).isoformat(),
+                                    },
+                                )
+                                async with self._lock:
+                                    for s in states:
+                                        s.created_rule_ids.append(rule.get("id"))
+                            except Exception:
+                                pass
+                        rules_created = True
+
+                # Execute trades from scan results
+                traded: set = set()
+                for state in states:
+                    if state.stopped:
+                        continue
+                    for result in unique_results:
+                        if state.stopped:
+                            break
+                        ticker = result.get("ticker", "")
+                        symbol = _to_symbol(ticker)
+                        trade_key = (account_id, symbol)
+                        if trade_key in traded:
+                            continue
+                        execution = await self._try_trade(state, result)
+                        if execution and execution.status == "success":
+                            traded.add(trade_key)
+                        if execution:
+                            executions.append(execution)
+
+                # Clean up if 0 trades were successfully executed
+                total_executed = sum(state.trades_executed for state in states)
+                if total_executed == 0 and self._close_svc:
+                    to_delete = set()
+                    async with self._lock:
+                        for s in states:
+                            for rid in s.created_rule_ids:
+                                to_delete.add(rid)
+                    for rule_id in to_delete:
+                        try:
+                            await self._close_svc.delete_rule(account_id, rule_id)
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                logger.warning("post_scan_recheck_failed", extra={
+                    "account_id": account_id, "error": str(e)[:200],
+                })
+
+        return executions
 
     async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False) -> Optional[TradeExecution]:
         cfg = state.config
@@ -553,3 +889,4 @@ class _AccountState:
     drawdown_rule_id: Optional[str] = None
     executions: List[TradeExecution] = field(default_factory=list)
     existing_symbols: set = field(default_factory=set)
+    created_rule_ids: List[str] = field(default_factory=list)

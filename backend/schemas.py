@@ -442,6 +442,8 @@ class AutoTradeConfig(BaseModel):
     skip_if_positions_open: bool = False
     fill_to_max_trades: bool = False
     close_on_profit_pct: Optional[float] = Field(None, gt=0, le=100)
+    breakeven_timeout_hours: Optional[float] = Field(None, gt=0, le=720)
+    max_trade_duration_hours: Optional[float] = Field(None, gt=0, le=720)
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":
@@ -1048,6 +1050,7 @@ VALID_TRIGGER_TYPES = frozenset([
     "BALANCE_BELOW", "BALANCE_ABOVE",
     "EQUITY_DROP_PCT", "EQUITY_RISE_PCT",
     "PNL_BELOW", "PNL_ABOVE",
+    "BREAKEVEN_TIMEOUT", "MAX_DURATION",
 ])
 
 PCT_TRIGGER_TYPES = frozenset(["EQUITY_DROP_PCT", "EQUITY_RISE_PCT"])

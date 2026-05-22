@@ -340,6 +340,25 @@ async def test_create_rule_negative_threshold(service):
         })
 
 
+@pytest.mark.asyncio(loop_scope="function")
+async def test_create_time_based_rule_success(service, mock_db, mock_accounts_service):
+    """Creating a time-based rule does not fetch wallet equity and uses/sets default timestamp reference."""
+    mock_accounts_service.get_wallet.reset_mock()
+    result = await service.create_rule("acc-1", {
+        "trigger_type": "BREAKEVEN_TIMEOUT",
+        "threshold_value": "4.5",
+    })
+    assert result["id"] == "rule-1"
+    # Verify we did not call get_wallet
+    mock_accounts_service.get_wallet.assert_not_called()
+    # Verify reference value was inserted
+    args = mock_db.insert_close_rule.call_args[0][0]
+    assert args["trigger_type"] == "BREAKEVEN_TIMEOUT"
+    assert args["threshold_value"] == "4.5"
+    assert "T" in args["reference_value"]  # ISO timestamp
+
+
+
 # ─── update_rule ───────────────────────────────────────────────────────────
 
 

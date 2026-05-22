@@ -29,6 +29,8 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   skip_if_positions_open: false,
   fill_to_max_trades: false,
   close_on_profit_pct: null,
+  breakeven_timeout_hours: null,
+  max_trade_duration_hours: null,
 };
 
 const SEGMENT_CONTAINER_CLASS = "grid grid-cols-2 gap-2 rounded-[calc(var(--radius)*1.2)] border border-border/55 bg-background/50 p-1.5 shadow-[var(--shadow-soft)] backdrop-blur-sm";
@@ -630,7 +632,49 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 ) : null
               }
             />
+            <ToggleRow
+              checked={(config.breakeven_timeout_hours != null && config.breakeven_timeout_hours > 0) || (config.max_trade_duration_hours != null && config.max_trade_duration_hours > 0)}
+              onChange={(checked) => onChange({
+                breakeven_timeout_hours: checked ? 4 : null,
+                max_trade_duration_hours: checked ? 8 : null,
+              })}
+              title="Trade duration limits"
+              description="Auto-adjust or close trades based on how long they've been open."
+            />
           </div>
+
+          {((config.breakeven_timeout_hours != null && config.breakeven_timeout_hours > 0) || (config.max_trade_duration_hours != null && config.max_trade_duration_hours > 0)) && (
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Move to breakeven after (hours)</Label>
+                <p className="mt-1 text-[11px] text-muted-foreground">Change target to 1% unrealised PnL (covers fees) after this time</p>
+                <Input
+                  type="number"
+                  min={0.5}
+                  max={720}
+                  step={0.5}
+                  value={config.breakeven_timeout_hours ?? ""}
+                  onChange={(e) => onChange({ breakeven_timeout_hours: e.target.value ? parseFloat(e.target.value) : null })}
+                  placeholder="e.g. 4"
+                  className="mt-2"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Force close after (hours)</Label>
+                <p className="mt-1 text-[11px] text-muted-foreground">Close all trades even at a loss after this time</p>
+                <Input
+                  type="number"
+                  min={0.5}
+                  max={720}
+                  step={0.5}
+                  value={config.max_trade_duration_hours ?? ""}
+                  onChange={(e) => onChange({ max_trade_duration_hours: e.target.value ? parseFloat(e.target.value) : null })}
+                  placeholder="e.g. 8"
+                  className="mt-2"
+                />
+              </div>
+            </div>
+          )}
 
           {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && !config.target_goal_value ? (
             <div className="mt-4">

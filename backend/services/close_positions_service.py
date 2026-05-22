@@ -265,14 +265,20 @@ class ClosePositionsService:
         threshold = rule_data["threshold_value"]
         reference = rule_data.get("reference_value")
 
-        if trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and not reference:
+        # Time-based rules store ISO timestamp in reference_value, skip equity checks
+        if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
+            if not reference:
+                from datetime import datetime, timezone
+                reference = datetime.now(timezone.utc).isoformat()
+        elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and not reference:
             wallet = await self._accounts_service.get_wallet(account_id)
             reference = wallet.get("totalEquity", "0")
             if not reference or Decimal(reference) <= 0:
                 raise ValueError("Cannot create percentage rule: current equity is zero or unavailable")
 
-        if Decimal(threshold) <= 0:
-            raise ValueError("threshold_value must be positive")
+        if trigger_type not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
+            if Decimal(threshold) <= 0:
+                raise ValueError("threshold_value must be positive")
 
         row = await self._db.insert_close_rule(
             {
