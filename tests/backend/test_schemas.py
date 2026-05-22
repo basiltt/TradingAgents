@@ -498,3 +498,45 @@ def test_scan_request_data_vendors_none_allowed():
     req = ScanRequest(analysis_date="2025-01-01")
     assert req.data_vendors is None
 
+
+def test_create_close_rule_request_valid():
+    from backend.schemas import CreateCloseRuleRequest
+    for trigger in ("BALANCE_BELOW", "EQUITY_DROP_PCT", "BREAKEVEN_TIMEOUT", "MAX_DURATION"):
+        req = CreateCloseRuleRequest(
+            trigger_type=trigger,
+            threshold_value="5.5",
+            reference_value="100.0" if "PCT" in trigger or "BELOW" in trigger else "2026-05-22T09:21:46Z",
+        )
+        assert req.trigger_type == trigger
+        assert req.threshold_value == "5.5"
+
+
+def test_create_close_rule_request_invalid_trigger():
+    from backend.schemas import CreateCloseRuleRequest
+    with pytest.raises(ValueError, match="Invalid trigger_type"):
+        CreateCloseRuleRequest(
+            trigger_type="INVALID_TRIGGER",
+            threshold_value="5.5",
+        )
+
+
+def test_create_close_rule_request_invalid_threshold():
+    from backend.schemas import CreateCloseRuleRequest
+    with pytest.raises(ValueError, match="must be positive"):
+        CreateCloseRuleRequest(
+            trigger_type="BREAKEVEN_TIMEOUT",
+            threshold_value="-1",
+        )
+    with pytest.raises(ValueError, match="valid number"):
+        CreateCloseRuleRequest(
+            trigger_type="BREAKEVEN_TIMEOUT",
+            threshold_value="not-a-number",
+        )
+
+
+def test_update_close_rule_request_valid():
+    from backend.schemas import UpdateCloseRuleRequest
+    req = UpdateCloseRuleRequest(trigger_type="BREAKEVEN_TIMEOUT")
+    assert req.trigger_type == "BREAKEVEN_TIMEOUT"
+
+

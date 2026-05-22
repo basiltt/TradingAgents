@@ -157,6 +157,55 @@ def _schema_v26_triggers_sync(cur) -> None:
         CREATE TRIGGER trg_trade_events_immutable BEFORE UPDATE OR DELETE ON trade_events
         FOR EACH ROW EXECUTE FUNCTION prevent_trade_events_mutation()
     """)
+def _fix_source_constraint_sync(cur) -> None:
+    """Drop all CHECK constraints on trades.source column and re-add with correct values."""
+    cur.execute("""
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_attribute att ON att.attnum = ANY(con.conkey) AND att.attrelid = con.conrelid
+        WHERE con.conrelid = 'trades'::regclass
+          AND att.attname = 'source'
+          AND con.contype = 'c'
+          AND con.conname != 'chk_source_id'
+    """)
+    rows = cur.fetchall()
+    for row in rows:
+        conname = row[0] if isinstance(row, (tuple, list)) else row["conname"]
+        cur.execute(f'ALTER TABLE trades DROP CONSTRAINT {conname}')
+    cur.execute(
+        "ALTER TABLE trades ADD CONSTRAINT trades_source_check "
+        "CHECK (source IN ('manual', 'cycle', 'scanner'))"
+    )
+
+
+def _fix_close_rules_constraints_sync(cur) -> None:
+    # 1. Find and drop existing check constraints on close_rules.trigger_type
+    cur.execute("""
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_attribute att ON att.attnum = ANY(con.conkey) AND att.attrelid = con.conrelid
+        WHERE con.conrelid = 'close_rules'::regclass
+          AND att.attname = 'trigger_type'
+          AND con.contype = 'c'
+    """)
+    rows = cur.fetchall()
+    for row in rows:
+        conname = row[0] if isinstance(row, (tuple, list)) else row["conname"]
+        cur.execute(f'ALTER TABLE close_rules DROP CONSTRAINT {conname}')
+
+    # 2. Add new check constraint allowing BREAKEVEN_TIMEOUT and MAX_DURATION
+    cur.execute("""
+        ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
+        CHECK (trigger_type IN (
+            'BALANCE_BELOW', 'BALANCE_ABOVE',
+            'EQUITY_DROP_PCT', 'EQUITY_RISE_PCT',
+            'PNL_BELOW', 'PNL_ABOVE',
+            'BREAKEVEN_TIMEOUT', 'MAX_DURATION'
+        ))
+    """)
+
+    # 3. Alter reference_value column to VARCHAR(100)
+    cur.execute("ALTER TABLE close_rules ALTER COLUMN reference_value TYPE VARCHAR(100)")
 
 
 _MIGRATIONS: list[tuple[int, "str | Callable[[Any], None]"]] = [
@@ -353,24 +402,62 @@ CREATE INDEX IF NOT EXISTS idx_close_executions_account ON close_executions(acco
 """),
     (19, "ALTER TABLE closed_pnl_records ALTER COLUMN created_time TYPE BIGINT"),
     (20, """
-ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS include_in_analytics INTEGER NOT NULL DEFAULT 1
-"""),
-    (21, """
 CREATE TABLE IF NOT EXISTS trading_cycles (
     id SERIAL PRIMARY KEY,
-    scan_id TEXT NOT NULL,
     account_id TEXT NOT NULL REFERENCES trading_accounts(id),
-    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','filtering','placing_orders','monitoring','closing','completed','failed','cancelled','partial')),
-    config JSONB NOT NULL DEFAULT '{}',
-    results JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    scan_id TEXT REFERENCES scans(scan_id) ON DELETE SET NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','placing_trades','running','stopping','completed','stopped','failed')),
+    trade_direction VARCHAR(10) NOT NULL CHECK (trade_direction IN ('straight','reverse')),
+    leverage INTEGER NOT NULL CHECK (leverage BETWEEN 1 AND 125),
+    capital_pct NUMERIC(5,2) NOT NULL CHECK (capital_pct > 0 AND capital_pct <= 100),
+    take_profit_pct NUMERIC(6,2) CHECK (take_profit_pct > 0 AND take_profit_pct <= 1000),
+    stop_loss_pct NUMERIC(6,2) CHECK (stop_loss_pct > 0 AND stop_loss_pct <= 1000),
+    min_score INTEGER NOT NULL DEFAULT 3 CHECK (min_score BETWEEN -10 AND 10),
+    min_confidence VARCHAR(10) NOT NULL DEFAULT 'moderate'
+        CHECK (min_confidence IN ('none','low','moderate','high')),
+    signal_filter VARCHAR(4) NOT NULL DEFAULT 'both'
+        CHECK (signal_filter IN ('buy','sell','both')),
+    max_trades INTEGER NOT NULL CHECK (max_trades BETWEEN 1 AND 20),
+    target_type VARCHAR(10) NOT NULL CHECK (target_type IN ('percentage','amount')),
+    target_value NUMERIC(12,2) NOT NULL CHECK (target_value > 0),
+    max_drawdown_pct NUMERIC(5,2) NOT NULL CHECK (max_drawdown_pct > 0 AND max_drawdown_pct <= 100),
+    initial_equity NUMERIC(14,4),
+    final_pnl NUMERIC(14,4),
+    stop_reason VARCHAR(200),
+    trades_placed INTEGER NOT NULL DEFAULT 0,
+    trades_failed INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ,
-    error TEXT
+    completed_at TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_trading_cycles_account ON trading_cycles(account_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_trading_cycles_status ON trading_cycles(status) WHERE status NOT IN ('completed','failed','cancelled')
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_account_status ON trading_cycles(account_id, status);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_created ON trading_cycles(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_scan_id ON trading_cycles(scan_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_cycle ON trading_cycles(account_id)
+    WHERE status IN ('pending','placing_trades','running','stopping');
+CREATE INDEX IF NOT EXISTS idx_trading_cycles_stuck ON trading_cycles(status, created_at)
+    WHERE status IN ('running','placing_trades','stopping')
+"""),
+    (21, """
+CREATE TABLE IF NOT EXISTS cycle_trades (
+    id SERIAL PRIMARY KEY,
+    cycle_id INTEGER NOT NULL REFERENCES trading_cycles(id) ON DELETE RESTRICT,
+    symbol VARCHAR(30) NOT NULL,
+    order_id VARCHAR(50),
+    order_link_id VARCHAR(50),
+    side VARCHAR(4) NOT NULL CHECK (side IN ('Buy','Sell')),
+    qty NUMERIC(18,8),
+    entry_price NUMERIC(18,8),
+    status VARCHAR(15) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','submitted','filled','failed','cancelled')),
+    error_msg VARCHAR(500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    filled_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_cycle_trades_cycle_id ON cycle_trades(cycle_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cycle_trades_order_link_id ON cycle_trades(order_link_id)
+    WHERE order_link_id IS NOT NULL
 """),
     (22, """
 ALTER TABLE close_rules ADD COLUMN IF NOT EXISTS cycle_id INTEGER REFERENCES trading_cycles(id) ON DELETE RESTRICT;
@@ -389,8 +476,39 @@ ALTER TABLE scheduled_scans ADD CONSTRAINT scheduled_scans_status_check
 """),
     (25, _SCHEMA_V25_TABLES),
     (26, _schema_v26_triggers_sync),
+    (27, """
+CREATE TABLE IF NOT EXISTS dead_letter (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    operation TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    stack_trace TEXT,
+    attempt_count INTEGER DEFAULT 1,
+    max_retries INTEGER DEFAULT 3,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending','retrying','exhausted','resolved')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_retried_at TIMESTAMPTZ,
+    resolved_at TIMESTAMPTZ,
+    resolved_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_status ON dead_letter(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_dead_letter_operation ON dead_letter(operation);
+"""),
     (28, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_results JSONB NOT NULL DEFAULT '[]'"),
     (29, "ALTER TABLE scans ADD COLUMN IF NOT EXISTS auto_trade_summaries JSONB NOT NULL DEFAULT '[]'"),
+    (30, """
+ALTER TABLE trades DROP CONSTRAINT IF EXISTS chk_source_id;
+ALTER TABLE trades ADD CONSTRAINT chk_source_id CHECK (
+    (source = 'cycle' AND source_id IS NOT NULL) OR
+    (source = 'manual' AND source_id IS NULL) OR
+    (source = 'scanner')
+);
+ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_source_check;
+ALTER TABLE trades ADD CONSTRAINT trades_source_check CHECK (source IN ('manual', 'cycle', 'scanner'))
+"""),
+    (31, _fix_source_constraint_sync),
+    (32, _fix_close_rules_constraints_sync),
 ]
 def _default_dsn() -> str:
     dsn = os.environ.get("DATABASE_URL")
@@ -1960,10 +2078,16 @@ class AnalysisDB:
 
     def insert_close_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
         cols = ["account_id", "trigger_type", "threshold_value", "reference_value",
-                "status", "expires_at"]
+                "status", "expires_at", "cycle_id"]
         vals = {c: rule.get(c) for c in cols}
         if vals.get("status") is None:
             vals["status"] = "active"
+        if vals.get("reference_value") is not None:
+            ref_val = vals["reference_value"]
+            if isinstance(ref_val, datetime):
+                vals["reference_value"] = ref_val.isoformat()
+            else:
+                vals["reference_value"] = str(ref_val)
         col_names = ", ".join(vals.keys())
         placeholders = ", ".join(["%s"] * len(vals))
         with self._get_conn() as conn:
@@ -2012,6 +2136,12 @@ class AnalysisDB:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return None
+        if updates.get("reference_value") is not None:
+            ref_val = updates["reference_value"]
+            if isinstance(ref_val, datetime):
+                updates["reference_value"] = ref_val.isoformat()
+            else:
+                updates["reference_value"] = str(ref_val)
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = %s" for k in updates)
         with self._get_conn() as conn:

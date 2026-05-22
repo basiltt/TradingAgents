@@ -181,6 +181,34 @@ async def _fix_source_constraint(conn) -> None:
     )
 
 
+async def _fix_close_rules_constraints(conn) -> None:
+    # 1. Find and drop existing check constraints on close_rules.trigger_type
+    rows = await conn.fetch("""
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_attribute att ON att.attnum = ANY(con.conkey) AND att.attrelid = con.conrelid
+        WHERE con.conrelid = 'close_rules'::regclass
+          AND att.attname = 'trigger_type'
+          AND con.contype = 'c'
+    """)
+    for row in rows:
+        await conn.execute(f'ALTER TABLE close_rules DROP CONSTRAINT {row["conname"]}')
+    
+    # 2. Add new check constraint allowing BREAKEVEN_TIMEOUT and MAX_DURATION
+    await conn.execute("""
+        ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
+        CHECK (trigger_type IN (
+            'BALANCE_BELOW', 'BALANCE_ABOVE',
+            'EQUITY_DROP_PCT', 'EQUITY_RISE_PCT',
+            'PNL_BELOW', 'PNL_ABOVE',
+            'BREAKEVEN_TIMEOUT', 'MAX_DURATION'
+        ))
+    """)
+
+    # 3. Alter reference_value column to VARCHAR(100)
+    await conn.execute("ALTER TABLE close_rules ALTER COLUMN reference_value TYPE VARCHAR(100)")
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -481,6 +509,7 @@ ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_source_check;
 ALTER TABLE trades ADD CONSTRAINT trades_source_check CHECK (source IN ('manual', 'cycle', 'scanner'))
 """),
     (31, _fix_source_constraint),
+    (32, _fix_close_rules_constraints),
 ]
 
 
@@ -1701,6 +1730,12 @@ class AsyncAnalysisDB:
         vals = {c: rule.get(c) for c in cols}
         if vals.get("status") is None:
             vals["status"] = "active"
+        if vals.get("reference_value") is not None:
+            ref_val = vals["reference_value"]
+            if isinstance(ref_val, datetime):
+                vals["reference_value"] = ref_val.isoformat()
+            else:
+                vals["reference_value"] = str(ref_val)
         col_names = ", ".join(vals.keys())
         placeholders = ", ".join(f"${i}" for i in range(1, len(vals) + 1))
         row = await self.pool.fetchrow(
@@ -1729,6 +1764,12 @@ class AsyncAnalysisDB:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return None
+        if updates.get("reference_value") is not None:
+            ref_val = updates["reference_value"]
+            if isinstance(ref_val, datetime):
+                updates["reference_value"] = ref_val.isoformat()
+            else:
+                updates["reference_value"] = str(ref_val)
         for dt_field in ("expires_at", "triggered_at"):
             if dt_field in updates and isinstance(updates[dt_field], str):
                 updates[dt_field] = datetime.fromisoformat(updates[dt_field])

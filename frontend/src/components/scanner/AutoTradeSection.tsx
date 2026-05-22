@@ -26,6 +26,8 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   skip_if_positions_open: false,
   fill_to_max_trades: false,
   close_on_profit_pct: null,
+  breakeven_timeout_hours: null,
+  max_trade_duration_hours: null,
 };
 
 function loadConfigs(): AutoTradeConfig[] {
@@ -494,6 +496,57 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
         </label>
         {config.close_on_profit_pct != null && config.close_on_profit_pct > 0 && !config.target_goal_value && (
           <p className="text-[10px] text-amber-500 ml-12">Requires a Target Goal (profit_pct) to be set above</p>
+        )}
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              checked={(config.breakeven_timeout_hours != null && config.breakeven_timeout_hours > 0) || (config.max_trade_duration_hours != null && config.max_trade_duration_hours > 0)}
+              onChange={(e) => onChange({
+                breakeven_timeout_hours: e.target.checked ? 4 : null,
+                max_trade_duration_hours: e.target.checked ? 8 : null,
+              })}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 rounded-full bg-muted/50 border border-border/40 peer-checked:bg-purple-600 peer-checked:border-purple-600 transition-colors" />
+            <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <div className="flex-1">
+            <span className="text-xs font-medium group-hover:text-foreground transition-colors">Trade duration limits</span>
+            <p className="text-[10px] text-muted-foreground">Auto-adjust or close trades based on how long they&apos;ve been open</p>
+          </div>
+        </label>
+        {((config.breakeven_timeout_hours != null && config.breakeven_timeout_hours > 0) || (config.max_trade_duration_hours != null && config.max_trade_duration_hours > 0)) && (
+          <div className="ml-12 space-y-2 border-l-2 border-purple-600/30 pl-3">
+            <div>
+              <Label className="text-[10px] text-muted-foreground">Move to breakeven after (hours)</Label>
+              <p className="text-[9px] text-muted-foreground/70 mb-1">Change target to 1% unrealised PnL (covers fees) after this time</p>
+              <Input
+                type="number"
+                min={0.5}
+                max={720}
+                step={0.5}
+                value={config.breakeven_timeout_hours ?? ""}
+                onChange={(e) => onChange({ breakeven_timeout_hours: e.target.value ? parseFloat(e.target.value) : null })}
+                placeholder="e.g. 4"
+                className="w-24 h-6 text-xs"
+              />
+            </div>
+            <div>
+              <Label className="text-[10px] text-muted-foreground">Force close after (hours)</Label>
+              <p className="text-[9px] text-muted-foreground/70 mb-1">Close all trades even at a loss after this time</p>
+              <Input
+                type="number"
+                min={0.5}
+                max={720}
+                step={0.5}
+                value={config.max_trade_duration_hours ?? ""}
+                onChange={(e) => onChange({ max_trade_duration_hours: e.target.value ? parseFloat(e.target.value) : null })}
+                placeholder="e.g. 8"
+                className="w-24 h-6 text-xs"
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>

@@ -214,6 +214,8 @@ export interface AutoTradeConfig {
   skip_if_positions_open?: boolean;
   fill_to_max_trades?: boolean;
   close_on_profit_pct?: number | null;
+  breakeven_timeout_hours?: number | null;
+  max_trade_duration_hours?: number | null;
 }
 
 export interface ScanRequest {

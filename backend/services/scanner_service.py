@@ -756,6 +756,21 @@ class ScannerService:
                                 )
                 except Exception as e:
                     logger.warning("auto_trade_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+                # Post-scan re-check: handle accounts where conditions changed during the scan
+                # (positions closed by TP/SL/drawdown, or close_on_profit_pct threshold now met)
+                try:
+                    recheck_executions = await executor.post_scan_recheck(all_results)
+                    if recheck_executions:
+                        async with self._lock:
+                            scan = self._scans.get(scan_id)
+                            if scan:
+                                scan["auto_trade_results"].extend(
+                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                                    for e in recheck_executions
+                                )
+                except Exception as e:
+                    logger.warning("auto_trade_post_scan_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 
         async with self._lock:
             scan = self._scans.get(scan_id)

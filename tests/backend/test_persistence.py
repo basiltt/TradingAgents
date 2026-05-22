@@ -42,7 +42,16 @@ def db():
     yield instance
     with instance._get_conn() as conn:
         cur = conn.cursor()
-        for table in ("scan_results", "scans", "report_sections", "analysis_runs"):
+        for table in (
+            "close_executions",
+            "close_rules",
+            "trading_cycles",
+            "trading_accounts",
+            "scan_results",
+            "scans",
+            "report_sections",
+            "analysis_runs",
+        ):
             cur.execute(f"DELETE FROM {table}")
         conn.commit()
     instance.close()
@@ -473,3 +482,93 @@ def test_default_dsn_raises_without_env():
     finally:
         if old is not None:
             os.environ["DATABASE_URL"] = old
+
+
+def _ensure_account(db, account_id: str) -> None:
+    with db._get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO trading_accounts (id, label, account_type, api_key_masked, api_key_encrypted, api_secret_encrypted, created_at, updated_at)
+            VALUES (%s, 'Test', 'demo', 'xxx', '\\x00', '\\x00', %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (account_id, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+
+def _ensure_cycle(db, account_id: str, cycle_id: int) -> None:
+    with db._get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO trading_cycles (
+                id, account_id, status, trade_direction, leverage, capital_pct,
+                max_trades, target_type, target_value, max_drawdown_pct, created_at
+            )
+            VALUES (%s, %s, 'pending', 'straight', 10, 5.0, 5, 'percentage', 10.0, 5.0, now())
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (cycle_id, account_id),
+        )
+        conn.commit()
+
+
+def test_close_rules_insert_and_update(db):
+    account_id = "test-rule-acc"
+    _ensure_account(db, account_id)
+    _ensure_cycle(db, account_id, 9999)
+
+    from decimal import Decimal
+    from datetime import datetime, timezone
+
+    # 1. Insert with Decimal reference_value and cycle_id
+    rule_decimal = {
+        "account_id": account_id,
+        "trigger_type": "BALANCE_BELOW",
+        "threshold_value": Decimal("90.0"),
+        "reference_value": Decimal("100.0"),
+        "status": "active",
+        "cycle_id": 9999,
+    }
+    inserted_decimal = db.insert_close_rule(rule_decimal)
+    assert inserted_decimal["reference_value"] == "100.0"
+    assert inserted_decimal["status"] == "active"
+    assert inserted_decimal["cycle_id"] == 9999
+
+    # 2. Insert with datetime reference_value
+    dt_now = datetime.now(timezone.utc)
+    rule_datetime = {
+        "account_id": account_id,
+        "trigger_type": "BREAKEVEN_TIMEOUT",
+        "threshold_value": Decimal("120.0"),
+        "reference_value": dt_now,
+        "status": "active",
+    }
+    inserted_datetime = db.insert_close_rule(rule_datetime)
+    assert inserted_datetime["reference_value"] == dt_now.isoformat()
+
+    # 3. Insert with string reference_value
+    rule_string = {
+        "account_id": account_id,
+        "trigger_type": "BALANCE_ABOVE",
+        "threshold_value": Decimal("110.0"),
+        "reference_value": "some-string",
+        "status": "active",
+    }
+    inserted_string = db.insert_close_rule(rule_string)
+    assert inserted_string["reference_value"] == "some-string"
+
+    # 4. Update with Decimal and status
+    updated = db.update_close_rule(
+        inserted_string["id"], reference_value=Decimal("123.45"), status="paused"
+    )
+    assert updated is not None
+    assert updated["reference_value"] == "123.45"
+    assert updated["status"] == "paused"
+
+    # 5. List close rules
+    rules = db.list_close_rules(account_id)
+    assert len(rules) == 3
+
