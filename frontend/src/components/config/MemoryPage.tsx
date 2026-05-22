@@ -7,7 +7,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +43,7 @@ export function MemoryPage() {
       {isLoading ? (
         <div className="grid gap-4">
           {Array.from({ length: 4 }).map((_, index) => (
-            <Card key={index} className="min-h-28 animate-pulse" />
+            <Card key={index} className="min-h-32 animate-pulse" />
           ))}
         </div>
       ) : isError || !data ? (
@@ -54,12 +53,9 @@ export function MemoryPage() {
               <TriangleAlert className="size-4.5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold tracking-tight text-destructive">
-                Memory service unavailable
-              </h2>
+              <h2 className="text-base font-semibold tracking-tight text-destructive">Memory service unavailable</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                The backend did not return the memory log. Verify the API runtime and reload
-                the page.
+                The backend did not return the memory log. Verify the API runtime and reload the page.
               </p>
             </div>
           </CardContent>
@@ -74,8 +70,7 @@ export function MemoryPage() {
               <p className="section-eyebrow">No records yet</p>
               <h2 className="text-xl font-semibold tracking-tight">The memory log is still empty.</h2>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Run one or more analyses to generate long-term entries for decisions,
-                reasoning summaries, and confidence outcomes.
+                Run one or more analyses to generate long-term entries for decisions, reasoning summaries, and confidence outcomes.
               </p>
             </div>
           </CardContent>
@@ -94,49 +89,50 @@ export function MemoryPage() {
 
               return (
                 <Card key={`${entry.ticker}-${entry.date}-${index}`}>
-                  <CardHeader className="gap-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <CardContent className="p-5">
+                    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(15rem,0.7fr)] xl:items-start">
                       <div className="flex min-w-0 items-start gap-4">
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.25)] bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+                        <div className="gradient-primary flex size-11 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.3)] text-primary-foreground shadow-[var(--shadow-accent)]">
                           <BrainCircuit className="size-4.5" />
                         </div>
-                        <div className="min-w-0 space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <CardTitle className="font-mono text-lg tracking-[0.04em]">
-                              {entry.ticker}
-                            </CardTitle>
+                        <div className="min-w-0 space-y-3">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <CardTitle className="font-mono text-xl tracking-[0.08em]">{entry.ticker}</CardTitle>
                             <Badge variant="outline">{entry.date}</Badge>
                             <span
                               className={cn(
-                                "inline-flex min-h-6 items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+                                "inline-flex min-h-7 items-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
                                 decisionTone,
                               )}
                             >
                               {entry.decision}
                             </span>
                           </div>
-                          {entry.reasoning ? (
-                            <CardDescription className="max-w-3xl text-sm leading-6">
-                              {entry.reasoning}
-                            </CardDescription>
-                          ) : (
-                            <CardDescription>No reasoning snapshot was stored for this entry.</CardDescription>
-                          )}
+                          <div className="rounded-[calc(var(--radius)*1.2)] border border-border/55 bg-card/52 p-4 shadow-[var(--shadow-soft)]">
+                            <p className="section-eyebrow">Reasoning summary</p>
+                            {entry.reasoning ? (
+                              <CardDescription className="mt-3 max-w-4xl text-sm leading-7 text-foreground/82">
+                                {entry.reasoning}
+                              </CardDescription>
+                            ) : (
+                              <CardDescription className="mt-3">No reasoning snapshot was stored for this entry.</CardDescription>
+                            )}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="grid min-w-[12rem] gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
                         <StatPill label="Confidence" value={entry.confidence} />
                         <StatPill label="Status" value={entry.status} />
                       </div>
                     </div>
-                  </CardHeader>
+                  </CardContent>
                 </Card>
               );
             })}
           </div>
 
-          {data.total > PAGE_SIZE && (
+          {data.total > PAGE_SIZE ? (
             <Card>
               <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -147,18 +143,20 @@ export function MemoryPage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
+                    id="memory-previous-page"
                     type="button"
                     disabled={page <= 1}
                     onClick={() => setPage((value) => value - 1)}
-                    className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-border/70 bg-card/75 px-4 py-3 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)] disabled:opacity-40"
+                    className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-border/70 bg-card/75 px-4 py-3 text-sm font-semibold text-foreground shadow-[var(--shadow-soft)] hover:border-primary/18 disabled:opacity-40"
                   >
                     Previous
                   </button>
                   <button
+                    id="memory-next-page"
                     type="button"
                     disabled={page * PAGE_SIZE >= data.total}
                     onClick={() => setPage((value) => value + 1)}
-                    className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-primary/20 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)] disabled:opacity-40"
+                    className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.2)] border border-primary/20 bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)] hover:brightness-110 disabled:opacity-40"
                   >
                     <RefreshCw className="mr-2 size-4" />
                     Next page
@@ -166,7 +164,7 @@ export function MemoryPage() {
                 </div>
               </CardContent>
             </Card>
-          )}
+          ) : null}
         </>
       )}
     </div>
@@ -175,7 +173,7 @@ export function MemoryPage() {
 
 function StatPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[calc(var(--radius)*1.1)] border border-border/60 bg-muted/20 px-3.5 py-2.5 shadow-[var(--shadow-soft)]">
+    <div className="rounded-[calc(var(--radius)*1.2)] border border-border/60 bg-card/58 px-4 py-3 shadow-[var(--shadow-soft)]">
       <p className="section-eyebrow">{label}</p>
       <p className="mt-2 text-sm font-semibold tracking-tight text-foreground">{value}</p>
     </div>

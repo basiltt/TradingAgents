@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -26,6 +26,21 @@ function formatPercent(value: number | null | undefined) {
 }
 
 export function AppMarketBar() {
+  const [compact, setCompact] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setCompact(media.matches);
+    update();
+
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   const healthQuery = useQuery({
     queryKey: ["shell", "health"],
     queryFn: ({ signal }) => apiClient.getHealth(signal),
@@ -152,5 +167,5 @@ export function AppMarketBar() {
     tradesQuery.isError,
   ]);
 
-  return <NeuMarketStrip items={items.map((item) => ({ ...item }))} compact={false} />;
+  return <NeuMarketStrip items={items.map((item) => ({ ...item }))} compact={compact} />;
 }

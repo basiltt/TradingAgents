@@ -12,16 +12,50 @@ import { formatDate, isActive } from "./utils";
 
 const STATUS_CONFIG: Record<
   string,
-  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+  {
+    label: string;
+    variant: "default" | "secondary" | "destructive" | "outline";
+    tone: "accent" | "success" | "warning" | "danger" | "neutral";
+  }
 > = {
-  pending: { label: "Pending", variant: "outline" },
-  placing_trades: { label: "Placing", variant: "default" },
-  running: { label: "Running", variant: "default" },
-  stopping: { label: "Stopping", variant: "secondary" },
-  completed: { label: "Completed", variant: "secondary" },
-  stopped: { label: "Stopped", variant: "outline" },
-  failed: { label: "Failed", variant: "destructive" },
+  pending: { label: "Pending", variant: "outline", tone: "neutral" },
+  placing_trades: { label: "Placing", variant: "default", tone: "accent" },
+  running: { label: "Running", variant: "default", tone: "success" },
+  stopping: { label: "Stopping", variant: "secondary", tone: "warning" },
+  completed: { label: "Completed", variant: "secondary", tone: "neutral" },
+  stopped: { label: "Stopped", variant: "outline", tone: "warning" },
+  failed: { label: "Failed", variant: "destructive", tone: "danger" },
 };
+
+function cycleStatusTone(status: string) {
+  return STATUS_CONFIG[status] ?? STATUS_CONFIG.pending;
+}
+
+function cycleStatusCopy(cycle: CycleResponse) {
+  if (cycle.stop_reason) return cycle.stop_reason;
+  if (cycle.status === "running") return "Execution is actively managing this cycle.";
+  if (cycle.status === "placing_trades") return "Orders are being routed across approved setups.";
+  if (cycle.status === "failed") return "Review the cycle detail for failed trade context.";
+  if (cycle.completed_at) return `Completed ${formatDate(cycle.completed_at)}`;
+  return `Opened ${formatDate(cycle.created_at)}`;
+}
+
+function MetricPill({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "accent" | "success" | "warning" | "danger" | "neutral" }) {
+  const toneClass = {
+    accent: "border-primary/20 bg-primary/10 text-primary",
+    success: "border-[color:color-mix(in_oklch,var(--success)_44%,transparent)] bg-[color:color-mix(in_oklch,var(--success)_12%,transparent)] text-[var(--success)]",
+    warning: "border-[color:color-mix(in_oklch,var(--warning)_44%,transparent)] bg-[color:color-mix(in_oklch,var(--warning)_12%,transparent)] text-[color:color-mix(in_oklch,var(--warning)_76%,var(--foreground))]",
+    danger: "border-[color:color-mix(in_oklch,var(--destructive)_44%,transparent)] bg-[color:color-mix(in_oklch,var(--destructive)_12%,transparent)] text-destructive",
+    neutral: "border-border/55 bg-card/55 text-foreground",
+  }[tone];
+
+  return (
+    <div className={`rounded-[calc(var(--radius)*1.05)] border px-3 py-2 shadow-[var(--shadow-soft)] ${toneClass}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold tracking-[-0.03em]">{value}</p>
+    </div>
+  );
+}
 
 export function CycleListPage() {
   const [offset, setOffset] = useState(0);
@@ -76,13 +110,19 @@ export function CycleListPage() {
         title="Cycle orchestration dashboard"
         description="Monitor automated trade batches, review execution states, and jump into the originating scan workflow from a responsive control surface."
         actions={
-          <Link
-            to="/scanner/history"
-            className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-primary/25 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
-          >
-            <Waypoints className="size-4" />
-            Start from scan history
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => refetch()}>
+              <RefreshCcw className="size-4" />
+              Refresh
+            </Button>
+            <Link
+              to="/scanner/history"
+              className="touch-target inline-flex items-center justify-center gap-2 rounded-[calc(var(--radius)*1.15)] border border-primary/25 bg-primary px-3.5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)]"
+            >
+              <Waypoints className="size-4" />
+              Start from scan history
+            </Link>
+          </div>
         }
         stats={[
           { label: "Visible cycles", value: String(items.length), tone: "accent" },
@@ -93,8 +133,8 @@ export function CycleListPage() {
       >
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline">Auto-refresh for active cycles</Badge>
-          <Badge variant="outline">Mobile card layout</Badge>
-          <Badge variant="outline">Detail drilldown ready</Badge>
+          <Badge variant="outline">Responsive card/table switch</Badge>
+          <Badge variant="outline">Execution drilldowns ready</Badge>
         </div>
       </PageHeader>
 
@@ -123,9 +163,24 @@ export function CycleListPage() {
         </Card>
       ) : (
         <>
+          <section className="grid gap-3 lg:grid-cols-3">
+            <div className="surface-lift rounded-[calc(var(--radius)*1.45)] p-4 lg:col-span-2">
+              <p className="section-eyebrow">Live routing overview</p>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.05em] text-foreground">Execution lanes stay readable at every breakpoint</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                The cycle monitor prioritizes failure context, routing status, and trade counts while preserving a compact desktop table and richer mobile cards.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+              <MetricPill label="Refresh mode" value={activeCount ? "5s live" : "30s idle"} tone={activeCount ? "success" : "neutral"} />
+              <MetricPill label="Throughput" value={`${items.reduce((sum, cycle) => sum + cycle.trades_placed, 0)} trades`} tone="accent" />
+              <MetricPill label="Exceptions" value={String(items.reduce((sum, cycle) => sum + cycle.trades_failed, 0))} tone={failedCount ? "danger" : "neutral"} />
+            </div>
+          </section>
+
           <div className="grid gap-3 sm:hidden">
             {items.map((cycle) => {
-              const config = STATUS_CONFIG[cycle.status] ?? STATUS_CONFIG.pending;
+              const config = cycleStatusTone(cycle.status);
               return (
                 <Link
                   key={cycle.id}
@@ -133,42 +188,43 @@ export function CycleListPage() {
                   params={{ cycleId: String(cycle.id) }}
                   className="block"
                 >
-                  <Card size="sm" className="h-full">
-                    <CardContent className="space-y-4 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="section-eyebrow">Cycle</p>
-                          <h3 className="font-mono text-lg font-semibold tracking-tight">
-                            #{cycle.id}
-                          </h3>
-                        </div>
-                        <Badge variant={config.variant}>{config.label}</Badge>
+                  <article className="glass-card rounded-[calc(var(--radius)*1.45)] border border-border/60 bg-card/72 p-4 shadow-[var(--shadow-card)]">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="section-eyebrow">Cycle</p>
+                        <h3 className="mt-1 font-mono text-lg font-semibold tracking-tight text-foreground">
+                          #{cycle.id}
+                        </h3>
                       </div>
-                      <div className="grid gap-2 text-sm text-muted-foreground">
-                        <p>
-                          {cycle.trades_placed} placed
-                          {cycle.trades_failed > 0 ? `, ${cycle.trades_failed} failed` : ""}
-                        </p>
-                        <p>{formatDate(cycle.created_at)}</p>
-                        {cycle.stop_reason ? (
-                          <p className="text-amber-500">Reason: {cycle.stop_reason}</p>
-                        ) : null}
-                      </div>
-                    </CardContent>
-                  </Card>
+                      <Badge variant={config.variant}>{config.label}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-muted-foreground">{cycleStatusCopy(cycle)}</p>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <MetricPill label="Placed" value={String(cycle.trades_placed)} tone="success" />
+                      <MetricPill label="Failed" value={String(cycle.trades_failed)} tone={cycle.trades_failed > 0 ? "danger" : "neutral"} />
+                    </div>
+                    <div className="mt-4 flex items-center justify-between border-t border-border/50 pt-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                      <span>{formatDate(cycle.created_at)}</span>
+                      <span className="inline-flex items-center gap-1 text-primary">
+                        View detail
+                        <ArrowRight className="size-3.5" />
+                      </span>
+                    </div>
+                  </article>
                 </Link>
               );
             })}
           </div>
 
-          <Card className="hidden sm:flex">
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[52rem] text-sm" aria-label="Trading cycles">
+          <Card className="hidden sm:flex overflow-hidden">
+            <CardContent className="w-full p-0">
+              <div className="overflow-x-auto custom-scrollbar">
+                <table className="w-full min-w-[62rem] text-sm" aria-label="Trading cycles">
                   <thead>
                     <tr className="border-b border-border/50 bg-muted/18 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                       <th className="px-5 py-4 text-left">Cycle</th>
                       <th className="px-5 py-4 text-left">Status</th>
+                      <th className="px-5 py-4 text-left">Execution notes</th>
                       <th className="px-5 py-4 text-left">Trades</th>
                       <th className="px-5 py-4 text-left">Created</th>
                       <th className="px-5 py-4 text-left">Completed</th>
@@ -177,32 +233,29 @@ export function CycleListPage() {
                   </thead>
                   <tbody>
                     {items.map((cycle) => {
-                      const config = STATUS_CONFIG[cycle.status] ?? STATUS_CONFIG.pending;
+                      const config = cycleStatusTone(cycle.status);
                       return (
                         <tr
                           key={cycle.id}
-                          className="border-b border-border/35 transition-colors last:border-b-0 hover:bg-muted/18"
+                          className="border-b border-border/35 align-top transition-colors last:border-b-0 hover:bg-muted/18"
                         >
                           <td className="px-5 py-4">
-                            <div className="space-y-1">
-                              <p className="font-mono text-sm font-semibold">#{cycle.id}</p>
-                              {cycle.stop_reason ? (
-                                <p className="text-xs text-amber-500">{cycle.stop_reason}</p>
-                              ) : null}
+                            <div className="space-y-2">
+                              <p className="font-mono text-sm font-semibold text-foreground">#{cycle.id}</p>
+                              <p className="text-xs text-muted-foreground">Auto-routed cycle execution bundle</p>
                             </div>
                           </td>
                           <td className="px-5 py-4">
                             <Badge variant={config.variant}>{config.label}</Badge>
                           </td>
                           <td className="px-5 py-4">
-                            <span className="font-medium text-foreground">
-                              {cycle.trades_placed} placed
-                            </span>
-                            {cycle.trades_failed > 0 ? (
-                              <span className="ml-2 text-destructive">
-                                {cycle.trades_failed} failed
-                              </span>
-                            ) : null}
+                            <p className="max-w-xs text-sm leading-6 text-muted-foreground">{cycleStatusCopy(cycle)}</p>
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              <MetricPill label="Placed" value={String(cycle.trades_placed)} tone="success" />
+                              <MetricPill label="Failed" value={String(cycle.trades_failed)} tone={cycle.trades_failed > 0 ? "danger" : "neutral"} />
+                            </div>
                           </td>
                           <td className="px-5 py-4 text-muted-foreground">
                             {formatDate(cycle.created_at)}
@@ -228,7 +281,7 @@ export function CycleListPage() {
           </Card>
 
           {total > limit ? (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="surface-lift flex flex-col gap-3 rounded-[calc(var(--radius)*1.35)] p-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
                 Showing {offset + 1}-{Math.min(offset + limit, total)} of {total}
               </p>

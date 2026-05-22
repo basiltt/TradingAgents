@@ -98,9 +98,9 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-3 text-left"
+        className="glass-card flex w-full items-center gap-3 rounded-[calc(var(--radius)*1.4)] px-4 py-4 text-left shadow-[var(--shadow-soft)]"
       >
-        <span className="neu-surface-base neu-surface-raised flex size-9 items-center justify-center rounded-[var(--neu-radius-md)] text-[var(--neu-accent)]">
+        <span className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-primary/20 bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
           <svg
             className={cn("size-4 transition-transform duration-200", open && "rotate-90")}
             fill="none"
@@ -112,8 +112,8 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
           </svg>
         </span>
         <div className="min-w-0">
-          <div className="text-sm font-semibold tracking-[-0.03em] text-[var(--neu-text-strong)]">Agent model overrides</div>
-          <div className="text-[11px] uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Per-agent routing for crypto research roles</div>
+          <div className="text-sm font-semibold tracking-[-0.03em] text-foreground">Agent model overrides</div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Per-role routing for specialist research agents</div>
         </div>
         <Badge variant={overrideCount > 0 ? "default" : "secondary"} className="ml-auto px-3 py-1 text-[10px] tracking-[0.16em]">
           {overrideCount} override{overrideCount === 1 ? "" : "s"}
@@ -121,9 +121,9 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
       </button>
 
       {open ? (
-        <div className="space-y-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] p-4">
+        <div className="glass-card space-y-4 rounded-[calc(var(--radius)*1.5)] border border-border/60 bg-card/72 p-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <p className="max-w-2xl text-[12px] leading-6 text-[var(--neu-text-muted)]">
+            <p className="max-w-2xl text-[12px] leading-6 text-muted-foreground">
               Override individual agent models when a specific analyst, trader, or portfolio role should use a different model than the global deep or quick setting.
             </p>
             {overrideCount > 0 ? (
@@ -133,19 +133,19 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
             ) : null}
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid gap-3 lg:grid-cols-2">
             {agents.map((agent) => (
               <div
                 key={agent.key}
-                className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3"
+                className="rounded-[calc(var(--radius)*1.15)] border border-border/55 bg-background/65 px-4 py-3.5 shadow-[var(--shadow-soft)]"
               >
                 <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <Label className="text-sm font-semibold text-[var(--neu-text-strong)]">{agent.label}</Label>
+                  <Label className="text-sm font-semibold text-foreground">{agent.label}</Label>
                   <Badge
                     variant={agent.tier === "deep" ? "default" : "secondary"}
                     className={cn(
-                      "px-2.5 py-0.5 text-[10px] tracking-[0.16em]",
-                      agent.tier === "deep" && "bg-[color:color-mix(in_oklch,var(--neu-accent)_12%,var(--neu-surface-raised))]",
+                      "px-2.5 py-0.5 text-[10px] tracking-[0.16em] uppercase",
+                      agent.tier === "deep" && "bg-primary/12 text-primary"
                     )}
                   >
                     {agent.tier}

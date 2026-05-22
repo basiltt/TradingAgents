@@ -21,11 +21,17 @@ export function TradeStats() {
     const totalExposure = trades.reduce((acc, t) => acc + (t.qty * (t.entry_price ?? 0)), 0);
 
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <Metric
           label="Positions"
           value={String(aggregates.tradeCount)}
-          sub={<span className="text-[10px] font-medium"><span className="text-emerald-400">{longCount}L</span> <span className="text-muted-foreground/40 px-1">|</span> <span className="text-red-400">{shortCount}S</span></span>}
+          sub={
+            <span className="text-[10px] font-medium">
+              <span className="text-emerald-400">{longCount}L</span>
+              <span className="px-1 text-muted-foreground/40">|</span>
+              <span className="text-red-400">{shortCount}S</span>
+            </span>
+          }
         />
         <Metric
           label="Total PnL"
@@ -52,11 +58,11 @@ export function TradeStats() {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {Array.from({ length: 5 }, (_, i) => (
-          <div key={i} className="rounded-xl border border-border/50 bg-card/65 backdrop-blur-sm p-4">
-            <Skeleton className="h-3 w-12 mb-2" />
-            <Skeleton className="h-6 w-16" />
+          <div key={i} className="rounded-[calc(var(--radius)*1.3)] border border-border/60 bg-card/70 p-4 shadow-[var(--shadow-soft)]">
+            <Skeleton className="mb-2 h-3 w-14" />
+            <Skeleton className="h-7 w-18" />
           </div>
         ))}
       </div>
@@ -64,10 +70,10 @@ export function TradeStats() {
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
       <Metric label="Total Trades" value={String(stats?.total_trades ?? 0)} />
       <Metric label="Open" value={String(stats?.open_count ?? 0)} valueColor="profit" />
-      <Metric label="Win Rate" value={`${((stats?.win_rate ?? 0) * 100).toFixed(1)}%`} valueColor={((stats?.win_rate ?? 0)) >= 0.5 ? "profit" : "loss"} />
+      <Metric label="Win Rate" value={`${((stats?.win_rate ?? 0) * 100).toFixed(1)}%`} valueColor={(stats?.win_rate ?? 0) >= 0.5 ? "profit" : "loss"} />
       <Metric label="Avg PnL" value={formatUsd(stats?.avg_pnl ?? null)} valueColor={(stats?.avg_pnl ?? 0) > 0 ? "profit" : (stats?.avg_pnl ?? 0) < 0 ? "loss" : "neutral"} />
       <Metric label="Total PnL" value={formatUsd(stats?.total_pnl ?? null)} valueColor={(stats?.total_pnl ?? 0) > 0 ? "profit" : (stats?.total_pnl ?? 0) < 0 ? "loss" : "neutral"} />
     </div>
@@ -86,16 +92,18 @@ function Metric({
   valueColor?: "profit" | "loss" | "neutral";
 }) {
   const colorMap = {
-    profit: "text-emerald-400 font-bold",
-    loss: "text-red-400 font-bold",
-    neutral: "text-foreground font-semibold",
+    profit: "text-emerald-500 dark:text-emerald-400",
+    loss: "text-destructive",
+    neutral: "text-foreground",
   };
 
   return (
-    <div className="rounded-xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card px-4 py-3.5 flex flex-col gap-1.5 hover:border-primary/25 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300">
-      <span className="text-[10px] font-black uppercase tracking-[0.08em] text-muted-foreground/60 leading-none">{label}</span>
-      <span className={`text-lg font-mono tabular-nums leading-none ${colorMap[valueColor]}`}>{value}</span>
-      {sub && <div className="mt-0.5">{sub}</div>}
+    <div className="glass-card rounded-[calc(var(--radius)*1.35)] px-4 py-3.5 transition-all duration-300 hover:border-primary/22 hover:shadow-[var(--shadow-card-hover)]">
+      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/70 leading-none">{label}</span>
+      <span className={`mt-2 block text-xl font-semibold tabular-nums tracking-[-0.04em] ${colorMap[valueColor]}`}>
+        {value}
+      </span>
+      {sub ? <div className="mt-1.5">{sub}</div> : null}
     </div>
   );
 }

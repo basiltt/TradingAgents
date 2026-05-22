@@ -6,6 +6,7 @@ import {
   Menu,
   Radar,
   Search,
+  Sparkles,
 } from "lucide-react";
 import {
   NeuAppShell,
@@ -78,6 +79,23 @@ export function RootLayout() {
       sections={sections}
       collapsed={sidebarCollapsed}
       headerSlot={<NeuStatusPill label="live" tone="success" animated />}
+      footer={
+        !sidebarCollapsed ? (
+          <div className="surface-lift rounded-[calc(var(--radius)*1.25)] p-3.5">
+            <div className="flex items-start gap-3">
+              <div className="gradient-primary inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] text-primary-foreground shadow-[var(--shadow-accent)]">
+                <Sparkles className="size-4.5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold tracking-[-0.03em] text-foreground">Operator focus</p>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Use the command palette to jump between research, monitoring, and execution surfaces.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null
+      }
     />
   );
 
@@ -85,8 +103,8 @@ export function RootLayout() {
     <NeuDrawer
       open={mobileNavOpen}
       onOpenChange={(open) => dispatch(setMobileNavOpen(open))}
-      title="Navigation"
-      description="Move through research, portfolio, and system routes from the mobile shell."
+      title="Workspace navigation"
+      description="Move through research, portfolio, and system workflows from the mobile shell."
       side="left"
       size="sm"
       showHandle={false}
@@ -102,7 +120,7 @@ export function RootLayout() {
   );
 
   const topbar = (
-    <div className="mx-auto w-full max-w-[min(100%,112rem)]">
+    <div className="mx-auto w-full max-w-[min(100%,116rem)]">
       <NeuTopbar
         section={currentSection}
         title={currentItem.label}
@@ -147,13 +165,13 @@ export function RootLayout() {
     <div className="min-h-screen p-3 sm:p-4 lg:p-5">
       <NeuAppShell
         sidebar={sidebar}
-        sidebarWidth={sidebarCollapsed ? "6rem" : "18rem"}
+        sidebarWidth={sidebarCollapsed ? "6.5rem" : "19rem"}
         topbar={topbar}
         mobileSidebar={mobileSidebar}
         dock={<MobileDock pathname={pathname} onMore={() => dispatch(setMobileNavOpen(true))} />}
         contentClassName="pb-24 lg:pb-10"
       >
-        <div className="mx-auto w-full max-w-[min(100%,112rem)]">
+        <div className="mx-auto w-full max-w-[min(100%,116rem)]">
           <Outlet />
         </div>
       </NeuAppShell>
@@ -170,7 +188,7 @@ export function NotFound() {
   return (
     <div className="flex min-h-[60vh] items-center justify-center py-6">
       <div className="w-full max-w-xl">
-        <NeuSurface depth="raised" radius="lg" padding="lg" className="space-y-5 text-center">
+        <NeuSurface depth="raised" radius="lg" padding="lg" className="space-y-5 text-center aurora-border">
           <div className="mx-auto inline-flex size-14 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-accent shadow-[var(--neu-shadow-accent)]">
             <Radar className="size-6" />
           </div>
@@ -180,8 +198,7 @@ export function NotFound() {
             </p>
             <h2 className="text-2xl font-semibold tracking-[-0.04em]">Page not found</h2>
             <p className="text-sm leading-7" style={{ color: "var(--neu-text-muted)" }}>
-              This workspace route does not exist anymore or the underlying record was removed.
-              Return to the main dashboard to continue from a stable surface.
+              This workspace route no longer exists or its backing record was removed. Return to the dashboard to continue from a stable control surface.
             </p>
           </div>
           <div className="flex justify-center">

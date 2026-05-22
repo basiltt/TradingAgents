@@ -1,7 +1,19 @@
-import { useState, useEffect } from "react";
-import { Loader2, X, ChevronLeft, ChevronRight, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Loader2,
+  ShieldCheck,
+  Sparkles,
+  X,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { accountsApi } from "@/api/client";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { CloseExecution } from "@/api/client";
 
 interface Props {
@@ -52,68 +64,98 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
   if (!open) return null;
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
+  const successful = executions.filter((execution) => execution.failed_count === 0).length;
+  const partial = executions.filter((execution) => execution.failed_count > 0 && execution.closed_count > 0).length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => handleOpenChange(false)}>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4" onClick={() => handleOpenChange(false)}>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,oklch(0.64_0.12_206_/_0.18),transparent_36%),rgba(2,6,23,0.78)] backdrop-blur-md" />
       <div
-        className="relative bg-popover border border-border/50 rounded-2xl shadow-2xl shadow-black/30 max-w-lg w-full mx-4 max-h-[80vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
+        className="glass-card relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[calc(var(--radius)*2)] border border-border/70 bg-card/90 shadow-[0_44px_140px_-56px_rgba(0,0,0,0.82)]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/30">
-          <div>
-            <h3 className="font-semibold text-base">Close History</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{accountLabel}</p>
+        <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,color-mix(in_oklch,var(--primary)_42%,white),transparent)]" />
+
+        <div className="border-b border-border/55 px-5 py-5 sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="gradient-primary flex size-14 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.35)] text-primary-foreground shadow-[var(--shadow-accent)]">
+                <ShieldCheck className="size-6" />
+              </div>
+              <div>
+                <p className="section-eyebrow">Execution audit trail</p>
+                <h2 className="mt-1 text-xl font-semibold tracking-[-0.04em] text-foreground sm:text-[1.7rem]">Close history</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Review every manual and rule-driven liquidation event recorded for <span className="font-semibold text-foreground">{accountLabel}</span>.
+                </p>
+              </div>
+            </div>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleOpenChange(false)} aria-label="Close history panel">
+              <X className="size-4" />
+            </Button>
           </div>
-          <button
-            className="p-1.5 rounded-lg hover:bg-muted/30 text-muted-foreground transition-colors"
-            onClick={() => handleOpenChange(false)}
-          >
-            <X className="w-4 h-4" />
-          </button>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[
+              { label: "Entries", value: String(total), tone: "accent" },
+              { label: "Fully closed", value: String(successful), tone: successful ? "success" : "neutral" },
+              { label: "Partial outcomes", value: String(partial), tone: partial ? "warning" : "neutral" },
+            ].map((item) => (
+              <div key={item.label} data-tone={item.tone} className="page-header-stat rounded-[calc(var(--radius)*1.1)] border px-4 py-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{item.label}</div>
+                <div className="mt-2 text-lg font-semibold tracking-[-0.04em] text-foreground">{item.value}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-3.5 space-y-2.5">
+        <div className="custom-scrollbar flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            <div className="flex min-h-[18rem] items-center justify-center">
+              <div className="surface-lift flex items-center gap-3 rounded-[calc(var(--radius)*1.25)] px-5 py-4 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading execution history...
+              </div>
             </div>
           ) : executions.length === 0 ? (
-            <div className="text-center py-10">
-              <p className="text-sm text-muted-foreground">No close history</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">Executions will appear here after positions are closed</p>
+            <div className="flex min-h-[18rem] flex-col items-center justify-center rounded-[calc(var(--radius)*1.6)] border border-dashed border-border/60 bg-background/35 px-6 text-center">
+              <div className="surface-lift flex size-16 items-center justify-center rounded-[calc(var(--radius)*1.4)] border border-border/60">
+                <Sparkles className="size-6 text-primary" />
+              </div>
+              <h3 className="mt-5 text-lg font-semibold tracking-tight text-foreground">No close events captured yet</h3>
+              <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+                Executions appear here after positions are flattened manually or through conditional close rules.
+              </p>
             </div>
           ) : (
-            executions.map((exec) => <ExecutionRow key={exec.id} execution={exec} />)
+            <div className="space-y-3">
+              {executions.map((exec) => <ExecutionRow key={exec.id} execution={exec} />)}
+            </div>
           )}
         </div>
 
-        {/* Footer / Pagination */}
-        {total > limit && (
-          <div className="flex items-center justify-between px-5 py-2.5 border-t border-border/30">
-            <span className="text-xs text-muted-foreground">
-              Page {page} of {totalPages}
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                className="p-1.5 rounded-lg hover:bg-muted/30 text-muted-foreground transition-colors disabled:opacity-30"
-                disabled={page <= 1}
-                onClick={() => changePage(page - 1)}
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                className="p-1.5 rounded-lg hover:bg-muted/30 text-muted-foreground transition-colors disabled:opacity-30"
-                disabled={page >= totalPages}
-                onClick={() => changePage(page + 1)}
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+        <div className="flex flex-col gap-3 border-t border-border/55 px-5 py-4 sm:px-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
           </div>
-        )}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            {total > limit ? (
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={page <= 1} onClick={() => changePage(page - 1)}>
+                  <ChevronLeft className="size-4" />
+                  Previous
+                </Button>
+                <Button type="button" variant="outline" size="sm" disabled={page >= totalPages} onClick={() => changePage(page + 1)}>
+                  Next
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            ) : null}
+            <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
+              Done
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -124,53 +166,104 @@ function ExecutionRow({ execution }: { execution: CloseExecution }) {
   const allFailed = execution.closed_count === 0;
   const date = new Date(execution.executed_at);
 
+  const statusMeta = allSuccess
+    ? {
+        icon: CheckCircle2,
+        tone: "text-success",
+        chip: "border-success/20 bg-success/12 text-success",
+        label: "Successful close",
+      }
+    : allFailed
+      ? {
+          icon: XCircle,
+          tone: "text-destructive",
+          chip: "border-destructive/20 bg-destructive/10 text-destructive",
+          label: "Failed close",
+        }
+      : {
+          icon: Clock3,
+          tone: "text-warning",
+          chip: "border-warning/20 bg-warning/12 text-warning",
+          label: "Partial outcome",
+        };
+
+  const Icon = statusMeta.icon;
+
   return (
-    <div className="rounded-xl border border-border/40 p-3.5 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {allSuccess ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          ) : allFailed ? (
-            <XCircle className="w-4 h-4 text-red-400" />
-          ) : (
-            <Clock className="w-4 h-4 text-amber-400" />
-          )}
-          <span className="text-xs font-medium">
-            {execution.closed_count}/{execution.total_positions} closed
-          </span>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-            execution.trigger_source === "rule"
-              ? "bg-violet-500/15 text-violet-400"
-              : "bg-blue-500/15 text-blue-400"
-          }`}>
-            {execution.trigger_source === "rule" ? "Rule" : "Manual"}
-          </span>
+    <article className="glass-card rounded-[calc(var(--radius)*1.35)] border p-4 sm:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="surface-lift flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-border/60">
+              <Icon className={cn("size-5", statusMeta.tone)} />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold tracking-[-0.03em] text-foreground">{statusMeta.label}</h3>
+                <span className={cn("inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]", statusMeta.chip)}>
+                  {execution.closed_count}/{execution.total_positions} closed
+                </span>
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
+                    execution.trigger_source === "rule"
+                      ? "border-primary/20 bg-primary/12 text-primary"
+                      : "border-border/60 bg-background/60 text-muted-foreground",
+                  )}
+                >
+                  {execution.trigger_source === "rule" ? "Rule trigger" : "Manual trigger"}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {date.toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[
+              { label: "Closed", value: String(execution.closed_count), tone: "success" },
+              { label: "Failed", value: String(execution.failed_count), tone: execution.failed_count ? "danger" : "neutral" },
+              { label: "Requested", value: String(execution.total_positions), tone: "accent" },
+            ].map((item) => (
+              <div key={item.label} data-tone={item.tone} className="page-header-stat rounded-[calc(var(--radius)*1.05)] border px-3.5 py-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{item.label}</div>
+                <div className="mt-2 text-base font-semibold tracking-[-0.03em] text-foreground">{item.value}</div>
+              </div>
+            ))}
+          </div>
         </div>
-        <span className="text-[10px] text-muted-foreground/60">
-          {date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-        </span>
       </div>
 
-      {execution.results.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {execution.results.slice(0, 8).map((r, i) => (
+      {execution.results.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {execution.results.slice(0, 12).map((result, index) => (
             <span
-              key={i}
-              className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
-                r.status === "closed"
-                  ? "border-emerald-500/20 text-emerald-400 bg-emerald-500/[0.04]"
-                  : "border-red-500/20 text-red-400 bg-red-500/[0.04]"
-              }`}
-              title={r.error || undefined}
+              key={`${result.symbol}-${index}`}
+              className={cn(
+                "inline-flex items-center rounded-full border px-3 py-1.5 text-[11px] font-semibold tracking-[0.14em] uppercase",
+                result.status === "closed"
+                  ? "border-success/20 bg-success/12 text-success"
+                  : "border-destructive/20 bg-destructive/10 text-destructive",
+              )}
+              title={result.error || undefined}
             >
-              {r.symbol}
+              {result.symbol}
             </span>
           ))}
-          {execution.results.length > 8 && (
-            <span className="text-[10px] text-muted-foreground/50">+{execution.results.length - 8} more</span>
-          )}
+          {execution.results.length > 12 ? (
+            <span className="inline-flex items-center rounded-full border border-border/60 bg-background/55 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              +{execution.results.length - 12} more
+            </span>
+          ) : null}
         </div>
-      )}
-    </div>
+      ) : null}
+    </article>
   );
 }

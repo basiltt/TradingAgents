@@ -55,14 +55,14 @@ const DEFAULT_SETTINGS: TradeSettings = {
 
 const SIDE_TONES = {
   buy: {
-    badge: "text-[var(--neu-success)] border-[color:color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-raised))]",
-    button: "border-[color:color-mix(in_oklch,var(--neu-success)_26%,var(--neu-stroke-soft))] bg-[linear-gradient(145deg,color-mix(in_oklch,var(--neu-highlight)_24%,color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-raised))),color-mix(in_oklch,var(--neu-success)_12%,var(--neu-surface-raised))_54%,color-mix(in_oklch,var(--neu-success)_14%,var(--neu-surface-muted)))] text-[color:color-mix(in_oklch,var(--neu-success)_80%,var(--neu-text-strong))] shadow-[var(--neu-shadow-pill),0_16px_28px_color-mix(in_oklch,var(--neu-success)_14%,transparent)]",
-    text: "text-[var(--neu-success)]",
+    badge: "border-emerald-500/25 bg-emerald-500/12 text-emerald-600 dark:text-emerald-300",
+    button: "border-emerald-400/35 bg-gradient-to-r from-emerald-500/90 via-teal-400/90 to-cyan-400/90 text-white shadow-[0_18px_42px_-24px_rgba(16,185,129,0.8)] hover:brightness-105 dark:text-slate-950",
+    text: "text-emerald-600 dark:text-emerald-300",
   },
   sell: {
-    badge: "text-[var(--neu-danger)] border-[color:color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-raised))]",
-    button: "border-[color:color-mix(in_oklch,var(--neu-danger)_26%,var(--neu-stroke-soft))] bg-[linear-gradient(145deg,color-mix(in_oklch,var(--neu-highlight)_24%,color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-raised))),color-mix(in_oklch,var(--neu-danger)_12%,var(--neu-surface-raised))_54%,color-mix(in_oklch,var(--neu-danger)_14%,var(--neu-surface-muted)))] text-[color:color-mix(in_oklch,var(--neu-danger)_80%,var(--neu-text-strong))] shadow-[var(--neu-shadow-pill),0_16px_28px_color-mix(in_oklch,var(--neu-danger)_14%,transparent)]",
-    text: "text-[var(--neu-danger)]",
+    badge: "border-rose-500/25 bg-rose-500/12 text-rose-600 dark:text-rose-300",
+    button: "border-rose-400/35 bg-gradient-to-r from-rose-500/92 via-orange-400/88 to-amber-300/85 text-white shadow-[0_18px_42px_-24px_rgba(244,63,94,0.76)] hover:brightness-105 dark:text-slate-950",
+    text: "text-rose-600 dark:text-rose-300",
   },
 } as const;
 
@@ -115,9 +115,9 @@ function StatRow({
   className?: string;
 }) {
   return (
-    <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] px-3 py-2.5">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">{label}</div>
-      <div className={cn("mt-1 text-sm font-semibold text-[var(--neu-text-strong)]", className)}>{value}</div>
+    <div className="surface-lift rounded-[calc(var(--radius)*1.18)] px-3.5 py-3">
+      <div className="section-eyebrow text-[0.58rem] tracking-[0.24em]">{label}</div>
+      <div className={cn("mt-1.5 text-sm font-semibold text-foreground", className)}>{value}</div>
     </div>
   );
 }
@@ -309,211 +309,233 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
         if (!nextOpen && !loading) handleClose();
       }}
     >
-      <DialogContent className="max-w-[min(42rem,calc(100%-1.5rem))] gap-5 p-5 sm:p-6">
-        <DialogHeader className="gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="neu-surface-base neu-surface-raised flex size-11 items-center justify-center rounded-[var(--neu-radius-md)] text-[var(--neu-accent)]">
+      <DialogContent className="max-w-[min(46rem,calc(100%-1.25rem))] gap-6 overflow-hidden border-border/60 bg-background/85 p-0">
+        <DialogHeader className="page-hero relative overflow-hidden border-b border-border/50 px-5 pb-5 pt-5 sm:px-6">
+          <div className="relative flex flex-wrap items-start gap-4">
+            <span className="gradient-hero glow-primary flex size-12 items-center justify-center rounded-[calc(var(--radius)*1.15)] text-white dark:text-slate-950">
               <svg className="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
             </span>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="section-eyebrow">Execution ticket</div>
               <DialogTitle>Place trade · {symbol}</DialogTitle>
-              <DialogDescription>Route a manual trade from the scanner with the same neumorphic trading controls.</DialogDescription>
+              <DialogDescription>
+                Confirm account routing, risk sizing, and directional intent from a cleaner high-contrast execution surface.
+              </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
-        {result ? (
-          <div className="space-y-4">
-            <div className="rounded-[var(--neu-radius-lg)] border border-[color:color-mix(in_oklch,var(--neu-success)_22%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-raised))] px-4 py-4">
-              <p className="text-sm font-semibold text-[var(--neu-success)]">Trade placed successfully</p>
-              <p className="mt-1 text-[12px] leading-6 text-[var(--neu-text-muted)]">Order ID: {result.orderId}</p>
-              {result.leverage !== String(leverageNum) ? (
-                <p className="mt-1 text-[12px] leading-6 text-[var(--neu-warning)]">Requested {leverageNum}x, capped to {result.leverage}x by account limits for {symbol}.</p>
-              ) : null}
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <StatRow label="Side" value={result.side} className={SIDE_TONES[result.side as "buy" | "sell"]?.text} />
-              <StatRow label="Leverage" value={`${result.leverage}x`} />
-              <StatRow label="Qty" value={result.qty} />
-              <StatRow label="USDT" value={`$${parseFloat(result.usdt_amount).toFixed(2)}`} />
-              <StatRow label="Entry" value={result.mark_price} />
-              <StatRow label="Take profit" value={result.take_profit_price} className="text-[var(--neu-success)]" />
-              <StatRow label="Stop loss" value={result.stop_loss_price} className="text-[var(--neu-danger)]" />
-            </div>
-
-            <DialogFooter className="pt-0">
-              <Button onClick={handleClose}>Close</Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] px-4 py-3">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Signal</span>
-              <span className={cn("inline-flex min-h-7 items-center rounded-[var(--neu-radius-pill)] border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]", SIDE_TONES[signalDirection].badge)}>
-                {signalDirection}
-              </span>
-              <span className="text-[var(--neu-text-soft)]">→</span>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Trade</span>
-              <span className={cn("inline-flex min-h-7 items-center rounded-[var(--neu-radius-pill)] border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]", sideTone.badge)}>
-                {actualSide}
-              </span>
-              {selectedAccount ? (
-                <Badge variant={selectedAccount.account_type === "live" ? "destructive" : "secondary"} className="ml-auto px-3 py-1 text-[10px] tracking-[0.16em]">
-                  {selectedAccount.account_type}
-                </Badge>
-              ) : null}
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] p-4">
-                <div>
-                  <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Account</Label>
-                  <Select value={settings.accountId} onValueChange={(value) => handleAccountChange(value ?? "")}>
-                    <SelectTrigger className="mt-2 w-full">
-                      <SelectValue placeholder="Select account" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accounts.filter((acc: TradingAccount) => acc.is_active).map((acc: TradingAccount) => (
-                        <SelectItem key={acc.id} value={acc.id}>
-                          {acc.label} ({acc.account_type})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {settings.accountId ? (
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Base capital (USDT)</Label>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => fetchAndSetBaseCapital(settings.accountId, true)}
-                        disabled={baseCapitalLoading}
-                        className="uppercase tracking-[0.14em]"
-                      >
-                        {baseCapitalLoading ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="size-3 rounded-full border border-current border-t-transparent animate-spin" />
-                            Syncing
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5">
-                            <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            Sync balance
-                          </span>
-                        )}
-                      </Button>
-                    </div>
-                    <Input
-                      type="number"
-                      value={baseCapital}
-                      onChange={(e) => {
-                        setBaseCapital(e.target.value);
-                        if (settings.accountId && e.target.value) {
-                          saveBaseCapital(settings.accountId, e.target.value);
-                        }
-                      }}
-                      placeholder="0.00"
-                    />
-                    <p className="mt-2 text-[11px] leading-5 text-[var(--neu-text-muted)]">Captured from wallet balance daily. Sync when you need the live amount.</p>
-                  </div>
-                ) : null}
-
-                <div>
-                  <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Direction</Label>
-                  <div className="neu-surface-base neu-surface-inset mt-2 flex min-h-12 items-center gap-1.5 rounded-[var(--neu-radius-md)] p-1.5">
-                    {(["straight", "reverse"] as const).map((direction) => (
-                      <button
-                        key={direction}
-                        type="button"
-                        onClick={() => update({ direction })}
-                        className={cn(
-                          "neu-focus-ring flex-1 rounded-[calc(var(--neu-radius-md)-8px)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all",
-                          settings.direction === direction
-                            ? "neu-surface-base neu-surface-raised shadow-[var(--neu-shadow-pill)] text-[var(--neu-text-strong)]"
-                            : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]",
-                        )}
-                      >
-                        {direction}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-[11px] leading-5 text-[var(--neu-text-muted)]">
-                    {settings.direction === "straight" ? "Trade follows the signal direction." : "Trade opposes the signal direction."}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[color:color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-muted))] p-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Leverage</Label>
-                    <div className="mt-2 flex items-center gap-2">
-                      <Input type="number" value={settings.leverage} onChange={(e) => update({ leverage: e.target.value })} min={1} max={125} />
-                      <span className="text-sm text-[var(--neu-text-muted)]">x</span>
-                    </div>
-                  </div>
-                  <div>
-                    <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Capital %</Label>
-                    <div className="mt-2 flex items-center gap-2">
-                      <Input type="number" value={settings.capitalPct} onChange={(e) => update({ capitalPct: e.target.value })} min={0.1} max={100} step={0.1} />
-                      <span className="text-sm text-[var(--neu-text-muted)]">%</span>
-                    </div>
-                  </div>
-                  <div>
-                    <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Take profit %</Label>
-                    <Input type="number" value={settings.tpPct} onChange={(e) => update({ tpPct: e.target.value })} min={0.1} step={0.1} className="mt-2" />
-                    <p className={cn("mt-2 text-[11px] leading-5", tpExceedsPrice ? "text-[var(--neu-danger)]" : "text-[var(--neu-text-muted)]")}>
-                      {tpExceedsPrice ? "TP exceeds 100% price move for a short." : `≈ ${tpActual}% price move`}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Stop loss %</Label>
-                    <Input type="number" value={settings.slPct} onChange={(e) => update({ slPct: e.target.value })} min={0.1} step={0.1} className="mt-2" />
-                    <p className={cn("mt-2 text-[11px] leading-5", slExceedsPrice ? "text-[var(--neu-danger)]" : "text-[var(--neu-text-muted)]")}>
-                      {slExceedsPrice ? "SL exceeds 100% price move." : `≈ ${slActual}% price move`}
-                    </p>
-                  </div>
-                </div>
-
-                {baseCapitalNum > 0 && capitalPctNum > 0 ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <StatRow label="USDT per trade" value={`$${usdtPerTrade.toFixed(2)}`} />
-                    <StatRow label={`Notional (${leverageNum}x)`} value={`$${notionalValue.toFixed(2)}`} />
-                  </div>
+        <div className="space-y-5 px-5 pb-5 sm:px-6 sm:pb-6">
+          {result ? (
+            <div className="space-y-4 pt-1">
+              <div className="surface-lift rounded-[calc(var(--radius)*1.45)] border-emerald-500/25 bg-emerald-500/10 px-4 py-4">
+                <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-300">Trade placed successfully</p>
+                <p className="mt-1 text-[12px] leading-6 text-muted-foreground">Order ID: {result.orderId}</p>
+                {result.leverage !== String(leverageNum) ? (
+                  <p className="mt-1 text-[12px] leading-6 text-amber-600 dark:text-amber-300">Requested {leverageNum}x, capped to {result.leverage}x by account limits for {symbol}.</p>
                 ) : null}
               </div>
-            </div>
 
-            <DialogFooter>
-              <Button variant="outline" onClick={handleClose} disabled={loading}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSubmit}
-                disabled={!isValid || loading}
-                className={cn("border", sideTone.button)}
-              >
-                {loading ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="size-3.5 rounded-full border border-current border-t-transparent animate-spin" />
-                    Routing trade
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <StatRow label="Side" value={result.side} className={SIDE_TONES[result.side as "buy" | "sell"]?.text} />
+                <StatRow label="Leverage" value={`${result.leverage}x`} />
+                <StatRow label="Qty" value={result.qty} />
+                <StatRow label="USDT" value={`$${parseFloat(result.usdt_amount).toFixed(2)}`} />
+                <StatRow label="Entry" value={result.mark_price} />
+                <StatRow label="Take profit" value={result.take_profit_price} className="text-emerald-600 dark:text-emerald-300" />
+                <StatRow label="Stop loss" value={result.stop_loss_price} className="text-rose-600 dark:text-rose-300" />
+              </div>
+
+              <DialogFooter className="pt-0">
+                <Button onClick={handleClose}>Close</Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <>
+              <div className="surface-lift rounded-[calc(var(--radius)*1.35)] px-4 py-3.5">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="section-eyebrow text-[0.6rem]">Signal</span>
+                  <span className={cn("inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]", SIDE_TONES[signalDirection].badge)}>
+                    {signalDirection}
                   </span>
-                ) : (
-                  `${actualSide === "buy" ? "Buy" : "Sell"} ${symbol}`
-                )}
-              </Button>
-            </DialogFooter>
-          </>
-        )}
+                  <span className="text-muted-foreground/70">→</span>
+                  <span className="section-eyebrow text-[0.6rem]">Trade</span>
+                  <span className={cn("inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]", sideTone.badge)}>
+                    {actualSide}
+                  </span>
+                  {selectedAccount ? (
+                    <Badge variant={selectedAccount.account_type === "live" ? "destructive" : "secondary"} className="ml-auto border border-border/50 px-3 py-1 text-[10px] tracking-[0.16em] uppercase">
+                      {selectedAccount.account_type}
+                    </Badge>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[1.02fr_0.98fr]">
+                <div className="glass-card rounded-[calc(var(--radius)*1.45)] p-4 sm:p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="section-eyebrow">Execution route</div>
+                      <p className="mt-1 text-sm font-semibold text-foreground">Pick the account and trade direction.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <Label className="section-eyebrow text-[0.62rem]">Account</Label>
+                      <Select value={settings.accountId} onValueChange={(value) => handleAccountChange(value ?? "")}>
+                        <SelectTrigger className="mt-2 w-full border-border/60 bg-background/55">
+                          <SelectValue placeholder="Select account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {accounts.filter((acc: TradingAccount) => acc.is_active).map((acc: TradingAccount) => (
+                            <SelectItem key={acc.id} value={acc.id}>
+                              {acc.label} ({acc.account_type})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {settings.accountId ? (
+                      <div className="surface-lift rounded-[calc(var(--radius)*1.18)] px-4 py-3.5">
+                        <div className="mb-2.5 flex items-center justify-between gap-2">
+                          <Label className="section-eyebrow text-[0.62rem]">Base capital (USDT)</Label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => fetchAndSetBaseCapital(settings.accountId, true)}
+                            disabled={baseCapitalLoading}
+                            className="uppercase tracking-[0.16em]"
+                          >
+                            {baseCapitalLoading ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="size-3 rounded-full border border-current border-t-transparent animate-spin" />
+                                Syncing
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5">
+                                <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                Sync balance
+                              </span>
+                            )}
+                          </Button>
+                        </div>
+                        <Input
+                          type="number"
+                          value={baseCapital}
+                          onChange={(e) => {
+                            setBaseCapital(e.target.value);
+                            if (settings.accountId && e.target.value) {
+                              saveBaseCapital(settings.accountId, e.target.value);
+                            }
+                          }}
+                          placeholder="0.00"
+                          className="border-border/60 bg-background/60"
+                        />
+                        <p className="mt-2.5 text-[11px] leading-5 text-muted-foreground">Captured from wallet balance daily. Sync when you need the live amount.</p>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <Label className="section-eyebrow text-[0.62rem]">Direction</Label>
+                      <div className="mt-2 grid grid-cols-2 gap-2 rounded-[calc(var(--radius)*1.1)] border border-border/60 bg-background/45 p-1.5">
+                        {(["straight", "reverse"] as const).map((direction) => (
+                          <button
+                            key={direction}
+                            type="button"
+                            onClick={() => update({ direction })}
+                            className={cn(
+                              "rounded-[calc(var(--radius)*0.92)] px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                              settings.direction === direction
+                                ? "gradient-primary text-primary-foreground shadow-[0_18px_34px_-24px_rgba(56,189,248,0.85)]"
+                                : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                            )}
+                          >
+                            {direction}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-2.5 text-[11px] leading-5 text-muted-foreground">
+                        {settings.direction === "straight" ? "Trade follows the incoming signal direction." : "Trade flips the incoming signal for a contrarian entry."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="glass-card rounded-[calc(var(--radius)*1.45)] p-4 sm:p-5">
+                  <div className="mb-4">
+                    <div className="section-eyebrow">Risk model</div>
+                    <p className="mt-1 text-sm font-semibold text-foreground">Tune leverage, position sizing, and exits.</p>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label className="section-eyebrow text-[0.62rem]">Leverage</Label>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Input type="number" value={settings.leverage} onChange={(e) => update({ leverage: e.target.value })} min={1} max={125} className="border-border/60 bg-background/60" />
+                        <span className="text-sm text-muted-foreground">x</span>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="section-eyebrow text-[0.62rem]">Capital %</Label>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Input type="number" value={settings.capitalPct} onChange={(e) => update({ capitalPct: e.target.value })} min={0.1} max={100} step={0.1} className="border-border/60 bg-background/60" />
+                        <span className="text-sm text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="section-eyebrow text-[0.62rem]">Take profit %</Label>
+                      <Input type="number" value={settings.tpPct} onChange={(e) => update({ tpPct: e.target.value })} min={0.1} step={0.1} className="mt-2 border-border/60 bg-background/60" />
+                      <p className={cn("mt-2 text-[11px] leading-5", tpExceedsPrice ? "text-rose-600 dark:text-rose-300" : "text-muted-foreground")}>
+                        {tpExceedsPrice ? "TP exceeds a 100% price move for a short." : `≈ ${tpActual}% price move`}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="section-eyebrow text-[0.62rem]">Stop loss %</Label>
+                      <Input type="number" value={settings.slPct} onChange={(e) => update({ slPct: e.target.value })} min={0.1} step={0.1} className="mt-2 border-border/60 bg-background/60" />
+                      <p className={cn("mt-2 text-[11px] leading-5", slExceedsPrice ? "text-rose-600 dark:text-rose-300" : "text-muted-foreground")}>
+                        {slExceedsPrice ? "SL exceeds a 100% price move." : `≈ ${slActual}% price move`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {baseCapitalNum > 0 && capitalPctNum > 0 ? (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <StatRow label="USDT per trade" value={`$${usdtPerTrade.toFixed(2)}`} />
+                      <StatRow label={`Notional (${leverageNum}x)`} value={`$${notionalValue.toFixed(2)}`} />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={handleClose} disabled={loading}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSubmit}
+                  disabled={!isValid || loading}
+                  className={cn("border", sideTone.button)}
+                >
+                  {loading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="size-3.5 rounded-full border border-current border-t-transparent animate-spin" />
+                      Routing trade
+                    </span>
+                  ) : (
+                    `${actualSide === "buy" ? "Buy" : "Sell"} ${symbol}`
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -49,14 +49,14 @@ export function MobileCollapse({ title, badge, defaultOpen = true, storageKey, c
       <button
         type="button"
         onClick={toggle}
-        className="neu-surface-base neu-surface-raised md:hidden flex w-full items-center justify-between gap-3 rounded-[var(--neu-radius-lg)] px-4 py-3.5 text-left"
+        className="glass-card md:hidden flex w-full items-center justify-between gap-3 rounded-[calc(var(--radius)*1.4)] px-4 py-3.5 text-left shadow-[var(--shadow-soft)]"
         aria-expanded={open}
       >
-        <div className="flex min-w-0 items-center gap-2">
-          {title}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">{title}</span>
           {badge ? <div className="shrink-0">{badge}</div> : null}
         </div>
-        <span className="neu-surface-base neu-surface-inset flex size-8 shrink-0 items-center justify-center rounded-[var(--neu-radius-sm)] text-[var(--neu-text-muted)]">
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground shadow-[var(--shadow-soft)]">
           <svg
             className={cn("size-4 transition-transform duration-200", open ? "rotate-180" : "rotate-0")}
             fill="none"
@@ -71,7 +71,7 @@ export function MobileCollapse({ title, badge, defaultOpen = true, storageKey, c
 
       <div
         className={cn(
-          "md:hidden overflow-hidden transition-all duration-200",
+          "md:hidden overflow-hidden transition-all duration-300",
           open ? "max-h-[9999px] opacity-100 pt-3" : "pointer-events-none max-h-0 opacity-0",
         )}
       >

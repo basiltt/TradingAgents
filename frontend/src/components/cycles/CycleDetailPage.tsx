@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ArrowLeft, ShieldAlert, Sparkles, TriangleAlert } from "lucide-react";
 import { cyclesApi, ApiError } from "@/api/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { formatDate, isActive } from "./utils";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -26,6 +28,35 @@ const TRADE_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructiv
   failed: "destructive",
   cancelled: "outline",
 };
+
+function StatCard({ label, value, tone = "neutral", helper }: { label: string; value: string; tone?: "accent" | "success" | "warning" | "danger" | "neutral"; helper?: string }) {
+  const toneClass = {
+    accent: "page-header-stat text-primary",
+    success: "page-header-stat text-[var(--success)]",
+    warning: "page-header-stat text-[color:color-mix(in_oklch,var(--warning)_76%,var(--foreground))]",
+    danger: "page-header-stat text-destructive",
+    neutral: "page-header-stat text-foreground",
+  }[tone];
+
+  return (
+    <div data-tone={tone} className={`surface-lift rounded-[calc(var(--radius)*1.35)] border p-4 ${toneClass}`}>
+      <div className="space-y-2 pl-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+        <div className="text-xl font-semibold tracking-[-0.05em] text-foreground sm:text-2xl">{value}</div>
+        {helper ? <p className="text-xs leading-5 text-muted-foreground">{helper}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function DetailCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[calc(var(--radius)*1.1)] border border-border/55 bg-card/55 p-3.5 shadow-[var(--shadow-soft)]">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</span>
+      <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
 
 export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   const id = Number(cycleId);
@@ -66,16 +97,14 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   if (error || !cycle) {
     return (
       <div className="space-y-5">
-        <Link to="/cycles" className="text-sm text-primary hover:underline flex items-center gap-1">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
+        <Link to="/cycles" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+          <ArrowLeft className="size-4" />
           Back to cycles
         </Link>
         <Card>
           <CardContent className="py-6 text-center text-destructive">
             <p>Cycle not found or failed to load.</p>
-            <button onClick={() => refetch()} className="text-sm text-primary hover:underline mt-2">Retry</button>
+            <button onClick={() => refetch()} className="mt-2 text-sm text-primary hover:underline">Retry</button>
           </CardContent>
         </Card>
       </div>
@@ -83,181 +112,152 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   }
 
   const canStop = isActive(cycle.status) && cycle.status !== "stopping";
+  const statusTone = cycle.status === "failed"
+    ? "danger"
+    : cycle.status === "running"
+      ? "success"
+      : cycle.status === "stopping"
+        ? "warning"
+        : cycle.status === "placing_trades"
+          ? "accent"
+          : "neutral";
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <Link to="/cycles" className="text-sm text-primary hover:underline flex items-center gap-1 mb-3">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to cycles
-          </Link>
-          <h1 className="text-xl font-bold flex items-center gap-3">
-            Cycle #{cycle.id}
-            <Badge variant={STATUS_VARIANT[cycle.status] ?? "outline"}>
-              {cycle.status.replace("_", " ")}
-            </Badge>
-          </h1>
-        </div>
-        {canStop && (
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setConfirmStop(true)}
-          >
-            Stop Cycle
-          </Button>
-        )}
-      </div>
-
-      {/* Configuration */}
-      <Card>
-        <CardContent className="py-4.5">
-          <h2 className="font-semibold text-sm mb-3">Configuration</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
-            <div>
-              <span className="text-muted-foreground text-xs">Direction</span>
-              <p className="font-medium capitalize">{cycle.trade_direction}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Leverage</span>
-              <p className="font-medium">{cycle.leverage}x</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Capital %</span>
-              <p className="font-medium">{cycle.capital_pct}%</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Max Trades</span>
-              <p className="font-medium">{cycle.max_trades}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Target</span>
-              <p className="font-medium">
-                {cycle.target_type === "percentage" ? `${cycle.target_value}%` : `$${cycle.target_value}`}
-              </p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Max Drawdown</span>
-              <p className="font-medium">{cycle.max_drawdown_pct}%</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Min Score</span>
-              <p className="font-medium">{cycle.min_score}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Min Confidence</span>
-              <p className="font-medium capitalize">{cycle.min_confidence}</p>
-            </div>
-            {cycle.take_profit_pct != null && (
-              <div>
-                <span className="text-muted-foreground text-xs">TP %</span>
-                <p className="font-medium">{cycle.take_profit_pct}%</p>
-              </div>
-            )}
-            {cycle.stop_loss_pct != null && (
-              <div>
-                <span className="text-muted-foreground text-xs">SL %</span>
-                <p className="font-medium">{cycle.stop_loss_pct}%</p>
-              </div>
-            )}
+    <div className="space-y-5 pb-8">
+      <PageHeader
+        eyebrow="Cycle detail"
+        title={`Cycle #${cycle.id}`}
+        description="Review trade routing, execution health, and configuration metadata for this automation batch without leaving the cycle workspace."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Link to="/cycles">
+              <Button variant="outline">
+                <ArrowLeft className="size-4" />
+                Back to cycles
+              </Button>
+            </Link>
+            {canStop ? (
+              <Button variant="destructive" onClick={() => setConfirmStop(true)}>
+                <ShieldAlert className="size-4" />
+                Stop Cycle
+              </Button>
+            ) : null}
           </div>
-        </CardContent>
-      </Card>
+        }
+        stats={[
+          { label: "Status", value: cycle.status.replace("_", " "), tone: statusTone },
+          { label: "Trades placed", value: String(cycle.trades_placed), tone: cycle.trades_placed > 0 ? "success" : "neutral" },
+          { label: "Trades failed", value: String(cycle.trades_failed), tone: cycle.trades_failed > 0 ? "danger" : "neutral" },
+          { label: "PnL", value: cycle.final_pnl != null ? `${cycle.final_pnl >= 0 ? "+" : ""}$${cycle.final_pnl.toFixed(2)}` : "Pending", tone: cycle.final_pnl == null ? "neutral" : cycle.final_pnl >= 0 ? "success" : "danger" },
+        ]}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={STATUS_VARIANT[cycle.status] ?? "outline"}>{cycle.status.replace("_", " ")}</Badge>
+          {cycle.stop_reason ? <Badge variant="outline">Stop reason recorded</Badge> : null}
+          <Badge variant="outline">Auto-refresh while active</Badge>
+        </div>
+      </PageHeader>
 
-      {/* Status */}
-      <Card>
-        <CardContent className="py-4.5">
-          <h2 className="font-semibold text-sm mb-3">Status</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-            <div>
-              <span className="text-muted-foreground text-xs">Trades Placed</span>
-              <p className="font-medium text-emerald-500">{cycle.trades_placed}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">Trades Failed</span>
-              <p className="font-medium text-destructive">{cycle.trades_failed}</p>
-            </div>
-            {cycle.initial_equity != null && (
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <Card>
+          <CardContent className="space-y-4 p-5">
+            <div className="flex items-start gap-3">
+              <span className="gradient-primary inline-flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.1)] text-primary-foreground shadow-[var(--shadow-accent)]">
+                <Sparkles className="size-5" />
+              </span>
               <div>
-                <span className="text-muted-foreground text-xs">Initial Equity</span>
-                <p className="font-medium">${cycle.initial_equity.toFixed(2)}</p>
-              </div>
-            )}
-            {cycle.final_pnl != null && (
-              <div>
-                <span className="text-muted-foreground text-xs">Final PnL</span>
-                <p className={`font-medium ${cycle.final_pnl >= 0 ? "text-emerald-500" : "text-destructive"}`}>
-                  {cycle.final_pnl >= 0 ? "+" : ""}${cycle.final_pnl.toFixed(2)}
+                <p className="section-eyebrow">Execution configuration</p>
+                <h2 className="mt-1 text-lg font-semibold tracking-[-0.04em] text-foreground">Cycle parameters</h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  These values represent the original automation rules used when the cycle was launched.
                 </p>
               </div>
-            )}
-            <div>
-              <span className="text-muted-foreground text-xs">Created</span>
-              <p className="font-medium">{formatDate(cycle.created_at)}</p>
             </div>
-            {cycle.started_at && (
-              <div>
-                <span className="text-muted-foreground text-xs">Started</span>
-                <p className="font-medium">{formatDate(cycle.started_at)}</p>
-              </div>
-            )}
-            {cycle.completed_at && (
-              <div>
-                <span className="text-muted-foreground text-xs">Completed</span>
-                <p className="font-medium">{formatDate(cycle.completed_at)}</p>
-              </div>
-            )}
-            {cycle.stop_reason && (
-              <div>
-                <span className="text-muted-foreground text-xs">Stop Reason</span>
-                <p className="font-medium text-orange-500">{cycle.stop_reason}</p>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <DetailCell label="Direction" value={cycle.trade_direction} />
+              <DetailCell label="Leverage" value={`${cycle.leverage}x`} />
+              <DetailCell label="Capital %" value={`${cycle.capital_pct}%`} />
+              <DetailCell label="Max trades" value={String(cycle.max_trades)} />
+              <DetailCell label="Target" value={cycle.target_type === "percentage" ? `${cycle.target_value}%` : `$${cycle.target_value}`} />
+              <DetailCell label="Max drawdown" value={`${cycle.max_drawdown_pct}%`} />
+              <DetailCell label="Min score" value={String(cycle.min_score)} />
+              <DetailCell label="Min confidence" value={cycle.min_confidence} />
+              {cycle.take_profit_pct != null ? <DetailCell label="Take profit" value={`${cycle.take_profit_pct}%`} /> : null}
+              {cycle.stop_loss_pct != null ? <DetailCell label="Stop loss" value={`${cycle.stop_loss_pct}%`} /> : null}
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Trades */}
-      {cycle.trades && cycle.trades.length > 0 && (
+        <div className="space-y-4">
+          <StatCard label="Lifecycle" value={formatDate(cycle.created_at)} helper="Cycle creation timestamp" tone="accent" />
+          {cycle.started_at ? <StatCard label="Started" value={formatDate(cycle.started_at)} helper="Execution engine began trade routing" tone="success" /> : null}
+          {cycle.completed_at ? <StatCard label="Completed" value={formatDate(cycle.completed_at)} helper="Cycle is no longer active" /> : null}
+          {cycle.initial_equity != null ? <StatCard label="Initial equity" value={`$${cycle.initial_equity.toFixed(2)}`} helper="Captured at launch" /> : null}
+          {cycle.stop_reason ? (
+            <div className="surface-lift rounded-[calc(var(--radius)*1.35)] border p-4 text-sm shadow-[var(--shadow-soft)]">
+              <div className="flex items-start gap-3">
+                <span className="inline-flex size-10 items-center justify-center rounded-full bg-[color:color-mix(in_oklch,var(--warning)_14%,transparent)] text-[color:color-mix(in_oklch,var(--warning)_78%,var(--foreground))]">
+                  <TriangleAlert className="size-5" />
+                </span>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Stop reason</p>
+                  <p className="mt-1 leading-6 text-foreground">{cycle.stop_reason}</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      {cycle.trades && cycle.trades.length > 0 ? (
         <Card>
-          <CardContent className="py-4.5">
-            <h2 className="font-semibold text-sm mb-3">Trades ({cycle.trades.length})</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm" aria-label="Cycle trades">
+          <CardContent className="space-y-4 p-5">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p className="section-eyebrow">Trade ledger</p>
+                <h2 className="mt-1 text-lg font-semibold tracking-[-0.04em] text-foreground">Trades ({cycle.trades.length})</h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  Trade-level submission status, side, quantity, entry price, and broker errors.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline">Responsive table</Badge>
+                <Badge variant="outline">Broker error visibility</Badge>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto custom-scrollbar">
+              <table className="w-full min-w-[56rem] text-sm" aria-label="Cycle trades">
                 <thead>
-                  <tr className="border-b border-border/50 text-xs text-muted-foreground">
-                    <th className="text-left px-3 py-2 font-medium">Symbol</th>
-                    <th className="text-left px-3 py-2 font-medium">Side</th>
-                    <th className="text-right px-3 py-2 font-medium">Qty</th>
-                    <th className="text-right px-3 py-2 font-medium">Entry Price</th>
-                    <th className="text-left px-3 py-2 font-medium">Status</th>
-                    <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Error</th>
+                  <tr className="border-b border-border/50 bg-muted/18 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    <th className="px-3 py-3 text-left">Symbol</th>
+                    <th className="px-3 py-3 text-left">Side</th>
+                    <th className="px-3 py-3 text-right">Qty</th>
+                    <th className="px-3 py-3 text-right">Entry Price</th>
+                    <th className="px-3 py-3 text-left">Status</th>
+                    <th className="px-3 py-3 text-left">Error</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cycle.trades.map((t) => (
-                    <tr key={t.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
-                      <td className="px-3 py-2 font-mono font-semibold">{t.symbol}</td>
-                      <td className="px-3 py-2">
-                        <span className={t.side === "Buy" ? "text-emerald-500" : "text-red-500"}>
+                    <tr key={t.id} className="border-b border-border/30 transition-colors last:border-b-0 hover:bg-muted/20">
+                      <td className="px-3 py-3 font-mono font-semibold text-foreground">{t.symbol}</td>
+                      <td className="px-3 py-3">
+                        <span className={t.side === "Buy" ? "text-[var(--success)]" : "text-destructive"}>
                           {t.side}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-right font-mono">{t.qty ?? "—"}</td>
-                      <td className="px-3 py-2 text-right font-mono">
+                      <td className="px-3 py-3 text-right font-mono text-foreground">{t.qty ?? "—"}</td>
+                      <td className="px-3 py-3 text-right font-mono text-foreground">
                         {t.entry_price != null ? `$${t.entry_price}` : "—"}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-3">
                         <Badge variant={TRADE_STATUS_VARIANT[t.status] ?? "outline"}>
                           {t.status}
                         </Badge>
                       </td>
-                      <td className="px-3 py-2 text-xs text-destructive hidden md:table-cell max-w-48 truncate">
-                        {t.error_msg ?? ""}
+                      <td className="px-3 py-3 text-xs text-muted-foreground">
+                        <div className="max-w-64 leading-5 text-destructive/90">{t.error_msg ?? "—"}</div>
                       </td>
                     </tr>
                   ))}
@@ -266,45 +266,49 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
             </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {/* Stop Confirmation */}
       {confirmStop && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" role="alertdialog" aria-modal="true" aria-labelledby="stop-cycle-title" onKeyDown={(e) => { if (e.key === "Escape" && !stopMutation.isPending) setConfirmStop(false); }}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="stop-cycle-title"
+          onKeyDown={(e) => { if (e.key === "Escape" && !stopMutation.isPending) setConfirmStop(false); }}
+        >
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-md"
             onClick={() => !stopMutation.isPending && setConfirmStop(false)}
           />
-          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
-            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
-              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
+          <div className="glass-card relative w-full max-w-md rounded-[calc(var(--radius)*1.8)] border border-border/60 p-5 shadow-[var(--shadow-card)]">
+            <div className="flex items-start gap-3">
+              <span className="inline-flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.1)] bg-[color:color-mix(in_oklch,var(--destructive)_14%,transparent)] text-destructive">
+                <TriangleAlert className="size-5" />
+              </span>
+              <div>
+                <h3 id="stop-cycle-title" className="text-lg font-semibold tracking-[-0.04em] text-foreground">Stop trading cycle?</h3>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  This cancels pending trades and closes any positions opened by the cycle. Use only when you intend to exit the batch immediately.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 id="stop-cycle-title" className="text-lg font-bold mb-1">Stop Trading Cycle?</h3>
-              <p className="text-sm text-muted-foreground">
-                This will cancel any pending trades and close all positions opened by this cycle.
-              </p>
-            </div>
-            <div className="flex items-center gap-2.5 pt-1">
-              <button
+            <div className="mt-5 flex items-center gap-2.5">
+              <Button
+                variant="outline"
+                className="flex-1"
                 onClick={() => setConfirmStop(false)}
                 disabled={stopMutation.isPending}
-                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
                 onClick={() => stopMutation.mutate()}
                 disabled={stopMutation.isPending}
-                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {stopMutation.isPending && (
-                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                )}
-                Stop Cycle
-              </button>
+                {stopMutation.isPending ? "Stopping..." : "Stop Cycle"}
+              </Button>
             </div>
           </div>
         </div>
