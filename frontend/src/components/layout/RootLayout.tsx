@@ -1,8 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import {
-  ChevronLeft,
-  ChevronRight,
   Menu,
   Radar,
   Search,
@@ -16,6 +14,7 @@ import {
   NeuTopbar,
   setCommandPaletteOpen,
   setMobileNavOpen,
+  setNeuMode,
   setSidebarCollapsed,
 } from "@/design-system/neumorphism";
 import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
@@ -29,7 +28,7 @@ export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { mobileNavOpen, commandPaletteOpen, sidebarCollapsed } = useAppSelector((state) => state.neuUi);
+  const { mobileNavOpen, commandPaletteOpen, sidebarCollapsed, mode: neuMode } = useAppSelector((state) => state.neuUi);
 
   useAccountWebSocket();
 
@@ -76,8 +75,9 @@ export function RootLayout() {
     <NeuSidebar
       sections={sections}
       collapsed={sidebarCollapsed}
-      headerSlot={null}
-      footer={null}
+      onCollapse={() => dispatch(setSidebarCollapsed(!sidebarCollapsed))}
+      darkMode={neuMode === "graphite"}
+      onDarkModeToggle={() => dispatch(setNeuMode(neuMode === "graphite" ? "ivory" : "graphite"))}
     />
   );
 
@@ -95,7 +95,8 @@ export function RootLayout() {
         <NeuSidebar
           sections={sections}
           mode="mobile-sheet"
-          headerSlot={null}
+          darkMode={neuMode === "graphite"}
+          onDarkModeToggle={() => dispatch(setNeuMode(neuMode === "graphite" ? "ivory" : "graphite"))}
         />
       </div>
     </NeuDrawer>
@@ -118,15 +119,6 @@ export function RootLayout() {
             >
               <Menu className="size-4" />
               Menu
-            </NeuButton>
-            <NeuButton
-              variant="secondary"
-              size="sm"
-              className="hidden lg:inline-flex"
-              onClick={() => dispatch(setSidebarCollapsed(!sidebarCollapsed))}
-            >
-              {sidebarCollapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-              {sidebarCollapsed ? "Expand" : "Collapse"}
             </NeuButton>
             <NeuButton
               variant="secondary"
