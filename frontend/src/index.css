@@ -64,7 +64,7 @@
   --danger-hue: 26;
   --danger-chroma: 0.2;
 
-  --background: oklch(0.982 0.004 var(--surface-hue));
+  --background: #ffffff;
   --foreground: oklch(0.2 0.018 var(--surface-hue));
   --card: oklch(0.995 0.003 var(--surface-hue) / 0.96);
   --card-foreground: var(--foreground);
@@ -148,7 +148,7 @@
 }
 
 .dark {
-  --background: oklch(0.074 0.01 var(--surface-hue));
+  --background: #121318;
   --foreground: oklch(0.96 0.006 var(--surface-hue));
   --card: oklch(0.13 0.012 var(--surface-hue) / 0.95);
   --card-foreground: var(--foreground);
@@ -271,41 +271,11 @@
 
   body {
     min-height: 100svh;
-    background:
-      radial-gradient(circle at 8% 10%, var(--ambient-1), transparent 26%),
-      radial-gradient(circle at 90% 10%, var(--ambient-2), transparent 28%),
-      radial-gradient(circle at 70% 84%, var(--ambient-3), transparent 30%),
-      var(--page-top-wash),
-      var(--background);
+    background: var(--background);
     color: var(--foreground);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     text-rendering: optimizeLegibility;
     overflow-x: hidden;
-  }
-
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -2;
-    pointer-events: none;
-    background-image:
-      var(--page-before-wash),
-      radial-gradient(circle at 18% 20%, var(--ambient-1), transparent 52%),
-      radial-gradient(circle at 84% 14%, var(--ambient-2), transparent 46%);
-    opacity: var(--page-before-opacity);
-  }
-
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background-image: var(--grid-dot);
-    background-size: 26px 26px;
-    opacity: var(--grid-opacity);
-    mask-image: linear-gradient(180deg, black, transparent 86%);
   }
 
   button,

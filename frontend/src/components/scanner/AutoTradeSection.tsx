@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { NeuSwitch } from "@/design-system/neumorphism";
 
 const STORAGE_KEY = "tradingagents_auto_trade_configs";
 
@@ -72,25 +73,11 @@ interface ToggleRowProps {
 function ToggleRow({ checked, onChange, title, description, trailing }: ToggleRowProps) {
   return (
     <div className="group flex items-start gap-3 rounded-[calc(var(--radius)*1.15)] border border-border/55 bg-card/55 px-3.5 py-3.5 shadow-[var(--shadow-soft)] transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/18 hover:bg-card/72">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={cn(
-          "relative mt-0.5 flex h-7 w-12 shrink-0 items-center rounded-full border p-1 shadow-[var(--shadow-soft)] transition-colors",
-          checked
-            ? "border-primary/30 bg-primary/20"
-            : "border-border/60 bg-muted/55",
-        )}
-      >
-        <span
-          className={cn(
-            "block size-5 rounded-full bg-background shadow-[var(--shadow-soft)] transition-transform",
-            checked && "translate-x-5",
-          )}
-        />
-      </button>
+      <NeuSwitch
+        checked={checked}
+        onChange={onChange}
+        className="p-0 gap-0 shrink-0 mt-0.5"
+      />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{description}</p>

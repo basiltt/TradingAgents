@@ -19,7 +19,6 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox } from "@/components/ui/combobox";
 import {
   Select,
@@ -329,7 +328,7 @@ export function NeuSelect({
     <FieldFrame label={label} helperText={helperText} error={error}>
       <Select value={value} onValueChange={(next) => next && onChange(next)} disabled={disabled}>
         <SelectTrigger
-          className="neu-input-base neu-focus-ring h-12 w-full rounded-[var(--neu-radius-md)] px-4 shadow-none sm:h-11"
+          className="neu-input-base neu-focus-ring h-12 w-full rounded-[var(--neu-radius-md)] px-4 sm:h-11"
           style={fieldToneStyle(typeof error === "string" ? error : undefined)}
         >
           <SelectValue placeholder={placeholder} />
@@ -620,29 +619,61 @@ export function NeuCheckbox({
   onCheckedChange,
   description,
   disabled,
+  accent = "accent",
 }: {
   label: ReactNode;
   checked: boolean | "indeterminate";
   onCheckedChange: (checked: boolean | "indeterminate") => void;
   description?: ReactNode;
   disabled?: boolean;
+  accent?: "accent" | "success" | "warning";
 }) {
+  const isChecked = checked === true;
+  const isIndeterminate = checked === "indeterminate";
+
+  const accentTrackColor = {
+    accent: "bg-[var(--neu-accent)] border-[color:color-mix(in_oklch,var(--neu-accent)_22%,var(--neu-stroke-soft))]",
+    success: "bg-[var(--neu-success)] border-[color:color-mix(in_oklch,var(--neu-success)_22%,var(--neu-stroke-soft))]",
+    warning: "bg-[var(--neu-warning)] border-[color:color-mix(in_oklch,var(--neu-warning)_22%,var(--neu-stroke-soft))]",
+  }[accent];
+
+  const accentTextColor = {
+    accent: "text-[var(--neu-accent)]",
+    success: "text-[var(--neu-success)]",
+    warning: "text-[var(--neu-warning)]",
+  }[accent];
+
   return (
-    <div className="flex items-start gap-3 rounded-[var(--neu-radius-md)] p-1">
-      <Checkbox
-        checked={checked === "indeterminate" ? false : checked}
-        onCheckedChange={(next) => onCheckedChange(next)}
+    <div className={cn("flex items-start gap-3 p-1", disabled && "opacity-50 pointer-events-none")}>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked === "indeterminate" ? "mixed" : checked}
         disabled={disabled}
-        className="mt-1 size-[1.35rem] rounded-[10px] border-[var(--neu-stroke-soft)] bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-pill)] data-checked:border-[color:var(--neu-accent)] data-checked:bg-[color:var(--neu-accent-muted)] data-checked:text-[var(--neu-accent-ink)]"
-      />
-      <div className="space-y-1">
-        <p className="text-sm font-semibold">{label}</p>
-        {description ? (
-          <p className="text-xs leading-5" style={{ color: "var(--neu-text-muted)" }}>
-            {description}
-          </p>
-        ) : null}
-      </div>
+        onClick={() => onCheckedChange(checked === "indeterminate" ? true : !checked)}
+        className={cn(
+          "mt-0.5 flex size-5.5 shrink-0 items-center justify-center rounded-[6px] border transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]",
+          isChecked || isIndeterminate
+            ? accentTrackColor
+            : "bg-[var(--neu-surface-deep)] border-[color:var(--neu-stroke-soft)]"
+        )}
+      >
+        {(isChecked || isIndeterminate) && (
+          <span className={cn("flex size-4 items-center justify-center rounded-[4px] bg-white shadow-[var(--neu-shadow-pill)] transition-transform duration-200", accentTextColor)}>
+            {isChecked ? (
+              <Check className="size-3.5 stroke-[3px]" />
+            ) : (
+              <span className="h-0.5 w-2 bg-current rounded-full" />
+            )}
+          </span>
+        )}
+      </button>
+      {(label || description) && (
+        <div className="flex flex-col gap-0.5">
+          {label && <span className="text-sm font-semibold tracking-[0.01em]" style={{ color: "var(--neu-text-strong)" }}>{label}</span>}
+          {description && <span className="text-xs leading-5" style={{ color: "var(--neu-text-muted)" }}>{description}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -653,18 +684,26 @@ export function NeuRadioGroup({
   value,
   onChange,
   orientation = "vertical",
+  accent = "accent",
 }: {
   label?: ReactNode;
   options: Array<{ value: string; label: ReactNode; description?: ReactNode }>;
   value: string;
   onChange: (value: string) => void;
   orientation?: "horizontal" | "vertical";
+  accent?: "accent" | "success" | "warning";
 }) {
   return (
     <FieldFrame label={label}>
       <div className={cn("grid gap-2", orientation === "horizontal" ? "sm:grid-cols-2" : "grid-cols-1")}>
         {options.map((option) => {
           const active = option.value === value;
+          const accentTrackColor = {
+            accent: "bg-[var(--neu-accent)] border-[color:color-mix(in_oklch,var(--neu-accent)_22%,var(--neu-stroke-soft))]",
+            success: "bg-[var(--neu-success)] border-[color:color-mix(in_oklch,var(--neu-success)_22%,var(--neu-stroke-soft))]",
+            warning: "bg-[var(--neu-warning)] border-[color:color-mix(in_oklch,var(--neu-warning)_22%,var(--neu-stroke-soft))]",
+          }[accent];
+
           return (
             <button
               key={option.value}
@@ -677,11 +716,16 @@ export function NeuRadioGroup({
             >
               <span
                 className={cn(
-                  "neu-surface-base mt-1 inline-flex size-[1.1rem] rounded-full",
-                  active ? "neu-surface-accent" : "neu-surface-inset",
+                  "mt-1 flex size-5.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 shadow-[var(--neu-shadow-inset)]",
+                  active
+                    ? accentTrackColor
+                    : "bg-[var(--neu-surface-deep)] border-[color:var(--neu-stroke-soft)]"
                 )}
-                style={{ borderColor: "var(--neu-stroke-soft)" }}
-              />
+              >
+                {active && (
+                  <span className="size-2.5 rounded-full bg-white shadow-[var(--neu-shadow-pill)]" />
+                )}
+              </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold">{option.label}</span>
                 {option.description ? (
@@ -706,6 +750,7 @@ export function NeuSlider({
   step = 1,
   onValueChange,
   marks,
+  accent = "accent",
 }: {
   label?: ReactNode;
   value: number | [number, number];
@@ -714,6 +759,7 @@ export function NeuSlider({
   step?: number;
   onValueChange: (value: number | [number, number]) => void;
   marks?: number[];
+  accent?: "accent" | "success" | "warning";
 }) {
   const isRange = Array.isArray(value);
   const values = isRange ? value : [value];
@@ -721,36 +767,49 @@ export function NeuSlider({
   return (
     <FieldFrame label={label}>
       <NeuSurface depth="inset" radius="md" padding="sm" className="space-y-3">
-        {values.map((entry, index) => (
-          <div key={index} className="space-y-2">
-            <div className="flex items-center justify-between text-xs font-semibold">
-              <span style={{ color: "var(--neu-text-muted)" }}>{isRange ? (index === 0 ? "Minimum" : "Maximum") : "Value"}</span>
-              <span>{entry}</span>
-            </div>
-            <input
-              type="range"
-              min={min}
-              max={max}
-              step={step}
-              value={entry}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (!isRange) {
-                  onValueChange(next);
-                  return;
-                }
+        {values.map((entry, index) => {
+          const pct = ((entry - min) / (max - min)) * 100;
+          const accentVar = {
+            accent: "var(--neu-accent)",
+            success: "var(--neu-success)",
+            warning: "var(--neu-warning)",
+          }[accent];
+          const trackBg = `linear-gradient(to right, ${accentVar} 0%, ${accentVar} ${pct}%, var(--neu-surface-deep) ${pct}%, var(--neu-surface-deep) 100%)`;
 
-                const current: [number, number] = [...value] as [number, number];
-                current[index] = next;
-                onValueChange(current[0] <= current[1] ? current : [current[1], current[0]]);
-              }}
-              className="neu-slider h-5 w-full cursor-pointer rounded-full bg-transparent"
-              style={{
-                accentColor: "var(--neu-accent)",
-              }}
-            />
-          </div>
-        ))}
+          return (
+            <div key={index} className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span style={{ color: "var(--neu-text-muted)" }}>{isRange ? (index === 0 ? "Minimum" : "Maximum") : "Value"}</span>
+                <span>{entry}</span>
+              </div>
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={entry}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (!isRange) {
+                    onValueChange(next);
+                    return;
+                  }
+
+                  const current: [number, number] = [...value] as [number, number];
+                  current[index] = next;
+                  onValueChange(current[0] <= current[1] ? current : [current[1], current[0]]);
+                }}
+                className="neu-slider h-5 w-full cursor-pointer bg-transparent"
+                style={
+                  {
+                    "--slider-track-bg": trackBg,
+                    accentColor: accentVar,
+                  } as CSSProperties
+                }
+              />
+            </div>
+          );
+        })}
         {marks?.length ? (
           <div className="flex items-center justify-between gap-2 text-[11px] font-medium" style={{ color: "var(--neu-text-soft)" }}>
             {marks.map((mark) => (
@@ -939,5 +998,58 @@ export function NeuAccountPicker({
         })}
       </NeuWell>
     </NeuSurface>
+  );
+}
+
+export function NeuSwitch({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled,
+  accent = "accent",
+  className,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label?: ReactNode;
+  description?: ReactNode;
+  disabled?: boolean;
+  accent?: "accent" | "success" | "warning";
+  className?: string;
+}) {
+  const accentColorClass = {
+    accent: "bg-[var(--neu-accent)] text-[var(--neu-accent-ink)] border-[color:color-mix(in_oklch,var(--neu-accent)_22%,var(--neu-stroke-soft))]",
+    success: "bg-[var(--neu-success)] text-white border-[color:color-mix(in_oklch,var(--neu-success)_22%,var(--neu-stroke-soft))]",
+    warning: "bg-[var(--neu-warning)] text-[var(--neu-accent-ink)] border-[color:color-mix(in_oklch,var(--neu-warning)_22%,var(--neu-stroke-soft))]",
+  }[accent];
+
+  return (
+    <div className={cn("flex items-start gap-4 p-1", disabled && "opacity-50 pointer-events-none", className)}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={cn(
+          "relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border border-transparent shadow-[var(--neu-shadow-inset)]",
+          checked ? accentColorClass : "bg-[var(--neu-surface-deep)] shadow-[var(--neu-shadow-inset)]"
+        )}
+      >
+        <span
+          className={cn(
+            "pointer-events-none block size-5 rounded-full bg-white shadow-[var(--neu-shadow-pill)] ring-0 transition duration-200 ease-in-out transform",
+            checked ? "translate-x-[22px] translate-y-[1px]" : "translate-x-[3px] translate-y-[1px]"
+          )}
+        />
+      </button>
+      {(label || description) && (
+        <div className="flex flex-col gap-0.5">
+          {label && <span className="text-sm font-semibold tracking-[0.01em]" style={{ color: "var(--neu-text-strong)" }}>{label}</span>}
+          {description && <span className="text-xs leading-5" style={{ color: "var(--neu-text-muted)" }}>{description}</span>}
+        </div>
+      )}
+    </div>
   );
 }

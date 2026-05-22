@@ -10,21 +10,21 @@
   --neu-font-ink: var(--font-sans, "Geist Variable", sans-serif);
   --neu-font-display: "Fraunces Variable", var(--font-sans, "Geist Variable", serif);
   --neu-font-mono: var(--font-mono, ui-monospace, monospace);
-  --neu-surface-base: oklch(0.94 0.005 95);
-  --neu-surface-raised: oklch(0.96 0.004 95);
-  --neu-surface-muted: oklch(0.915 0.004 95);
-  --neu-surface-deep: oklch(0.9 0.004 95);
+  --neu-surface-base: #ffffff;
+  --neu-surface-raised: #ffffff;
+  --neu-surface-muted: oklch(0.955 0 0);
+  --neu-surface-deep: oklch(0.935 0 0);
   --neu-surface-accent-bg: oklch(0.92 0.03 257);
-  --neu-surface-overlay: oklch(0.98 0.002 95 / 0.88);
-  --neu-text-strong: oklch(0.27 0.012 95);
-  --neu-text-muted: oklch(0.48 0.01 95);
-  --neu-text-soft: oklch(0.6 0.008 95);
-  --neu-stroke-soft: oklch(0.84 0.01 95 / 0.9);
-  --neu-stroke-strong: oklch(0.76 0.012 95 / 0.94);
-  --neu-highlight: oklch(1 0 0 / 0.94);
-  --neu-highlight-soft: oklch(0.99 0.001 95 / 0.8);
-  --neu-shadow: oklch(0.76 0.008 95 / 0.74);
-  --neu-shadow-deep: oklch(0.7 0.01 95 / 0.5);
+  --neu-surface-overlay: oklch(1 0 0 / 0.88);
+  --neu-text-strong: oklch(0.25 0.005 250);
+  --neu-text-muted: oklch(0.48 0.005 250);
+  --neu-text-soft: oklch(0.6 0.005 250);
+  --neu-stroke-soft: oklch(0.93 0 0 / 0.8);
+  --neu-stroke-strong: oklch(0.88 0 0 / 0.9);
+  --neu-highlight: oklch(1 0 0);
+  --neu-highlight-soft: oklch(1 0 0 / 0.85);
+  --neu-shadow: oklch(0.88 0 0 / 0.68);
+  --neu-shadow-deep: oklch(0.82 0 0 / 0.35);
   --neu-focus: oklch(0.61 0.13 257 / 0.46);
   --neu-accent: oklch(0.61 0.13 257);
   --neu-accent-ink: oklch(0.22 0.03 257);
@@ -131,21 +131,21 @@
 }
 
 .neu-theme[data-neu-mode="graphite"] {
-  --neu-surface-base: oklch(0.145 0.008 255);
-  --neu-surface-raised: oklch(0.175 0.01 255);
-  --neu-surface-muted: oklch(0.122 0.008 255);
-  --neu-surface-deep: oklch(0.092 0.008 255);
+  --neu-surface-base: #121318;
+  --neu-surface-raised: oklch(0.17 0.003 255);
+  --neu-surface-muted: oklch(0.10 0.002 255);
+  --neu-surface-deep: oklch(0.08 0.002 255);
   --neu-surface-accent-bg: oklch(0.255 0.03 257);
-  --neu-surface-overlay: oklch(0.145 0.008 255 / 0.92);
-  --neu-text-strong: oklch(0.92 0.004 255);
-  --neu-text-muted: oklch(0.72 0.008 255);
-  --neu-text-soft: oklch(0.6 0.008 255);
-  --neu-stroke-soft: oklch(0.28 0.012 255 / 0.64);
-  --neu-stroke-strong: oklch(0.36 0.014 255 / 0.78);
-  --neu-highlight: oklch(0.44 0.008 255 / 0.22);
-  --neu-highlight-soft: oklch(0.34 0.006 255 / 0.16);
-  --neu-shadow: oklch(0.02 0.008 255 / 0.88);
-  --neu-shadow-deep: oklch(0 0 0 / 0.94);
+  --neu-surface-overlay: oklch(0.13 0.002 255 / 0.92);
+  --neu-text-strong: oklch(0.95 0.001 255);
+  --neu-text-muted: oklch(0.75 0.002 255);
+  --neu-text-soft: oklch(0.55 0.002 255);
+  --neu-stroke-soft: oklch(0.24 0.004 255 / 0.6);
+  --neu-stroke-strong: oklch(0.32 0.004 255 / 0.7);
+  --neu-highlight: oklch(0.25 0.003 255 / 0.25);
+  --neu-highlight-soft: oklch(0.22 0.003 255 / 0.16);
+  --neu-shadow: oklch(0.02 0.001 255 / 0.9);
+  --neu-shadow-deep: oklch(0 0 0 / 0.96);
   --neu-focus: oklch(0.78 0.08 252 / 0.34);
   --neu-shadow-raised:
     -16px -16px 30px color-mix(in oklch, var(--neu-highlight) 80%, transparent),
@@ -253,65 +253,27 @@
 .neu-app-bg {
   position: relative;
   min-height: 100%;
-  background:
-    radial-gradient(circle at 20% 14%, color-mix(in oklch, var(--neu-highlight) 28%, transparent), transparent 28%),
-    radial-gradient(circle at 86% 8%, color-mix(in oklch, var(--neu-accent) 8%, transparent), transparent 24%),
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-surface-base) 96%, white), var(--neu-surface-base)),
-    var(--neu-noise);
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, var(--neu-highlight) 40%, transparent),
-    inset 0 -1px 0 color-mix(in oklch, var(--neu-shadow) 12%, transparent);
+  background: var(--neu-surface-base);
 }
 
 .neu-app-bg::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 12% 14%, color-mix(in oklch, var(--neu-highlight) 38%, transparent), transparent 34%),
-    radial-gradient(circle at 88% 10%, color-mix(in oklch, var(--neu-accent) 8%, transparent), transparent 24%);
-  opacity: 0.95;
+  display: none !important;
 }
 
 .neu-app-bg::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, color-mix(in oklch, var(--neu-highlight) 18%, transparent), transparent 18%, transparent 82%, color-mix(in oklch, var(--neu-shadow) 10%, transparent));
-  opacity: 0.9;
+  display: none !important;
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-app-bg {
-  background:
-    radial-gradient(circle at 14% 12%, color-mix(in oklch, white 9%, transparent), transparent 22%),
-    radial-gradient(circle at 88% 8%, color-mix(in oklch, var(--neu-accent) 10%, transparent), transparent 24%),
-    radial-gradient(circle at 50% 120%, color-mix(in oklch, black 32%, transparent), transparent 40%),
-    linear-gradient(
-      160deg,
-      color-mix(in oklch, var(--neu-surface-base) 90%, black 10%),
-      color-mix(in oklch, var(--neu-surface-deep) 78%, black 22%)
-    ),
-    var(--neu-noise);
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, white 8%, transparent),
-    inset 0 -1px 0 color-mix(in oklch, black 62%, transparent);
+  background: var(--neu-surface-base);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-app-bg::before {
-  background:
-    radial-gradient(circle at 10% 10%, color-mix(in oklch, white 10%, transparent), transparent 26%),
-    radial-gradient(circle at 90% 12%, color-mix(in oklch, var(--neu-accent) 8%, transparent), transparent 22%),
-    radial-gradient(circle at 62% 90%, color-mix(in oklch, black 26%, transparent), transparent 34%);
-  opacity: 0.72;
+  display: none !important;
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-app-bg::after {
-  background:
-    linear-gradient(180deg, color-mix(in oklch, white 5%, transparent), transparent 14%, transparent 78%, color-mix(in oklch, black 24%, transparent));
-  opacity: 0.54;
+  display: none !important;
 }
 
 .neu-surface-base,
@@ -688,7 +650,7 @@
   border-radius: 999px;
   background:
     linear-gradient(145deg, color-mix(in oklch, var(--neu-shadow) 14%, transparent), transparent 46%),
-    var(--neu-surface-muted);
+    var(--slider-track-bg, var(--neu-surface-deep));
   box-shadow: var(--neu-shadow-inset);
 }
 
@@ -697,32 +659,40 @@
   border-radius: 999px;
   background:
     linear-gradient(145deg, color-mix(in oklch, var(--neu-shadow) 14%, transparent), transparent 46%),
-    var(--neu-surface-muted);
+    var(--slider-track-bg, var(--neu-surface-deep));
   box-shadow: var(--neu-shadow-inset);
 }
 
 .neu-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  margin-top: -0.18rem;
-  height: 1.2rem;
-  width: 1.2rem;
+  margin-top: -0.22rem;
+  height: 1.3rem;
+  width: 1.3rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in oklch, var(--neu-accent) 18%, var(--neu-stroke-soft));
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 24%, var(--neu-accent-muted)), color-mix(in oklch, var(--neu-accent) 12%, var(--neu-surface-raised)));
-  box-shadow: var(--neu-shadow-pill), 0 10px 20px color-mix(in oklch, var(--neu-accent) 18%, transparent);
+  border: 1px solid color-mix(in oklch, var(--neu-stroke-soft) 42%, transparent);
+  background: #ffffff;
+  box-shadow: var(--neu-shadow-pill);
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.neu-slider::-webkit-slider-thumb:active {
+  transform: scale(0.95);
 }
 
 .neu-slider::-moz-range-thumb {
   appearance: none;
-  height: 1.2rem;
-  width: 1.2rem;
+  height: 1.3rem;
+  width: 1.3rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in oklch, var(--neu-accent) 18%, var(--neu-stroke-soft));
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 24%, var(--neu-accent-muted)), color-mix(in oklch, var(--neu-accent) 12%, var(--neu-surface-raised)));
-  box-shadow: var(--neu-shadow-pill), 0 10px 20px color-mix(in oklch, var(--neu-accent) 18%, transparent);
+  border: 1px solid color-mix(in oklch, var(--neu-stroke-soft) 42%, transparent);
+  background: #ffffff;
+  box-shadow: var(--neu-shadow-pill);
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.neu-slider::-moz-range-thumb:active {
+  transform: scale(0.95);
 }
 
 .neu-skeleton-shimmer {

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CATEGORIES, STATUSES, STATUS_COLORS, CATEGORY_COLORS } from "./constants";
+import { NeuSwitch } from "@/design-system/neumorphism";
 
 const SELECT_CLASS = "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
@@ -626,15 +627,11 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${checked ? "bg-primary" : "bg-muted"}`}
-    >
-      <span className={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-4" : "translate-x-0"}`} />
-    </button>
+    <NeuSwitch
+      checked={checked}
+      onChange={onChange}
+      className="p-0 gap-0 shrink-0"
+    />
   );
 }
 

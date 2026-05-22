@@ -23,6 +23,7 @@ import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
+import { NeuSwitch } from "@/design-system/neumorphism";
 
 const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
@@ -260,26 +261,15 @@ function ScannerToggle({
   description: string;
   accent?: "accent" | "warning";
 }) {
-  const toggleStyles = accent === "warning"
-    ? "peer-checked:border-amber-400/35 peer-checked:bg-amber-400/18"
-    : "peer-checked:border-primary/35 peer-checked:bg-primary/18";
-
   return (
-    <label className="surface-lift flex items-start gap-3 rounded-[calc(var(--radius)*1.15)] border border-border/60 px-3.5 py-3.5">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="peer sr-only"
-      />
-      <span className={cn("relative mt-0.5 flex h-6 w-11 shrink-0 items-center rounded-full border border-border/60 bg-background/60 p-1 transition-colors", toggleStyles)}>
-        <span className="block size-4 rounded-full bg-card shadow-[var(--shadow-soft)] transition-transform peer-checked:translate-x-5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <span className="text-sm font-semibold text-foreground">{title}</span>
-        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{description}</p>
-      </div>
-    </label>
+    <NeuSwitch
+      checked={checked}
+      onChange={onChange}
+      label={title}
+      description={description}
+      accent={accent === "warning" ? "warning" : "accent"}
+      className="surface-lift rounded-[calc(var(--radius)*1.15)] border border-border/60 px-3.5 py-3.5"
+    />
   );
 }
 

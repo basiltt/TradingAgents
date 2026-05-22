@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -126,7 +127,7 @@ export function Combobox({
               key={option}
               type="button"
               className={cn(
-                "flex w-full items-center rounded-[var(--neu-radius-sm)] border border-transparent px-3 py-2 text-left text-sm transition-colors",
+                "relative flex w-full items-center justify-between rounded-[var(--neu-radius-sm)] border border-transparent py-2.5 pr-10 pl-3 text-left text-sm transition-colors",
                 index === highlightIdx && "border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))]",
                 option === value && "font-semibold text-[var(--neu-accent)]",
               )}
@@ -135,7 +136,12 @@ export function Combobox({
                 select(option);
               }}
             >
-              {option}
+              <span>{option}</span>
+              {option === value && (
+                <span className="pointer-events-none absolute right-2 flex size-5.5 items-center justify-center rounded-full bg-white text-[var(--neu-accent)] shadow-[var(--neu-shadow-pill)]">
+                  <CheckIcon className="pointer-events-none size-3 stroke-[3px]" />
+                </span>
+              )}
             </button>
           ))}
         </div>

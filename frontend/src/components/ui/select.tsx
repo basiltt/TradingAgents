@@ -40,7 +40,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "neu-input-base neu-focus-ring flex w-fit items-center justify-between gap-2 rounded-[var(--neu-radius-md)] py-2 pr-3 pl-4 text-sm whitespace-nowrap shadow-none outline-none disabled:cursor-not-allowed disabled:opacity-50 data-placeholder:text-[color:var(--neu-text-soft)] data-[size=default]:h-11 data-[size=sm]:h-9 data-[size=sm]:rounded-[var(--neu-radius-sm)] *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "neu-input-base neu-focus-ring flex w-fit items-center justify-between gap-2 rounded-[var(--neu-radius-md)] py-2 pr-3 pl-4 text-sm whitespace-nowrap outline-none disabled:cursor-not-allowed disabled:opacity-50 data-placeholder:text-[color:var(--neu-text-soft)] data-[size=default]:h-11 data-[size=sm]:h-9 data-[size=sm]:rounded-[var(--neu-radius-sm)] *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -117,7 +117,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-2 rounded-[var(--neu-radius-sm)] border border-transparent py-2.5 pr-8 pl-3 text-sm outline-hidden select-none data-disabled:pointer-events-none data-disabled:opacity-50 data-highlighted:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] data-highlighted:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] data-highlighted:text-[var(--neu-text-strong)] data-highlighted:shadow-[var(--neu-shadow-pill)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex w-full cursor-default items-center gap-2 rounded-[var(--neu-radius-sm)] border border-transparent py-2.5 pr-10 pl-3 text-sm outline-hidden select-none data-disabled:pointer-events-none data-disabled:opacity-50 data-highlighted:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] data-highlighted:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] data-highlighted:text-[var(--neu-text-strong)] data-highlighted:shadow-[var(--neu-shadow-pill)] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className,
       )}
       {...props}
@@ -126,9 +126,9 @@ function SelectItem({
         {children}
       </SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator
-        render={<span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center" />}
+        render={<span className="pointer-events-none absolute right-2 flex size-5.5 items-center justify-center rounded-full bg-white text-[var(--neu-accent)] shadow-[var(--neu-shadow-pill)]" />}
       >
-        <CheckIcon className="pointer-events-none text-[var(--neu-accent)]" />
+        <CheckIcon className="pointer-events-none size-3 stroke-[3px]" />
       </SelectPrimitive.ItemIndicator>
     </SelectPrimitive.Item>
   );

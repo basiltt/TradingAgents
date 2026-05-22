@@ -79,6 +79,7 @@ import {
   NeuRadioGroup,
   NeuSelect,
   NeuSlider,
+  NeuSwitch,
   NeuTabs,
   NeuTextArea,
   NeuToggleGroup,
@@ -465,6 +466,9 @@ function PreviewWorkspace() {
   const [tabValue, setTabValue] = useState("summary");
   const [riskLocked, setRiskLocked] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [switchActive, setSwitchActive] = useState(true);
+  const [switchSuccess, setSwitchSuccess] = useState(true);
+  const [switchWarning, setSwitchWarning] = useState(false);
   const [horizon, setHorizon] = useState("swing");
   const [confidenceValue, setConfidenceValue] = useState(68);
   const [riskRange, setRiskRange] = useState<[number, number]>([25, 80]);
@@ -1279,12 +1283,21 @@ function PreviewWorkspace() {
             checked={riskLocked}
             onCheckedChange={(checked) => setRiskLocked(checked === true)}
             description="Prevent strategy edits once the cycle goes live."
+            accent="accent"
           />
           <NeuCheckbox
-            label="Push notifications"
+            label="Auto-trade safeguards"
             checked={notificationsEnabled}
             onCheckedChange={(checked) => setNotificationsEnabled(checked === true)}
-            description="Forward critical state changes to mobile."
+            description="Enable automated exit rules (Success accent)."
+            accent="success"
+          />
+          <NeuCheckbox
+            label="Override margin checks"
+            checked={switchWarning}
+            onCheckedChange={(checked) => setSwitchWarning(checked === true)}
+            description="Bypass critical margin verification (Warning accent)."
+            accent="warning"
           />
           <NeuCheckbox
             label="Archived switch"
@@ -1299,39 +1312,99 @@ function PreviewWorkspace() {
     NeuRadioGroup: {
       description: "Radio groups lean on the same raised-versus-accent contrast used elsewhere in the system.",
       content: (
-        <NeuRadioGroup
-          label="Time horizon"
-          value={horizon}
-          onChange={setHorizon}
-          orientation="horizontal"
-          options={[
-            { value: "intraday", label: "Intraday", description: "Fast decision cycle" },
-            { value: "swing", label: "Swing", description: "Multi-day hold" },
-            { value: "position", label: "Position", description: "Longer thesis horizon" },
-          ]}
-        />
+        <div className="space-y-6">
+          <NeuRadioGroup
+            label="Time horizon (Default accent)"
+            value={horizon}
+            onChange={setHorizon}
+            orientation="horizontal"
+            options={[
+              { value: "intraday", label: "Intraday", description: "Fast decision cycle" },
+              { value: "swing", label: "Swing", description: "Multi-day hold" },
+              { value: "position", label: "Position", description: "Longer thesis horizon" },
+            ]}
+          />
+          <NeuRadioGroup
+            label="Risk profile (Warning accent)"
+            value={executionMode}
+            onChange={setExecutionMode}
+            orientation="horizontal"
+            accent="warning"
+            options={[
+              { value: "assisted", label: "Conservative", description: "Low drawdown limit" },
+              { value: "auto", label: "Aggressive", description: "Expanded volatility tolerance" },
+            ]}
+          />
+        </div>
       ),
     },
     NeuSlider: {
       description: "Tracks stay inset while the active fill and thumb remain clearly raised and color-assisted.",
       content: (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <NeuSlider
-            label="Confidence threshold"
+            label="Confidence threshold (Default accent)"
             value={confidenceValue}
             min={0}
             max={100}
             step={1}
             marks={[0, 25, 50, 75, 100]}
             onValueChange={(value) => setConfidenceValue(value as number)}
+            accent="accent"
           />
           <NeuSlider
-            label="Risk band"
+            label="Risk band (Warning accent)"
             value={riskRange}
             min={0}
             max={100}
             step={5}
+            marks={[0, 50, 100]}
             onValueChange={(value) => setRiskRange(value as [number, number])}
+            accent="warning"
+          />
+          <NeuSlider
+            label="Target buffer (Success accent)"
+            value={35}
+            min={0}
+            max={100}
+            step={5}
+            onValueChange={() => {}}
+            accent="success"
+          />
+        </div>
+      ),
+    },
+    NeuSwitch: {
+      description: "Tactile sliding switches representing boolean selections, featuring recessed tracks and raised solid thumbs.",
+      content: (
+        <div className="grid gap-3 md:grid-cols-2">
+          <NeuSwitch
+            label="Live execution desk"
+            checked={switchActive}
+            onChange={setSwitchActive}
+            description="Route orders to live liquidity streams (Default accent)."
+            accent="accent"
+          />
+          <NeuSwitch
+            label="Automated safety loops"
+            checked={switchSuccess}
+            onChange={setSwitchSuccess}
+            description="Enable continuous heartbeats (Success accent)."
+            accent="success"
+          />
+          <NeuSwitch
+            label="Bypass circuit breakers"
+            checked={switchWarning}
+            onChange={setSwitchWarning}
+            description="Allow trade executions during market stress (Warning accent)."
+            accent="warning"
+          />
+          <NeuSwitch
+            label="Simulated environment"
+            checked={false}
+            onChange={() => {}}
+            description="Disabled toggle specimen."
+            disabled
           />
         </div>
       ),
