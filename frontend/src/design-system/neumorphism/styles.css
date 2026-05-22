@@ -1,7 +1,7 @@
 .neu-theme {
-  --neu-radius-sm: 16px;
-  --neu-radius-md: 22px;
-  --neu-radius-lg: 30px;
+  --neu-radius-sm: 12px;
+  --neu-radius-md: 18px;
+  --neu-radius-lg: 24px;
   --neu-radius-pill: 999px;
   --neu-spacing-xs: 0.5rem;
   --neu-spacing-sm: 0.75rem;
@@ -10,10 +10,10 @@
   --neu-font-ink: var(--font-sans, "Geist Variable", sans-serif);
   --neu-font-display: "Fraunces Variable", var(--font-sans, "Geist Variable", serif);
   --neu-font-mono: var(--font-mono, ui-monospace, monospace);
-  --neu-surface-base: #ffffff;
-  --neu-surface-raised: #ffffff;
-  --neu-surface-muted: oklch(0.955 0 0);
-  --neu-surface-deep: oklch(0.935 0 0);
+  --neu-surface-base: #f0f0f3;
+  --neu-surface-raised: #f0f0f3;
+  --neu-surface-muted: #e4e4e8;
+  --neu-surface-deep: #dcdce0;
   --neu-surface-accent-bg: oklch(0.92 0.03 257);
   --neu-surface-overlay: oklch(1 0 0 / 0.88);
   --neu-text-strong: oklch(0.25 0.005 250);
@@ -21,10 +21,10 @@
   --neu-text-soft: oklch(0.6 0.005 250);
   --neu-stroke-soft: oklch(0.93 0 0 / 0.8);
   --neu-stroke-strong: oklch(0.88 0 0 / 0.9);
-  --neu-highlight: oklch(1 0 0);
-  --neu-highlight-soft: oklch(1 0 0 / 0.85);
-  --neu-shadow: oklch(0.88 0 0 / 0.68);
-  --neu-shadow-deep: oklch(0.82 0 0 / 0.35);
+  --neu-highlight: #ffffff;
+  --neu-highlight-soft: rgba(255, 255, 255, 0.85);
+  --neu-shadow: #bebec8;
+  --neu-shadow-deep: #a8a8b2;
   --neu-focus: oklch(0.61 0.13 257 / 0.46);
   --neu-accent: oklch(0.61 0.13 257);
   --neu-accent-ink: oklch(0.22 0.03 257);
@@ -33,51 +33,35 @@
   --neu-warning: oklch(0.78 0.1 82);
   --neu-danger: oklch(0.63 0.14 22);
   --neu-shadow-raised:
-    -18px -18px 34px color-mix(in oklch, var(--neu-highlight) 94%, transparent),
-    18px 18px 34px color-mix(in oklch, var(--neu-shadow) 90%, transparent),
-    0 18px 34px color-mix(in oklch, var(--neu-shadow-deep) 30%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 72%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 16%, transparent);
+    8px 8px 16px var(--neu-shadow),
+    -8px -8px 16px var(--neu-highlight);
   --neu-shadow-raised-hover:
-    -20px -20px 38px color-mix(in oklch, var(--neu-highlight) 98%, transparent),
-    20px 20px 38px color-mix(in oklch, var(--neu-shadow) 94%, transparent),
-    0 24px 40px color-mix(in oklch, var(--neu-shadow-deep) 34%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 76%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 18%, transparent);
+    10px 10px 20px var(--neu-shadow),
+    -10px -10px 20px var(--neu-highlight);
   --neu-shadow-inset:
-    inset -10px -10px 20px color-mix(in oklch, var(--neu-highlight) 92%, transparent),
-    inset 10px 10px 20px color-mix(in oklch, var(--neu-shadow) 90%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-shadow) 12%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-highlight) 62%, transparent);
+    inset 4px 4px 8px var(--neu-shadow),
+    inset -4px -4px 8px var(--neu-highlight);
   --neu-shadow-press:
-    inset -8px -8px 16px color-mix(in oklch, var(--neu-highlight) 88%, transparent),
-    inset 8px 8px 16px color-mix(in oklch, var(--neu-shadow) 90%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-shadow) 12%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-highlight) 60%, transparent);
+    inset 6px 6px 12px var(--neu-shadow),
+    inset -6px -6px 12px var(--neu-highlight);
   --neu-shadow-float:
-    0 18px 36px color-mix(in oklch, var(--neu-shadow) 58%, transparent),
-    -8px -8px 18px color-mix(in oklch, var(--neu-highlight) 52%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 64%, transparent);
+    12px 12px 24px var(--neu-shadow),
+    -12px -12px 24px var(--neu-highlight);
   --neu-shadow-accent:
-    0 18px 36px color-mix(in oklch, var(--neu-accent) 24%, transparent);
+    8px 8px 16px var(--neu-shadow),
+    -8px -8px 16px var(--neu-highlight);
   --neu-shadow-pill:
-    -7px -7px 14px color-mix(in oklch, var(--neu-highlight) 88%, transparent),
-    7px 7px 14px color-mix(in oklch, var(--neu-shadow) 76%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight) 62%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 14%, transparent);
+    5px 5px 10px var(--neu-shadow),
+    -5px -5px 10px var(--neu-highlight);
   --neu-shadow-input:
-    inset -8px -8px 16px color-mix(in oklch, var(--neu-highlight) 86%, transparent),
-    inset 8px 8px 16px color-mix(in oklch, var(--neu-shadow) 82%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-shadow) 12%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-highlight) 56%, transparent);
-  --neu-noise:
-    radial-gradient(circle at 18% 18%, color-mix(in oklch, var(--neu-highlight) 34%, transparent), transparent 38%),
-    radial-gradient(circle at 80% 10%, color-mix(in oklch, var(--neu-accent) 10%, transparent), transparent 28%);
+    inset 3px 3px 6px var(--neu-shadow),
+    inset -3px -3px 6px var(--neu-highlight);
+  --neu-noise: none;
   font-family: var(--neu-font-ink);
   color: var(--neu-text-strong);
   --background: var(--neu-surface-base);
   --foreground: var(--neu-text-strong);
-  --card: color-mix(in oklch, var(--neu-surface-raised) 96%, white 4%);
+  --card: var(--neu-surface-raised);
   --card-foreground: var(--neu-text-strong);
   --popover: var(--neu-surface-overlay);
   --popover-foreground: var(--neu-text-strong);
@@ -131,58 +115,43 @@
 }
 
 .neu-theme[data-neu-mode="graphite"] {
-  --neu-surface-base: #121318;
-  --neu-surface-raised: oklch(0.17 0.003 255);
-  --neu-surface-muted: oklch(0.10 0.002 255);
-  --neu-surface-deep: oklch(0.08 0.002 255);
+  --neu-surface-base: #2d2d35;
+  --neu-surface-raised: #2d2d35;
+  --neu-surface-muted: #242429;
+  --neu-surface-deep: #1e1e23;
   --neu-surface-accent-bg: oklch(0.255 0.03 257);
-  --neu-surface-overlay: oklch(0.13 0.002 255 / 0.92);
+  --neu-surface-overlay: oklch(0.2 0.002 255 / 0.94);
   --neu-text-strong: oklch(0.95 0.001 255);
-  --neu-text-muted: oklch(0.75 0.002 255);
-  --neu-text-soft: oklch(0.55 0.002 255);
-  --neu-stroke-soft: oklch(0.24 0.004 255 / 0.6);
-  --neu-stroke-strong: oklch(0.32 0.004 255 / 0.7);
-  --neu-highlight: oklch(0.25 0.003 255 / 0.25);
-  --neu-highlight-soft: oklch(0.22 0.003 255 / 0.16);
-  --neu-shadow: oklch(0.02 0.001 255 / 0.9);
-  --neu-shadow-deep: oklch(0 0 0 / 0.96);
+  --neu-text-muted: oklch(0.65 0.002 255);
+  --neu-text-soft: oklch(0.5 0.002 255);
+  --neu-stroke-soft: rgba(255, 255, 255, 0.08);
+  --neu-stroke-strong: rgba(255, 255, 255, 0.12);
+  --neu-highlight: #383840;
+  --neu-highlight-soft: rgba(56, 56, 64, 0.5);
+  --neu-shadow: #1a1a20;
+  --neu-shadow-deep: #111115;
   --neu-focus: oklch(0.78 0.08 252 / 0.34);
   --neu-shadow-raised:
-    -16px -16px 30px color-mix(in oklch, var(--neu-highlight) 80%, transparent),
-    20px 20px 34px color-mix(in oklch, var(--neu-shadow) 94%, transparent),
-    0 24px 48px color-mix(in oklch, var(--neu-shadow-deep) 72%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 62%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 48%, transparent);
+    8px 8px 16px var(--neu-shadow),
+    -8px -8px 16px var(--neu-highlight);
   --neu-shadow-raised-hover:
-    -18px -18px 34px color-mix(in oklch, var(--neu-highlight) 84%, transparent),
-    24px 24px 40px color-mix(in oklch, var(--neu-shadow) 100%, transparent),
-    0 28px 56px color-mix(in oklch, var(--neu-shadow-deep) 76%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 68%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 52%, transparent);
+    10px 10px 20px var(--neu-shadow),
+    -10px -10px 20px var(--neu-highlight);
   --neu-shadow-inset:
-    inset -10px -10px 18px color-mix(in oklch, var(--neu-highlight) 62%, transparent),
-    inset 10px 10px 22px color-mix(in oklch, var(--neu-shadow) 96%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-shadow) 48%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-highlight) 18%, transparent);
+    inset 4px 4px 8px var(--neu-shadow),
+    inset -4px -4px 8px var(--neu-highlight);
   --neu-shadow-press:
-    inset -8px -8px 15px color-mix(in oklch, var(--neu-highlight) 58%, transparent),
-    inset 8px 8px 18px color-mix(in oklch, var(--neu-shadow) 100%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-shadow) 48%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-highlight) 16%, transparent);
+    inset 6px 6px 12px var(--neu-shadow),
+    inset -6px -6px 12px var(--neu-highlight);
   --neu-shadow-float:
-    0 26px 48px color-mix(in oklch, var(--neu-shadow) 86%, transparent),
-    -8px -8px 20px color-mix(in oklch, var(--neu-highlight) 24%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 26%, transparent);
+    12px 12px 24px var(--neu-shadow),
+    -12px -12px 24px var(--neu-highlight);
   --neu-shadow-pill:
-    -6px -6px 12px color-mix(in oklch, var(--neu-highlight) 50%, transparent),
-    8px 8px 16px color-mix(in oklch, var(--neu-shadow) 94%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight) 18%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 46%, transparent);
+    5px 5px 10px var(--neu-shadow),
+    -5px -5px 10px var(--neu-highlight);
   --neu-shadow-input:
-    inset -8px -8px 14px color-mix(in oklch, var(--neu-highlight) 50%, transparent),
-    inset 8px 8px 16px color-mix(in oklch, var(--neu-shadow) 96%, transparent),
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-shadow) 44%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-highlight) 14%, transparent);
+    inset 3px 3px 6px var(--neu-shadow),
+    inset -3px -3px 6px var(--neu-highlight);
   --card: color-mix(in oklch, var(--neu-surface-raised) 90%, black 10%);
   --secondary: color-mix(in oklch, var(--neu-surface-raised) 84%, black 16%);
   --sidebar-accent: color-mix(in oklch, var(--neu-surface-raised) 82%, var(--neu-accent) 18%);
@@ -190,9 +159,7 @@
   --surface-lift-bg: color-mix(in oklch, var(--neu-surface-raised) 86%, black 14%);
   --terminal-panel: color-mix(in oklch, var(--neu-surface-raised) 82%, black 18%);
   --terminal-dock-bg: color-mix(in oklch, var(--neu-surface-raised) 84%, black 16%);
-  --neu-noise:
-    radial-gradient(circle at 16% 16%, color-mix(in oklch, var(--neu-highlight) 26%, transparent), transparent 34%),
-    radial-gradient(circle at 84% 10%, color-mix(in oklch, var(--neu-accent) 10%, transparent), transparent 24%);
+  --neu-noise: none;
 }
 
 .neu-theme[data-neu-accent="sage"] {
@@ -284,7 +251,7 @@
 .neu-surface-disabled {
   position: relative;
   isolation: isolate;
-  border: 1px solid color-mix(in oklch, var(--neu-stroke-soft) 92%, var(--neu-highlight) 8%);
+  border: none;
   color: var(--neu-text-strong);
   background-clip: padding-box;
 }
@@ -295,9 +262,8 @@
   inset: 1px;
   border-radius: inherit;
   pointer-events: none;
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 18%, transparent), transparent 46%, color-mix(in oklch, var(--neu-shadow) 8%, transparent) 100%);
-  opacity: 0.92;
+  background: none;
+  opacity: 0;
   z-index: 0;
 }
 
@@ -307,9 +273,7 @@
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow:
-    inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight-soft) 74%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 16%, transparent);
+  box-shadow: none;
   z-index: 0;
 }
 
@@ -324,87 +288,60 @@
 .neu-theme[data-neu-mode="graphite"] .neu-surface-flat,
 .neu-theme[data-neu-mode="graphite"] .neu-surface-accent,
 .neu-theme[data-neu-mode="graphite"] .neu-surface-disabled {
-  border-color: color-mix(in oklch, var(--neu-stroke-soft) 84%, transparent);
+  border-color: transparent;
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-base::before {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 6%, transparent), transparent 38%, color-mix(in oklch, black 14%, transparent) 100%);
-  opacity: 0.84;
+  background: none;
+  opacity: 0;
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-base::after {
-  box-shadow:
-    inset 1px 1px 0 color-mix(in oklch, white 9%, transparent),
-    inset -1px -1px 0 color-mix(in oklch, black 52%, transparent);
+  box-shadow: none;
 }
 
 .neu-surface-raised {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 54%, transparent), transparent 40%),
-    linear-gradient(315deg, color-mix(in oklch, var(--neu-shadow) 8%, transparent), transparent 52%),
-    var(--neu-surface-raised);
+  background: var(--neu-surface-raised);
   box-shadow: var(--neu-shadow-raised);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-raised {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 5%, transparent), transparent 34%),
-    linear-gradient(330deg, color-mix(in oklch, black 18%, transparent), transparent 56%),
-    color-mix(in oklch, var(--neu-surface-raised) 92%, black 8%);
+  background: var(--neu-surface-raised);
 }
 
 .neu-surface-inset {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-shadow) 18%, transparent), transparent 46%),
-    linear-gradient(315deg, color-mix(in oklch, var(--neu-highlight) 16%, transparent), transparent 44%),
-    var(--neu-surface-muted);
+  background: var(--neu-surface-muted);
   box-shadow: var(--neu-shadow-inset);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-inset {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, black 16%, transparent), transparent 44%),
-    linear-gradient(320deg, color-mix(in oklch, white 5%, transparent), transparent 34%),
-    color-mix(in oklch, var(--neu-surface-muted) 90%, black 10%);
+  background: var(--neu-surface-muted);
 }
 
 .neu-surface-flat {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 10%, transparent), transparent 52%),
-    color-mix(in oklch, var(--neu-surface-raised) 94%, transparent);
+  background: var(--neu-surface-raised);
   box-shadow:
     inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight) 46%, transparent),
     inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 12%, transparent);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-flat {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 4%, transparent), transparent 48%),
-    color-mix(in oklch, var(--neu-surface-raised) 88%, black 12%);
+  background: var(--neu-surface-raised);
   box-shadow:
     inset 1px 1px 0 color-mix(in oklch, white 7%, transparent),
     inset -1px -1px 0 color-mix(in oklch, black 34%, transparent);
 }
 
 .neu-surface-accent {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 30%, var(--neu-accent-muted)), color-mix(in oklch, var(--neu-accent) 10%, var(--neu-surface-raised)) 48%, color-mix(in oklch, var(--neu-accent-muted) 86%, var(--neu-surface-raised)));
+  background: color-mix(in oklch, var(--neu-accent-muted) 30%, var(--neu-surface-raised));
   border-color: color-mix(in oklch, var(--neu-accent) 22%, var(--neu-stroke-soft));
-  box-shadow: var(--neu-shadow-float), var(--neu-shadow-accent);
+  box-shadow: var(--neu-shadow-raised);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-accent {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 6%, transparent), transparent 28%),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--neu-accent) 22%, var(--neu-surface-raised)),
-      color-mix(in oklch, var(--neu-accent) 12%, var(--neu-surface-raised)) 54%,
-      color-mix(in oklch, var(--neu-surface-raised) 76%, black 24%)
-    );
+  background: color-mix(in oklch, var(--neu-accent) 15%, var(--neu-surface-raised));
   border-color: color-mix(in oklch, var(--neu-accent) 26%, var(--neu-stroke-soft));
-  box-shadow: var(--neu-shadow-raised), 0 18px 30px color-mix(in oklch, var(--neu-accent) 14%, transparent);
+  box-shadow: var(--neu-shadow-raised);
 }
 
 .neu-surface-disabled {
@@ -472,22 +409,16 @@
 }
 
 .neu-input-base {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-shadow) 12%, transparent), transparent 48%),
-    linear-gradient(315deg, color-mix(in oklch, var(--neu-highlight) 10%, transparent), transparent 38%),
-    var(--neu-surface-muted);
-  border: 1px solid color-mix(in oklch, var(--neu-stroke-soft) 92%, var(--neu-highlight) 8%);
+  background: var(--neu-surface-muted);
+  border: none;
   box-shadow: var(--neu-shadow-input);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-input-base,
 .neu-theme[data-neu-mode="graphite"] .neu-table-wrap,
 .neu-theme[data-neu-mode="graphite"] .neu-chart-well {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, black 16%, transparent), transparent 44%),
-    linear-gradient(315deg, color-mix(in oklch, white 4%, transparent), transparent 34%),
-    color-mix(in oklch, var(--neu-surface-muted) 88%, black 12%);
-  border-color: color-mix(in oklch, var(--neu-stroke-soft) 84%, transparent);
+  background: var(--neu-surface-muted);
+  border: none;
 }
 
 .neu-grid-highlight {
@@ -505,92 +436,57 @@
 }
 
 .neu-button-primary {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 32%, var(--neu-accent-muted)), color-mix(in oklch, var(--neu-accent) 12%, var(--neu-surface-raised)) 54%, color-mix(in oklch, var(--neu-accent-muted) 82%, var(--neu-surface-raised)));
-  color: var(--neu-accent-ink);
-  box-shadow: var(--neu-shadow-pill), 0 16px 28px color-mix(in oklch, var(--neu-accent) 18%, transparent);
+  background: var(--neu-accent);
+  color: #ffffff;
+  box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-button-primary {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 10%, transparent), transparent 26%),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--neu-accent) 28%, var(--neu-surface-raised)),
-      color-mix(in oklch, var(--neu-accent) 16%, var(--neu-surface-raised)) 58%,
-      color-mix(in oklch, var(--neu-surface-raised) 70%, black 30%)
-    );
-  box-shadow: var(--neu-shadow-pill), 0 18px 34px color-mix(in oklch, var(--neu-accent) 18%, transparent);
+  background: var(--neu-accent);
+  color: #ffffff;
+  box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-button-secondary {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 34%, transparent), transparent 44%),
-    var(--neu-surface-raised);
+  background: var(--neu-surface-raised);
   color: var(--neu-text-strong);
   box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-button-secondary {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 6%, transparent), transparent 32%),
-    color-mix(in oklch, var(--neu-surface-raised) 92%, black 8%);
+  background: var(--neu-surface-raised);
 }
 
 .neu-button-tonal {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 30%, var(--neu-accent-muted)), color-mix(in oklch, var(--neu-accent) 8%, var(--neu-surface-raised)) 52%, color-mix(in oklch, var(--neu-accent-muted) 78%, var(--neu-surface-raised)));
+  background: color-mix(in oklch, var(--neu-accent-muted) 40%, var(--neu-surface-raised));
   color: var(--neu-accent-ink);
   box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-button-tonal {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 8%, transparent), transparent 28%),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--neu-accent) 16%, var(--neu-surface-raised)),
-      color-mix(in oklch, var(--neu-accent) 9%, var(--neu-surface-raised)) 56%,
-      color-mix(in oklch, var(--neu-surface-raised) 76%, black 24%)
-    );
+  background: color-mix(in oklch, var(--neu-accent) 15%, var(--neu-surface-raised));
 }
 
 .neu-button-danger {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 24%, color-mix(in oklch, var(--neu-danger) 8%, var(--neu-surface-raised))), color-mix(in oklch, var(--neu-danger) 10%, var(--neu-surface-raised)) 54%, color-mix(in oklch, var(--neu-danger) 12%, var(--neu-surface-muted)));
-  color: color-mix(in oklch, var(--neu-danger) 72%, var(--neu-text-strong));
-  box-shadow: var(--neu-shadow-pill), 0 14px 24px color-mix(in oklch, var(--neu-danger) 14%, transparent);
+  background: var(--neu-danger);
+  color: #ffffff;
+  box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-button-danger {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 7%, transparent), transparent 26%),
-    linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--neu-danger) 18%, var(--neu-surface-raised)),
-      color-mix(in oklch, var(--neu-danger) 10%, var(--neu-surface-raised)) 56%,
-      color-mix(in oklch, var(--neu-surface-raised) 76%, black 24%)
-    );
-  color: color-mix(in oklch, white 88%, var(--neu-danger));
+  background: var(--neu-danger);
+  color: #ffffff;
 }
 
 .neu-button-ghost {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-highlight) 16%, transparent), transparent 44%),
-    color-mix(in oklch, var(--neu-surface-raised) 86%, transparent);
+  background: var(--neu-surface-raised);
   color: var(--neu-text-muted);
-  box-shadow:
-    inset -4px -4px 10px color-mix(in oklch, var(--neu-highlight) 48%, transparent),
-    inset 4px 4px 10px color-mix(in oklch, var(--neu-shadow) 34%, transparent);
+  box-shadow: var(--neu-shadow-input);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-button-ghost {
-  background:
-    linear-gradient(150deg, color-mix(in oklch, white 4%, transparent), transparent 34%),
-    color-mix(in oklch, var(--neu-surface-raised) 82%, black 18%);
-  box-shadow:
-    inset -4px -4px 10px color-mix(in oklch, white 5%, transparent),
-    inset 4px 4px 10px color-mix(in oklch, black 38%, transparent);
+  background: var(--neu-surface-raised);
+  box-shadow: var(--neu-shadow-input);
 }
 
 .neu-pill-soft {
@@ -598,7 +494,7 @@
 }
 
 .neu-pill-solid {
-  box-shadow: var(--neu-shadow-pill), var(--neu-shadow-accent);
+  box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-pill-outline {

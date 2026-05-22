@@ -1033,14 +1033,14 @@ export function NeuSwitch({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border border-transparent shadow-[var(--neu-shadow-inset)]",
-          checked ? accentColorClass : "bg-[var(--neu-surface-deep)] shadow-[var(--neu-shadow-inset)]"
+          "relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none shadow-[var(--neu-shadow-inset)]",
+          checked ? accentColorClass : "bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]"
         )}
       >
         <span
           className={cn(
-            "pointer-events-none block size-5 rounded-full bg-white shadow-[var(--neu-shadow-pill)] ring-0 transition duration-200 ease-in-out transform",
-            checked ? "translate-x-[22px] translate-y-[1px]" : "translate-x-[3px] translate-y-[1px]"
+            "pointer-events-none block size-6 rounded-full bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-pill)] ring-0 transition duration-200 ease-in-out transform",
+            checked ? "translate-x-[26px] translate-y-[3px]" : "translate-x-[4px] translate-y-[3px]"
           )}
         />
       </button>

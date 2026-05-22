@@ -34,35 +34,27 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <section className={cn("page-hero glass-card relative overflow-hidden rounded-[calc(var(--radius)*2)] p-4 sm:p-5 lg:p-6", className)}>
-      <div className="relative z-10 flex flex-col gap-5">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-4xl space-y-3">
+    <section className={cn("rounded-[calc(var(--radius)*2)] p-4 sm:p-5 lg:p-6 shadow-[var(--shadow-card)]", className)}>
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="space-y-1">
             {eyebrow ? <p className="section-eyebrow">{eyebrow}</p> : null}
-            <div className="space-y-3">
-              <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.06em] text-foreground sm:text-4xl lg:text-[2.75rem]">
-                {title}
-              </h1>
-              {description ? (
-                <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-[0.97rem]">
-                  {description}
-                </p>
-              ) : null}
-            </div>
+            <h1 className="text-2xl font-semibold tracking-[-0.04em] text-foreground">
+              {title}
+            </h1>
+            {description ? (
+              <p className="text-sm text-muted-foreground">{description}</p>
+            ) : null}
           </div>
 
           {actions ? (
-            <div className="flex w-full flex-wrap gap-2 xl:w-auto xl:max-w-[28rem] xl:justify-end">
+            <div className="flex flex-wrap gap-2 xl:justify-end">
               {actions}
             </div>
           ) : null}
         </div>
 
-        {children ? (
-          <div className="surface-lift rounded-[calc(var(--radius)*1.45)] p-3.5 sm:p-4">
-            {children}
-          </div>
-        ) : null}
+        {children}
 
         {stats.length > 0 ? (
           <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
@@ -73,17 +65,15 @@ export function PageHeader({
                   key={`${stat.label}-${stat.value}`}
                   data-tone={tone}
                   className={cn(
-                    "surface-lift rounded-[calc(var(--radius)*1.35)] border p-4 sm:p-4.5",
+                    "rounded-[calc(var(--radius)*1.2)] p-3.5 shadow-[var(--shadow-inset)]",
                     toneClasses[tone],
                   )}
                 >
-                  <div className="space-y-2 pl-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      {stat.label}
-                    </p>
-                    <div className="text-xl font-semibold tracking-[-0.05em] text-foreground sm:text-2xl">
-                      <AnimatedNumber value={stat.value} />
-                    </div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    {stat.label}
+                  </p>
+                  <div className="mt-1.5 text-xl font-semibold tracking-[-0.04em] text-foreground">
+                    <AnimatedNumber value={stat.value} />
                   </div>
                 </div>
               );

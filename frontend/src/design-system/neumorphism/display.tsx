@@ -508,8 +508,7 @@ export function NeuTickerMetric({
 }) {
   return (
     <div
-      className="neu-surface-base neu-surface-raised neu-pill-soft min-w-[11rem] rounded-[var(--neu-radius-md)] px-3.5 py-3"
-      style={{ borderColor: `color-mix(in oklch, ${toneColor(tone)} 18%, var(--neu-stroke-soft))` }}
+      className="min-w-[9rem] rounded-[var(--neu-radius-sm)] px-3 py-2.5"
     >
       <div className="flex items-center gap-2">
         {icon}

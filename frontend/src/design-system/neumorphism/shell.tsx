@@ -51,14 +51,14 @@ export function NeuNavItem({
       className={cn(
         "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition",
         touchFriendly ? "min-h-14 px-3.5 py-3 sm:min-h-0 sm:px-3 sm:py-2.5" : "px-3 py-2.5",
-        active ? "neu-surface-base neu-surface-accent" : "neu-surface-base neu-surface-raised neu-interactive",
+        active ? "neu-surface-base neu-surface-inset" : "hover:opacity-80",
       )}
     >
       {Icon ? (
         <span className={cn(
           "inline-flex items-center justify-center rounded-[var(--neu-radius-sm)]",
-          touchFriendly ? "size-11 sm:size-10" : "size-10",
-          active ? "neu-surface-base neu-surface-raised shadow-[var(--neu-shadow-pill)]" : "neu-surface-base neu-surface-inset",
+          touchFriendly ? "size-9 sm:size-8" : "size-8",
+          active ? "text-[var(--neu-accent)]" : "opacity-70",
         )}>
           <Icon className="size-4.5" />
         </span>
@@ -132,7 +132,7 @@ export function NeuSidebar({
         {!collapsed ? <div className="ml-auto">{headerSlot}</div> : null}
       </div>
 
-      <div className="neu-scrollbar neu-surface-base neu-surface-inset flex-1 min-h-0 overflow-auto rounded-[var(--neu-radius-lg)] p-3 pr-2 space-y-5">
+      <div className="neu-scrollbar flex-1 min-h-0 overflow-auto p-1 pr-0.5 space-y-4">
         {sections.map((section) => (
           <section key={section.title} className="space-y-2">
             {!collapsed ? (
@@ -140,24 +140,16 @@ export function NeuSidebar({
                 {section.title}
               </p>
             ) : null}
-            <div className="space-y-2">
+            <div className="space-y-1">
               {section.items.map((item) => (
                 <NeuNavItem
                   key={item.id}
                   icon={item.icon}
                   label={collapsed ? item.label.slice(0, 1) : item.label}
-                  description={collapsed ? undefined : item.description}
-                  active={item.active || item.href === activePath}
+                  active={!!item.active}
                   badge={item.badge}
-                  meta={
-                    collapsed
-                      ? undefined
-                      : item.tone === "danger"
-                        ? <NeuBadge tone="danger" variant="ghost" size="sm" dot>risk</NeuBadge>
-                        : null
-                  }
                   href={item.href}
-                  compact={collapsed}
+                  compact
                   touchFriendly={mode === "mobile-sheet"}
                   onClick={() => {
                     item.onSelect?.();

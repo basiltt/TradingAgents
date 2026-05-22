@@ -6,7 +6,7 @@ import {
   Menu,
   Radar,
   Search,
-  Sparkles,
+
 } from "lucide-react";
 import {
   NeuAppShell,
@@ -79,23 +79,7 @@ export function RootLayout() {
       sections={sections}
       collapsed={sidebarCollapsed}
       headerSlot={<NeuStatusPill label="live" tone="success" animated />}
-      footer={
-        !sidebarCollapsed ? (
-          <div className="surface-lift rounded-[calc(var(--radius)*1.25)] p-3.5">
-            <div className="flex items-start gap-3">
-              <div className="gradient-primary inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] text-primary-foreground shadow-[var(--shadow-accent)]">
-                <Sparkles className="size-4.5" />
-              </div>
-              <div className="space-y-1">
-                <p className="text-sm font-semibold tracking-[-0.03em] text-foreground">Operator focus</p>
-                <p className="text-xs leading-5 text-muted-foreground">
-                  Use the command palette to jump between research, monitoring, and execution surfaces.
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : null
-      }
+      footer={null}
     />
   );
 
