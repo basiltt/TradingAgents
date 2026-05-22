@@ -124,21 +124,30 @@ export function NeuSidebar({
       padding="md"
       className={cn("flex h-full min-h-0 flex-col", mode === "mobile-sheet" && "min-h-0")}
     >
-      {/* Logo + brand */}
-      <div className={cn("flex items-center", collapsed ? "justify-center py-1" : "gap-3 pb-4")}>
-        <div className="inline-flex size-10 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-inset">
-          <Command className="size-4.5" />
+      {/* Header: Logo + collapse */}
+      <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between")}>
+        <div className={cn("flex items-center", collapsed ? "" : "gap-3")}>
+          <div className="inline-flex size-10 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-inset">
+            <Command className="size-4.5" />
+          </div>
+          {!collapsed ? (
+            <p className="text-sm font-bold tracking-[-0.03em]">TradingAgents</p>
+          ) : null}
         </div>
-        {!collapsed ? (
-          <p className="text-sm font-bold tracking-[-0.03em]">TradingAgents</p>
+        {!collapsed && onCollapse && mode === "desktop" ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="inline-flex size-7 items-center justify-center rounded-[var(--neu-radius-sm)] opacity-50 transition-opacity hover:opacity-100"
+            title="Collapse sidebar"
+          >
+            <ChevronLeft className="size-3.5" />
+          </button>
         ) : null}
       </div>
 
-      {/* Divider */}
-      <div className="mx-1 h-px bg-[var(--neu-border)]" />
-
       {/* Navigation items */}
-      <div className="neu-scrollbar mt-3 flex-1 min-h-0 overflow-auto space-y-3">
+      <div className="neu-scrollbar mt-4 flex-1 min-h-0 overflow-auto space-y-3">
         {sections.map((section) => (
           <section key={section.title} className="space-y-1">
             {!collapsed ? (
@@ -168,39 +177,63 @@ export function NeuSidebar({
         ))}
       </div>
 
-      {/* Divider */}
-      <div className="mx-1 mt-3 h-px bg-[var(--neu-border)]" />
-
-      {/* Footer controls */}
-      <div className={cn(
-        "mt-auto pt-3",
-        collapsed ? "flex flex-col items-center" : "flex items-center",
-      )}>
-        <div className={cn(
-          "inline-flex items-center gap-1 rounded-[var(--neu-radius-lg)] p-1",
-          "neu-surface-base neu-surface-inset",
-        )}>
-          {onDarkModeToggle ? (
-            <button
-              type="button"
-              onClick={onDarkModeToggle}
-              className="inline-flex size-8 items-center justify-center rounded-[var(--neu-radius-md)] transition-all hover:neu-surface-raised"
-              title={darkMode ? "Switch to light" : "Switch to dark"}
-            >
-              {darkMode ? <SunMedium className="size-3.5" /> : <MoonStar className="size-3.5" />}
-            </button>
-          ) : null}
-          {onCollapse && mode === "desktop" ? (
+      {/* Footer: theme toggle + expand (when collapsed) */}
+      <div className="mt-auto pt-3">
+        {collapsed && onCollapse && mode === "desktop" ? (
+          <div className="flex justify-center pb-2">
             <button
               type="button"
               onClick={onCollapse}
-              className="inline-flex size-8 items-center justify-center rounded-[var(--neu-radius-md)] transition-all hover:neu-surface-raised"
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="inline-flex size-9 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-inset transition-all hover:opacity-80"
+              title="Expand sidebar"
             >
-              {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronLeft className="size-3.5" />}
+              <ChevronRight className="size-3.5" />
             </button>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
+
+        {onDarkModeToggle ? (
+          <div className={cn(
+            "rounded-[var(--neu-radius-lg)] neu-surface-base neu-surface-inset p-1",
+            collapsed && "flex justify-center",
+          )}>
+            {collapsed ? (
+              <button
+                type="button"
+                onClick={onDarkModeToggle}
+                className="inline-flex size-8 items-center justify-center rounded-[var(--neu-radius-md)] transition-all hover:opacity-80"
+                title={darkMode ? "Switch to light" : "Switch to dark"}
+              >
+                {darkMode ? <SunMedium className="size-3.5" /> : <MoonStar className="size-3.5" />}
+              </button>
+            ) : (
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={!darkMode ? undefined : onDarkModeToggle}
+                  className={cn(
+                    "inline-flex items-center justify-center gap-2 rounded-[var(--neu-radius-md)] px-3 py-2 text-xs font-semibold transition-all",
+                    !darkMode && "neu-surface-base neu-surface-raised shadow-sm",
+                  )}
+                >
+                  <SunMedium className="size-3.5" />
+                  Light
+                </button>
+                <button
+                  type="button"
+                  onClick={darkMode ? undefined : onDarkModeToggle}
+                  className={cn(
+                    "inline-flex items-center justify-center gap-2 rounded-[var(--neu-radius-md)] px-3 py-2 text-xs font-semibold transition-all",
+                    darkMode && "neu-surface-base neu-surface-raised shadow-sm",
+                  )}
+                >
+                  <MoonStar className="size-3.5" />
+                  Dark
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     </NeuSurface>
   );
