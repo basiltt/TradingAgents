@@ -10,6 +10,7 @@ import { MonthlyPnlGrid } from "./MonthlyPnlGrid";
 import { AccountSelector } from "@/components/ui/AccountSelector";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CleanupDialog } from "./CleanupDialog";
+import { NeuSelect } from "@/design-system/neumorphism";
 
 const PERIODS = ["1m", "5m", "15m", "30m", "1H", "2H", "6H", "12H", "1D", "3D", "1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 type Period = (typeof PERIODS)[number];
@@ -291,7 +292,8 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
 
               <div className="space-y-2 lg:min-w-[20rem]">
                 <p className="section-eyebrow">Timeframe</p>
-                <div className="no-scrollbar flex gap-1 overflow-x-auto rounded-[calc(var(--radius)*1.15)] border border-border/60 bg-muted/28 p-1 shadow-[var(--shadow-soft)]">
+                {/* Desktop view: Horizontal scrolling buttons */}
+                <div className="hidden sm:flex no-scrollbar gap-1 overflow-x-auto rounded-[calc(var(--radius)*1.15)] border border-border/60 bg-muted/28 p-1 shadow-[var(--shadow-soft)]">
                   {PERIODS.map((p) => (
                     <button
                       key={p}
@@ -306,6 +308,15 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
                       {p}
                     </button>
                   ))}
+                </div>
+                {/* Mobile view: Neumorphic dropdown */}
+                <div className="sm:hidden">
+                  <NeuSelect
+                    options={PERIODS.map((p) => ({ value: p, label: p }))}
+                    value={period}
+                    onChange={(val) => setPeriod(val as Period)}
+                    placeholder="Select Timeframe"
+                  />
                 </div>
               </div>
             </div>

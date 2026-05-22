@@ -69,10 +69,9 @@ export function useTradePolling(enabled: boolean) {
     const handler = () => {
       if (document.visibilityState === "visible") {
         fetchAllActiveTrades(dispatch);
-        queryClient.invalidateQueries({ queryKey: ["trades"] });
       }
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [dispatch, queryClient]);
+  }, [dispatch]);
 }

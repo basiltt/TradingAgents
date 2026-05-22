@@ -63,7 +63,7 @@ export function useAccountPolling() {
       if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
       controllerRef.current?.abort();
     };
-  }, [poll, pollingIntervalMs]);
+  }, [dispatch, poll, pollingIntervalMs]);
 
   return { refresh: manualRefresh, isRefreshDisabled: refreshCooldown };
 }

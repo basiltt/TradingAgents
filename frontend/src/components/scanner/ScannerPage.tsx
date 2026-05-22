@@ -41,7 +41,6 @@ const SCANNER_KEY = "tradingagents_scanner";
 const SCANNER_PANEL_CLASS = "glass-card aurora-border overflow-hidden rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*1.7)] border border-border/60";
 const SCANNER_SECTION_CLASS = "surface-lift rounded-[calc(var(--radius)*1.2)] sm:rounded-[calc(var(--radius)*1.3)] border border-border/60 px-3 py-3 sm:px-4.5 sm:py-4";
 const SCANNER_LABEL_CLASS = "section-eyebrow text-[0.62rem] tracking-[0.22em] text-muted-foreground";
-const SCANNER_HINT_CLASS = "text-[11px] leading-5 text-muted-foreground";
 const SCANNER_SEGMENT_CLASS = "grid grid-cols-1 gap-1.5 sm:gap-2 rounded-[calc(var(--radius)*1.18)] border border-border/60 bg-background/55 p-1 sm:p-1.5 shadow-[var(--shadow-soft)] sm:grid-cols-2";
 const SCANNER_SEGMENT_BUTTON_CLASS = "inline-flex min-h-9 sm:min-h-11 items-center justify-center rounded-[calc(var(--radius)*0.95)] px-3 sm:px-4 py-1.5 sm:py-2 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] sm:tracking-[0.18em] transition-all duration-200";
 const TONE_PILL_STYLES = {
@@ -1043,14 +1042,12 @@ export function ScannerPage() {
             ) : null}
           </div>
 
-          <div className={cn(SCANNER_PANEL_CLASS, "p-5")}>
-            <AgentModelOverrides
-              assetType="crypto"
-              modelOptions={deepOptions}
-              overrides={agentModelOverrides}
-              onChange={setAgentModelOverrides}
-            />
-          </div>
+          <AgentModelOverrides
+            assetType="crypto"
+            modelOptions={deepOptions}
+            overrides={agentModelOverrides}
+            onChange={setAgentModelOverrides}
+          />
 
           <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
 

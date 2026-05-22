@@ -10,6 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { formatDate, isActive } from "./utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   pending: "outline",
@@ -221,7 +229,7 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
               </div>
             </div>
 
-            <div className="overflow-x-auto custom-scrollbar">
+            <div className="hidden sm:block overflow-x-auto custom-scrollbar">
               <table className="w-full min-w-[56rem] text-sm" aria-label="Cycle trades">
                 <thead>
                   <tr className="border-b border-border/50 bg-muted/18 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -259,55 +267,84 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Trade List */}
+            <div className="grid grid-cols-1 gap-3 sm:hidden">
+              {cycle.trades.map((t) => (
+                <div
+                  key={t.id}
+                  className="rounded-[calc(var(--radius)*1.15)] border border-border/40 bg-card p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-bold text-foreground text-sm">{t.symbol}</span>
+                    <Badge variant={TRADE_STATUS_VARIANT[t.status] ?? "outline"}>
+                      {t.status}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div>
+                      <p className="text-muted-foreground/60">Side</p>
+                      <p className={`font-semibold mt-0.5 ${t.side === "Buy" ? "text-[var(--success)]" : "text-destructive"}`}>
+                        {t.side}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground/60 font-medium">Qty</p>
+                      <p className="font-semibold text-foreground font-mono mt-0.5">{t.qty ?? "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground/60 font-medium">Entry Price</p>
+                      <p className="font-semibold text-foreground font-mono mt-0.5">
+                        {t.entry_price != null ? `$${t.entry_price}` : "—"}
+                      </p>
+                    </div>
+                  </div>
+                  {t.error_msg && (
+                    <div className="border-t border-border/30 pt-2 text-xs text-destructive">
+                      <span className="font-semibold">Error:</span> {t.error_msg}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       ) : null}
 
-      {confirmStop && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="stop-cycle-title"
-          onKeyDown={(e) => { if (e.key === "Escape" && !stopMutation.isPending) setConfirmStop(false); }}
-        >
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-md"
-            onClick={() => !stopMutation.isPending && setConfirmStop(false)}
-          />
-          <div className="glass-card relative w-full max-w-md rounded-[calc(var(--radius)*1.8)] border border-border/60 p-5 shadow-[var(--shadow-card)]">
-            <div className="flex items-start gap-3">
-              <span className="inline-flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.1)] bg-[color:color-mix(in_oklch,var(--destructive)_14%,transparent)] text-destructive">
-                <TriangleAlert className="size-5" />
-              </span>
-              <div>
-                <h3 id="stop-cycle-title" className="text-lg font-semibold tracking-[-0.04em] text-foreground">Stop trading cycle?</h3>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  This cancels pending trades and closes any positions opened by the cycle. Use only when you intend to exit the batch immediately.
-                </p>
-              </div>
+      <Dialog open={confirmStop} onOpenChange={(open) => {
+        if (!stopMutation.isPending) setConfirmStop(open);
+      }}>
+        <DialogContent showCloseButton={!stopMutation.isPending} className="max-w-sm">
+          <DialogHeader>
+            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center mb-2">
+              <TriangleAlert className="w-5 h-5 text-red-500" />
             </div>
-            <div className="mt-5 flex items-center gap-2.5">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => setConfirmStop(false)}
-                disabled={stopMutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                className="flex-1"
-                onClick={() => stopMutation.mutate()}
-                disabled={stopMutation.isPending}
-              >
-                {stopMutation.isPending ? "Stopping..." : "Stop Cycle"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            <DialogTitle>Stop trading cycle?</DialogTitle>
+            <DialogDescription>
+              This cancels pending trades and closes any positions opened by the cycle. Use only when you intend to exit the batch immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmStop(false)}
+              disabled={stopMutation.isPending}
+              className="flex-1 sm:flex-initial"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => stopMutation.mutate()}
+              disabled={stopMutation.isPending}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2"
+            >
+              {stopMutation.isPending && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              Stop Cycle
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -10,6 +10,16 @@ import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 import { useAppDispatch } from "@/store";
 import { removeAccount } from "@/store/accounts-slice";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { NeuInput } from "@/design-system/neumorphism/inputs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface AccountDetailViewProps {
   accountId: string;
@@ -63,6 +73,126 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
     return () => controller.abort();
   }, [accountId]);
 
+  const renderDialogs = () => (
+    <>
+      {/* Update Credentials Dialog */}
+      <Dialog open={showCredentials} onOpenChange={(open) => {
+        if (!credSaving) setShowCredentials(open);
+      }}>
+        <DialogContent showCloseButton={!credSaving} className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Update API Credentials</DialogTitle>
+            <DialogDescription>
+              Enter the API credentials for your exchange connection.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 my-2">
+            <NeuInput
+              type="text"
+              placeholder="API Key"
+              value={credKey}
+              onChange={(e) => setCredKey(e.target.value)}
+              disabled={credSaving}
+            />
+            <NeuInput
+              type="password"
+              placeholder="API Secret"
+              value={credSecret}
+              onChange={(e) => setCredSecret(e.target.value)}
+              disabled={credSaving}
+            />
+          </div>
+          {credError && <p className="text-destructive text-xs">{credError}</p>}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowCredentials(false)}
+              disabled={credSaving}
+              className="flex-1 sm:flex-initial"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!credKey.trim() || !credSecret.trim()) {
+                  setCredError("Both fields are required");
+                  return;
+                }
+                setCredSaving(true);
+                setCredError(null);
+                try {
+                  await accountsApi.rotateCredentials(accountId, { api_key: credKey.trim(), api_secret: credSecret.trim() });
+                  setShowCredentials(false);
+                  setCredKey("");
+                  setCredSecret("");
+                  window.location.reload();
+                } catch (e: unknown) {
+                  const err = e as { detail?: string; message?: string };
+                  setCredError(err.detail || err.message || "Failed to update");
+                } finally {
+                  setCredSaving(false);
+                }
+              }}
+              disabled={credSaving}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2"
+            >
+              {credSaving && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirm} onOpenChange={(open) => {
+        if (!deleting) setDeleteConfirm(open);
+      }}>
+        <DialogContent showCloseButton={!deleting} className="max-w-sm">
+          <DialogHeader>
+            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center mb-2">
+              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </div>
+            <DialogTitle>Delete account?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove this account and all its data. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirm(false)}
+              disabled={deleting}
+              className="flex-1 sm:flex-initial"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                setDeleting(true);
+                try {
+                  await accountsApi.delete(accountId);
+                  dispatch(removeAccount(accountId));
+                  navigate({ to: "/accounts" });
+                } catch {
+                  setDeleting(false);
+                  setDeleteConfirm(false);
+                }
+              }}
+              disabled={deleting}
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2"
+            >
+              {deleting && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+
   if (loading) {
     return (
       <div className="space-y-5">
@@ -79,147 +209,42 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   if (error) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <Button
+              variant="outline"
+              size="icon-sm"
               onClick={() => navigate({ to: "/accounts" })}
-              className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+              className="shrink-0 rounded-xl"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
-            </button>
+            </Button>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Account Detail</h1>
           </div>
-          <div className="flex items-center gap-2">
-            <button
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Button
+              variant="outline"
               onClick={() => setShowCredentials(true)}
-              className="px-3.5 py-2 rounded-xl text-sm font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all"
+              className="flex-1 sm:flex-initial"
             >
               Update Credentials
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="destructive"
               disabled={deleting}
               onClick={() => setDeleteConfirm(true)}
-              className="px-3.5 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50"
+              className="flex-1 sm:flex-initial"
             >
               {deleting ? "Deleting..." : "Delete Account"}
-            </button>
+            </Button>
           </div>
         </div>
         <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-5 text-center">
           <p className="text-destructive text-sm">{error}</p>
         </div>
-
-        {/* Update Credentials Dialog */}
-        {showCredentials && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !credSaving && setShowCredentials(false)} />
-            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
-              <h3 className="text-lg font-bold">Update API Credentials</h3>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="API Key"
-                  value={credKey}
-                  onChange={(e) => setCredKey(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                <input
-                  type="password"
-                  placeholder="API Secret"
-                  value={credSecret}
-                  onChange={(e) => setCredSecret(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-secondary border border-border/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-              </div>
-              {credError && <p className="text-destructive text-xs">{credError}</p>}
-              <div className="flex items-center gap-2.5 pt-1">
-                <button
-                  onClick={() => setShowCredentials(false)}
-                  disabled={credSaving}
-                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    if (!credKey.trim() || !credSecret.trim()) {
-                      setCredError("Both fields are required");
-                      return;
-                    }
-                    setCredSaving(true);
-                    setCredError(null);
-                    try {
-                      await accountsApi.rotateCredentials(accountId, { api_key: credKey.trim(), api_secret: credSecret.trim() });
-                      setShowCredentials(false);
-                      setCredKey("");
-                      setCredSecret("");
-                      window.location.reload();
-                    } catch (e: unknown) {
-                      const err = e as { detail?: string; message?: string };
-                      setCredError(err.detail || err.message || "Failed to update");
-                    } finally {
-                      setCredSaving(false);
-                    }
-                  }}
-                  disabled={credSaving}
-                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {credSaving && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Delete Confirmation Dialog */}
-        {deleteConfirm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !deleting && setDeleteConfirm(false)} />
-            <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
-              <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
-                <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold mb-1">Delete account?</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  This will permanently remove this account and all its data. This cannot be undone.
-                </p>
-              </div>
-              <div className="flex items-center gap-2.5 pt-1">
-                <button
-                  onClick={() => setDeleteConfirm(false)}
-                  disabled={deleting}
-                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    setDeleting(true);
-                    try {
-                      await accountsApi.delete(accountId);
-                      dispatch(removeAccount(accountId));
-                      navigate({ to: "/accounts" });
-                    } catch {
-                      setDeleting(false);
-                      setDeleteConfirm(false);
-                    }
-                  }}
-                  disabled={deleting}
-                  className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {deleting && <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {renderDialogs()}
       </div>
     );
   }
@@ -267,14 +292,16 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <button
+          <Button
+            variant="outline"
+            size="icon-sm"
             onClick={() => navigate({ to: "/accounts" })}
-            className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground shrink-0"
+            className="shrink-0 rounded-xl"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-          </button>
+          </Button>
           <div className="min-w-0">
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Account Detail</h1>
             <p className="text-sm text-muted-foreground/60 mt-0.5">
@@ -283,32 +310,51 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
           </div>
         </div>
 
-        <button
-          disabled={deleting}
-          onClick={() => setDeleteConfirm(true)}
-          className="px-3.5 py-2 rounded-xl text-sm font-medium bg-red-500/[0.08] text-red-500 border border-red-500/20 hover:bg-red-500/[0.15] hover:border-red-500/30 transition-all disabled:opacity-50 shrink-0 self-start sm:self-auto"
-        >
-          {deleting ? "Deleting..." : "Delete Account"}
-        </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Button
+            variant="outline"
+            onClick={() => setShowCredentials(true)}
+            className="flex-1 sm:flex-initial"
+          >
+            Update Credentials
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={deleting}
+            onClick={() => setDeleteConfirm(true)}
+            className="flex-1 sm:flex-initial"
+          >
+            {deleting ? "Deleting..." : "Delete Account"}
+          </Button>
+        </div>
       </div>
 
       {/* KPI Cards */}
       {wallet && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 neu-grid-enter">
           {kpis.map((kpi) => (
             <div
               key={kpi.label}
-              className="rounded-2xl border border-border/40 bg-card p-4 space-y-2.5"
+              className="rounded-2xl p-4 space-y-2.5 transition-all duration-200 hover:scale-[1.02]"
+              style={{
+                background: "var(--neu-surface-base)",
+                boxShadow: "var(--neu-shadow-pill)",
+              }}
             >
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">
                   {kpi.label}
                 </span>
-                <div className={`w-8 h-8 rounded-xl flex items-center justify-center ring-1 ring-inset ${
-                  kpi.color === "emerald" ? "bg-emerald-500/10 ring-emerald-500/20 text-emerald-500" :
-                  kpi.color === "red" ? "bg-red-500/10 ring-red-500/20 text-red-500" :
-                  "bg-muted/50 ring-border/30 text-muted-foreground/60"
-                }`}>
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                  kpi.color === "emerald" ? "text-emerald-500" :
+                  kpi.color === "red" ? "text-red-500" :
+                  "text-muted-foreground/60"
+                }`}
+                  style={{
+                    background: "var(--neu-surface-deep)",
+                    boxShadow: "var(--neu-shadow-inset)",
+                  }}
+                >
                   {kpiIcons[kpi.icon]}
                 </div>
               </div>
@@ -330,49 +376,41 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-muted/30 border border-border/30 rounded-xl p-1 h-auto">
-          <TabsTrigger value="wallet" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
-            <svg className="w-4 h-4 mr-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20 12V8H6a2 2 0 01-2-2c0-1.1.9-2 2-2h12v4" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6v12a2 2 0 002 2h14v-4" />
-            </svg>
-            Wallet
-          </TabsTrigger>
-          <TabsTrigger value="positions" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
-            <svg className="w-4 h-4 mr-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            Positions
-            {positions.length > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
-                {positions.length}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="orders" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
-            <svg className="w-4 h-4 mr-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            Orders
-            {orders.length > 0 && (
-              <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
-                {orders.length}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="pnl" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
-            <svg className="w-4 h-4 mr-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-            </svg>
-            PnL
-          </TabsTrigger>
-          <TabsTrigger value="analytics" className="rounded-lg px-4 py-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm">
-            <svg className="w-4 h-4 mr-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6m6 0h6m-6 0a2 2 0 01-2-2m8 2V5a2 2 0 012-2h2a2 2 0 012 2v14" />
-            </svg>
-            Analytics
-          </TabsTrigger>
-        </TabsList>
+        <div className="w-full overflow-x-auto scrollbar-none">
+          <TabsList
+            className="rounded-2xl p-1.5 h-auto inline-flex flex-nowrap gap-1 border-0 min-w-full"
+            style={{
+              background: "var(--neu-surface-deep)",
+              boxShadow: "var(--neu-shadow-inset)",
+            }}
+          >
+            <TabsTrigger value="wallet" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+              Wallet
+            </TabsTrigger>
+            <TabsTrigger value="positions" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+              Positions
+              {positions.length > 0 && (
+                <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
+                  {positions.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="orders" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+              Orders
+              {orders.length > 0 && (
+                <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
+                  {orders.length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="pnl" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+              PnL
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+              Analytics
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="wallet" className="mt-6">
           {wallet && <WalletPanel wallet={wallet} />}
@@ -395,54 +433,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
         </TabsContent>
       </Tabs>
 
-      {/* Delete Confirmation Dialog */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => !deleting && setDeleteConfirm(false)} />
-          <div className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-5 max-w-sm w-full mx-4 space-y-4">
-            <div className="w-10 h-10 rounded-[calc(var(--radius)*1.2)] bg-red-500/10 flex items-center justify-center">
-              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-lg font-bold mb-1">Delete account?</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                This will permanently remove this account and all its data. This cannot be undone.
-              </p>
-            </div>
-            <div className="flex items-center gap-2.5 pt-1">
-              <button
-                onClick={() => setDeleteConfirm(false)}
-                disabled={deleting}
-                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  setDeleting(true);
-                  try {
-                    await accountsApi.delete(accountId);
-                    dispatch(removeAccount(accountId));
-                    navigate({ to: "/accounts" });
-                  } catch {
-                    setDeleting(false);
-                    setDeleteConfirm(false);
-                  }
-                }}
-                disabled={deleting}
-                className="flex-1 px-3.5 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {deleting && (
-                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                )}
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderDialogs()}
     </div>
   );
 }

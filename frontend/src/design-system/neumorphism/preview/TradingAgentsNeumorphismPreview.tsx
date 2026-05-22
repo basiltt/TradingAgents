@@ -1507,7 +1507,7 @@ function PreviewWorkspace() {
           rows={tableRows}
           rowKey={(row) => row.id}
           toolbar={<NeuButton size="sm" variant="secondary">Export CSV</NeuButton>}
-          rowActions={(_row: (typeof tableRows)[number]) => (
+          rowActions={() => (
             <div className="flex justify-end gap-2">
               <NeuButton size="sm" variant="ghost">
                 View

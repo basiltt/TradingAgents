@@ -1,8 +1,9 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const NUMBER_PATTERN =
-  /^([^0-9+\-]*)([-+]?(?:\d[\d,]*\.?\d*|\d*\.?\d+))(.*)$/;
+  /^([^0-9+-]*)([-+]?(?:\d[\d,]*\.?\d*|\d*\.?\d+))(.*)$/;
 
 function parseDisplayValue(value: string) {
   const match = value.trim().match(NUMBER_PATTERN);

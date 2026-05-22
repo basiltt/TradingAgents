@@ -164,7 +164,7 @@ export function AccountsDashboard() {
         title="Accounts"
         description=""
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:justify-end">
             {hasDemoAccounts ? (
               <Button
                 variant="outline"
@@ -273,7 +273,7 @@ export function AccountsDashboard() {
 
       {/* Account Cards */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3 neu-stagger">
           {filtered.map((card) => (
             <AccountCard key={card.id} card={card} onRefresh={fetchDashboard} />
           ))}
@@ -320,13 +320,15 @@ export function AccountsDashboard() {
                   <p className="text-[11px] text-muted-foreground/80 leading-relaxed">Note: Active scheduled scans will not be paused. Pause them separately to prevent new trades from opening.</p>
                 </div>
                 <div className="flex gap-3">
-                  <button
+                  <Button
+                    variant="outline"
                     onClick={() => setKillOpen(false)}
-                    className="flex-1 h-10 px-4 py-2 rounded-xl border border-border text-xs font-bold uppercase tracking-wider hover:bg-muted/40 transition-all cursor-pointer active:scale-95"
+                    className="flex-1"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="destructive"
                     onClick={async () => {
                       setKillLoading(true);
                       setKillProgress({ current: 0, total: 0, accounts: [] });
@@ -343,10 +345,10 @@ export function AccountsDashboard() {
                         setKillLoading(false);
                       }
                     }}
-                    className="flex-1 h-10 px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-red-700 active:scale-95 transition-all shadow-lg shadow-red-600/15 cursor-pointer"
+                    className="flex-1 border-red-500/25 bg-red-500/10 text-red-500 hover:bg-red-500/15"
                   >
                     Close Everything
-                  </button>
+                  </Button>
                 </div>
               </>
             ) : killLoading ? (
@@ -382,12 +384,13 @@ export function AccountsDashboard() {
                     </div>
                   ))}
                 </div>
-                <button
+                <Button
+                  variant="link"
                   onClick={() => { setKillOpen(false); setKillLoading(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); killTaskId.current = null; fetchDashboard(true); }}
                   className="mt-5 w-full text-[10px] font-black uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors cursor-pointer text-center"
                 >
                   Dismiss (continues in background)
-                </button>
+                </Button>
               </>
             ) : killResult ? (
               <>
@@ -425,12 +428,12 @@ export function AccountsDashboard() {
                     </div>
                   )}
                 </div>
-                <button
+                <Button
                   onClick={() => { setKillOpen(false); setKillResult(null); setKillProgress({ current: 0, total: 0, accounts: [] }); }}
-                  className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer active:scale-95 shadow-lg shadow-primary/15"
+                  className="w-full"
                 >
                   Done
-                </button>
+                </Button>
               </>
             ) : null}
           </div>
@@ -472,15 +475,17 @@ export function AccountsDashboard() {
                 <div className="mb-5">
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">Accounts</label>
-                    <button
+                    <Button
+                      variant="link"
+                      size="xs"
                       onClick={() => {
                         const demoIds = dashboard.filter(c => c.account_type === "demo" && c.is_active).map(c => c.id);
                         setResetSelectedIds(prev => prev.length === demoIds.length ? [] : demoIds);
                       }}
-                      className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline cursor-pointer"
+                      className="h-auto p-0 text-[10px] font-black uppercase tracking-wider"
                     >
                       {resetSelectedIds.length === dashboard.filter(c => c.account_type === "demo" && c.is_active).length ? "Deselect all" : "Select all"}
-                    </button>
+                    </Button>
                   </div>
                   <div className="max-h-40 overflow-y-auto space-y-1.5 border border-border/40 rounded-xl p-2 bg-muted/10 custom-scrollbar pr-1">
                     {dashboard.filter(c => c.account_type === "demo" && c.is_active).map(acct => (
@@ -500,13 +505,14 @@ export function AccountsDashboard() {
                   </div>
                 </div>
                 <div className="flex gap-3">
-                  <button
+                  <Button
+                    variant="outline"
                     onClick={() => { setResetOpen(false); setResetSelectedIds([]); }}
-                    className="flex-1 h-10 px-4 py-2 rounded-xl border border-border text-xs font-bold uppercase tracking-wider hover:bg-muted/40 transition-all cursor-pointer active:scale-95"
+                    className="flex-1"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     onClick={async () => {
                       const amount = parseFloat(resetAmount);
                       if (!amount || amount <= 0 || amount > 100000) return;
@@ -529,10 +535,10 @@ export function AccountsDashboard() {
                       }
                     }}
                     disabled={!resetAmount || parseFloat(resetAmount) <= 0 || resetSelectedIds.length === 0}
-                    className="flex-1 h-10 px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold uppercase tracking-wider hover:bg-amber-700 active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-amber-600/15 cursor-pointer"
+                    className="flex-1 border-amber-500/25 bg-amber-500/10 text-amber-500 hover:bg-amber-500/15 disabled:opacity-50"
                   >
                     Set Balance
-                  </button>
+                  </Button>
                 </div>
               </>
             ) : resetLoading ? (
@@ -568,12 +574,13 @@ export function AccountsDashboard() {
                     </div>
                   ))}
                 </div>
-                <button
+                <Button
+                  variant="link"
                   onClick={() => { setResetOpen(false); setResetLoading(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); resetTaskId.current = null; fetchDashboard(true); }}
                   className="mt-5 w-full text-[10px] font-black uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors cursor-pointer text-center"
                 >
                   Dismiss (continues in background)
-                </button>
+                </Button>
               </>
             ) : resetResult ? (
               <>
@@ -609,12 +616,12 @@ export function AccountsDashboard() {
                     </div>
                   )}
                 </div>
-                <button
+                <Button
                   onClick={() => { setResetOpen(false); setResetResult(null); setResetProgress({ current: 0, total: 0, accounts: [] }); setResetSelectedIds([]); }}
-                  className="w-full h-10 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:brightness-110 transition-all cursor-pointer active:scale-95 shadow-lg shadow-primary/15"
+                  className="w-full"
                 >
                   Done
-                </button>
+                </Button>
               </>
             ) : null}
           </div>

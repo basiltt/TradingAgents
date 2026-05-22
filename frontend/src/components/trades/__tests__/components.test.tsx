@@ -38,8 +38,7 @@ describe("PnLDisplay", () => {
 });
 
 describe("TradeStatusBadge", () => {
-  it.each(["open", "pending", "closing", "closed", "failed", "cancelled"])
-    ("renders known status: %s", (status) => {
+  it.each(["open", "pending", "closing", "closed", "failed", "cancelled"])("renders known status: %s", (status) => {
       const { container } = render(<TradeStatusBadge status={status} />);
       expect(container.textContent).toBeTruthy();
     });

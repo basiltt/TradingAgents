@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { toast } from "sonner";
 import { AlertTriangle, LoaderCircle, Wifi, WifiOff } from "lucide-react";
 import {

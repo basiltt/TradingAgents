@@ -334,6 +334,124 @@
     var(--neu-shadow-raised);
 }
 
+[data-neu-tab][data-state="active"] {
+  background: var(--neu-surface-base) !important;
+  box-shadow: var(--neu-shadow-pill) !important;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* === Micro Animations === */
+
+/* Smooth page transitions */
+@keyframes neu-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes neu-fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes neu-scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes neu-slide-in-right {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes neu-pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes neu-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes neu-breathe {
+  0%, 100% { box-shadow: var(--neu-shadow-raised); }
+  50% { box-shadow: var(--neu-shadow-raised-hover); }
+}
+
+/* Staggered children animation */
+.neu-stagger > * {
+  animation: neu-fade-in-up 400ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.neu-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.neu-stagger > *:nth-child(2) { animation-delay: 60ms; }
+.neu-stagger > *:nth-child(3) { animation-delay: 120ms; }
+.neu-stagger > *:nth-child(4) { animation-delay: 180ms; }
+.neu-stagger > *:nth-child(5) { animation-delay: 240ms; }
+.neu-stagger > *:nth-child(6) { animation-delay: 300ms; }
+.neu-stagger > *:nth-child(7) { animation-delay: 360ms; }
+.neu-stagger > *:nth-child(8) { animation-delay: 420ms; }
+
+/* Card hover lift */
+.neu-card-hover {
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.neu-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--neu-shadow-raised-hover);
+}
+.neu-card-hover:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: var(--neu-shadow-inset);
+  transition-duration: 80ms;
+}
+
+/* Button press effect */
+.neu-btn-press {
+  transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 120ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.neu-btn-press:active {
+  transform: scale(0.95);
+  box-shadow: var(--neu-shadow-inset);
+}
+
+/* Tab content transition */
+[role="tabpanel"] {
+  animation: neu-fade-in 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Main content area page transitions */
+main > * {
+  animation: neu-fade-in 350ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Badge pulse for attention items */
+.neu-badge-pulse {
+  animation: neu-pulse-soft 2s ease-in-out infinite;
+}
+
+/* Smooth number transitions */
+.neu-number {
+  transition: color 300ms ease;
+}
+
+/* Card entrance for grid items */
+.neu-grid-enter > * {
+  animation: neu-scale-in 350ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.neu-grid-enter > *:nth-child(1) { animation-delay: 0ms; }
+.neu-grid-enter > *:nth-child(2) { animation-delay: 80ms; }
+.neu-grid-enter > *:nth-child(3) { animation-delay: 160ms; }
+.neu-grid-enter > *:nth-child(4) { animation-delay: 240ms; }
+.neu-grid-enter > *:nth-child(5) { animation-delay: 320ms; }
+.neu-grid-enter > *:nth-child(6) { animation-delay: 400ms; }
+
 .neu-divider-h {
   height: 1px;
   background:
@@ -474,18 +592,14 @@
 }
 
 .neu-command-overlay {
-  background:
-    radial-gradient(circle at 16% 16%, color-mix(in oklch, var(--neu-highlight) 28%, transparent), transparent 28%),
-    radial-gradient(circle at 84% 10%, color-mix(in oklch, var(--neu-accent) 10%, transparent), transparent 22%),
-    color-mix(in oklch, var(--neu-surface-deep) 62%, black 38%);
-  backdrop-filter: blur(24px);
+  background: color-mix(in oklch, var(--neu-surface-base) 82%, transparent);
+  backdrop-filter: blur(20px) saturate(1.2);
+  animation: neu-fade-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-command-overlay {
-  background:
-    radial-gradient(circle at 16% 16%, color-mix(in oklch, white 6%, transparent), transparent 24%),
-    radial-gradient(circle at 84% 10%, color-mix(in oklch, var(--neu-accent) 10%, transparent), transparent 20%),
-    color-mix(in oklch, var(--neu-surface-deep) 52%, black 48%);
+  background: color-mix(in oklch, var(--neu-surface-deep) 85%, transparent);
+  backdrop-filter: blur(20px) saturate(1.1);
 }
 
 .neu-slider {

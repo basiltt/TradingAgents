@@ -212,9 +212,11 @@ export function ConfigForm() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const saved = useMemo(() => loadSettings(), []);
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   const isTest =
     (typeof window !== "undefined" && ((window as any).__vitest_worker__ || (window as any).process?.env?.NODE_ENV === "test")) ||
     (typeof globalThis !== "undefined" && ((globalThis as any).process?.env?.NODE_ENV === "test"));
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   const [showLLM, setShowLLM] = useState(!!(saved.llm_api_key || saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
   const [showWorkflow, setShowWorkflow] = useState(false);

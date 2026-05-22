@@ -43,61 +43,137 @@ export function PositionsTable({ positions }: PositionsTableProps) {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-border/40 bg-card overflow-hidden overflow-x-auto">
-        <table className="w-full text-sm min-w-[700px]">
-          <thead>
-            <tr className="border-b border-border/30">
-            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>
-            <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Side</th>
-            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Size</th>
-            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Entry</th>
-            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Mark</th>
-            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">PnL</th>
-            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Leverage</th>
-            <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Liq. Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            {positions.map((p, i) => {
-              const pnl = parseFloat(p.unrealisedPnl);
-              const mark = parseFloat(p.markPrice);
-              const liq = parseFloat(p.liqPrice);
-              const distToLiq = liq > 0 ? Math.abs((mark - liq) / mark * 100) : 999;
-              const isLong = p.side === "Buy";
+      {/* Desktop view (table) */}
+      <div className="hidden sm:block rounded-2xl border border-border/40 bg-card overflow-hidden">
+        <div className="overflow-x-auto scrollbar-none">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border/30">
+                <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Symbol</th>
+                <th className="text-left px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Side</th>
+                <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Size</th>
+                <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Entry</th>
+                <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Mark</th>
+                <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">PnL</th>
+                <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Leverage</th>
+                <th className="text-right px-4 py-3 text-[11px] text-muted-foreground/60 uppercase tracking-wider font-semibold">Liq. Price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p, i) => {
+                const pnl = parseFloat(p.unrealisedPnl);
+                const mark = parseFloat(p.markPrice);
+                const liq = parseFloat(p.liqPrice);
+                const distToLiq = liq > 0 ? Math.abs((mark - liq) / mark * 100) : 999;
+                const isLong = p.side === "Buy";
 
-              return (
-                <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/[0.04] transition-colors">
-                  <td className="px-4 py-3">
-                    <span className="font-semibold">{p.symbol}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider border ${
-                      isLong
-                        ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/[0.08]"
-                        : "border-red-500/30 text-red-500 bg-red-500/[0.08]"
-                    }`}>
-                      {isLong ? "Long" : "Short"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums">{p.size}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{parseFloat(p.avgPrice).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums">{mark.toFixed(2)}</td>
-                  <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                return (
+                  <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/[0.04] transition-colors">
+                    <td className="px-4 py-3">
+                      <span className="font-semibold">{p.symbol}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider border ${
+                        isLong
+                          ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/[0.08]"
+                          : "border-red-500/30 text-red-500 bg-red-500/[0.08]"
+                      }`}>
+                        {isLong ? "Long" : "Short"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium tabular-nums">{p.size}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{parseFloat(p.avgPrice).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right font-medium tabular-nums">{mark.toFixed(2)}</td>
+                    <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                      {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="text-xs px-2 py-0.5 rounded-md bg-muted/50 font-medium tabular-nums">{p.leverage}x</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {liq > 0 ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <span className={`font-medium tabular-nums ${
+                            distToLiq <= 5 ? "text-red-500 font-bold" : distToLiq <= 15 ? "text-amber-500" : ""
+                          }`}>
+                            ${liq.toFixed(2)}
+                          </span>
+                          {distToLiq <= 15 && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${
+                              distToLiq <= 5
+                                ? "bg-red-500/10 text-red-500 border border-red-500/20"
+                                : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                            }`}>
+                              {distToLiq.toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/40">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Mobile view (cards) */}
+      <div className="space-y-3 sm:hidden">
+        {positions.map((p, i) => {
+          const pnl = parseFloat(p.unrealisedPnl);
+          const mark = parseFloat(p.markPrice);
+          const liq = parseFloat(p.liqPrice);
+          const distToLiq = liq > 0 ? Math.abs((mark - liq) / mark * 100) : 999;
+          const isLong = p.side === "Buy";
+
+          return (
+            <div key={i} className="rounded-2xl border border-border/40 bg-card p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm text-foreground">{p.symbol}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted/50 font-semibold tabular-nums text-muted-foreground">{p.leverage}x</span>
+                </div>
+                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
+                  isLong
+                    ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/[0.08]"
+                    : "border-red-500/30 text-red-500 bg-red-500/[0.08]"
+                }`}>
+                  {isLong ? "Long" : "Short"}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 pt-2 border-t border-border/10 text-xs">
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-muted-foreground/60 uppercase font-semibold">Size</span>
+                  <p className="text-xs font-medium tabular-nums text-foreground">{p.size}</p>
+                </div>
+                <div className="space-y-0.5 text-right">
+                  <span className="text-[10px] text-muted-foreground/60 uppercase font-semibold">PnL</span>
+                  <p className={`text-xs font-semibold tabular-nums ${pnl >= 0 ? "text-emerald-500" : "text-red-500"}`}>
                     {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <span className="text-xs px-2 py-0.5 rounded-md bg-muted/50 font-medium tabular-nums">{p.leverage}x</span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
+                  </p>
+                </div>
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-muted-foreground/60 uppercase font-semibold">Entry / Mark</span>
+                  <p className="text-xs font-medium tabular-nums text-muted-foreground">
+                    {parseFloat(p.avgPrice).toFixed(2)} / <span className="text-foreground">{mark.toFixed(2)}</span>
+                  </p>
+                </div>
+                <div className="space-y-0.5 text-right">
+                  <span className="text-[10px] text-muted-foreground/60 uppercase font-semibold">Liq. Price</span>
+                  <div className="flex items-center justify-end gap-1.5">
                     {liq > 0 ? (
-                      <div className="flex items-center justify-end gap-2">
-                        <span className={`font-medium tabular-nums ${
+                      <>
+                        <span className={`text-xs font-semibold tabular-nums ${
                           distToLiq <= 5 ? "text-red-500 font-bold" : distToLiq <= 15 ? "text-amber-500" : ""
                         }`}>
                           ${liq.toFixed(2)}
                         </span>
                         {distToLiq <= 15 && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${
+                          <span className={`text-[9px] px-1 py-0.2 rounded-full font-semibold tabular-nums ${
                             distToLiq <= 5
                               ? "bg-red-500/10 text-red-500 border border-red-500/20"
                               : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
@@ -105,16 +181,16 @@ export function PositionsTable({ positions }: PositionsTableProps) {
                             {distToLiq.toFixed(1)}%
                           </span>
                         )}
-                      </div>
+                      </>
                     ) : (
                       <span className="text-muted-foreground/40">—</span>
                     )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

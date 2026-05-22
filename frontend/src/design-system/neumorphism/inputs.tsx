@@ -76,10 +76,10 @@ const buttonVariants = cva(
         "soft-tonal": "neu-surface-base neu-button-tonal neu-interactive",
       },
       size: {
-        sm: "h-10 rounded-[var(--neu-radius-sm)] px-3.5 text-sm sm:h-9",
-        md: "h-12 rounded-[var(--neu-radius-md)] px-4.5 text-sm sm:h-11",
-        lg: "h-14 rounded-[var(--neu-radius-md)] px-5 text-base sm:h-12",
-        icon: "size-12 rounded-[var(--neu-radius-md)] p-0 sm:size-11",
+        sm: "h-9 rounded-[var(--neu-radius-sm)] px-3 text-xs sm:h-10 sm:px-3.5 sm:text-sm",
+        md: "h-10 rounded-[var(--neu-radius-md)] px-4 text-sm sm:h-11 sm:px-4.5",
+        lg: "h-12 rounded-[var(--neu-radius-md)] px-4.5 text-sm sm:h-14 sm:px-5 sm:text-base",
+        icon: "size-10 rounded-[var(--neu-radius-md)] p-0 sm:size-12",
       },
     },
     defaultVariants: {
@@ -183,7 +183,7 @@ export function NeuButton({
   return slotButton({
     asChild,
     props,
-    className: cn(buttonVariants({ variant, size }), pressed && "neu-pressed", className),
+    className: cn(buttonVariants({ variant, size }), "neu-btn-press", pressed && "neu-pressed", className),
     children: content,
   });
 }
@@ -234,7 +234,7 @@ export function NeuInput({
     <FieldFrame label={label} helperText={helperText} error={error} required={required}>
         <div
           className={cn(
-          "neu-input-base neu-focus-ring flex min-h-12 items-center gap-2 rounded-[var(--neu-radius-md)] px-4 py-0.5 sm:min-h-11",
+          "neu-input-base neu-focus-ring flex min-h-10 items-center gap-2 rounded-[var(--neu-radius-md)] px-4 py-0.5 sm:min-h-11",
           className,
         )}
         style={fieldToneStyle(typeof error === "string" ? error : undefined)}
@@ -328,7 +328,7 @@ export function NeuSelect({
     <FieldFrame label={label} helperText={helperText} error={error}>
       <Select value={value} onValueChange={(next) => next && onChange(next)} disabled={disabled}>
         <SelectTrigger
-          className="neu-input-base neu-focus-ring h-12 w-full rounded-[var(--neu-radius-md)] px-4 sm:h-11"
+          className="neu-input-base neu-focus-ring h-10 w-full rounded-[var(--neu-radius-md)] px-4 sm:h-11"
           style={fieldToneStyle(typeof error === "string" ? error : undefined)}
         >
           <SelectValue placeholder={placeholder} />
@@ -554,8 +554,8 @@ export function NeuToggleGroup({
                 "neu-focus-ring inline-flex items-center gap-2 font-semibold transition",
                 active ? "neu-surface-base neu-surface-accent" : "neu-surface-base neu-surface-raised neu-interactive",
                 size === "sm"
-                  ? "h-10 rounded-[var(--neu-radius-sm)] px-3.5 text-xs sm:h-9"
-                  : "h-11 rounded-[var(--neu-radius-md)] px-4.5 text-sm sm:h-10",
+                  ? "h-8.5 rounded-[var(--neu-radius-sm)] px-3 text-xs sm:h-9 sm:px-3.5"
+                  : "h-10 rounded-[var(--neu-radius-md)] px-4 text-sm sm:h-11 sm:px-4.5",
               )}
             >
               {option.icon}

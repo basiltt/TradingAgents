@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { NeuSurface } from "./foundation";
 import { NeuButton, NeuInput, NeuToggleGroup } from "./inputs";
 import { NeuBadge, NeuTickerMetric } from "./display";
-import { getNeuAccentPreview, neuAccentDefinitions, neuAccentPalettes } from "./theme";
 import type {
   NeuAccentPalette,
   NeuCommandGroup,
@@ -50,10 +49,16 @@ export function NeuNavItem({
   const content = (
     <div
       className={cn(
-        "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition",
+        "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition-all duration-200",
         touchFriendly ? "min-h-10 px-3 py-2 sm:min-h-0 sm:px-3 sm:py-2.5" : "px-3 py-2.5",
-        active ? "neu-surface-base neu-surface-inset" : "hover:opacity-80",
+        active
+          ? "neu-surface-base text-[var(--neu-accent)]"
+          : "hover:opacity-80",
       )}
+      style={active ? {
+        boxShadow: "var(--neu-shadow-pill)",
+        background: "var(--neu-surface-base)",
+      } : undefined}
     >
       {Icon ? (
         <span className={cn(
@@ -96,12 +101,9 @@ export function NeuNavItem({
 
 export function NeuSidebar({
   sections,
-  activePath,
   onNavigate,
   collapsed = false,
   mode = "desktop",
-  footer,
-  headerSlot,
   onCollapse,
   darkMode = false,
   onDarkModeToggle,
@@ -120,7 +122,7 @@ export function NeuSidebar({
   const Wrapper = mode === "mobile-sheet" ? "div" : NeuSurface;
   const wrapperProps = mode === "mobile-sheet"
     ? { className: "flex h-full min-h-0 flex-col" }
-    : { depth: "raised" as const, radius: "lg" as const, padding: "md" as const, className: "flex h-full min-h-0 flex-col" };
+    : { depth: "raised" as const, radius: "lg" as const, padding: "md" as const, className: "flex h-full min-h-0 flex-col !overflow-visible" };
 
   return (
     <Wrapper {...wrapperProps}>
@@ -148,50 +150,117 @@ export function NeuSidebar({
 
       {/* Navigation items */}
       {mode === "mobile-sheet" ? (
-        <div className="mt-1 flex flex-1 min-h-0 flex-col justify-between">
-          {sections.flatMap((section) => section.items).map((item) => (
-            <NeuNavItem
-              key={item.id}
-              icon={item.icon}
-              label={item.label}
-              active={!!item.active}
-              badge={item.badge}
-              href={item.href}
-              compact
-              touchFriendly
-              onClick={() => {
-                item.onSelect?.();
-                onNavigate?.(item.href);
-              }}
-            />
-          ))}
-        </div>
-      ) : (
-      <div className="neu-scrollbar flex-1 min-h-0 overflow-auto mt-4 space-y-3">
-        {sections.map((section) => (
-          <section key={section.title} className="space-y-1">
-            {!collapsed ? (
-              <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ color: "var(--neu-text-muted)" }}>
-                {section.title}
-              </p>
-            ) : null}
-            <div className="space-y-0.5">
-              {section.items.map((item) => (
-                <NeuNavItem
+        <div className="mt-4 flex flex-1 min-h-0 flex-col pb-2">
+          <div
+            className="neu-scrollbar flex-1 overflow-y-auto rounded-2xl p-2 space-y-1"
+            style={{
+              background: "color-mix(in srgb, var(--neu-surface-base) 85%, var(--neu-surface-deep))",
+              boxShadow: "inset 0 2px 4px rgba(0,0,0,0.04), inset 0 0 0 1px var(--neu-stroke-soft)",
+            }}
+          >
+            {sections.flatMap((section) => section.items).map((item) => {
+              const Icon = item.icon;
+              const active = !!item.active;
+              return (
+                <button
                   key={item.id}
-                  icon={item.icon}
-                  label={collapsed ? "" : item.label}
-                  active={!!item.active}
-                  badge={!collapsed ? item.badge : undefined}
-                  href={item.href}
-                  compact
-                  touchFriendly={false}
+                  type="button"
                   onClick={() => {
                     item.onSelect?.();
                     onNavigate?.(item.href);
                   }}
-                />
-              ))}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-all duration-200 w-full text-left",
+                    active
+                      ? "text-[var(--neu-accent)] font-bold"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  style={active ? {
+                    boxShadow: "var(--neu-shadow-pill)",
+                    background: "var(--neu-surface-base)",
+                  } : undefined}
+                >
+                  {Icon ? (
+                    <span className={cn(
+                      "inline-flex items-center justify-center size-7 rounded-lg transition-transform duration-200",
+                      active ? "scale-110" : "",
+                    )}>
+                      <Icon className="size-4.5" />
+                    </span>
+                  ) : null}
+                  <span className="text-sm font-semibold">{item.label}</span>
+                  {item.badge ? <span className="ml-auto">{item.badge}</span> : null}
+                  {active ? (
+                    <span
+                      className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--neu-accent)] animate-pulse"
+                      style={{ boxShadow: "0 0 6px var(--neu-accent)" }}
+                    />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+      <div className="neu-scrollbar flex-1 min-h-0 overflow-auto mt-4 space-y-4 px-1">
+        {sections.map((section) => (
+          <section key={section.title} className="space-y-1.5">
+            {!collapsed ? (
+              <p className="px-3 text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: "var(--neu-text-muted)" }}>
+                {section.title}
+              </p>
+            ) : null}
+            <div
+              className="rounded-2xl p-1.5 space-y-0.5"
+              style={{
+                background: "color-mix(in srgb, var(--neu-surface-base) 85%, var(--neu-surface-deep))",
+                boxShadow: "inset 0 2px 4px rgba(0,0,0,0.04), inset 0 0 0 1px var(--neu-stroke-soft)",
+              }}
+            >
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const active = !!item.active;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      item.onSelect?.();
+                      onNavigate?.(item.href);
+                    }}
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl px-3 py-2 transition-all duration-200 w-full text-left",
+                      active
+                        ? "text-[var(--neu-accent)] font-bold"
+                        : "text-muted-foreground hover:text-foreground",
+                      collapsed && "justify-center px-2",
+                    )}
+                    style={active ? {
+                      boxShadow: "var(--neu-shadow-pill)",
+                      background: "var(--neu-surface-base)",
+                    } : undefined}
+                  >
+                    {Icon ? (
+                      <span className={cn(
+                        "inline-flex items-center justify-center size-7 rounded-lg transition-transform duration-200",
+                        active ? "scale-110" : "",
+                      )}>
+                        <Icon className="size-4.5" />
+                      </span>
+                    ) : null}
+                    {!collapsed ? (
+                      <span className="text-sm font-semibold">{item.label}</span>
+                    ) : null}
+                    {!collapsed && item.badge ? <span className="ml-auto">{item.badge}</span> : null}
+                    {!collapsed && active ? (
+                      <span
+                        className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--neu-accent)] animate-pulse"
+                        style={{ boxShadow: "0 0 6px var(--neu-accent)" }}
+                      />
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
           </section>
         ))}
@@ -318,6 +387,7 @@ export function NeuMarketStrip({
 export function NeuMobileDock({
   items,
   activePath,
+  menuActive = false,
   onMore,
   onNavigate,
 }: {
@@ -331,6 +401,7 @@ export function NeuMobileDock({
     onSelect?: () => void;
   }>;
   activePath?: string;
+  menuActive?: boolean;
   onMore?: () => void;
   onNavigate?: (href?: string) => void;
 }) {
@@ -338,26 +409,41 @@ export function NeuMobileDock({
     <div
       className="flex items-center justify-around px-3 py-2.5"
       style={{
-        background: "var(--background)",
-        boxShadow: "0 -6px 20px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.7)",
+        background: "var(--neu-surface-base)",
+        boxShadow: "0 -6px 20px rgba(0,0,0,0.06), inset 0 1px 0 var(--neu-stroke-soft)",
         paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)",
       }}
     >
-      {/* More/Menu button first — always depth */}
+      {/* More/Menu button — arise when active, depth otherwise */}
       <button
         type="button"
         onClick={onMore}
-        className="relative inline-flex items-center justify-center size-11 rounded-xl text-muted-foreground hover:text-foreground transition-all duration-200"
-        style={{
-          boxShadow: "inset 3px 3px 6px rgba(0,0,0,0.1), inset -3px -3px 6px rgba(255,255,255,0.7)",
+        className={cn(
+          "relative inline-flex items-center justify-center size-11 rounded-xl transition-all duration-200",
+          menuActive
+            ? "text-[var(--neu-accent)] font-bold scale-105"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        style={menuActive ? {
+          boxShadow: "var(--neu-shadow-pill)",
+          background: "var(--neu-surface-base)",
+        } : {
+          boxShadow: "var(--neu-shadow-inset)",
+          background: "var(--neu-surface-deep)",
         }}
       >
-        <Menu className="size-5" />
+        <Menu className={cn("size-5 transition-transform duration-200", menuActive ? "scale-110" : "")} />
+        {menuActive ? (
+          <span
+            className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--neu-accent)] animate-pulse"
+            style={{ boxShadow: "0 0 6px var(--neu-accent)" }}
+          />
+        ) : null}
       </button>
 
       {/* Nav items — active=arise, inactive=depth */}
       {items.slice(0, 4).map((item) => {
-        const active = item.active || item.href === activePath;
+        const active = item.active || (item.href && item.href === activePath);
         return (
           <button
             key={item.id}
@@ -371,20 +457,32 @@ export function NeuMobileDock({
             className={cn(
               "relative inline-flex items-center justify-center size-11 rounded-xl transition-all duration-200",
               active
-                ? "text-primary"
+                ? "text-[var(--neu-accent)] font-bold scale-105"
                 : "text-muted-foreground hover:text-foreground",
             )}
             style={active ? {
-              boxShadow: "5px 5px 10px rgba(0,0,0,0.12), -5px -5px 10px rgba(255,255,255,0.9)",
-              background: "var(--background)",
+              boxShadow: "var(--neu-shadow-pill)",
+              background: "var(--neu-surface-base)",
             } : {
-              boxShadow: "inset 3px 3px 6px rgba(0,0,0,0.1), inset -3px -3px 6px rgba(255,255,255,0.7)",
+              boxShadow: "var(--neu-shadow-inset)",
+              background: "var(--neu-surface-deep)",
             }}
           >
-            <span className="inline-flex items-center justify-center">
+            <span className={cn(
+              "inline-flex items-center justify-center transition-transform duration-200",
+              active ? "scale-110" : ""
+            )}>
               {item.icon}
             </span>
             {item.badge ? <span className="absolute right-0.5 top-0.5">{item.badge}</span> : null}
+            {active ? (
+              <span
+                className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--neu-accent)] animate-pulse"
+                style={{
+                  boxShadow: "0 0 6px var(--neu-accent)",
+                }}
+              />
+            ) : null}
           </button>
         );
       })}
@@ -427,7 +525,7 @@ export function NeuCommandPalette({
   return (
     <div className="neu-command-overlay fixed inset-0 z-50 flex items-start justify-center px-3 py-8" onClick={() => onOpenChange(false)}>
       <div className="w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
-        <NeuSurface depth="raised" radius="lg" padding="md" className="space-y-4 shadow-[var(--neu-shadow-float)]">
+        <NeuSurface depth="raised" radius="lg" padding="md" className="space-y-4 shadow-[var(--neu-shadow-float)]" style={{ animation: "neu-scale-in 250ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
           <div className="flex items-center gap-3">
             <div className="inline-flex size-11 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-accent shadow-[var(--neu-shadow-pill)]">
               <Command className="size-5" />
@@ -505,10 +603,8 @@ export function NeuCommandPalette({
 
 export function NeuAppearanceStudio({
   theme,
-  palette,
   contrast,
   onThemeChange,
-  onPaletteChange,
   onContrastChange,
   compact = false,
 }: {

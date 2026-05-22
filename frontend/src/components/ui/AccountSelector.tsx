@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useRef, useState } from "react";
 import type { DashboardCard } from "@/api/client";
 import { cn } from "@/lib/utils";
