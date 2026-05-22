@@ -213,9 +213,9 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
   return (
     <div className="page-shell space-y-5 pb-8">
       <PageHeader
-        eyebrow="Research pipeline"
-        title={runDetails?.ticker ? `Analysis: ${runDetails.ticker} Pipeline` : "Analysis Pipeline Run"}
-        description="Monitor live agent output, track reconnect state, and review the final decision package from a single run console."
+        eyebrow="Analysis"
+        title={runDetails?.ticker ? `${runDetails.ticker} Pipeline` : "Analysis Run"}
+        description=""
         stats={[
           {
             label: "Feed",

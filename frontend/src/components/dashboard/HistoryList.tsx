@@ -338,9 +338,9 @@ export function HistoryList() {
   return (
     <div className="space-y-5 pb-8">
       <PageHeader
-        eyebrow="Research archive"
+        eyebrow="History"
         title="Analysis History"
-        description="Browse prior runs, review trade-card confidence, and pivot across filtered reasoning records from one denser archive surface."
+        description=""
         stats={[
           { label: "Total Runs", value: String(allItems.length), tone: "neutral" },
           { label: "Completed", value: String(completedCount), tone: "success" },

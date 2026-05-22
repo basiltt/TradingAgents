@@ -125,9 +125,9 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   return (
     <div className="space-y-5 pb-8">
       <PageHeader
-        eyebrow="Cycle detail"
+        eyebrow="Cycles"
         title={`Cycle #${cycle.id}`}
-        description="Review trade routing, execution health, and configuration metadata for this automation batch without leaving the cycle workspace."
+        description=""
         actions={
           <div className="flex flex-wrap gap-2">
             <Link to="/cycles">
@@ -154,7 +154,6 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={STATUS_VARIANT[cycle.status] ?? "outline"}>{cycle.status.replace("_", " ")}</Badge>
           {cycle.stop_reason ? <Badge variant="outline">Stop reason recorded</Badge> : null}
-          <Badge variant="outline">Auto-refresh while active</Badge>
         </div>
       </PageHeader>
 
@@ -219,10 +218,6 @@ export function CycleDetailPage({ cycleId }: { cycleId: string }) {
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">
                   Trade-level submission status, side, quantity, entry price, and broker errors.
                 </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="outline">Responsive table</Badge>
-                <Badge variant="outline">Broker error visibility</Badge>
               </div>
             </div>
 

@@ -165,9 +165,9 @@ export function StrategiesPage() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="Strategy library"
-        title="Reusable trading strategy system"
-        description="Create, duplicate, import, and tune strategy templates from a responsive library that stays consistent across desktop dashboards and touch devices."
+        eyebrow="Strategies"
+        title="Strategies"
+        description=""
         actions={
           <div className="flex flex-wrap gap-2">
             <input
@@ -199,8 +199,6 @@ export function StrategiesPage() {
         ]}
       >
         <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">JSON import and export</Badge>
-          <Badge variant="outline">Reusable execution templates</Badge>
           <Badge variant="outline">{counts.categories} category groups</Badge>
         </div>
       </PageHeader>

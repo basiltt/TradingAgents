@@ -33,9 +33,9 @@ export function ConfigPage() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="System Settings"
-        title="Configuration command center"
-        description="Inspect live runtime values, validate deployment overrides, and tune the premium interface from a single operational surface."
+        eyebrow="Settings"
+        title="Configuration"
+        description=""
         stats={[
           {
             label: "Resolved values",
@@ -112,7 +112,7 @@ export function ConfigPage() {
                   <div className="surface-lift rounded-[calc(var(--radius)*1.2)] p-4">
                     <p className="section-eyebrow">Operational mode</p>
                     <p className="mt-2 leading-6">
-                      TradingAgents can operate in a read-only market intelligence mode without private exchange secrets.
+                      Read-only market intelligence mode available without exchange secrets.
                     </p>
                   </div>
 
@@ -127,7 +127,7 @@ export function ConfigPage() {
                   <div className="rounded-[calc(var(--radius)*1.2)] border border-success/18 bg-success/8 p-4">
                     <p className="text-sm font-semibold text-foreground">Best practice</p>
                     <p className="mt-2 leading-6">
-                      Inject private credentials only when portfolio access, position management, or live order routing is enabled.
+                      Only inject credentials when live trading is enabled.
                     </p>
                   </div>
                 </CardContent>
@@ -142,7 +142,7 @@ export function ConfigPage() {
                     <div>
                       <CardTitle>Runtime posture</CardTitle>
                       <CardDescription>
-                        Quick visibility into the current configuration surface.
+                        Current configuration overview.
                       </CardDescription>
                     </div>
                   </div>

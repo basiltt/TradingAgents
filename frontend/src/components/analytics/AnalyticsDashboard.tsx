@@ -180,9 +180,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
     <div className="space-y-5 pb-8">
       {!embedded && (
         <PageHeader
-          eyebrow="Portfolio intelligence"
-          title="Performance Analytics"
-          description="Track equity, drawdown, realized PnL, and snapshot history from a denser analytics console built for cross-account monitoring."
+          eyebrow="Analytics"
+          title="Performance"
+          description=""
           stats={[
             {
               label: "Scope",
@@ -319,9 +319,6 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
               <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-foreground">
                 {latestSnapshot ? `$${latestSnapshot.equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
               </p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Current snapshot equity for the active analytics scope.
-              </p>
             </div>
             <div className="rounded-[calc(var(--radius)*1.2)] border border-border/60 bg-card/58 p-3.5 shadow-[var(--shadow-soft)]">
               <p className="section-eyebrow">Realized PnL</p>
@@ -330,19 +327,13 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
                   ? `${latestSnapshot.realised_pnl < 0 ? "-" : "+"}$${Math.abs(latestSnapshot.realised_pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   : "—"}
               </p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Locked performance after trade closure for the selected window.
-              </p>
             </div>
             <div className="rounded-[calc(var(--radius)*1.2)] border border-border/60 bg-card/58 p-3.5 shadow-[var(--shadow-soft)]">
               <p className="section-eyebrow">Capture cadence</p>
               <p className="mt-2 text-lg font-semibold tracking-[-0.04em] text-foreground">
                 {SUB_DAY_PERIODS.has(period) ? "Live pulse" : "Manual snapshots"}
               </p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                {SUB_DAY_PERIODS.has(period)
-                  ? "Intraday windows refresh automatically so the desk stays current."
-                  : "Use manual captures to add strategic checkpoints over longer horizons."}
+            </div>
               </p>
             </div>
           </CardContent>

@@ -451,9 +451,9 @@ export function ConfigForm() {
   return (
     <div className="page-shell space-y-6 animate-fade-in-up pb-8">
       <PageHeader
-        eyebrow="Research launchpad"
-        title="New Analysis Run"
-        description="Configure asset scope, analyst composition, and execution models from a denser multi-step builder tuned for both laptops and touch devices."
+        eyebrow="Analysis"
+        title="New Analysis"
+        description=""
         stats={[
           {
             label: "Asset Class",

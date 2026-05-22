@@ -25,19 +25,14 @@ export function MemoryPage() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="Agent Memory"
-        title="Historical decisions, confidence records, and long-term reasoning context."
-        description="Use the redesigned memory log to review what the agents decided, how confident they were, and whether each record resolved cleanly."
+        eyebrow="Memory"
+        title="Agent Memory"
+        description=""
         stats={[
           { label: "Loaded page", value: String(page), tone: "accent" },
           { label: "Records", value: String(data?.total ?? 0), tone: "neutral" },
         ]}
       >
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">Paginated browsing</Badge>
-          <Badge variant="outline">Readable decision cards</Badge>
-          <Badge variant="outline">Mobile-first spacing</Badge>
-        </div>
       </PageHeader>
 
       {isLoading ? (

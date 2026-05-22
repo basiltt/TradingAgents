@@ -552,9 +552,9 @@ export function ScannerPage() {
   return (
     <div className="page-shell space-y-5 py-3">
       <PageHeader
-        eyebrow="Scanner desk"
+        eyebrow="Scanner"
         title="Market Scanner"
-        description="Sweep the Bybit USDT perpetual universe, review signal strength, and route the strongest setups from a denser scanner workstation."
+        description=""
         stats={[
           {
             label: "Mode",
@@ -600,13 +600,6 @@ export function ScannerPage() {
         }
       >
         <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">{provider} provider</Badge>
-          <Badge variant="outline">{maxParallel} max parallel</Badge>
-          {taPrefilterEnabled ? (
-            <Badge variant="outline">TA prefilter {taPrefilterThreshold}</Badge>
-          ) : (
-            <Badge variant="outline">Prefilter off</Badge>
-          )}
           <ConnBadge status={conn.status} latency={conn.latency} error={conn.errorMsg} />
         </div>
       </PageHeader>
@@ -643,7 +636,7 @@ export function ScannerPage() {
                 </svg>
               )}
               title="Scan configuration"
-              description="Core market sweep inputs, workflow routing, and analyst team composition"
+              description=""
             />
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
@@ -653,7 +646,6 @@ export function ScannerPage() {
                     <div className="space-y-2">
                       <Label className={SCANNER_LABEL_CLASS}>Analysis date</Label>
                       <Input type="date" value={analysisDate} max={getToday()} onChange={(e) => setAnalysisDate(e.target.value)} className="h-11 text-sm" />
-                      <p className={SCANNER_HINT_CLASS}>Historical market date for replay analysis.</p>
                     </div>
                     <div className="space-y-2">
                       <Label className={SCANNER_LABEL_CLASS}>Kline interval</Label>
@@ -667,7 +659,6 @@ export function ScannerPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className={SCANNER_HINT_CLASS}>Candlestick interval used by technical signals.</p>
                     </div>
                     <div className="space-y-2">
                       <Label className={SCANNER_LABEL_CLASS}>LLM provider</Label>
@@ -681,7 +672,6 @@ export function ScannerPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className={SCANNER_HINT_CLASS}>Provider for scanner orchestration and debate agents.</p>
                     </div>
                   </div>
                 </div>
@@ -711,11 +701,6 @@ export function ScannerPage() {
                         </button>
                       ))}
                     </div>
-                    <p className={SCANNER_HINT_CLASS}>
-                      {workflowMode === "quick_trade"
-                        ? "Shorter path from analyst consensus to trade card routing."
-                        : "Full research, risk, and portfolio debate pipeline."}
-                    </p>
                   </div>
 
                   <div className="mt-4 space-y-3">
@@ -723,7 +708,7 @@ export function ScannerPage() {
                       checked={taPrefilterEnabled}
                       onChange={setTaPrefilterEnabled}
                       title="Smart pre-screen"
-                      description="Run TA filtering before LLM debates so bulk scans skip low-conviction assets and reduce token spend."
+                      description="Filter low-conviction assets before LLM debate."
                     />
 
                     {taPrefilterEnabled ? (
@@ -749,7 +734,6 @@ export function ScannerPage() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <div className="section-eyebrow text-[0.62rem] tracking-[0.22em]">Analyst team</div>
-                    <div className="mt-1 text-sm font-semibold text-foreground">Select the specialists that participate in the scan.</div>
                   </div>
                   <Badge variant="secondary" className="px-3 py-1 text-[10px] tracking-[0.16em]">
                     {analysts.length}/{CRYPTO_ANALYSTS.length}
@@ -854,13 +838,11 @@ export function ScannerPage() {
                         <div className="space-y-2">
                           <Label className={SCANNER_LABEL_CLASS}>Max debate rounds</Label>
                           <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} className="h-10" />
-                          <p className={SCANNER_HINT_CLASS}>Bull versus bear debate iterations.</p>
-                        </div>
+                            </div>
                         {workflowMode !== "quick_trade" ? (
                           <div className="space-y-2">
                             <Label className={SCANNER_LABEL_CLASS}>Max risk rounds</Label>
                             <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} className="h-10" />
-                            <p className={SCANNER_HINT_CLASS}>Risk team discussion cycles.</p>
                           </div>
                         ) : null}
                       </div>
@@ -871,12 +853,10 @@ export function ScannerPage() {
                         <div className="space-y-2">
                           <Label className={SCANNER_LABEL_CLASS}>Max recursion limit</Label>
                           <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} className="h-10" />
-                          <p className={SCANNER_HINT_CLASS}>Upper bound on LangGraph execution steps.</p>
                         </div>
                         <div className="space-y-2">
                           <Label className={SCANNER_LABEL_CLASS}>Max parallel analyses</Label>
                           <Input type="number" min={1} max={15} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(15, Math.max(1, Number(e.target.value))))} className="h-10" />
-                          <p className={SCANNER_HINT_CLASS}>Concurrent symbol analyses from 1 to 15.</p>
                         </div>
                       </div>
                     </div>
@@ -885,7 +865,7 @@ export function ScannerPage() {
                       checked={checkpointEnabled}
                       onChange={setCheckpointEnabled}
                       title="Enable checkpoints"
-                      description="Persist progress after each major step so interrupted scans can resume instead of restarting."
+                      description="Resume interrupted scans instead of restarting."
                       accent="warning"
                     />
                   </div>
@@ -913,7 +893,7 @@ export function ScannerPage() {
                 </span>
                 <div>
                   <div className="text-sm font-semibold tracking-[-0.03em] text-foreground">LLM and proxy settings</div>
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Endpoint routing, API credentials, model selection, and throttle controls</div>
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">API credentials, model selection, and throttle controls</div>
                 </div>
               </div>
             </button>

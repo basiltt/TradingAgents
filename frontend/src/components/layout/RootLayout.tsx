@@ -6,14 +6,12 @@ import {
   Menu,
   Radar,
   Search,
-
 } from "lucide-react";
 import {
   NeuAppShell,
   NeuButton,
   NeuDrawer,
   NeuSidebar,
-  NeuStatusPill,
   NeuSurface,
   NeuTopbar,
   setCommandPaletteOpen,
@@ -78,7 +76,7 @@ export function RootLayout() {
     <NeuSidebar
       sections={sections}
       collapsed={sidebarCollapsed}
-      headerSlot={<NeuStatusPill label="live" tone="success" animated />}
+      headerSlot={null}
       footer={null}
     />
   );
@@ -87,8 +85,8 @@ export function RootLayout() {
     <NeuDrawer
       open={mobileNavOpen}
       onOpenChange={(open) => dispatch(setMobileNavOpen(open))}
-      title="Workspace navigation"
-      description="Move through research, portfolio, and system workflows from the mobile shell."
+      title="Navigation"
+      description=""
       side="left"
       size="sm"
       showHandle={false}
@@ -97,7 +95,7 @@ export function RootLayout() {
         <NeuSidebar
           sections={sections}
           mode="mobile-sheet"
-          headerSlot={<NeuStatusPill label="touch ready" tone="accent" />}
+          headerSlot={null}
         />
       </div>
     </NeuDrawer>
@@ -108,8 +106,8 @@ export function RootLayout() {
       <NeuTopbar
         section={currentSection}
         title={currentItem.label}
-        description={currentItem.description}
-        statusPill={<NeuStatusPill label="runtime live" tone="success" animated />}
+        description=""
+        statusPill={null}
         actions={
           <>
             <NeuButton
@@ -128,15 +126,15 @@ export function RootLayout() {
               onClick={() => dispatch(setSidebarCollapsed(!sidebarCollapsed))}
             >
               {sidebarCollapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-              {sidebarCollapsed ? "Expand nav" : "Collapse nav"}
+              {sidebarCollapsed ? "Expand" : "Collapse"}
             </NeuButton>
             <NeuButton
-              variant="soft-tonal"
+              variant="secondary"
               size="sm"
               onClick={() => dispatch(setCommandPaletteOpen(true))}
             >
               <Search className="size-4" />
-              Command menu
+              <span className="hidden sm:inline">Search</span>
             </NeuButton>
           </>
         }

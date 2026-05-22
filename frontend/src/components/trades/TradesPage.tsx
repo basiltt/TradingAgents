@@ -198,9 +198,9 @@ export default function TradesPage() {
         {!wsConnected ? <WsDisconnectBanner lastUpdated={lastUpdated} /> : null}
 
         <PageHeader
-          eyebrow="Execution workspace"
-          title="Trades and position control"
-          description="Monitor live positions, review archived fills, and trigger close actions from a single responsive trade desk tuned for touch and wide-screen workflows."
+          eyebrow="Trades"
+          title="Trades"
+          description=""
           stats={[
             {
               label: "Open positions",
@@ -225,9 +225,7 @@ export default function TradesPage() {
           ]}
         >
           <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">Touch-friendly filters</Badge>
-            <Badge variant="outline">Real-time execution surface</Badge>
-            <Badge variant="outline">History and live book tabs</Badge>
+            <Badge variant="outline">{activeTab === "active" ? "Live book" : "History"}</Badge>
           </div>
         </PageHeader>
 
@@ -240,16 +238,7 @@ export default function TradesPage() {
           <Card className="overflow-visible">
             <CardContent className="space-y-5 p-4 sm:p-5">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                <div className="space-y-2">
-                  <p className="section-eyebrow">Trade explorer</p>
-                  <h2 className="text-xl font-semibold tracking-tight">
-                    Switch between active execution and archived fills.
-                  </h2>
-                  <p className="max-w-3xl text-sm text-muted-foreground">
-                    Filters, close actions, and bulk selection stay accessible across mobile,
-                    laptop, and ultra-wide layouts.
-                  </p>
-                </div>
+                <h2 className="text-lg font-semibold">Positions</h2>
 
                 <div className="flex flex-wrap items-center gap-3">
                   <span

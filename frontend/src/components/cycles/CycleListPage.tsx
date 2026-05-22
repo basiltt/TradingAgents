@@ -89,9 +89,9 @@ export function CycleListPage() {
     return (
       <div className="space-y-5 pb-7">
         <PageHeader
-          eyebrow="Automation cycles"
-          title="Cycle orchestration dashboard"
-          description="Trading cycles could not be loaded. Retry the surface without leaving the automation workspace."
+          eyebrow="Cycles"
+          title="Cycles"
+          description=""
           actions={
             <Button variant="outline" onClick={() => refetch()}>
               <RefreshCcw className="size-4" />
@@ -106,9 +106,9 @@ export function CycleListPage() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="Automation cycles"
-        title="Cycle orchestration dashboard"
-        description="Monitor automated trade batches, review execution states, and jump into the originating scan workflow from a responsive control surface."
+        eyebrow="Cycles"
+        title="Cycles"
+        description=""
         actions={
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => refetch()}>
@@ -131,11 +131,6 @@ export function CycleListPage() {
           { label: "Failed", value: String(failedCount), tone: failedCount ? "danger" : "neutral" },
         ]}
       >
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">Auto-refresh for active cycles</Badge>
-          <Badge variant="outline">Responsive card/table switch</Badge>
-          <Badge variant="outline">Execution drilldowns ready</Badge>
-        </div>
       </PageHeader>
 
       {items.length === 0 ? (

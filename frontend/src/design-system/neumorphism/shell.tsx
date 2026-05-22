@@ -124,9 +124,6 @@ export function NeuSidebar({
         {!collapsed ? (
           <div>
             <p className="text-base font-semibold tracking-[-0.03em]">TradingAgents</p>
-            <p className="text-xs uppercase tracking-[0.18em]" style={{ color: "var(--neu-text-muted)" }}>
-              Adaptive workspace
-            </p>
           </div>
         ) : null}
         {!collapsed ? <div className="ml-auto">{headerSlot}</div> : null}
@@ -426,59 +423,17 @@ export function NeuAppearanceStudio({
 }) {
   return (
     <NeuSurface depth="raised" radius="lg" padding={compact ? "sm" : "md"} className="space-y-4">
-      <div className="flex items-start gap-3">
-        <div className="inline-flex size-11 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-accent shadow-[var(--neu-shadow-pill)]">
-          <SwatchBook className="size-5" />
-        </div>
-        <div>
-          <p className="text-base font-semibold tracking-[-0.02em]">Appearance studio</p>
-          {!compact ? (
-            <p className="text-sm leading-6" style={{ color: "var(--neu-text-muted)" }}>
-              Switch between the Ivory and Graphite material fields, then tune accents without breaking the single-material illusion.
-            </p>
-          ) : null}
-        </div>
-      </div>
+      <p className="text-base font-semibold tracking-[-0.02em]">Appearance</p>
 
       <NeuToggleGroup
         label="Surface mode"
         value={theme}
         onChange={(value) => onThemeChange(value as NeuSurfaceMode)}
         options={[
-          { value: "ivory", label: "Ivory", icon: <SunMedium className="size-4" /> },
-          { value: "graphite", label: "Graphite", icon: <MoonStar className="size-4" /> },
+          { value: "ivory", label: "Light", icon: <SunMedium className="size-4" /> },
+          { value: "graphite", label: "Dark", icon: <MoonStar className="size-4" /> },
         ]}
       />
-
-      <div className="space-y-2">
-        <p className="text-sm font-semibold tracking-[-0.01em]">Accent palette</p>
-        <div className={cn("grid gap-3", compact ? "grid-cols-4" : "grid-cols-2 lg:grid-cols-4")}>
-          {neuAccentPalettes.map((accent) => {
-            const active = palette === accent;
-            return (
-              <button
-                key={accent}
-                type="button"
-                onClick={() => onPaletteChange(accent)}
-                className={cn(
-                  "neu-surface-base overflow-hidden rounded-[var(--neu-radius-md)] p-1 text-left transition",
-                  active ? "neu-surface-accent shadow-[var(--neu-shadow-float)]" : "neu-surface-raised neu-interactive",
-                )}
-              >
-                <div className="h-18 rounded-[var(--neu-radius-sm)]" style={{ background: getNeuAccentPreview(theme, accent) }} />
-                {!compact ? (
-                  <div className="p-2.5">
-                    <p className="text-sm font-semibold">{neuAccentDefinitions[accent].label}</p>
-                    <p className="mt-1 text-xs leading-5" style={{ color: "var(--neu-text-muted)" }}>
-                      {neuAccentDefinitions[accent].description}
-                    </p>
-                  </div>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       <NeuToggleGroup
         label="Contrast"

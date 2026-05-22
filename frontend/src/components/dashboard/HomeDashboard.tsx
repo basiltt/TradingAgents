@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import {
   Activity,
   ArrowRight,
-  ChartColumnBig,
   Radar,
   Sparkles,
   Wallet,
@@ -17,99 +16,90 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 
-const featureCards = [
+const quickActions = [
   {
     title: "Research Pipelines",
-    description:
-      "Spin up stock or crypto workflows with faster setup, cleaner defaults, and better model control.",
+    description: "Launch stock or crypto analysis workflows with AI agents.",
     icon: Sparkles,
     to: "/analysis/new",
-    action: "Launch research",
-    tone: "accent",
+    action: "Launch",
   },
   {
     title: "Market Scanner",
-    description:
-      "Batch-scan crypto markets, monitor live sweeps, and drill into signal snapshots without context switching.",
+    description: "Batch-scan markets and drill into signal snapshots.",
     icon: Radar,
     to: "/scanner",
-    action: "Open scanner",
-    tone: "success",
+    action: "Scan",
   },
   {
-    title: "Portfolio Control",
-    description:
-      "Track balances, positions, trades, and automation from one high-density responsive control surface.",
+    title: "Portfolio",
+    description: "Track balances, positions, and automation rules.",
     icon: Wallet,
     to: "/accounts",
-    action: "Review accounts",
-    tone: "warning",
+    action: "View",
   },
 ];
-
-const capabilityPills: string[] = [];
 
 export function HomeDashboard() {
   const activeRuns = useAppSelector((s) => s.analysis.activeRuns);
   const entries = Object.entries(activeRuns);
   const runningCount = entries.filter(([, run]) => run.status === "running").length;
-  const completedCount = entries.filter(([, run]) => run.status === "completed").length;
-  const failedCount = entries.filter(([, run]) => run.status === "failed").length;
-
-  const readiness = runningCount > 0 ? "Engaged" : "Ready";
 
   return (
-    <div className="page-shell space-y-6 pb-8 route-stage">
-      <PageHeader
-        eyebrow="Dashboard"
-        title="Trading workspace"
-        description=""
-        className=""
-        actions={
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Link to="/analysis/new" className="min-w-[11rem]">
-              <Button size="lg" className="min-w-[11rem] w-full">
-                Launch analysis
-                <ArrowRight className="size-4" />
+    <div className="page-shell space-y-8 pb-8 route-stage">
+      {/* Hero section */}
+      <section className="rounded-[calc(var(--radius)*2)] p-6 sm:p-8 shadow-[var(--shadow-card)]">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Trading Workspace
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {runningCount > 0
+                ? `${runningCount} analysis running`
+                : "Ready to launch"}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Link to="/analysis/new">
+              <Button size="lg">
+                New Analysis
+                <ArrowRight className="ml-2 size-4" />
               </Button>
             </Link>
-            <Link to="/scanner" className="min-w-[11rem]">
-              <Button variant="outline" size="lg" className="min-w-[11rem] w-full">
-                Open scanner
+            <Link to="/scanner">
+              <Button variant="outline" size="lg">
+                Scanner
               </Button>
             </Link>
           </div>
-        }
-        stats={[
-          { label: "Running", value: String(runningCount), tone: "accent" },
-          { label: "Completed", value: String(completedCount), tone: "success" },
-          { label: "Failed", value: String(failedCount), tone: "danger" },
-          { label: "Status", value: readiness, tone: runningCount > 0 ? "warning" : "neutral" },
-        ]}
-      />
+        </div>
+      </section>
 
-      <section className="grid gap-4 sm:grid-cols-3">
-        {featureCards.map((card) => {
+      {/* Quick actions grid */}
+      <section className="grid gap-5 sm:grid-cols-3">
+        {quickActions.map((card) => {
           const Icon = card.icon;
           return (
-            <Link key={card.title} to={card.to} className="block">
-              <Card className="h-full rounded-[calc(var(--radius)*1.45)] transition hover:-translate-y-1 hover:shadow-[var(--shadow-card-hover)]">
-                <CardHeader className="space-y-3">
-                  <div className="inline-flex size-11 items-center justify-center rounded-[calc(var(--radius)*1.2)] bg-primary/10 text-primary shadow-[var(--shadow-inset)]">
-                    <Icon className="size-5" />
+            <Link key={card.title} to={card.to} className="block group">
+              <Card className="h-full rounded-[calc(var(--radius)*1.4)] transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[var(--shadow-card-hover)]">
+                <CardHeader className="space-y-4 pb-3">
+                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.1)] shadow-[var(--shadow-inset)]">
+                    <Icon className="size-4.5 text-muted-foreground" />
                   </div>
-                  <div className="space-y-1.5">
-                    <CardTitle className="text-[1.05rem]">{card.title}</CardTitle>
-                    <CardDescription className="text-sm leading-6">{card.description}</CardDescription>
+                  <div className="space-y-1">
+                    <CardTitle className="text-base">{card.title}</CardTitle>
+                    <CardDescription className="text-sm leading-relaxed">
+                      {card.description}
+                    </CardDescription>
                   </div>
                 </CardHeader>
-                <CardContent>
-                  <span className="inline-flex items-center gap-2 text-sm font-semibold text-primary">
+                <CardContent className="pt-0">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
                     {card.action}
-                    <ArrowRight className="size-4" />
+                    <ArrowRight className="size-3.5" />
                   </span>
                 </CardContent>
               </Card>
@@ -118,41 +108,36 @@ export function HomeDashboard() {
         })}
       </section>
 
+      {/* Active runs or empty state */}
       {entries.length > 0 ? (
         <section className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="section-eyebrow">Live activity</p>
-              <h2 className="text-xl font-semibold tracking-[-0.04em]">Active analysis queue</h2>
-            </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Active Runs</h2>
             <Link to="/history">
               <Button variant="ghost" size="sm">
-                View full history
+                History
               </Button>
             </Link>
           </div>
-          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {entries.map(([runId, run]) => (
-              <Link key={runId} to="/analysis/$runId" params={{ runId }} className="block">
-                <Card className="h-full rounded-[calc(var(--radius)*1.45)] transition hover:-translate-y-1">
-                  <CardHeader className="gap-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="section-eyebrow">Pipeline run</p>
-                        <CardTitle className="mt-2 font-mono text-xl tracking-[0.08em]">{run.ticker}</CardTitle>
-                      </div>
-                      <Badge variant={run.status === "running" ? "default" : "secondary"}>{run.status}</Badge>
-                    </div>
-                    <div className="flex items-center gap-2 rounded-[calc(var(--radius)*1.05)] p-2.5 text-[0.82rem] text-muted-foreground shadow-[var(--shadow-inset)]">
-                      <Activity className="size-4 text-primary" />
-                      <span className="truncate">
-                        {run.currentAgent ? `${run.currentAgent} is currently active` : "Waiting for orchestration"}
-                      </span>
+              <Link key={runId} to="/analysis/$runId" params={{ runId }} className="block group">
+                <Card className="h-full rounded-[calc(var(--radius)*1.4)] transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[var(--shadow-card-hover)]">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="font-mono text-lg">{run.ticker}</CardTitle>
+                      <Badge variant={run.status === "running" ? "default" : "secondary"}>
+                        {run.status}
+                      </Badge>
                     </div>
                   </CardHeader>
-                  <CardContent className="grid gap-3 sm:grid-cols-2">
-                    <SummaryStat icon={ChartColumnBig} label="Status" value={run.status} />
-                    <SummaryStat icon={Radar} label="Agent" value={run.currentAgent ?? "Pending"} />
+                  <CardContent>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Activity className="size-3.5" />
+                      <span className="truncate">
+                        {run.currentAgent ? `${run.currentAgent} active` : "Waiting"}
+                      </span>
+                    </div>
                   </CardContent>
                 </Card>
               </Link>
@@ -160,49 +145,28 @@ export function HomeDashboard() {
           </div>
         </section>
       ) : (
-        <Card className="overflow-hidden rounded-[calc(var(--radius)*1.55)]">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center md:p-6">
-            <div className="flex size-14 items-center justify-center rounded-[calc(var(--radius)*1.4)] bg-primary text-white shadow-[var(--shadow-soft)]">
-              <Sparkles className="size-6" />
+        <Card className="rounded-[calc(var(--radius)*1.6)]">
+          <CardContent className="flex flex-col items-center gap-4 p-8 text-center sm:flex-row sm:text-left sm:p-6">
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.3)] bg-primary text-white shadow-[var(--shadow-soft)]">
+              <Sparkles className="size-5" />
             </div>
-            <div className="space-y-2">
-              <p className="section-eyebrow">Ready state</p>
-              <h2 className="text-xl font-semibold tracking-[-0.04em]">No active runs yet</h2>
-              <p className="max-w-2xl text-sm leading-7 text-muted-foreground">
-                Launch a new analysis to stream agent reasoning, monitor execution, and land inside a calmer high-signal workspace.
+            <div className="flex-1 space-y-1">
+              <h2 className="text-lg font-semibold">No active runs</h2>
+              <p className="text-sm text-muted-foreground">
+                Launch an analysis to start streaming agent reasoning.
               </p>
             </div>
-            <div className="flex flex-wrap gap-3 md:justify-end">
+            <div className="flex gap-2">
               <Link to="/analysis/new">
-                <Button>Start analysis</Button>
+                <Button size="sm">Start analysis</Button>
               </Link>
               <Link to="/scanner">
-                <Button variant="outline">Explore scanner</Button>
+                <Button variant="outline" size="sm">Scanner</Button>
               </Link>
             </div>
           </CardContent>
         </Card>
       )}
-    </div>
-  );
-}
-
-function SummaryStat({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Activity;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-[calc(var(--radius)*1.2)] p-3 shadow-[var(--shadow-inset)]">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="size-4" />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.18em]">{label}</span>
-      </div>
-      <p className="mt-3 text-base font-semibold tracking-[-0.03em] text-foreground">{value}</p>
     </div>
   );
 }

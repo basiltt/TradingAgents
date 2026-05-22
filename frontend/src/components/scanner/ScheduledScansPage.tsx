@@ -404,9 +404,9 @@ export function ScheduledScansPage() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="Automation schedules"
-        title="Scheduled scan automation"
-        description="Create recurring scan jobs, resume paused routines, and keep execution visibility high across touch devices, laptops, and large trading displays."
+        eyebrow="Scanner"
+        title="Scheduled Scans"
+        description=""
         actions={
           <Button onClick={openCreate} className="shrink-0 gap-1.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -424,8 +424,6 @@ export function ScheduledScansPage() {
       >
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline">{cancelledCount} cancelled schedules</Badge>
-          <Badge variant="outline">Run-now control</Badge>
-          <Badge variant="outline">Create and edit dialogs</Badge>
         </div>
       </PageHeader>
 

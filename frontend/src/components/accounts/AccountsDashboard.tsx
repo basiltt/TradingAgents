@@ -144,9 +144,9 @@ export function AccountsDashboard() {
     return (
       <div className="space-y-5 pb-7">
         <PageHeader
-          eyebrow="Portfolio control"
-          title="Accounts command center"
-          description={error || "The account surface could not be loaded. Retry without leaving the portfolio workspace."}
+          eyebrow="Accounts"
+          title="Accounts"
+          description={error || ""}
           actions={
             <Button variant="outline" onClick={() => fetchDashboard()}>
               Retry
@@ -160,9 +160,9 @@ export function AccountsDashboard() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="Portfolio control"
-        title="Accounts command center"
-        description="Monitor every connected account, reset demo capital, and trigger protective actions from a responsive portfolio surface built for touch devices and large-screen oversight."
+        eyebrow="Accounts"
+        title="Accounts"
+        description=""
         actions={
           <div className="flex flex-wrap gap-2">
             {hasDemoAccounts ? (
@@ -223,22 +223,12 @@ export function AccountsDashboard() {
           <Badge variant="outline">{dashboard.length} linked accounts</Badge>
           <Badge variant="outline">{activeCount} active in scope</Badge>
           <Badge variant="outline">{allActiveCount} active feeds</Badge>
-          {hasDemoAccounts ? <Badge variant="outline">Demo reset enabled</Badge> : null}
         </div>
       </PageHeader>
 
       <Card>
-        <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <p className="section-eyebrow">Dashboard scope</p>
-            <h2 className="text-xl font-semibold tracking-tight">
-              Filter account cohorts without losing live context.
-            </h2>
-            <p className="max-w-3xl text-sm text-muted-foreground">
-              Switch between all, demo, and live account groups while preserving touch-friendly
-              actions and dense account telemetry.
-            </p>
-          </div>
+        <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <h2 className="text-base font-semibold">Filter</h2>
           <div className="flex flex-wrap gap-2">
             {(["all", "demo", "live"] as const).map((type) => (
               <Button

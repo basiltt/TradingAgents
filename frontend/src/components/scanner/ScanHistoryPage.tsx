@@ -155,9 +155,9 @@ export function ScanHistoryPage() {
   return (
     <div className="space-y-5 pb-7">
       <PageHeader
-        eyebrow="Research archive"
-        title="Scan history command center"
-        description="Browse completed and cancelled scans, delete stale artifacts, and reopen result sets from a responsive archive tuned for dense market research workflows."
+        eyebrow="Scanner"
+        title="Scan History"
+        description=""
         actions={
           <Link
             to="/scanner"
@@ -178,8 +178,6 @@ export function ScanHistoryPage() {
       >
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline">{totalSell} sell signals</Badge>
-          <Badge variant="outline">Delete preview protection</Badge>
-          <Badge variant="outline">Responsive archive cards</Badge>
         </div>
       </PageHeader>
 
