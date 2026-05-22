@@ -449,7 +449,7 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="page-shell space-y-4 sm:space-y-6 animate-fade-in-up pb-8">
+    <div className="page-shell space-y-3 sm:space-y-6 animate-fade-in-up pb-8">
       <PageHeader
         eyebrow="Analysis"
         title="New Analysis"
@@ -492,7 +492,7 @@ export function ConfigForm() {
       </PageHeader>
 
       {/* Progress Stepper */}
-      <div className="glass-card mb-3 sm:mb-5 flex w-full items-center justify-between gap-1.5 sm:gap-2 rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*1.65)] border border-border/60 px-3 py-2.5 sm:px-5 sm:py-3">
+      <div className="glass-card mb-2 sm:mb-5 flex w-full items-center justify-between gap-1 sm:gap-2 rounded-[calc(var(--radius)*1.3)] sm:rounded-[calc(var(--radius)*1.65)] border border-border/60 px-2.5 py-2 sm:px-5 sm:py-3">
         {[
           { stepNum: 1, title: "Target Asset" },
           { stepNum: 2, title: "Analyst Team" },
@@ -554,19 +554,19 @@ export function ConfigForm() {
         ))}
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3 sm:gap-5">
         {/* Step 1: Target Asset */}
         {(step === 1 || isTest) && (
           <div className="glass-card border border-border/50 rounded-xl sm:rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in">
-            <div className="px-3.5 sm:px-5 pt-3.5 sm:pt-5 pb-2.5 sm:pb-3.5 border-b border-border/40">
-              <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
+            <div className="px-3 sm:px-5 pt-3 sm:pt-5 pb-2 sm:pb-3.5 border-b border-border/40">
+              <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-foreground">
                 <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                 </svg>
                 Core Target Settings
               </h2>
             </div>
-            <div className="flex flex-col gap-4 sm:gap-5 p-3.5 sm:p-5">
+            <div className="flex flex-col gap-3 sm:gap-5 p-3 sm:p-5">
               {/* Asset Type Toggle */}
               <div className="flex flex-col gap-2">
                 <Label className="font-bold text-xs uppercase tracking-wider text-muted-foreground">Asset Type</Label>
@@ -581,7 +581,7 @@ export function ConfigForm() {
                           type="button"
                           role="radio"
                           aria-checked={field.value === t}
-                          className={`flex-1 px-5 py-2.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                          className={`flex-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-lg text-[11px] sm:text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                             field.value === t
                               ? "bg-background text-foreground shadow shadow-black/5"
                               : "text-muted-foreground hover:text-foreground"
@@ -618,7 +618,7 @@ export function ConfigForm() {
                           type="button"
                           role="radio"
                           aria-checked={field.value === opt.value}
-                          className={`flex-1 px-5 py-2.5 rounded-lg text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                          className={`flex-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-lg text-[11px] sm:text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                             field.value === opt.value
                               ? "bg-background text-foreground shadow shadow-black/5"
                               : "text-muted-foreground hover:text-foreground"

@@ -452,7 +452,7 @@ export function HistoryList() {
                 <button
                   key={s}
                   onClick={() => toggleStatus(s)}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[10px] font-extrabold uppercase tracking-wider rounded-lg border transition-all cursor-pointer whitespace-nowrap ${
+                  className={`inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider rounded-lg border transition-all cursor-pointer whitespace-nowrap ${
                     active
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border/50 bg-card/40 text-muted-foreground hover:border-primary/40 hover:bg-card/75"

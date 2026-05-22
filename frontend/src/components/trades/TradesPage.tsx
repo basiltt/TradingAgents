@@ -194,7 +194,7 @@ export default function TradesPage() {
 
   return (
     <ErrorBoundary FallbackComponent={FullPageError}>
-      <div className="space-y-5 pb-7">
+      <div className="space-y-3 sm:space-y-5 pb-7">
         {!wsConnected ? <WsDisconnectBanner lastUpdated={lastUpdated} /> : null}
 
         <PageHeader

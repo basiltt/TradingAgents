@@ -21,7 +21,7 @@ export function TradeStats() {
     const totalExposure = trades.reduce((acc, t) => acc + (t.qty * (t.entry_price ?? 0)), 0);
 
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <Metric
           label="Positions"
           value={String(aggregates.tradeCount)}
@@ -51,6 +51,7 @@ export function TradeStats() {
         <Metric
           label="Exposure"
           value={`$${totalExposure.toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
+          className="col-span-2 sm:col-span-1"
         />
       </div>
     );
@@ -58,9 +59,9 @@ export function TradeStats() {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {Array.from({ length: 5 }, (_, i) => (
-          <div key={i} className="rounded-[calc(var(--radius)*1.3)] border border-border/60 bg-card/70 p-4 shadow-[var(--shadow-soft)]">
+          <div key={i} className="rounded-[calc(var(--radius)*1.3)] border border-border/60 bg-card/70 p-3 sm:p-4 shadow-[var(--shadow-soft)]">
             <Skeleton className="mb-2 h-3 w-14" />
             <Skeleton className="h-7 w-18" />
           </div>
@@ -70,7 +71,7 @@ export function TradeStats() {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-3 xl:grid-cols-5">
       <Metric label="Total Trades" value={String(stats?.total_trades ?? 0)} />
       <Metric label="Open" value={String(stats?.open_count ?? 0)} valueColor="profit" />
       <Metric label="Win Rate" value={`${((stats?.win_rate ?? 0) * 100).toFixed(1)}%`} valueColor={(stats?.win_rate ?? 0) >= 0.5 ? "profit" : "loss"} />
@@ -85,11 +86,13 @@ function Metric({
   value,
   sub,
   valueColor = "neutral",
+  className,
 }: {
   label: string;
   value: string;
   sub?: React.ReactNode;
   valueColor?: "profit" | "loss" | "neutral";
+  className?: string;
 }) {
   const colorMap = {
     profit: "text-emerald-500 dark:text-emerald-400",
@@ -98,12 +101,12 @@ function Metric({
   };
 
   return (
-    <div className="glass-card rounded-[calc(var(--radius)*1.35)] px-4 py-3.5 transition-all duration-300 hover:border-primary/22 hover:shadow-[var(--shadow-card-hover)]">
-      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground/70 leading-none">{label}</span>
-      <span className={`mt-2 block text-xl font-semibold tabular-nums tracking-[-0.04em] ${colorMap[valueColor]}`}>
+    <div className={`glass-card rounded-[calc(var(--radius)*1.35)] px-3 sm:px-4 py-3 sm:py-3.5 transition-all duration-300 hover:border-primary/22 hover:shadow-[var(--shadow-card-hover)] ${className ?? ""}`}>
+      <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.14em] sm:tracking-[0.16em] text-muted-foreground/70 leading-none">{label}</span>
+      <span className={`mt-1.5 sm:mt-2 block text-lg sm:text-xl font-semibold tabular-nums tracking-[-0.04em] ${colorMap[valueColor]}`}>
         {value}
       </span>
-      {sub ? <div className="mt-1.5">{sub}</div> : null}
+      {sub ? <div className="mt-1">{sub}</div> : null}
     </div>
   );
 }

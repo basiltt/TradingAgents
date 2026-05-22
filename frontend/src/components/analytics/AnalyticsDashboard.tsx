@@ -177,7 +177,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
 
   return (
-    <div className="space-y-5 pb-8">
+    <div className="space-y-3 sm:space-y-5 pb-8">
       {!embedded && (
         <PageHeader
           eyebrow="Analytics"
@@ -250,9 +250,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         </PageHeader>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(19rem,0.8fr)]">
+      <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(19rem,0.8fr)]">
         <Card>
-          <CardContent className="grid gap-4 p-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start">
+          <CardContent className="grid gap-3 sm:gap-4 p-3 sm:p-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start">
             {!accountId ? (
               <div className="flex items-center gap-1 rounded-[calc(var(--radius)*1.15)] border border-border/60 bg-muted/30 p-1 shadow-[var(--shadow-soft)]">
                 {(["live", "demo"] as const).map((t) => (

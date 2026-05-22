@@ -38,12 +38,12 @@ const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "Frenc
 
 const STORAGE_KEY = "tradingagents_settings";
 const SCANNER_KEY = "tradingagents_scanner";
-const SCANNER_PANEL_CLASS = "glass-card aurora-border overflow-hidden rounded-[calc(var(--radius)*1.7)] border border-border/60";
-const SCANNER_SECTION_CLASS = "surface-lift rounded-[calc(var(--radius)*1.3)] border border-border/60 px-4 py-4 sm:px-4.5";
+const SCANNER_PANEL_CLASS = "glass-card aurora-border overflow-hidden rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*1.7)] border border-border/60";
+const SCANNER_SECTION_CLASS = "surface-lift rounded-[calc(var(--radius)*1.2)] sm:rounded-[calc(var(--radius)*1.3)] border border-border/60 px-3 py-3 sm:px-4.5 sm:py-4";
 const SCANNER_LABEL_CLASS = "section-eyebrow text-[0.62rem] tracking-[0.22em] text-muted-foreground";
 const SCANNER_HINT_CLASS = "text-[11px] leading-5 text-muted-foreground";
-const SCANNER_SEGMENT_CLASS = "grid grid-cols-1 gap-2 rounded-[calc(var(--radius)*1.18)] border border-border/60 bg-background/55 p-1.5 shadow-[var(--shadow-soft)] sm:grid-cols-2";
-const SCANNER_SEGMENT_BUTTON_CLASS = "inline-flex min-h-11 items-center justify-center rounded-[calc(var(--radius)*0.95)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition-all duration-200";
+const SCANNER_SEGMENT_CLASS = "grid grid-cols-1 gap-1.5 sm:gap-2 rounded-[calc(var(--radius)*1.18)] border border-border/60 bg-background/55 p-1 sm:p-1.5 shadow-[var(--shadow-soft)] sm:grid-cols-2";
+const SCANNER_SEGMENT_BUTTON_CLASS = "inline-flex min-h-9 sm:min-h-11 items-center justify-center rounded-[calc(var(--radius)*0.95)] px-3 sm:px-4 py-1.5 sm:py-2 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] sm:tracking-[0.18em] transition-all duration-200";
 const TONE_PILL_STYLES = {
   accent: "border-primary/20 bg-primary/10 text-primary shadow-[0_16px_32px_-22px_color-mix(in_oklch,var(--primary)_58%,transparent)]",
   success: "border-emerald-500/25 bg-emerald-500/12 text-emerald-600 shadow-[0_16px_32px_-22px_color-mix(in_oklch,var(--success)_56%,transparent)] dark:text-emerald-300",
@@ -550,7 +550,7 @@ export function ScannerPage() {
   const handleTrade = isCrypto ? (symbol: string, direction: "buy" | "sell") => setTradeTarget({ symbol, direction }) : undefined;
 
   return (
-    <div className="page-shell space-y-5 py-3">
+    <div className="page-shell space-y-3 sm:space-y-5 py-2 sm:py-3">
       <PageHeader
         eyebrow="Scanner"
         title="Market Scanner"

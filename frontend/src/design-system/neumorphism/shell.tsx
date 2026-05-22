@@ -338,12 +338,24 @@ export function NeuMobileDock({
     <div
       className="flex items-center justify-around px-3 py-2.5"
       style={{
-        background: "var(--neu-surface-raised)",
-        boxShadow: "0 -6px 24px color-mix(in oklch, var(--neu-shadow) 50%, transparent), 0 -2px 8px color-mix(in oklch, var(--neu-shadow) 30%, transparent)",
-        borderTop: "1px solid color-mix(in oklch, var(--neu-highlight) 50%, transparent)",
+        background: "var(--background)",
+        boxShadow: "0 -6px 20px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.7)",
         paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)",
       }}
     >
+      {/* More/Menu button first — always depth */}
+      <button
+        type="button"
+        onClick={onMore}
+        className="relative inline-flex items-center justify-center size-11 rounded-xl text-muted-foreground hover:text-foreground transition-all duration-200"
+        style={{
+          boxShadow: "inset 3px 3px 6px rgba(0,0,0,0.1), inset -3px -3px 6px rgba(255,255,255,0.7)",
+        }}
+      >
+        <Menu className="size-5" />
+      </button>
+
+      {/* Nav items — active=arise, inactive=depth */}
       {items.slice(0, 4).map((item) => {
         const active = item.active || item.href === activePath;
         return (
@@ -357,23 +369,25 @@ export function NeuMobileDock({
               }
             }}
             className={cn(
-              "relative inline-flex size-10 items-center justify-center rounded-full transition-all",
-              active ? "text-[var(--neu-accent)]" : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]",
+              "relative inline-flex items-center justify-center size-11 rounded-xl transition-all duration-200",
+              active
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground",
             )}
-            style={active ? { background: "color-mix(in oklch, var(--neu-accent) 12%, transparent)" } : undefined}
+            style={active ? {
+              boxShadow: "5px 5px 10px rgba(0,0,0,0.12), -5px -5px 10px rgba(255,255,255,0.9)",
+              background: "var(--background)",
+            } : {
+              boxShadow: "inset 3px 3px 6px rgba(0,0,0,0.1), inset -3px -3px 6px rgba(255,255,255,0.7)",
+            }}
           >
-            {item.icon}
-            {item.badge ? <span className="absolute -right-1 -top-1">{item.badge}</span> : null}
+            <span className="inline-flex items-center justify-center">
+              {item.icon}
+            </span>
+            {item.badge ? <span className="absolute right-0.5 top-0.5">{item.badge}</span> : null}
           </button>
         );
       })}
-      <button
-        type="button"
-        onClick={onMore}
-        className="relative inline-flex size-10 items-center justify-center rounded-full text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] transition-all"
-      >
-        <Menu className="size-4.5" />
-      </button>
     </div>
   );
 }

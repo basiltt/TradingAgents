@@ -135,7 +135,7 @@ export function RootLayout() {
   );
 
   return (
-    <div className="min-h-screen p-2 sm:p-3 lg:p-5">
+    <div className="min-h-screen p-1.5 sm:p-3 lg:p-5">
       <NeuAppShell
         sidebar={sidebar}
         sidebarWidth={sidebarCollapsed ? "6.5rem" : "19rem"}

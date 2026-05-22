@@ -6,11 +6,11 @@ interface Props {
 
 function KpiCard({ label, value, color, suffix = "" }: { label: string; value: string | number; color?: string; suffix?: string }) {
   return (
-    <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-4 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.01]">
-      <div className={`text-xl font-black tracking-tight tabular-nums ${color || "text-foreground"}`}>
+    <div className="glass-card border border-border/50 bg-card/65 backdrop-blur-sm p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 hover:scale-[1.01]">
+      <div className={`text-base sm:text-xl font-black tracking-tight tabular-nums ${color || "text-foreground"}`}>
         {value}{suffix}
       </div>
-      <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wider font-extrabold">{label}</div>
+      <div className="text-[9px] sm:text-[10px] text-muted-foreground mt-0.5 sm:mt-1 uppercase tracking-wider font-extrabold">{label}</div>
     </div>
   );
 }
@@ -29,9 +29,9 @@ export function KpiCards({ analytics }: Props) {
   const expectancy = analytics.expectancy;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2 sm:space-y-3">
       {/* Primary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
         <KpiCard label="Total Return" value={`${totalReturn > 0 ? "+" : ""}${totalReturn}%`} color={returnColor} />
         <KpiCard label="Total P&L" value={fmtCurrency(pnl)} color={pnlColor} />
         <KpiCard label="Max Drawdown" value={`${analytics.max_drawdown_pct > 0 ? "-" : ""}${analytics.max_drawdown_pct}%`} color={analytics.max_drawdown_pct > 0 ? "text-red-500" : ""} />
@@ -41,7 +41,7 @@ export function KpiCards({ analytics }: Props) {
       </div>
 
       {/* Secondary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-3">
         <KpiCard label="Sortino" value={analytics.sortino_ratio} />
         <KpiCard label="Calmar" value={analytics.calmar_ratio} />
         <KpiCard label="Expectancy" value={fmtCurrency(expectancy)} color={expectancy >= 0 ? "text-emerald-500" : "text-red-500"} />
@@ -53,7 +53,7 @@ export function KpiCards({ analytics }: Props) {
       </div>
 
       {/* Trade Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
         <KpiCard label="Total Trades" value={analytics.total_trades} />
         <KpiCard label="Wins" value={analytics.win_count} color="text-emerald-500" />
         <KpiCard label="Losses" value={analytics.loss_count} color="text-red-500" />
