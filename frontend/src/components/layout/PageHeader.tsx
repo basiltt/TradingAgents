@@ -34,21 +34,21 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <section className={cn("rounded-[calc(var(--radius)*2)] p-4 sm:p-5 lg:p-6 shadow-[var(--shadow-card)]", className)}>
+    <section className={cn("rounded-[calc(var(--radius)*2)] p-5 sm:p-6 lg:p-7 shadow-[var(--shadow-card)]", className)}>
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             {eyebrow ? <p className="section-eyebrow">{eyebrow}</p> : null}
-            <h1 className="text-2xl font-semibold tracking-[-0.04em] text-foreground">
+            <h1 className="text-2xl font-bold tracking-[-0.04em] text-foreground">
               {title}
             </h1>
             {description ? (
-              <p className="text-sm text-muted-foreground">{description}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
             ) : null}
           </div>
 
           {actions ? (
-            <div className="flex flex-wrap gap-2 xl:justify-end">
+            <div className="flex flex-wrap gap-2.5 xl:justify-end">
               {actions}
             </div>
           ) : null}
@@ -57,7 +57,7 @@ export function PageHeader({
         {children}
 
         {stats.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+          <div className="grid gap-3.5 sm:grid-cols-2 2xl:grid-cols-4">
             {stats.map((stat) => {
               const tone = stat.tone ?? "neutral";
               return (
@@ -65,14 +65,14 @@ export function PageHeader({
                   key={`${stat.label}-${stat.value}`}
                   data-tone={tone}
                   className={cn(
-                    "rounded-[calc(var(--radius)*1.2)] p-3.5 shadow-[var(--shadow-inset)]",
+                    "rounded-[calc(var(--radius)*1.3)] p-4 shadow-[var(--shadow-inset)]",
                     toneClasses[tone],
                   )}
                 >
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     {stat.label}
                   </p>
-                  <div className="mt-1.5 text-xl font-semibold tracking-[-0.04em] text-foreground">
+                  <div className="mt-2 text-xl font-bold tracking-[-0.04em] text-foreground">
                     <AnimatedNumber value={stat.value} />
                   </div>
                 </div>

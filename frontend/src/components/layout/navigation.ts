@@ -190,7 +190,7 @@ export const navSections: NavSection[] = [
 export const navItems = navSections.flatMap((section) => section.items);
 
 export const mobileDockItems = navItems.filter((item) =>
-  ["home", "analysis-new", "scanner", "trades"].includes(item.id),
+  ["accounts", "scanner", "scanner-schedules", "analytics"].includes(item.id),
 );
 
 export function getActiveNavigation(pathname: string): {

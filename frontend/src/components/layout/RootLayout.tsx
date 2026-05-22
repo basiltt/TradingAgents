@@ -85,13 +85,13 @@ export function RootLayout() {
     <NeuDrawer
       open={mobileNavOpen}
       onOpenChange={(open) => dispatch(setMobileNavOpen(open))}
-      title="Navigation"
+      title=""
       description=""
       side="left"
       size="sm"
       showHandle={false}
     >
-      <div className="space-y-4">
+      <div className="h-full">
         <NeuSidebar
           sections={sections}
           mode="mobile-sheet"

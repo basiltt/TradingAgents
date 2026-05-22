@@ -499,16 +499,18 @@ export function NeuTickerMetric({
   value,
   detail,
   tone = "neutral",
+  compact = false,
 }: {
   icon?: ReactNode;
   label: ReactNode;
   value: ReactNode;
   detail?: ReactNode;
   tone?: Extract<NeuTone, "accent" | "success" | "warning" | "danger" | "neutral">;
+  compact?: boolean;
 }) {
   return (
     <div
-      className="min-w-[9rem] rounded-[var(--neu-radius-sm)] px-3 py-2.5"
+      className={compact ? "rounded-[var(--neu-radius-sm)] px-2.5 py-2" : "min-w-[9rem] rounded-[var(--neu-radius-sm)] px-3 py-2.5"}
     >
       <div className="flex items-center gap-2">
         {icon}

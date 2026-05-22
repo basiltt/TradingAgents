@@ -51,14 +51,14 @@ export function NeuNavItem({
     <div
       className={cn(
         "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition",
-        touchFriendly ? "min-h-14 px-3.5 py-3 sm:min-h-0 sm:px-3 sm:py-2.5" : "px-3 py-2.5",
+        touchFriendly ? "min-h-10 px-3 py-2 sm:min-h-0 sm:px-3 sm:py-2.5" : "px-3 py-2.5",
         active ? "neu-surface-base neu-surface-inset" : "hover:opacity-80",
       )}
     >
       {Icon ? (
         <span className={cn(
           "inline-flex items-center justify-center rounded-[var(--neu-radius-sm)]",
-          touchFriendly ? "size-9 sm:size-8" : "size-8",
+          touchFriendly ? "size-7 sm:size-8" : "size-8",
           active ? "text-[var(--neu-accent)]" : "opacity-70",
         )}>
           <Icon className="size-4.5" />
@@ -117,13 +117,13 @@ export function NeuSidebar({
   darkMode?: boolean;
   onDarkModeToggle?: () => void;
 }) {
+  const Wrapper = mode === "mobile-sheet" ? "div" : NeuSurface;
+  const wrapperProps = mode === "mobile-sheet"
+    ? { className: "flex h-full min-h-0 flex-col" }
+    : { depth: "raised" as const, radius: "lg" as const, padding: "md" as const, className: "flex h-full min-h-0 flex-col" };
+
   return (
-    <NeuSurface
-      depth="raised"
-      radius="lg"
-      padding="md"
-      className={cn("flex h-full min-h-0 flex-col", mode === "mobile-sheet" && "min-h-0")}
-    >
+    <Wrapper {...wrapperProps}>
       {/* Header: Logo + collapse/expand */}
       <div className="flex items-center justify-between">
         <div className={cn("flex items-center", collapsed ? "gap-2" : "gap-3")}>
@@ -147,7 +147,27 @@ export function NeuSidebar({
       </div>
 
       {/* Navigation items */}
-      <div className="neu-scrollbar mt-4 flex-1 min-h-0 overflow-auto space-y-3">
+      {mode === "mobile-sheet" ? (
+        <div className="mt-1 flex flex-1 min-h-0 flex-col justify-between">
+          {sections.flatMap((section) => section.items).map((item) => (
+            <NeuNavItem
+              key={item.id}
+              icon={item.icon}
+              label={item.label}
+              active={!!item.active}
+              badge={item.badge}
+              href={item.href}
+              compact
+              touchFriendly
+              onClick={() => {
+                item.onSelect?.();
+                onNavigate?.(item.href);
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+      <div className="neu-scrollbar flex-1 min-h-0 overflow-auto mt-4 space-y-3">
         {sections.map((section) => (
           <section key={section.title} className="space-y-1">
             {!collapsed ? (
@@ -165,7 +185,7 @@ export function NeuSidebar({
                   badge={!collapsed ? item.badge : undefined}
                   href={item.href}
                   compact
-                  touchFriendly={mode === "mobile-sheet"}
+                  touchFriendly={false}
                   onClick={() => {
                     item.onSelect?.();
                     onNavigate?.(item.href);
@@ -176,6 +196,7 @@ export function NeuSidebar({
           </section>
         ))}
       </div>
+      )}
 
       {/* Footer: theme toggle */}
       <div className="mt-auto pt-3">
@@ -222,9 +243,8 @@ export function NeuSidebar({
           </div>
         ) : null}
       </div>
-    </NeuSurface>
-  );
-}
+    </Wrapper>
+  );}
 
 export function NeuTopbar({
   section,
@@ -284,9 +304,12 @@ export function NeuMarketStrip({
   scrollable?: boolean;
 }) {
   return (
-    <div className={cn("flex gap-3", scrollable && "overflow-x-auto pb-1", compact && "gap-2")}>
+    <div className={cn(
+      compact ? "grid grid-cols-2 gap-2 sm:grid-cols-3" : "flex gap-3",
+      !compact && scrollable && "overflow-x-auto pb-1",
+    )}>
       {items.map((item) => (
-        <NeuTickerMetric key={item.id} {...item} />
+        <NeuTickerMetric key={item.id} {...item} compact={compact} />
       ))}
     </div>
   );
@@ -312,12 +335,14 @@ export function NeuMobileDock({
   onNavigate?: (href?: string) => void;
 }) {
   return (
-    <NeuSurface
-      depth="raised"
-      radius="full"
-      padding="sm"
-      className="grid grid-cols-5 gap-2"
-      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)" }}
+    <div
+      className="flex items-center justify-around px-3 py-2.5"
+      style={{
+        background: "var(--neu-surface-raised)",
+        boxShadow: "0 -6px 24px color-mix(in oklch, var(--neu-shadow) 50%, transparent), 0 -2px 8px color-mix(in oklch, var(--neu-shadow) 30%, transparent)",
+        borderTop: "1px solid color-mix(in oklch, var(--neu-highlight) 50%, transparent)",
+        paddingBottom: "max(env(safe-area-inset-bottom), 0.5rem)",
+      }}
     >
       {items.slice(0, 4).map((item) => {
         const active = item.active || item.href === activePath;
@@ -332,27 +357,24 @@ export function NeuMobileDock({
               }
             }}
             className={cn(
-              "flex min-h-[4.5rem] flex-col items-center justify-center gap-1 rounded-[var(--neu-radius-md)] px-1.5 text-[11px] font-semibold uppercase tracking-[0.14em]",
-              active ? "neu-surface-base neu-surface-accent" : "neu-surface-base neu-surface-inset",
+              "relative inline-flex size-10 items-center justify-center rounded-full transition-all",
+              active ? "text-[var(--neu-accent)]" : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]",
             )}
+            style={active ? { background: "color-mix(in oklch, var(--neu-accent) 12%, transparent)" } : undefined}
           >
-            <span className="relative inline-flex items-center justify-center">
-              {item.icon}
-              {item.badge ? <span className="absolute -right-3 -top-2">{item.badge}</span> : null}
-            </span>
-            <span className="truncate">{item.label}</span>
+            {item.icon}
+            {item.badge ? <span className="absolute -right-1 -top-1">{item.badge}</span> : null}
           </button>
         );
       })}
       <button
         type="button"
         onClick={onMore}
-        className="neu-surface-base neu-surface-inset flex min-h-[4.5rem] flex-col items-center justify-center gap-1 rounded-[var(--neu-radius-md)] px-1.5 text-[11px] font-semibold uppercase tracking-[0.14em]"
+        className="relative inline-flex size-10 items-center justify-center rounded-full text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] transition-all"
       >
         <Menu className="size-4.5" />
-        More
       </button>
-    </NeuSurface>
+    </div>
   );
 }
 
@@ -546,7 +568,7 @@ export function NeuAppShell({
         <main className={cn("min-w-0", mainClassName)}>{children}</main>
       </div>
       {mobileSidebar ? <div className="lg:hidden">{mobileSidebar}</div> : null}
-      {dock ? <div className="fixed inset-x-3 bottom-3 z-40 lg:hidden">{dock}</div> : null}
+      {dock ? <div className="fixed inset-x-0 bottom-0 z-40 lg:hidden">{dock}</div> : null}
     </div>
   );
 }

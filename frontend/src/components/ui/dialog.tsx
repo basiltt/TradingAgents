@@ -30,7 +30,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-[color:color-mix(in_oklch,var(--neu-surface-deep)_55%,black_45%)] backdrop-blur-md duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-black/30 backdrop-blur-[2px] duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       {...props}
@@ -42,9 +42,11 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  variant = "dialog",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
+  variant?: "dialog" | "drawer";
 }) {
   return (
     <DialogPortal>
@@ -52,7 +54,9 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "neu-surface-base neu-surface-raised fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-5 text-sm text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-float)] duration-200 outline-none sm:max-w-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          variant === "dialog"
+            ? "neu-surface-base neu-surface-raised fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-5 text-sm text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-float)] duration-200 outline-none sm:max-w-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+            : "fixed z-50 outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className,
         )}
         {...props}

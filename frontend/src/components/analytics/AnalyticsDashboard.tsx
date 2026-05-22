@@ -334,8 +334,6 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
                 {SUB_DAY_PERIODS.has(period) ? "Live pulse" : "Manual snapshots"}
               </p>
             </div>
-              </p>
-            </div>
           </CardContent>
         </Card>
       </div>

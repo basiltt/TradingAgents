@@ -109,7 +109,7 @@ export function NeuDrawer({
 }) {
   const sizeClass =
     size === "sm"
-      ? "w-[min(100vw,24rem)]"
+      ? "w-[min(100vw,20rem)]"
       : size === "lg"
         ? "w-[min(100vw,40rem)]"
         : size === "full"
@@ -117,26 +117,27 @@ export function NeuDrawer({
           : "w-[min(100vw,32rem)]";
   const sideClasses =
     side === "left"
-      ? `left-0 right-auto top-0 h-screen ${sizeClass} -translate-x-0 -translate-y-0`
+      ? `left-0 top-0 ${sizeClass}`
       : side === "bottom"
         ? size === "full"
-          ? "inset-x-0 bottom-0 top-0 w-full -translate-x-0 -translate-y-0"
-          : "bottom-0 left-1/2 top-auto w-[min(100vw,60rem)] -translate-x-1/2 -translate-y-0"
-        : `left-auto right-0 top-0 h-screen ${sizeClass} -translate-x-0 -translate-y-0`;
+          ? "inset-x-0 bottom-0 top-0 w-full"
+          : "bottom-0 left-1/2 top-auto w-[min(100vw,60rem)] -translate-x-1/2"
+        : `right-0 top-0 ${sizeClass}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("border-0 bg-transparent p-0 shadow-none", sideClasses)} showCloseButton={false}>
-        <NeuSurface depth="raised" radius="lg" padding="lg" className="flex h-full flex-col gap-4 shadow-[var(--neu-shadow-float)]">
+      <DialogContent variant="drawer" className={cn("inset-y-0 h-[100dvh] border-0 bg-transparent p-0 shadow-none", sideClasses)} showCloseButton={false}>
+        <NeuSurface depth="raised" radius="lg" padding="md" className="flex h-full flex-col gap-2 shadow-none overflow-hidden">
           {showHandle && side === "bottom" ? (
-            <div className="flex justify-center">
+            <div className="flex justify-center pt-2">
               <span
-                className="inline-flex h-1.5 w-16 rounded-full"
-                style={{ background: "color-mix(in oklch, var(--neu-text-soft) 20%, transparent)" }}
+                className="inline-flex h-1.5 w-12 rounded-full"
+                style={{ background: "color-mix(in oklch, var(--neu-text-soft) 30%, transparent)" }}
               />
             </div>
           ) : null}
-          <DialogHeader className="space-y-2">
+          {title ? (
+          <DialogHeader className="space-y-2 shrink-0">
             <DialogTitle className="text-xl font-semibold tracking-[-0.03em]">{title}</DialogTitle>
             {description ? (
               <DialogDescription className="text-sm leading-7" style={{ color: "var(--neu-text-muted)" }}>
@@ -144,8 +145,9 @@ export function NeuDrawer({
               </DialogDescription>
             ) : null}
           </DialogHeader>
-          <div className="neu-scrollbar min-h-0 flex-1 overflow-auto pr-1">{children}</div>
-          {footer ? <div>{footer}</div> : null}
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom,0.5rem)]">{children}</div>
+          {footer ? <div className="shrink-0">{footer}</div> : null}
         </NeuSurface>
       </DialogContent>
     </Dialog>
