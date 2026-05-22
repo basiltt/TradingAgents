@@ -124,24 +124,24 @@ export function NeuSidebar({
       padding="md"
       className={cn("flex h-full min-h-0 flex-col", mode === "mobile-sheet" && "min-h-0")}
     >
-      {/* Header: Logo + collapse */}
-      <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-between")}>
-        <div className={cn("flex items-center", collapsed ? "" : "gap-3")}>
-          <div className="inline-flex size-10 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-inset">
-            <Command className="size-4.5" />
+      {/* Header: Logo + collapse/expand */}
+      <div className="flex items-center justify-between">
+        <div className={cn("flex items-center", collapsed ? "gap-2" : "gap-3")}>
+          <div className="inline-flex size-10 items-center justify-center">
+            <Command className="size-5" />
           </div>
           {!collapsed ? (
             <p className="text-sm font-bold tracking-[-0.03em]">TradingAgents</p>
           ) : null}
         </div>
-        {!collapsed && onCollapse && mode === "desktop" ? (
+        {onCollapse && mode === "desktop" ? (
           <button
             type="button"
             onClick={onCollapse}
             className="inline-flex size-7 items-center justify-center rounded-[var(--neu-radius-sm)] opacity-50 transition-opacity hover:opacity-100"
-            title="Collapse sidebar"
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            <ChevronLeft className="size-3.5" />
+            {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronLeft className="size-3.5" />}
           </button>
         ) : null}
       </div>
@@ -177,21 +177,8 @@ export function NeuSidebar({
         ))}
       </div>
 
-      {/* Footer: theme toggle + expand (when collapsed) */}
+      {/* Footer: theme toggle */}
       <div className="mt-auto pt-3">
-        {collapsed && onCollapse && mode === "desktop" ? (
-          <div className="flex justify-center pb-2">
-            <button
-              type="button"
-              onClick={onCollapse}
-              className="inline-flex size-9 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-inset transition-all hover:opacity-80"
-              title="Expand sidebar"
-            >
-              <ChevronRight className="size-3.5" />
-            </button>
-          </div>
-        ) : null}
-
         {onDarkModeToggle ? (
           <div className={cn(
             "rounded-[var(--neu-radius-lg)] neu-surface-base neu-surface-inset p-1",
