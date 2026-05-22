@@ -347,7 +347,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="TradingAgents Web API", lifespan=lifespan)
 
-    cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177")
+    cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177,http://localhost:5178,http://localhost:5179")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
     app.add_middleware(ObservabilityMiddleware)
     app.add_middleware(ContentSizeLimitMiddleware)

@@ -449,7 +449,7 @@ export function ConfigForm() {
   }
 
   return (
-    <div className="page-shell space-y-6 animate-fade-in-up pb-8">
+    <div className="page-shell space-y-4 sm:space-y-6 animate-fade-in-up pb-8">
       <PageHeader
         eyebrow="Analysis"
         title="New Analysis"
@@ -492,7 +492,7 @@ export function ConfigForm() {
       </PageHeader>
 
       {/* Progress Stepper */}
-      <div className="glass-card mb-5 flex w-full items-center justify-between gap-2 rounded-[calc(var(--radius)*1.65)] border border-border/60 px-3.5 py-3 sm:px-5">
+      <div className="glass-card mb-3 sm:mb-5 flex w-full items-center justify-between gap-1.5 sm:gap-2 rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*1.65)] border border-border/60 px-3 py-2.5 sm:px-5 sm:py-3">
         {[
           { stepNum: 1, title: "Target Asset" },
           { stepNum: 2, title: "Analyst Team" },
@@ -517,7 +517,7 @@ export function ConfigForm() {
             >
               <div
                 className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-[calc(var(--radius)*1.1)] border font-bold text-xs transition-all duration-300",
+                  "flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-[calc(var(--radius)*1.1)] border font-bold text-xs transition-all duration-300",
                   step === s.stepNum
                     ? "bg-primary border-primary text-primary-foreground shadow-lg shadow-primary/20 scale-110"
                     : step > s.stepNum
@@ -557,8 +557,8 @@ export function ConfigForm() {
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
         {/* Step 1: Target Asset */}
         {(step === 1 || isTest) && (
-          <div className="glass-card border border-border/50 rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in">
-            <div className="px-5 pt-5 pb-3.5 border-b border-border/40">
+          <div className="glass-card border border-border/50 rounded-xl sm:rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in">
+            <div className="px-3.5 sm:px-5 pt-3.5 sm:pt-5 pb-2.5 sm:pb-3.5 border-b border-border/40">
               <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
                 <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
@@ -566,7 +566,7 @@ export function ConfigForm() {
                 Core Target Settings
               </h2>
             </div>
-            <div className="flex flex-col gap-5 p-5">
+            <div className="flex flex-col gap-4 sm:gap-5 p-3.5 sm:p-5">
               {/* Asset Type Toggle */}
               <div className="flex flex-col gap-2">
                 <Label className="font-bold text-xs uppercase tracking-wider text-muted-foreground">Asset Type</Label>

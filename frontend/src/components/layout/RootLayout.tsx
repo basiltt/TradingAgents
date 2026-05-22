@@ -118,7 +118,6 @@ export function RootLayout() {
               onClick={() => dispatch(setMobileNavOpen(true))}
             >
               <Menu className="size-4" />
-              Menu
             </NeuButton>
             <NeuButton
               variant="secondary"
@@ -136,7 +135,7 @@ export function RootLayout() {
   );
 
   return (
-    <div className="min-h-screen p-3 sm:p-4 lg:p-5">
+    <div className="min-h-screen p-2 sm:p-3 lg:p-5">
       <NeuAppShell
         sidebar={sidebar}
         sidebarWidth={sidebarCollapsed ? "6.5rem" : "19rem"}

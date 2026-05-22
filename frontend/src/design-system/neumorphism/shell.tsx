@@ -264,25 +264,25 @@ export function NeuTopbar({
   toolbar?: React.ReactNode;
 }) {
   return (
-    <NeuSurface depth="raised" radius="lg" padding={condensed ? "sm" : "md"} className="space-y-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--neu-text-muted)" }}>
+    <NeuSurface depth="raised" radius="lg" padding={condensed ? "sm" : "md"} className="space-y-2 sm:space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <p className="hidden sm:block text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--neu-text-muted)" }}>
             {section}
           </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className={cn(condensed ? "text-lg" : "text-xl", "font-semibold tracking-[-0.03em]")}>{title}</h2>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h2 className={cn(condensed ? "text-lg" : "text-lg sm:text-xl", "font-semibold tracking-[-0.03em] truncate")}>{title}</h2>
             {statusPill}
           </div>
           {description ? (
-            <p className="text-sm leading-6" style={{ color: "var(--neu-text-muted)" }}>
+            <p className="hidden sm:block text-sm leading-6" style={{ color: "var(--neu-text-muted)" }}>
               {description}
             </p>
           ) : null}
         </div>
-        {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+        {actions ? <div className="flex shrink-0 gap-2">{actions}</div> : null}
       </div>
-      {toolbar ? <div>{toolbar}</div> : null}
+      {toolbar ? <div className="hidden sm:block">{toolbar}</div> : null}
     </NeuSurface>
   );
 }
@@ -555,7 +555,7 @@ export function NeuAppShell({
 }) {
   return (
     <div
-      className="grid min-h-screen gap-4 lg:grid-cols-[var(--neu-shell-sidebar-width)_minmax(0,1fr)]"
+      className="grid min-h-screen gap-3 sm:gap-4 lg:grid-cols-[var(--neu-shell-sidebar-width)_minmax(0,1fr)]"
       style={{ ["--neu-shell-sidebar-width" as string]: sidebarWidth }}
     >
       <aside className="hidden self-start lg:block" aria-label="Primary navigation">
@@ -563,7 +563,7 @@ export function NeuAppShell({
           {sidebar}
         </div>
       </aside>
-      <div className={cn("min-w-0 space-y-4", contentClassName)}>
+      <div className={cn("min-w-0 space-y-3 sm:space-y-4", contentClassName)}>
         {topbar}
         <main className={cn("min-w-0", mainClassName)}>{children}</main>
       </div>
