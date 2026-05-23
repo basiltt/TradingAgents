@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-EVALUATION_INTERVAL = 30  # seconds
+EVALUATION_INTERVAL = 60  # seconds
 PER_ACCOUNT_TIMEOUT = 30  # seconds — must accommodate closing multiple positions
 MAX_CONCURRENT_ACCOUNTS = 5
 MAX_RULE_FAILURES = 3
@@ -25,6 +26,8 @@ class CloseRuleEvaluator:
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._rule_failures: dict[str, int] = {}
+        self._last_ws_eval: dict[str, float] = {}
+        self._ws_debounce_interval = 1.5
 
     def set_cycle_callback(self, callback: Any) -> None:
         self._cycle_callback = callback
@@ -105,6 +108,34 @@ class CloseRuleEvaluator:
         active_ids = {r["id"] for r in rules}
         self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
 
+    async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
+        """Evaluate equity-based rules instantly on WS wallet event (debounced)."""
+        now = time.monotonic()
+        last = self._last_ws_eval.get(account_id, 0.0)
+        if (now - last) < self._ws_debounce_interval:
+            return
+
+        self._last_ws_eval[account_id] = now
+
+        try:
+            equity = Decimal(wallet_data.get("totalEquity") or "0")
+            pnl = Decimal(wallet_data.get("totalPerpUPL") or "0")
+            balance = Decimal(wallet_data.get("totalWalletBalance") or "0")
+        except Exception:
+            logger.warning("Invalid WS wallet data for account %s", account_id)
+            return
+
+        rules = await self._db.list_active_rules_for_account(account_id)
+        if not rules:
+            return
+
+        # Only evaluate equity-based rules (time-based stay on polling loop)
+        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION")]
+        if not equity_rules:
+            return
+
+        await self._evaluate_account_rules_with_data(account_id, equity_rules, equity, pnl, balance)
+
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         try:
             wallet = await self._accounts_service.get_wallet(account_id)
@@ -120,6 +151,11 @@ class CloseRuleEvaluator:
             logger.warning("Invalid wallet data for account %s, skipping rules", account_id)
             return
 
+        await self._evaluate_account_rules_with_data(account_id, rules, equity, pnl, balance)
+
+    async def _evaluate_account_rules_with_data(
+        self, account_id: str, rules: list[dict], equity: Decimal, pnl: Decimal, balance: Decimal
+    ) -> None:
         logger.debug(
             "Account %s wallet: equity=%s, balance=%s, pnl=%s, rules=%d",
             account_id, equity, balance, pnl, len(rules),

@@ -1,0 +1,116 @@
+"""Tests for WS-driven close rule evaluation with debounce."""
+
+import time
+from decimal import Decimal
+from unittest.mock import AsyncMock
+
+import pytest
+
+from backend.services.close_rule_evaluator import CloseRuleEvaluator
+
+
+@pytest.fixture()
+def mock_deps():
+    close_service = AsyncMock()
+    accounts_service = AsyncMock()
+    db = AsyncMock()
+    db.list_active_rules = AsyncMock(return_value=[])
+    db.list_active_rules_for_account = AsyncMock(return_value=[])
+    return close_service, accounts_service, db
+
+
+@pytest.fixture()
+def evaluator(mock_deps):
+    close_service, accounts_service, db = mock_deps
+    return CloseRuleEvaluator(close_service=close_service, accounts_service=accounts_service, db=db)
+
+
+@pytest.mark.asyncio
+async def test_on_wallet_update_triggers_rule_check(evaluator, mock_deps):
+    _, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[
+        {"id": "r1", "account_id": "acc1", "trigger_type": "EQUITY_DROP_PCT",
+         "threshold_value": "10", "reference_value": "1000", "cycle_id": None},
+    ])
+    db.atomic_trigger_rule = AsyncMock(return_value=False)
+
+    wallet_data = {"totalEquity": "950", "totalWalletBalance": "900", "totalPerpUPL": "50"}
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    db.list_active_rules_for_account.assert_called_once_with("acc1")
+
+
+@pytest.mark.asyncio
+async def test_debounce_skips_rapid_calls(evaluator, mock_deps):
+    _, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[])
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+
+    await evaluator.on_wallet_update("acc1", wallet_data)
+    await evaluator.on_wallet_update("acc1", wallet_data)
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    assert db.list_active_rules_for_account.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_debounce_allows_after_interval(evaluator, mock_deps):
+    _, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[])
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+
+    await evaluator.on_wallet_update("acc1", wallet_data)
+    evaluator._last_ws_eval["acc1"] = time.monotonic() - 2.0
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    assert db.list_active_rules_for_account.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_different_accounts_not_debounced(evaluator, mock_deps):
+    _, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[])
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+
+    await evaluator.on_wallet_update("acc1", wallet_data)
+    await evaluator.on_wallet_update("acc2", wallet_data)
+
+    assert db.list_active_rules_for_account.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_ws_triggered_rule_fires_close(evaluator, mock_deps):
+    close_service, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[
+        {"id": "r1", "account_id": "acc1", "trigger_type": "EQUITY_DROP_PCT",
+         "threshold_value": "5", "reference_value": "1000", "cycle_id": None},
+    ])
+    db.atomic_trigger_rule = AsyncMock(return_value=True)
+    close_service.close_all_for_rule = AsyncMock(return_value={})
+    db.update_close_rule = AsyncMock()
+    db.deactivate_rules_for_account = AsyncMock(return_value=0)
+
+    wallet_data = {"totalEquity": "900", "totalWalletBalance": "850", "totalPerpUPL": "50"}
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    close_service.close_all_for_rule.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_time_based_rules_skipped_in_ws(evaluator, mock_deps):
+    _, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[
+        {"id": "r1", "account_id": "acc1", "trigger_type": "BREAKEVEN_TIMEOUT",
+         "threshold_value": "6", "reference_value": "2025-05-23T10:00:00Z", "cycle_id": None},
+        {"id": "r2", "account_id": "acc1", "trigger_type": "MAX_DURATION",
+         "threshold_value": "12", "reference_value": "2025-05-23T10:00:00Z", "cycle_id": None},
+    ])
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    # No close should be attempted since only time-based rules exist
+    mock_deps[0].close_all_for_rule.assert_not_called()

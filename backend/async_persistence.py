@@ -1859,6 +1859,14 @@ class AsyncAnalysisDB:
         )
         return [self._serialize_row(r) for r in rows]
 
+    async def list_active_rules_for_account(self, account_id: str) -> list:
+        """Fetch all active rules for a specific account."""
+        rows = await self.pool.fetch(
+            "SELECT * FROM close_rules WHERE account_id = $1 AND status = 'active'",
+            account_id,
+        )
+        return [self._serialize_row(r) for r in rows]
+
     async def recover_stuck_triggered_rules(self, max_age_seconds: int = 120) -> int:
         """Revert rules stuck in 'triggered' state for longer than max_age_seconds."""
         result = await self.pool.execute(
