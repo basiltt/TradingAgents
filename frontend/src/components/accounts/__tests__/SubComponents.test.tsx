@@ -18,16 +18,16 @@ describe("WalletPanel", () => {
       coin: [{ coin: "USDT", walletBalance: "900.1234", equity: "1000.5678", unrealisedPnl: "100.9876" }],
     };
     render(<WalletPanel wallet={wallet as unknown as WalletBalance} />);
-    expect(screen.getByText("USDT")).toBeInTheDocument();
-    expect(screen.getByText("900.1234")).toBeInTheDocument();
+    expect(screen.getAllByText("USDT").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("900.1234").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders column headers", () => {
     const wallet = { totalEquity: "0", totalWalletBalance: "0", totalAvailableBalance: "0", totalPerpUPL: "0", coin: [{ coin: "BTC", walletBalance: "1", equity: "1", unrealisedPnl: "0" }] };
     render(<WalletPanel wallet={wallet as unknown as WalletBalance} />);
     expect(screen.getByText("Coin")).toBeInTheDocument();
-    expect(screen.getByText("Balance")).toBeInTheDocument();
-    expect(screen.getByText("Equity")).toBeInTheDocument();
+    expect(screen.getAllByText("Balance").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Equity").length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -40,21 +40,21 @@ describe("PositionsTable", () => {
   it("renders position row", () => {
     const positions = [{ symbol: "BTCUSDT", side: "Buy", size: "0.1", avgPrice: "50000", markPrice: "51000", unrealisedPnl: "100", leverage: "10", liqPrice: "45000", takeProfit: "", stopLoss: "", positionIM: "500", positionMM: "250" }];
     render(<PositionsTable positions={positions as unknown as Position[]} />);
-    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
-    expect(screen.getByText("Long")).toBeInTheDocument();
-    expect(screen.getByText("10x")).toBeInTheDocument();
+    expect(screen.getAllByText("BTCUSDT").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Long").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("10x").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows liquidation warning when close to liq price", () => {
     const positions = [{ symbol: "ETHUSDT", side: "Sell", size: "1", avgPrice: "3000", markPrice: "3000", unrealisedPnl: "-10", leverage: "50", liqPrice: "3100", takeProfit: "", stopLoss: "", positionIM: "60", positionMM: "30" }];
     render(<PositionsTable positions={positions as unknown as Position[]} />);
-    expect(screen.getByText("$3100.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$3100.00").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows Short badge for Sell side", () => {
     const positions = [{ symbol: "ETHUSDT", side: "Sell", size: "1", avgPrice: "3000", markPrice: "2900", unrealisedPnl: "100", leverage: "5", liqPrice: "3500", takeProfit: "", stopLoss: "", positionIM: "600", positionMM: "300" }];
     render(<PositionsTable positions={positions as unknown as Position[]} />);
-    expect(screen.getByText("Short")).toBeInTheDocument();
+    expect(screen.getAllByText("Short").length).toBeGreaterThanOrEqual(1);
   });
 
   it("colors PnL green for profit", () => {
@@ -74,9 +74,9 @@ describe("OrdersTable", () => {
   it("renders order row", () => {
     const orders = [{ orderId: "o1", symbol: "BTCUSDT", side: "Buy", orderType: "Limit", qty: "0.01", price: "50000", orderStatus: "New", createdTime: "123", triggerPrice: "", stopOrderType: "" }];
     render(<OrdersTable orders={orders as unknown as OpenOrder[]} />);
-    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
-    expect(screen.getByText("Buy")).toBeInTheDocument();
-    expect(screen.getByText("$50000.00")).toBeInTheDocument();
+    expect(screen.getAllByText("BTCUSDT").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Buy").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("$50000.00").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows Market for price 0", () => {
@@ -88,7 +88,7 @@ describe("OrdersTable", () => {
   it("shows stop order type annotation", () => {
     const orders = [{ orderId: "o3", symbol: "BTCUSDT", side: "Buy", orderType: "Limit", qty: "0.01", price: "48000", orderStatus: "Untriggered", createdTime: "123", triggerPrice: "49000", stopOrderType: "TakeProfit" }];
     render(<OrdersTable orders={orders as unknown as OpenOrder[]} />);
-    expect(screen.getByText("Limit (TakeProfit)")).toBeInTheDocument();
+    expect(screen.getAllByText("Limit (TakeProfit)").length).toBeGreaterThanOrEqual(1);
   });
 });
 

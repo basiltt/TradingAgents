@@ -5,7 +5,7 @@ function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="skeleton"
       className={cn(
-        "neu-surface-base neu-surface-inset neu-skeleton-shimmer rounded-[var(--neu-radius-md)]",
+        "neu-surface-base neu-surface-inset neu-skeleton-shimmer animate-pulse rounded-[var(--neu-radius-md)]",
         className,
       )}
       {...props}

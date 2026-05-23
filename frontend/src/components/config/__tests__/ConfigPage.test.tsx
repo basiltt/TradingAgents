@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { configureStore } from "@reduxjs/toolkit";
 import { analysisSlice } from "@/store/analysis-slice";
 import { uiSlice } from "@/store/ui-slice";
+import { neuUiSlice } from "@/design-system/neumorphism";
 import { ConfigPage } from "../ConfigPage";
 
 const server = setupServer(
@@ -33,7 +34,7 @@ afterAll(() => server.close());
 
 function createWrapper() {
   const store = configureStore({
-    reducer: { analysis: analysisSlice.reducer, ui: uiSlice.reducer },
+    reducer: { analysis: analysisSlice.reducer, ui: uiSlice.reducer, neuUi: neuUiSlice.reducer },
   });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },

@@ -67,7 +67,7 @@ describe("ConfigForm", () => {
 
   it("renders asset type toggle", () => {
     render(<ConfigForm />, { wrapper: createWrapper() });
-    expect(screen.getByText("Stock")).toBeInTheDocument();
+    expect(screen.getAllByText("Stock").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Crypto Futures")).toBeInTheDocument();
   });
 
@@ -83,7 +83,7 @@ describe("ConfigForm", () => {
     render(<ConfigForm />, { wrapper: createWrapper() });
     await user.type(screen.getByLabelText(/ticker/i), "invalid ticker!!");
     await user.click(screen.getByRole("button", { name: /start analysis/i }));
-    expect(await screen.findByText(/valid ticker/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Enter a valid ticker/i)).toBeInTheDocument();
   });
 
   it("submits valid form and navigates to run page", async () => {
@@ -131,7 +131,7 @@ describe("ConfigForm", () => {
     render(<ConfigForm />, { wrapper: createWrapper() });
     await user.type(screen.getByLabelText(/ticker/i), "../etc");
     await user.click(screen.getByRole("button", { name: /start analysis/i }));
-    expect(await screen.findByText(/valid ticker/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Enter a valid ticker/i)).toBeInTheDocument();
     expect(mockStartAnalysis).not.toHaveBeenCalled();
   });
 

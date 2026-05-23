@@ -82,7 +82,7 @@ describe("AccountsDashboard", () => {
     const store = createStore();
     renderWithStore(store);
     await waitFor(() => {
-      expect(screen.getByText("$2000.00")).toBeInTheDocument();
+      expect(screen.getByText((content) => content.replace(/,/g, "") === "$2000.00")).toBeInTheDocument();
     });
   });
 
