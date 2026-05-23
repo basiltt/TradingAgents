@@ -112,7 +112,7 @@ class CloseRuleEvaluator:
         self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
         active_account_ids = set(accounts.keys())
         self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
-        self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids}
+        self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids and not v.locked()}
 
     async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
         """Evaluate equity-based rules instantly on WS wallet event (debounced)."""

@@ -26,6 +26,7 @@ async def test_register_wallet_listener_receives_events(ws_manager):
 
     wallet_data = {"totalEquity": "1000", "totalWalletBalance": "950", "totalPerpUPL": "50"}
     await ws_manager._notify_wallet_listeners("acc_123", wallet_data)
+    await asyncio.sleep(0)  # let task run
 
     assert len(received) == 1
     assert received[0] == ("acc_123", wallet_data)
@@ -46,6 +47,8 @@ async def test_multiple_listeners(ws_manager):
     ws_manager.register_wallet_listener(listener_b)
 
     await ws_manager._notify_wallet_listeners("x", {"totalEquity": "1"})
+    await asyncio.sleep(0)  # let tasks run
+
     assert len(calls_a) == 1
     assert len(calls_b) == 1
 
@@ -64,4 +67,6 @@ async def test_listener_exception_does_not_crash(ws_manager):
     ws_manager.register_wallet_listener(good_listener)
 
     await ws_manager._notify_wallet_listeners("acc", {"totalEquity": "1"})
+    await asyncio.sleep(0.01)  # let tasks complete (including exception handling)
+
     assert len(good_calls) == 1

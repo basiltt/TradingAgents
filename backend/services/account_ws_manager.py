@@ -103,9 +103,15 @@ class AccountWSManager:
     async def _notify_wallet_listeners(self, account_id: str, wallet_data: dict[str, Any]) -> None:
         for listener in self._wallet_listeners:
             try:
-                await listener(account_id, wallet_data)
+                asyncio.create_task(self._run_wallet_listener(listener, account_id, wallet_data))
             except Exception:
-                logger.exception("Wallet listener failed for account %s", account_id)
+                logger.exception("Failed to schedule wallet listener for account %s", account_id)
+
+    async def _run_wallet_listener(self, listener: Any, account_id: str, wallet_data: dict[str, Any]) -> None:
+        try:
+            await listener(account_id, wallet_data)
+        except Exception:
+            logger.exception("Wallet listener failed for account %s", account_id)
 
     async def broadcast_event(self, event: dict[str, Any]) -> None:
         await self._broadcast(event)
