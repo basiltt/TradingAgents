@@ -25,6 +25,7 @@ class CloseRuleEvaluator:
         self._db = db
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._shutting_down = False
         self._rule_failures: dict[str, int] = {}
         self._last_ws_eval: dict[str, float] = {}
         self._ws_debounce_interval = 1.5
@@ -45,6 +46,7 @@ class CloseRuleEvaluator:
 
     async def shutdown(self) -> None:
         self._running = False
+        self._shutting_down = True
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -110,9 +112,13 @@ class CloseRuleEvaluator:
         self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
         active_account_ids = set(accounts.keys())
         self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
+        self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids}
 
     async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
         """Evaluate equity-based rules instantly on WS wallet event (debounced)."""
+        if self._shutting_down:
+            return
+
         now = time.monotonic()
         last = self._last_ws_eval.get(account_id, 0.0)
         if (now - last) < self._ws_debounce_interval:

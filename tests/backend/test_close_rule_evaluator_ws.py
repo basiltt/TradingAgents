@@ -148,3 +148,17 @@ async def test_lock_prevents_reentrant_evaluation(evaluator, mock_deps):
 
     # Only one should have actually run (the other skipped due to lock)
     assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_ws_evaluation(evaluator, mock_deps):
+    """After shutdown, WS events are ignored."""
+    _, _, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[])
+
+    await evaluator.shutdown()
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    db.list_active_rules_for_account.assert_not_called()
