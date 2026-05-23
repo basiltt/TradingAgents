@@ -5,7 +5,7 @@ export type NeuDepth = "raised" | "inset" | "flat" | "accent" | "disabled";
 export type NeuRadius = "sm" | "md" | "lg" | "full";
 export type NeuPadding = "none" | "sm" | "md" | "lg";
 export type NeuSurfaceMode = "ivory" | "graphite";
-export type NeuAccentPalette = "cobalt" | "sage" | "amber" | "rose";
+export type NeuAccentPalette = "flame" | "cobalt" | "sage" | "amber" | "rose";
 export type NeuContrastMode = "balanced" | "high";
 
 export interface NeuOption {

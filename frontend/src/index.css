@@ -60,6 +60,8 @@
   --success-chroma: 0.14;
   --danger-hue: 4;
   --danger-chroma: 0.16;
+  --warning-hue: 85;
+  --warning-chroma: 0.12;
 
   --background: #e0e5ec;
   --foreground: #2d3436;
@@ -94,7 +96,7 @@
   --sidebar-ring: var(--ring);
   --success: oklch(0.64 var(--success-chroma) var(--success-hue));
   --success-foreground: #ffffff;
-  --warning: oklch(0.72 0.12 var(--brand-hue));
+  --warning: oklch(0.72 var(--warning-chroma) var(--warning-hue));
   --warning-foreground: #2a2a2a;
 
   --radius: 1.1rem;
@@ -180,7 +182,7 @@
   --sidebar-ring: var(--ring);
   --success: oklch(0.72 var(--success-chroma) var(--success-hue));
   --success-foreground: #1a1a1a;
-  --warning: oklch(0.78 0.12 var(--brand-hue));
+  --warning: oklch(0.78 var(--warning-chroma) var(--warning-hue));
   --warning-foreground: #1a1a1a;
 
   --glass-bg: #2d3436;

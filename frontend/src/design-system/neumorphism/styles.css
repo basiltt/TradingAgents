@@ -23,14 +23,14 @@
   --neu-stroke-strong: rgba(0, 0, 0, 0.1);
   --neu-highlight: #ffffff;
   --neu-highlight-soft: rgba(255, 255, 255, 0.9);
-  --neu-shadow: #b8bec7;
-  --neu-shadow-deep: #a0a8b4;
+  --neu-shadow: #a3b1c6;
+  --neu-shadow-deep: #8e99a8;
   --neu-focus: oklch(0.58 0.16 28 / 0.4);
   --neu-accent: oklch(0.58 0.16 28);
   --neu-accent-ink: #ffffff;
   --neu-accent-muted: oklch(0.94 0.03 28);
   --neu-success: oklch(0.64 0.14 155);
-  --neu-warning: oklch(0.72 0.12 28);
+  --neu-warning: oklch(0.72 0.12 85);
   --neu-danger: oklch(0.58 0.16 4);
   --neu-shadow-raised:
     8px 8px 16px var(--neu-shadow),
@@ -127,23 +127,26 @@
   --neu-shadow-deep: #111516;
   --neu-focus: oklch(0.72 0.14 28 / 0.3);
   --neu-shadow-raised:
+    7px 7px 14px var(--neu-shadow),
+    -7px -7px 14px var(--neu-highlight);
+  --neu-shadow-raised-hover:
     9px 9px 18px var(--neu-shadow),
     -9px -9px 18px var(--neu-highlight);
-  --neu-shadow-raised-hover:
-    12px 12px 24px var(--neu-shadow),
-    -12px -12px 24px var(--neu-highlight);
   --neu-shadow-inset:
     inset 4px 4px 8px var(--neu-shadow),
     inset -4px -4px 8px var(--neu-highlight);
   --neu-shadow-press:
-    inset 6px 6px 12px var(--neu-shadow),
-    inset -6px -6px 12px var(--neu-highlight);
+    inset 5px 5px 10px var(--neu-shadow),
+    inset -5px -5px 10px var(--neu-highlight);
   --neu-shadow-float:
-    14px 14px 28px var(--neu-shadow),
-    -14px -14px 28px var(--neu-highlight);
+    10px 10px 20px var(--neu-shadow),
+    -10px -10px 20px var(--neu-highlight);
+  --neu-shadow-accent:
+    7px 7px 14px var(--neu-shadow),
+    -7px -7px 14px var(--neu-highlight);
   --neu-shadow-pill:
-    6px 6px 12px var(--neu-shadow),
-    -6px -6px 12px var(--neu-highlight);
+    5px 5px 10px var(--neu-shadow),
+    -5px -5px 10px var(--neu-highlight);
   --neu-shadow-input:
     inset 3px 3px 6px var(--neu-shadow),
     inset -3px -3px 6px var(--neu-highlight);
@@ -286,14 +289,14 @@
 }
 
 .neu-surface-accent {
-  background: color-mix(in oklch, var(--neu-accent-muted) 30%, var(--neu-surface-raised));
-  border-color: color-mix(in oklch, var(--neu-accent) 22%, var(--neu-stroke-soft));
+  background: color-mix(in oklch, var(--neu-accent-muted) 12%, var(--neu-surface-raised));
+  border-color: color-mix(in oklch, var(--neu-accent) 14%, var(--neu-stroke-soft));
   box-shadow: var(--neu-shadow-raised);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-surface-accent {
-  background: color-mix(in oklch, var(--neu-accent) 15%, var(--neu-surface-raised));
-  border-color: color-mix(in oklch, var(--neu-accent) 26%, var(--neu-stroke-soft));
+  background: color-mix(in oklch, var(--neu-accent) 8%, var(--neu-surface-raised));
+  border-color: color-mix(in oklch, var(--neu-accent) 16%, var(--neu-stroke-soft));
   box-shadow: var(--neu-shadow-raised);
 }
 
@@ -529,13 +532,13 @@ main > * {
 }
 
 .neu-button-tonal {
-  background: color-mix(in oklch, var(--neu-accent-muted) 20%, var(--neu-surface-raised));
+  background: color-mix(in oklch, var(--neu-accent-muted) 8%, var(--neu-surface-raised));
   color: var(--neu-text-strong);
   box-shadow: var(--neu-shadow-pill);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-button-tonal {
-  background: color-mix(in oklch, var(--neu-accent) 15%, var(--neu-surface-raised));
+  background: color-mix(in oklch, var(--neu-accent) 6%, var(--neu-surface-raised));
 }
 
 .neu-button-danger {
@@ -575,19 +578,13 @@ main > * {
 }
 
 .neu-table-wrap {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-shadow) 12%, transparent), transparent 48%),
-    linear-gradient(315deg, color-mix(in oklch, var(--neu-highlight) 8%, transparent), transparent 44%),
-    var(--neu-surface-muted);
+  background: var(--neu-surface-muted);
   border: 1px solid color-mix(in oklch, var(--neu-stroke-soft) 90%, var(--neu-highlight) 10%);
   box-shadow: var(--neu-shadow-inset);
 }
 
 .neu-chart-well {
-  background:
-    linear-gradient(145deg, color-mix(in oklch, var(--neu-shadow) 10%, transparent), transparent 48%),
-    linear-gradient(315deg, color-mix(in oklch, var(--neu-highlight) 8%, transparent), transparent 40%),
-    var(--neu-surface-muted);
+  background: var(--neu-surface-muted);
   box-shadow: var(--neu-shadow-inset);
 }
 
@@ -676,6 +673,11 @@ main > * {
 }
 
 /* === Dynamic Accent Definitions === */
+.neu-theme[data-neu-accent="flame"] {
+  --neu-accent: oklch(0.58 0.16 28);
+  --neu-accent-muted: oklch(0.94 0.03 28);
+  --neu-accent-ink: oklch(0.25 0.04 28);
+}
 .neu-theme[data-neu-accent="cobalt"] {
   --neu-accent: oklch(0.61 0.13 257);
   --neu-accent-muted: oklch(0.92 0.03 257);

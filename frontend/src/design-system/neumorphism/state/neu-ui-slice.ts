@@ -33,7 +33,7 @@ function isNeuMode(value: unknown): value is NeuSurfaceMode {
 }
 
 function isNeuAccent(value: unknown): value is NeuAccentPalette {
-  return value === "cobalt" || value === "sage" || value === "amber" || value === "rose";
+  return value === "flame" || value === "cobalt" || value === "sage" || value === "amber" || value === "rose";
 }
 
 function isNeuContrast(value: unknown): value is NeuContrastMode {

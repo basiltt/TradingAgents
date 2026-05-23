@@ -5,7 +5,7 @@ import type {
 } from "./types";
 
 export const neuSurfaceModes = ["ivory", "graphite"] as const satisfies readonly NeuSurfaceMode[];
-export const neuAccentPalettes = ["cobalt", "sage", "amber", "rose"] as const satisfies readonly NeuAccentPalette[];
+export const neuAccentPalettes = ["flame", "cobalt", "sage", "amber", "rose"] as const satisfies readonly NeuAccentPalette[];
 export const neuContrastModes = ["balanced", "high"] as const satisfies readonly NeuContrastMode[];
 
 export interface NeuAccentDefinition {
@@ -20,10 +20,22 @@ export interface NeuAccentDefinition {
 }
 
 export const DEFAULT_NEU_MODE: NeuSurfaceMode = "ivory";
-export const DEFAULT_NEU_ACCENT: NeuAccentPalette = "cobalt";
+export const DEFAULT_NEU_ACCENT: NeuAccentPalette = "flame";
 export const DEFAULT_NEU_CONTRAST: NeuContrastMode = "balanced";
 
 export const neuAccentDefinitions: Record<NeuAccentPalette, NeuAccentDefinition> = {
+  flame: {
+    key: "flame",
+    label: "Flame",
+    description: "Energetic orange for trading momentum and call-to-action.",
+    accent: "oklch(0.58 0.16 28)",
+    muted: "oklch(0.94 0.03 28)",
+    ink: "oklch(0.25 0.04 28)",
+    previewIvory:
+      "linear-gradient(135deg, oklch(0.65 0.15 28), oklch(0.78 0.10 40), oklch(0.90 0.03 50))",
+    previewGraphite:
+      "linear-gradient(145deg, oklch(0.30 0.05 28), oklch(0.42 0.09 30) 48%, oklch(0.68 0.13 28) 100%)",
+  },
   cobalt: {
     key: "cobalt",
     label: "Cobalt",
