@@ -8,7 +8,6 @@ import {
 import {
   NeuAppShell,
   NeuButton,
-  NeuDrawer,
   NeuSidebar,
   NeuSurface,
   NeuTopbar,
@@ -17,6 +16,7 @@ import {
   setNeuMode,
   setSidebarCollapsed,
 } from "@/design-system/neumorphism";
+import { MobileDragDrawer } from "@/components/layout/MobileDragDrawer";
 import { useAccountWebSocket } from "@/hooks/useAccountWebSocket";
 import { AppCommandPalette } from "@/components/layout/AppCommandPalette";
 import { AppMarketBar } from "@/components/layout/AppMarketBar";
@@ -83,14 +83,9 @@ export function RootLayout() {
   );
 
   const mobileSidebar = (
-    <NeuDrawer
+    <MobileDragDrawer
       open={mobileNavOpen}
       onOpenChange={(open) => dispatch(setMobileNavOpen(open))}
-      title=""
-      description=""
-      side="left"
-      size="sm"
-      showHandle={false}
     >
       <div className="h-full">
         <NeuSidebar
@@ -100,7 +95,7 @@ export function RootLayout() {
           onDarkModeToggle={() => dispatch(setNeuMode(neuMode === "graphite" ? "ivory" : "graphite"))}
         />
       </div>
-    </NeuDrawer>
+    </MobileDragDrawer>
   );
 
   const topbar = (

@@ -1150,9 +1150,9 @@ export function ScannerPage() {
                   <ScannerMetricCard tone="success" value={scan.auto_trade_results.filter(r => r.status === "success").length} label="Executed" />
                   <ScannerMetricCard tone="danger" value={scan.auto_trade_results.filter(r => r.status === "failed").length} label="Failed" />
                 </div>
-                <div className="custom-scrollbar max-h-40 space-y-2 overflow-y-auto pr-1">
+                <div className="custom-scrollbar max-h-40 space-y-3 overflow-y-auto pr-1">
                   {scan.auto_trade_results.map((r, i) => (
-                    <div key={i} className="neu-surface-base rounded-[var(--neu-radius-md)] border-none shadow-[var(--neu-shadow-pill)] px-3.5 py-3" title={r.error || undefined}>
+                    <div key={i} className="neu-surface-base rounded-[var(--neu-radius-md)] border-none shadow-[var(--neu-shadow-raised-soft)] px-3.5 py-3" title={r.error || undefined}>
                       <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
                         <span className="font-mono font-semibold text-[var(--neu-text-strong)]">{r.symbol}</span>
                         <TonePill tone={r.side === "buy" ? "success" : "danger"}>{r.side}</TonePill>

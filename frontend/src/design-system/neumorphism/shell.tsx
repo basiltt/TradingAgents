@@ -523,9 +523,9 @@ export function NeuCommandPalette({
   if (!open) return null;
 
   return (
-    <div className="neu-command-overlay fixed inset-0 z-50 flex items-start justify-center px-3 py-8" onClick={() => onOpenChange(false)}>
-      <div className="w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
-        <NeuSurface depth="raised" radius="lg" padding="md" className="space-y-4 shadow-[var(--neu-shadow-float)]" style={{ animation: "neu-scale-in 250ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
+    <div className="neu-command-overlay fixed inset-0 z-50 flex items-start justify-center px-3 py-4 sm:py-8" onClick={() => onOpenChange(false)}>
+      <div className="w-full max-w-3xl max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-4rem)] flex flex-col" onClick={(event) => event.stopPropagation()}>
+        <NeuSurface depth="raised" radius="lg" padding="md" className="flex flex-col space-y-4 shadow-[var(--neu-shadow-float)] overflow-hidden" style={{ animation: "neu-scale-in 250ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
           <div className="flex items-center gap-3">
             <div className="inline-flex size-11 items-center justify-center rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-accent shadow-[var(--neu-shadow-pill)]">
               <Command className="size-5" />
@@ -546,9 +546,10 @@ export function NeuCommandPalette({
             onChange={(event) => onQueryChange?.(event.target.value)}
             placeholder="Search commands or routes"
             leadingIcon={<Search className="size-4" />}
+            className="!min-h-[3.5rem] text-base"
           />
 
-          <div className="neu-scrollbar max-h-[32rem] space-y-4 overflow-auto p-2 -m-2">
+          <div className="neu-scrollbar min-h-0 flex-1 space-y-4 overflow-auto p-2 pb-16 -m-2">
             {filteredGroups.length === 0 ? (
               <NeuSurface depth="inset" radius="md" padding="lg" className="text-center">
                 <p className="text-base font-semibold tracking-[-0.02em]">No matching commands</p>
@@ -562,7 +563,7 @@ export function NeuCommandPalette({
                   <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--neu-text-muted)" }}>
                     {group.title}
                   </p>
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     {group.items.map((item) => (
                       <button
                         key={item.id}
@@ -571,7 +572,7 @@ export function NeuCommandPalette({
                           item.onSelect();
                           onSelect(item.id);
                         }}
-                        className="neu-surface-base neu-interactive flex w-full items-start gap-3 rounded-[var(--neu-radius-md)] px-3.5 py-3 text-left shadow-[var(--neu-shadow-pill)]"
+                        className="neu-surface-base neu-interactive flex w-full items-start gap-3 rounded-[var(--neu-radius-md)] px-3.5 py-3 text-left shadow-[var(--neu-shadow-raised-soft)]"
                       >
                         <span className="inline-flex size-10 items-center justify-center rounded-[var(--neu-radius-sm)] neu-surface-base neu-surface-inset">
                           {item.icon ?? <Search className="size-4" />}

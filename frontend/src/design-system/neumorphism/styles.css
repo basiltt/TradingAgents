@@ -35,6 +35,9 @@
   --neu-shadow-raised:
     8px 8px 16px var(--neu-shadow),
     -8px -8px 16px var(--neu-highlight);
+  --neu-shadow-raised-soft:
+    4px 4px 8px var(--neu-shadow),
+    -4px -4px 8px var(--neu-highlight);
   --neu-shadow-raised-hover:
     10px 10px 20px var(--neu-shadow),
     -10px -10px 20px var(--neu-highlight);
@@ -132,6 +135,9 @@
   --neu-shadow-raised:
     7px 7px 14px var(--neu-shadow),
     -7px -7px 14px var(--neu-highlight);
+  --neu-shadow-raised-soft:
+    3px 3px 7px var(--neu-shadow),
+    -3px -3px 7px var(--neu-highlight);
   --neu-shadow-raised-hover:
     9px 9px 18px var(--neu-shadow),
     -9px -9px 18px var(--neu-highlight);
@@ -177,6 +183,10 @@
     0 18px 34px color-mix(in oklch, var(--neu-shadow-deep) 36%, transparent),
     inset 1px 1px 0 color-mix(in oklch, var(--neu-highlight) 80%, transparent),
     inset -1px -1px 0 color-mix(in oklch, var(--neu-shadow) 24%, transparent);
+  --neu-shadow-raised-soft:
+    -9px -9px 17px color-mix(in oklch, var(--neu-highlight) 96%, transparent),
+    9px 9px 17px color-mix(in oklch, var(--neu-shadow) 98%, transparent),
+    0 9px 17px color-mix(in oklch, var(--neu-shadow-deep) 36%, transparent);
 }
 
 .neu-app-bg {
