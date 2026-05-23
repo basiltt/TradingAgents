@@ -31,7 +31,7 @@ export const TradeRow = memo(function TradeRow({
 
   return (
     <tr
-      className={`group transition-all duration-150 cursor-pointer border-b border-border/20 ${selected ? "bg-primary/[0.03]" : "hover:bg-muted/15"}`}
+      className={`group neu-row-highlight cursor-pointer border-b border-border/20 ${selected ? "bg-primary/[0.03]" : "hover:bg-muted/15"}`}
       onClick={() => dispatch(setSelectedTrade(trade))}
     >
       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>

@@ -11,7 +11,7 @@ function Card({
       data-slot="card"
       data-size={size}
       className={cn(
-        "neu-surface-base neu-surface-raised flex flex-col gap-3 overflow-hidden rounded-[var(--neu-radius-lg)] text-sm text-[var(--neu-text-strong)] transition-all duration-200 data-[size=sm]:gap-2.5",
+        "neu-surface-base neu-surface-raised neu-hover-shine neu-tilt flex flex-col gap-3 overflow-hidden rounded-[var(--neu-radius-lg)] text-sm text-[var(--neu-text-strong)] transition-all duration-200 data-[size=sm]:gap-2.5",
         className,
       )}
       {...props}

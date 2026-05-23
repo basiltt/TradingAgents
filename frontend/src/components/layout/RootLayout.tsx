@@ -23,6 +23,7 @@ import { AppMarketBar } from "@/components/layout/AppMarketBar";
 import { MobileDock } from "@/components/layout/MobileDock";
 import { getActiveNavigation, navSections } from "@/components/layout/navigation";
 import { useAppDispatch, useAppSelector } from "@/store";
+import { motion, AnimatePresence } from "@/lib/motion";
 
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -145,7 +146,17 @@ export function RootLayout() {
         contentClassName="pb-24 lg:pb-10"
       >
         <div className="mx-auto w-full max-w-[min(100%,116rem)]">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={pathname}
+              initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              exit={{ opacity: 0, y: -6, filter: "blur(2px)" }}
+              transition={{ type: "spring", stiffness: 300, damping: 28, mass: 0.8 }}
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </div>
       </NeuAppShell>
 

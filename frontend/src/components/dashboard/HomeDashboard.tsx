@@ -17,6 +17,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { motion } from "@/lib/motion";
+import { springs, staggerContainer, listItem, fadeInUp } from "@/lib/motion";
 
 const quickActions = [
   {
@@ -51,9 +53,18 @@ export function HomeDashboard() {
   const runningCount = entries.filter(([, run]) => run.status === "running").length;
 
   return (
-    <div className="page-shell space-y-3 sm:space-y-6 lg:space-y-8 pb-8 route-stage">
+    <motion.div
+      className="page-shell space-y-3 sm:space-y-6 lg:space-y-8 pb-8 route-stage"
+      initial="hidden"
+      animate="visible"
+      variants={staggerContainer}
+    >
       {/* Hero section */}
-      <section className="rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*2)] p-3.5 sm:p-6 lg:p-8 shadow-[var(--shadow-card)] relative overflow-hidden aurora-border">
+      <motion.section
+        variants={fadeInUp}
+        transition={springs.gentle}
+        className="rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*2)] p-3.5 sm:p-6 lg:p-8 shadow-[var(--shadow-card)] relative overflow-hidden aurora-border"
+      >
         <div className="flex flex-col gap-3 sm:gap-6 lg:flex-row lg:items-center lg:justify-between relative z-10">
           <div className="space-y-1.5 sm:space-y-3">
             <div className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 shadow-[var(--shadow-inset)] text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -83,14 +94,23 @@ export function HomeDashboard() {
             </Link>
           </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* Quick actions grid */}
-      <section className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 neu-stagger">
-        {quickActions.map((card) => {
+      <motion.section
+        variants={fadeInUp}
+        transition={springs.gentle}
+        className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
+      >
+        {quickActions.map((card, i) => {
           const Icon = card.icon;
           return (
-            <Link key={card.title} to={card.to} className="block group active:scale-[0.985] transition-transform duration-200">
+            <motion.div
+              key={card.title}
+              variants={listItem}
+              transition={{ ...springs.snappy, delay: i * 0.08 }}
+            >
+            <Link to={card.to} className="block group active:scale-[0.985] transition-transform duration-200">
               <Card className={cn(
                 "h-full rounded-[calc(var(--radius)*1.2)] sm:rounded-[calc(var(--radius)*1.5)]",
                 "neu-card-hover neu-hover-shine relative overflow-hidden"
@@ -112,13 +132,14 @@ export function HomeDashboard() {
                 </div>
               </Card>
             </Link>
+            </motion.div>
           );
         })}
-      </section>
+      </motion.section>
 
       {/* Active runs or empty state */}
       {entries.length > 0 ? (
-        <section className="space-y-4">
+        <motion.section variants={fadeInUp} transition={springs.gentle} className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold tracking-tight">Active Runs</h2>
             <Link to="/history">
@@ -128,8 +149,14 @@ export function HomeDashboard() {
             </Link>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {entries.map(([runId, run]) => (
-              <Link key={runId} to="/analysis/$runId" params={{ runId }} className="block group active:scale-[0.985] transition-transform duration-200">
+            {entries.map(([runId, run], i) => (
+              <motion.div
+                key={runId}
+                initial={{ opacity: 0, y: 12, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ ...springs.snappy, delay: i * 0.06 }}
+              >
+              <Link to="/analysis/$runId" params={{ runId }} className="block group active:scale-[0.985] transition-transform duration-200">
                 <Card className="h-full rounded-[calc(var(--radius)*1.4)] neu-card-hover neu-hover-shine">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
@@ -149,10 +176,12 @@ export function HomeDashboard() {
                   </CardContent>
                 </Card>
               </Link>
+              </motion.div>
             ))}
           </div>
-        </section>
+        </motion.section>
       ) : (
+        <motion.div variants={fadeInUp} transition={springs.gentle}>
         <Card className="rounded-[calc(var(--radius)*1.3)] sm:rounded-[calc(var(--radius)*1.8)]">
           <CardContent className="flex flex-col items-center gap-3 sm:gap-4 p-4 sm:p-8 lg:p-10 text-center sm:flex-row sm:text-left">
             <div className="flex size-10 sm:size-14 shrink-0 items-center justify-center rounded-[calc(var(--radius)*1.1)] sm:rounded-[calc(var(--radius)*1.4)] bg-primary text-white shadow-[var(--shadow-soft)]">
@@ -174,7 +203,8 @@ export function HomeDashboard() {
             </div>
           </CardContent>
         </Card>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }

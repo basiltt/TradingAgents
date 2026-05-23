@@ -90,7 +90,7 @@ export function AnimatedNumber({
   }
 
   return (
-    <span className={cn("tabular-nums", className)}>
+    <span className={cn("tabular-nums transition-colors duration-300", className)} data-value-changed={animated !== parsed.number ? "" : undefined}>
       {parsed.prefix}
       {formatAnimatedValue(animated, parsed.decimals)}
       {parsed.suffix}

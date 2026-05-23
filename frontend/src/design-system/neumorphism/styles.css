@@ -781,3 +781,345 @@ main > * {
   ) !important;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PREMIUM MICRO-INTERACTIONS & ANIMATIONS
+   Best-in-class feel: every action has a response
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* === Ripple Effect on Click === */
+.neu-ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.neu-ripple::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%),
+    color-mix(in oklch, var(--neu-accent) 20%, transparent) 0%,
+    transparent 60%);
+  opacity: 0;
+  transform: scale(0);
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.neu-ripple:active::after {
+  opacity: 1;
+  transform: scale(2.5);
+  transition: transform 0s, opacity 0s;
+}
+
+/* === Magnetic Hover (subtle pull toward cursor) === */
+.neu-magnetic {
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+/* === Glow Pulse for Active/Success States === */
+@keyframes neu-glow-pulse {
+  0%, 100% {
+    box-shadow: var(--neu-shadow-raised),
+      0 0 0 0 color-mix(in oklch, var(--neu-accent) 30%, transparent);
+  }
+  50% {
+    box-shadow: var(--neu-shadow-raised),
+      0 0 20px 4px color-mix(in oklch, var(--neu-accent) 20%, transparent);
+  }
+}
+
+.neu-glow-active {
+  animation: neu-glow-pulse 2s ease-in-out infinite;
+}
+
+/* === Floating Animation (for cards, badges) === */
+@keyframes neu-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+.neu-float {
+  animation: neu-float 3s ease-in-out infinite;
+}
+
+/* === Slide-up Reveal for newly added elements === */
+@keyframes neu-slide-up-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.96);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.neu-reveal {
+  animation: neu-slide-up-reveal 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.neu-reveal-delay-1 { animation-delay: 60ms; }
+.neu-reveal-delay-2 { animation-delay: 120ms; }
+.neu-reveal-delay-3 { animation-delay: 180ms; }
+.neu-reveal-delay-4 { animation-delay: 240ms; }
+.neu-reveal-delay-5 { animation-delay: 300ms; }
+
+/* === Elastic Scale for Toggles/Checkboxes === */
+@keyframes neu-elastic-check {
+  0% { transform: scale(0); }
+  50% { transform: scale(1.2); }
+  70% { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+
+.neu-check-animate {
+  animation: neu-elastic-check 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* === Morphing Shadow on Scroll/Depth Change === */
+.neu-depth-transition {
+  transition: box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* === Typewriter cursor for loading states === */
+@keyframes neu-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.neu-cursor-blink::after {
+  content: "▊";
+  color: var(--neu-accent);
+  animation: neu-blink 1s step-end infinite;
+  margin-left: 2px;
+}
+
+/* === Smooth number change flash === */
+@keyframes neu-value-flash {
+  0% { background-color: color-mix(in oklch, var(--neu-accent) 15%, transparent); }
+  100% { background-color: transparent; }
+}
+
+.neu-value-changed {
+  animation: neu-value-flash 0.8s ease-out;
+  border-radius: 4px;
+}
+
+/* === Success checkmark animation === */
+@keyframes neu-draw-check {
+  0% { stroke-dashoffset: 24; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.neu-draw-check {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: neu-draw-check 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.1s forwards;
+}
+
+/* === Tooltip/Popover entrance === */
+@keyframes neu-tooltip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(4px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+
+.neu-tooltip-animate {
+  animation: neu-tooltip-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* === Badge Bounce-In === */
+@keyframes neu-badge-in {
+  0% { transform: scale(0) rotate(-10deg); opacity: 0; }
+  60% { transform: scale(1.15) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+.neu-badge-animate {
+  animation: neu-badge-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* === Table Row Highlight on Hover === */
+.neu-row-highlight {
+  transition: background-color 150ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.neu-row-highlight:hover {
+  background-color: color-mix(in oklch, var(--neu-accent) 5%, var(--neu-surface-muted));
+  transform: scale(1.002);
+}
+
+/* === Card Tilt on Hover (3D perspective) === */
+.neu-tilt {
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-style: preserve-3d;
+  perspective: 1000px;
+}
+
+.neu-tilt:hover {
+  transform: perspective(1000px) rotateX(-1deg) rotateY(1deg) translateY(-2px);
+  box-shadow: var(--neu-shadow-float);
+}
+
+/* === Progress Bar Stripe Animation === */
+@keyframes neu-progress-stripe {
+  0% { background-position: 1rem 0; }
+  100% { background-position: 0 0; }
+}
+
+.neu-progress-animated {
+  background-image: linear-gradient(
+    45deg,
+    rgba(255,255,255,0.15) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255,255,255,0.15) 50%,
+    rgba(255,255,255,0.15) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 1rem 1rem;
+  animation: neu-progress-stripe 1s linear infinite;
+}
+
+/* === Shake on Error === */
+@keyframes neu-shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-3px); }
+  20%, 40%, 60%, 80% { transform: translateX(3px); }
+}
+
+.neu-shake {
+  animation: neu-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* === Smooth Text Appear === */
+@keyframes neu-text-appear {
+  from { opacity: 0; transform: translateY(6px); filter: blur(2px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+.neu-text-appear {
+  animation: neu-text-appear 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* === Active/Selected indicator slide === */
+@keyframes neu-indicator-slide {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+
+.neu-indicator-animate {
+  animation: neu-indicator-slide 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: left;
+}
+
+/* === Notification Bell Ring === */
+@keyframes neu-ring {
+  0% { transform: rotate(0); }
+  10% { transform: rotate(14deg); }
+  20% { transform: rotate(-13deg); }
+  30% { transform: rotate(10deg); }
+  40% { transform: rotate(-8deg); }
+  50% { transform: rotate(5deg); }
+  60% { transform: rotate(-3deg); }
+  70% { transform: rotate(1deg); }
+  100% { transform: rotate(0); }
+}
+
+.neu-ring {
+  animation: neu-ring 0.8s ease;
+  transform-origin: top center;
+}
+
+/* === Smooth Collapse/Expand === */
+.neu-collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 350ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 250ms ease;
+  opacity: 0;
+}
+
+.neu-collapsible[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.neu-collapsible > * {
+  overflow: hidden;
+}
+
+/* === Button Loading Spinner === */
+@keyframes neu-spin {
+  to { transform: rotate(360deg); }
+}
+
+.neu-spin {
+  animation: neu-spin 0.7s linear infinite;
+}
+
+/* === Confetti-like Success Burst === */
+@keyframes neu-burst {
+  0% { transform: scale(0); opacity: 1; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+.neu-burst::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid var(--neu-accent);
+  animation: neu-burst 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  pointer-events: none;
+}
+
+/* === Focus within glow (for form groups) === */
+.neu-focus-within-glow:focus-within {
+  box-shadow:
+    var(--neu-shadow-raised),
+    0 0 0 3px color-mix(in oklch, var(--neu-accent) 12%, transparent);
+  transition: box-shadow 200ms ease;
+}
+
+/* === Smooth Counter Tick (for real-time data) === */
+@keyframes neu-tick-up {
+  0% { transform: translateY(100%); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes neu-tick-down {
+  0% { transform: translateY(-100%); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+.neu-tick-up { animation: neu-tick-up 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+.neu-tick-down { animation: neu-tick-down 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* === Reduced Motion === */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .neu-float, .neu-glow-active, .neu-progress-animated {
+    animation: none !important;
+  }
+}
+
