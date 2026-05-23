@@ -28,6 +28,7 @@ class CloseRuleEvaluator:
         self._rule_failures: dict[str, int] = {}
         self._last_ws_eval: dict[str, float] = {}
         self._ws_debounce_interval = 1.5
+        self._ws_eval_locks: dict[str, asyncio.Lock] = {}
 
     def set_cycle_callback(self, callback: Any) -> None:
         self._cycle_callback = callback
@@ -119,24 +120,30 @@ class CloseRuleEvaluator:
 
         self._last_ws_eval[account_id] = now
 
-        try:
-            equity = Decimal(wallet_data.get("totalEquity") or "0")
-            pnl = Decimal(wallet_data.get("totalPerpUPL") or "0")
-            balance = Decimal(wallet_data.get("totalWalletBalance") or "0")
-        except Exception:
-            logger.warning("Invalid WS wallet data for account %s", account_id)
+        # Per-account lock prevents re-entrant evaluation if close takes >1.5s
+        lock = self._ws_eval_locks.setdefault(account_id, asyncio.Lock())
+        if lock.locked():
             return
 
-        rules = await self._db.list_active_rules_for_account(account_id)
-        if not rules:
-            return
+        async with lock:
+            try:
+                equity = Decimal(wallet_data.get("totalEquity") or "0")
+                pnl = Decimal(wallet_data.get("totalPerpUPL") or "0")
+                balance = Decimal(wallet_data.get("totalWalletBalance") or "0")
+            except Exception:
+                logger.warning("Invalid WS wallet data for account %s", account_id)
+                return
 
-        # Only evaluate equity-based rules (time-based stay on polling loop)
-        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION")]
-        if not equity_rules:
-            return
+            rules = await self._db.list_active_rules_for_account(account_id)
+            if not rules:
+                return
 
-        await self._evaluate_account_rules_with_data(account_id, equity_rules, equity, pnl, balance)
+            # Only evaluate equity-based rules (time-based stay on polling loop)
+            equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION")]
+            if not equity_rules:
+                return
+
+            await self._evaluate_account_rules_with_data(account_id, equity_rules, equity, pnl, balance)
 
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         try:

@@ -1,5 +1,6 @@
 """Tests for WS-driven close rule evaluation with debounce."""
 
+import asyncio
 import time
 from decimal import Decimal
 from unittest.mock import AsyncMock
@@ -114,3 +115,36 @@ async def test_time_based_rules_skipped_in_ws(evaluator, mock_deps):
 
     # No close should be attempted since only time-based rules exist
     mock_deps[0].close_all_for_rule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lock_prevents_reentrant_evaluation(evaluator, mock_deps):
+    """If evaluation is in progress (lock held), subsequent calls skip."""
+    _, _, db = mock_deps
+
+    # Make list_active_rules_for_account slow to simulate long close operation
+    call_count = 0
+
+    async def slow_query(account_id):
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(0.1)
+        return []
+
+    db.list_active_rules_for_account = slow_query
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+
+    # Bypass debounce for second call
+    async def fire_second():
+        await asyncio.sleep(0.02)
+        evaluator._last_ws_eval["acc1"] = 0
+        await evaluator.on_wallet_update("acc1", wallet_data)
+
+    await asyncio.gather(
+        evaluator.on_wallet_update("acc1", wallet_data),
+        fire_second(),
+    )
+
+    # Only one should have actually run (the other skipped due to lock)
+    assert call_count == 1
