@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Set
+from typing import Any, Callable, Coroutine, Dict, Set
 
 from backend.crypto import decrypt_value
 from backend.async_persistence import AsyncAnalysisDB
@@ -20,6 +20,7 @@ class AccountWSManager:
         self._db = db
         self._clients: Dict[str, BybitWSClient] = {}
         self._frontend_queues: Set[asyncio.Queue] = set()
+        self._wallet_listeners: list = []
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
@@ -68,6 +69,8 @@ class AccountWSManager:
         async def on_event(event: dict[str, Any]) -> None:
             event["account_id"] = account_id
             await self._broadcast(event)
+            if event.get("type") == "wallet_update" and self._wallet_listeners:
+                await self._notify_wallet_listeners(account_id, event.get("data", {}))
 
         client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
         self._clients[account_id] = client
@@ -93,6 +96,16 @@ class AccountWSManager:
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._frontend_queues.discard(q)
+
+    def register_wallet_listener(self, callback: Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]) -> None:
+        self._wallet_listeners.append(callback)
+
+    async def _notify_wallet_listeners(self, account_id: str, wallet_data: dict[str, Any]) -> None:
+        for listener in self._wallet_listeners:
+            try:
+                await listener(account_id, wallet_data)
+            except Exception:
+                logger.exception("Wallet listener failed for account %s", account_id)
 
     async def broadcast_event(self, event: dict[str, Any]) -> None:
         await self._broadcast(event)
