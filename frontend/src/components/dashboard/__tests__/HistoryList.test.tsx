@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { configureStore } from "@reduxjs/toolkit";
 import { analysisSlice } from "@/store/analysis-slice";
 import { uiSlice } from "@/store/ui-slice";
+import { neuUiSlice } from "@/design-system/neumorphism";
 import { HistoryList } from "../HistoryList";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -27,6 +28,14 @@ const server = setupServer(
       limit: 20,
     }),
   ),
+  http.get("/api/v1/analysis/:runId/snapshot", () =>
+    HttpResponse.json({
+      agents: {},
+      messages: [],
+      stats: null,
+      reports: {},
+    }),
+  ),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
@@ -35,10 +44,18 @@ afterAll(() => server.close());
 
 function createWrapper() {
   const store = configureStore({
-    reducer: { analysis: analysisSlice.reducer, ui: uiSlice.reducer },
+    reducer: { analysis: analysisSlice.reducer, ui: uiSlice.reducer, neuUi: neuUiSlice.reducer },
   });
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        refetchOnMount: false,
+        staleTime: Infinity,
+      },
+    },
   });
   return ({ children }: { children: React.ReactNode }) => (
     <Provider store={store}>
