@@ -21,6 +21,7 @@ import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } fro
 import { cn } from "@/lib/utils";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
+import { NeuSwitch } from "@/design-system/neumorphism";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -78,19 +79,19 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 const STATUS_CONFIG: Record<string, { color: string; dot: string; label: string }> = {
-  active: { color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", dot: "bg-emerald-400", label: "Active" },
-  paused: { color: "bg-amber-500/10 text-amber-400 border-amber-500/20", dot: "bg-amber-400", label: "Paused" },
-  completed: { color: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20", dot: "bg-zinc-400", label: "Completed" },
-  error: { color: "bg-red-500/10 text-red-400 border-red-500/20", dot: "bg-red-400", label: "Error" },
-  cancelled: { color: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20", dot: "bg-zinc-400", label: "Cancelled" },
+  active: { color: "bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]", dot: "bg-[var(--neu-success)]", label: "Active" },
+  paused: { color: "bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]", dot: "bg-[var(--neu-warning)]", label: "Paused" },
+  completed: { color: "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-pill)]", dot: "bg-[var(--neu-text-muted)]", label: "Completed" },
+  error: { color: "bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]", dot: "bg-[var(--neu-danger)]", label: "Error" },
+  cancelled: { color: "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-pill)]", dot: "bg-[var(--neu-text-muted)]", label: "Cancelled" },
 };
 
 const TYPE_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
-  once: { icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z", label: "One-time", color: "text-violet-400" },
-  interval: { icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15", label: "Interval", color: "text-blue-400" },
-  daily: { icon: "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z", label: "Daily", color: "text-orange-400" },
-  weekly: { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Weekly", color: "text-cyan-400" },
-  cron: { icon: "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4", label: "Cron", color: "text-pink-400" },
+  once: { icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z", label: "One-time", color: "text-[var(--neu-accent)]" },
+  interval: { icon: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15", label: "Interval", color: "text-[var(--neu-accent)]" },
+  daily: { icon: "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z", label: "Daily", color: "text-[var(--neu-warning)]" },
+  weekly: { icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2", label: "Weekly", color: "text-[var(--neu-accent)]" },
+  cron: { icon: "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4", label: "Cron", color: "text-[var(--neu-danger)]" },
 };
 
 const DAYS_OF_WEEK = [
@@ -162,7 +163,7 @@ function ScheduleCard({
   const isRunning = s.is_running;
 
   return (
-    <div className="group relative rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 overflow-hidden active:scale-[0.995]">
+    <div className="group relative neu-surface-base neu-surface-raised neu-card-hover border-none rounded-[var(--neu-radius-lg)] shadow-[var(--shadow-card)] overflow-hidden active:scale-[0.995]">
       {/* Subtle top accent line */}
       <div className={cn(
         "absolute top-0 left-0 right-0 h-[2px] opacity-60",
@@ -177,7 +178,7 @@ function ScheduleCard({
       <div className="p-5">
         <div className="flex items-start gap-4">
           {/* Type icon */}
-          <div className={cn("shrink-0 mt-0.5 w-10 h-10 rounded-xl flex items-center justify-center bg-muted/15 border border-border/30 backdrop-blur-sm", typeInfo.color)}>
+          <div className={cn("shrink-0 mt-0.5 w-10 h-10 rounded-[var(--neu-radius-md)] flex items-center justify-center bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] border border-[color:var(--neu-stroke-soft)]", typeInfo.color)}>
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
             </svg>
@@ -186,48 +187,48 @@ function ScheduleCard({
           {/* Main content */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5 mb-1">
-              <h3 className="font-semibold text-sm text-foreground truncate" title={s.name}>{s.name}</h3>
+              <h3 className="font-semibold text-sm text-[var(--neu-text-strong)] truncate" title={s.name}>{s.name}</h3>
               {isRunning && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-primary/10 text-primary border-primary/20">
-                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                <span className="inline-flex items-center gap-1.5 rounded-[var(--neu-radius-pill)] border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]">
+                  <svg className="w-3 h-3 animate-spin text-[var(--neu-accent)]" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                   Running
                 </span>
               )}
-              <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider", status.color)}>
+              <span className={cn("inline-flex items-center gap-1.5 rounded-[var(--neu-radius-pill)] border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider", status.color)}>
                 {s.status === "active" && !isRunning && <PulsingDot className={status.dot} />}
                 {status.label}
               </span>
             </div>
 
-            <p className="text-xs text-muted-foreground mb-3">{scheduleDescription(s)}</p>
+            <p className="text-xs text-[var(--neu-text-muted)] mb-3">{scheduleDescription(s)}</p>
 
             {/* Info chips */}
             <div className="flex flex-wrap items-center gap-2 text-[11px]">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/50 text-muted-foreground">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border border-[color:var(--neu-stroke-soft)]">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 Next: {relativeTime(s.next_run_at)}
               </span>
               {s.last_run_at && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/50 text-muted-foreground">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border border-[color:var(--neu-stroke-soft)]">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                   Last: {relativeTime(s.last_run_at)}
                 </span>
               )}
-              <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/50", typeInfo.color)}>
+              <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-muted)] border border-[color:var(--neu-stroke-soft)]", typeInfo.color)}>
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
                 </svg>
                 {typeInfo.label}
               </span>
               {s.consecutive_failures > 0 && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/10 text-red-400">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-[var(--neu-radius-sm)] bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
@@ -239,11 +240,11 @@ function ScheduleCard({
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-0.5 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity duration-200">
+          <div className="flex items-center gap-1.5 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity duration-200">
             {s.status === "active" && (
               <button
                 onClick={onPause}
-                className="p-2 rounded-lg hover:bg-amber-500/10 text-muted-foreground hover:text-amber-400 transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-warning)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all disabled:opacity-40 cursor-pointer"
                 aria-label="Pause"
                 title="Pause"
                 disabled={isPending}
@@ -256,7 +257,7 @@ function ScheduleCard({
             {(s.status === "paused" || s.status === "error" || s.status === "cancelled") && (
               <button
                 onClick={onResume}
-                className="p-2 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-success)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all disabled:opacity-40 cursor-pointer"
                 aria-label="Resume"
                 title="Resume"
                 disabled={isPending}
@@ -269,7 +270,7 @@ function ScheduleCard({
             )}
             <button
               onClick={onTrigger}
-              className="p-2 rounded-lg hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-accent)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all disabled:opacity-40 cursor-pointer"
               aria-label="Run Now"
               title="Run Now"
               disabled={s.status === "completed" || s.status === "cancelled" || isRunning || isPending}
@@ -280,7 +281,7 @@ function ScheduleCard({
             </button>
             <button
               onClick={onEdit}
-              className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all cursor-pointer"
               aria-label="Edit"
               title="Edit"
             >
@@ -290,7 +291,7 @@ function ScheduleCard({
             </button>
             <button
               onClick={onDelete}
-              className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-danger)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all cursor-pointer"
               aria-label="Delete"
               title="Delete"
             >
@@ -430,59 +431,59 @@ export function ScheduledScansPage() {
       {/* Stats bar */}
       {!isLoading && schedules.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-              <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] flex items-center justify-center border border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]">
+              <svg className="w-4.5 h-4.5 text-[var(--neu-success)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground leading-none">{activeCount}</p>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Active</p>
+              <p className="text-lg font-bold text-[var(--neu-text-strong)] leading-none">{activeCount}</p>
+              <p className="text-[10px] text-[var(--neu-text-muted)]/60 uppercase tracking-wider font-semibold mt-1">Active</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-              <svg className="w-4.5 h-4.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] flex items-center justify-center border border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))]">
+              <svg className="w-4.5 h-4.5 text-[var(--neu-warning)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground leading-none">{pausedCount}</p>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Paused</p>
+              <p className="text-lg font-bold text-[var(--neu-text-strong)] leading-none">{pausedCount}</p>
+              <p className="text-[10px] text-[var(--neu-text-muted)]/60 uppercase tracking-wider font-semibold mt-1">Paused</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-red-500/10 flex items-center justify-center border border-red-500/20">
-              <svg className="w-4.5 h-4.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] flex items-center justify-center border border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]">
+              <svg className="w-4.5 h-4.5 text-[var(--neu-danger)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground leading-none">{errorCount}</p>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Errors</p>
+              <p className="text-lg font-bold text-[var(--neu-text-strong)] leading-none">{errorCount}</p>
+              <p className="text-[10px] text-[var(--neu-text-muted)]/60 uppercase tracking-wider font-semibold mt-1">Errors</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center border border-zinc-500/20">
-              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[var(--neu-surface-deep)] flex items-center justify-center border border-[color:var(--neu-stroke-soft)]">
+              <svg className="w-4.5 h-4.5 text-[var(--neu-text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground leading-none">{cancelledCount}</p>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Cancelled</p>
+              <p className="text-lg font-bold text-[var(--neu-text-strong)] leading-none">{cancelledCount}</p>
+              <p className="text-[10px] text-[var(--neu-text-muted)]/60 uppercase tracking-wider font-semibold mt-1">Cancelled</p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/50 bg-card/65 backdrop-blur-sm glass-card p-3.5 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-zinc-500/10 flex items-center justify-center border border-zinc-500/20">
-              <svg className="w-4.5 h-4.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-3.5 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[var(--neu-surface-deep)] flex items-center justify-center border border-[color:var(--neu-stroke-soft)]">
+              <svg className="w-4.5 h-4.5 text-[var(--neu-text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
             <div>
-              <p className="text-lg font-bold text-foreground leading-none">{completedCount}</p>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider font-semibold mt-1">Completed</p>
+              <p className="text-lg font-bold text-[var(--neu-text-strong)] leading-none">{completedCount}</p>
+              <p className="text-[10px] text-[var(--neu-text-muted)]/60 uppercase tracking-wider font-semibold mt-1">Completed</p>
             </div>
           </div>
         </div>
@@ -950,7 +951,7 @@ function ScheduleFormDialog({
 
           {/* Schedule type selector */}
           <div>
-            <Label className="text-xs font-medium">Schedule Type</Label>
+            <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Schedule Type</Label>
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 mt-1.5">
               {SCHEDULE_TYPES.map((t) => {
                 const typeIcon = TYPE_CONFIG[t.value]?.icon ?? "";
@@ -960,10 +961,10 @@ function ScheduleFormDialog({
                   type="button"
                   onClick={() => setScheduleType(t.value)}
                   className={cn(
-                    "flex flex-col items-center gap-1 px-2 py-2.5 text-[11px] rounded-xl border transition-all duration-150",
+                    "flex flex-col items-center gap-1 px-2 py-2.5 text-[11px] rounded-[var(--neu-radius-md)] border transition-all duration-150 font-bold uppercase tracking-wider cursor-pointer",
                     scheduleType === t.value
-                      ? "bg-primary/10 text-primary border-primary/40 shadow-sm"
-                      : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/60 hover:border-border"
+                      ? "bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]"
+                      : "bg-[var(--neu-surface-raised)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-raised)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:text-[var(--neu-text-strong)]"
                   )}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
@@ -979,28 +980,28 @@ function ScheduleFormDialog({
           {/* Type-specific fields */}
           {scheduleType === "once" && (
             <div>
-              <Label htmlFor="run-at" className="text-xs font-medium">Date &amp; Time</Label>
+              <Label htmlFor="run-at" className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Date &amp; Time</Label>
               <Input id="run-at" type="datetime-local" value={runAt} onChange={(e) => setRunAt(e.target.value)} className="mt-1.5" />
             </div>
           )}
           {scheduleType === "interval" && (
             <div>
-              <Label htmlFor="interval" className="text-xs font-medium">Interval (minutes)</Label>
+              <Label htmlFor="interval" className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Interval (minutes)</Label>
               <Input id="interval" type="number" min={15} max={10080} value={intervalMinutes} onChange={(e) => setIntervalMinutes(parseInt(e.target.value) || 60)} className="mt-1.5" />
-              <p className="text-[11px] text-muted-foreground mt-1">
+              <p className="text-[11px] text-[var(--neu-text-muted)]/60 mt-1">
                 {intervalMinutes >= 60 ? `Every ${(intervalMinutes / 60).toFixed(1)} hours` : `Every ${intervalMinutes} minutes`}
               </p>
             </div>
           )}
           {(scheduleType === "daily" || scheduleType === "weekly") && (
             <div>
-              <Label htmlFor="time" className="text-xs font-medium">Time</Label>
+              <Label htmlFor="time" className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Time</Label>
               <Input id="time" type="time" value={time} onChange={(e) => setTime(e.target.value)} className="mt-1.5" />
             </div>
           )}
           {scheduleType === "daily" && (
             <div>
-              <Label className="text-xs font-medium">Days</Label>
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Days</Label>
               <div className="flex gap-1.5 mt-1.5 flex-wrap">
                 {DAYS_OF_WEEK.map((d) => (
                   <button
@@ -1008,10 +1009,10 @@ function ScheduleFormDialog({
                     type="button"
                     onClick={() => setDays((prev) => prev.includes(d.value) ? prev.filter((x) => x !== d.value) : [...prev, d.value])}
                     className={cn(
-                      "w-9 h-9 text-xs rounded-lg border transition-all duration-150 font-medium",
+                      "w-9 h-9 text-xs rounded-[var(--neu-radius-sm)] border transition-all duration-150 font-bold uppercase cursor-pointer",
                       days.includes(d.value)
-                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                        : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/60"
+                        ? "bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]"
+                        : "bg-[var(--neu-surface-raised)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-raised)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:text-[var(--neu-text-strong)]"
                     )}
                   >
                     {d.label}
@@ -1048,21 +1049,21 @@ function ScheduleFormDialog({
           <CollapsibleSection title="Scan Configuration" open={showScanConfig} onToggle={() => setShowScanConfig(!showScanConfig)}>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium">LLM Provider</Label>
+                <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">LLM Provider</Label>
                 <Select value={provider} onValueChange={(v) => v != null && setProvider(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{PROVIDERS.map((p) => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium">Kline Interval</Label>
+                <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Kline Interval</Label>
                 <Select value={klineInterval} onValueChange={(v) => setKlineInterval(v as CryptoInterval)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{CRYPTO_INTERVALS.map((i) => (<SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>))}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium">Output Language</Label>
+                <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Output Language</Label>
                 <Select value={outputLanguage} onValueChange={(v) => v != null && setOutputLanguage(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{LANGUAGES.map((l) => (<SelectItem key={l} value={l}>{l}</SelectItem>))}</SelectContent>
@@ -1070,27 +1071,71 @@ function ScheduleFormDialog({
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Workflow Mode</Label>
-              <div className="flex rounded-xl border border-border/40 overflow-hidden">
-                {([{ value: "quick_trade" as const, label: "Quick Trade" }, { value: "deep_analysis" as const, label: "Deep Analysis" }]).map((opt) => (
-                  <button key={opt.value} type="button" className={cn("flex-1 px-3 py-2 text-xs font-medium transition-all", workflowMode === opt.value ? "bg-primary text-primary-foreground" : "bg-muted/30 hover:bg-muted/60 text-muted-foreground")} onClick={() => setWorkflowMode(opt.value)}>{opt.label}</button>
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Workflow Mode</Label>
+              <div className="grid grid-cols-2 gap-1 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 shadow-[var(--neu-shadow-inset)] border-none">
+                {(
+                  [
+                    { value: "quick_trade" as const, label: "Quick Trade" },
+                    { value: "deep_analysis" as const, label: "Deep Analysis" },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={cn(
+                      "flex min-h-9 items-center justify-center rounded-[var(--neu-radius-sm)] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer border-none",
+                      workflowMode === opt.value
+                        ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                        : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]"
+                    )}
+                    onClick={() => setWorkflowMode(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="sched_ta_prefilter" checked={taPrefilterEnabled} onChange={(e) => setTaPrefilterEnabled(e.target.checked)} className="h-4 w-4 rounded border-input" />
-              <Label htmlFor="sched_ta_prefilter" className="text-xs font-medium cursor-pointer">Smart Pre-Screen</Label>
+            <div className="space-y-3">
+              <NeuSwitch
+                checked={taPrefilterEnabled}
+                onChange={setTaPrefilterEnabled}
+                label="Smart Pre-Screen"
+                description="Filter low-conviction assets before LLM debate."
+                className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3.5"
+              />
               {taPrefilterEnabled && (
-                <Input type="number" min={0} max={100} value={taPrefilterThreshold} onChange={(e) => setTaPrefilterThreshold(Number(e.target.value))} className="w-16 h-7 text-xs ml-2" />
+                <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] flex flex-wrap items-center gap-3 px-4 py-3 bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]">
+                  <Label htmlFor="sched_ta_threshold" className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)]">Threshold</Label>
+                  <Input
+                    id="sched_ta_threshold"
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={taPrefilterThreshold}
+                    onChange={(e) => setTaPrefilterThreshold(Number(e.target.value))}
+                    className="h-10 w-24"
+                  />
+                  <span className="inline-flex items-center rounded-full border border-transparent shadow-[var(--neu-shadow-pill)] bg-[var(--neu-surface-muted)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">/ 100</span>
+                </div>
               )}
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Analyst Team</Label>
-              <div className="flex flex-wrap gap-1.5">
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Analyst Team</Label>
+              <div className="flex flex-wrap gap-2.5">
                 {CRYPTO_ANALYSTS.map((a) => {
                   const active = analysts.includes(a);
                   return (
-                    <button key={a} type="button" onClick={() => setAnalysts((prev) => active ? prev.filter((x) => x !== a) : [...prev, a])} className={cn("px-2.5 py-1 text-xs rounded-lg border transition-all", active ? "bg-primary text-primary-foreground border-primary" : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/60")}>
+                    <button
+                      key={a}
+                      type="button"
+                      onClick={() => setAnalysts((prev) => active ? prev.filter((x) => x !== a) : [...prev, a])}
+                      className={cn(
+                        "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-[var(--neu-radius-pill)] border transition-all duration-150 cursor-pointer shadow-[var(--neu-shadow-pill)] hover:translate-y-[-1px]",
+                        active
+                          ? "bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))]"
+                          : "bg-[var(--neu-surface-raised)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)] hover:text-[var(--neu-text-strong)] hover:shadow-[var(--neu-shadow-raised-hover)]"
+                      )}
+                    >
                       {a.replace("crypto_", "")}
                     </button>
                   );
@@ -1101,41 +1146,51 @@ function ScheduleFormDialog({
 
           {/* Workflow Settings (collapsible) */}
           <CollapsibleSection title="Workflow Settings" open={showWorkflowSettings} onToggle={() => setShowWorkflowSettings(!showWorkflowSettings)}>
-            <div className="flex flex-col gap-1.5">
-              <Label className="text-xs font-medium">Research Depth</Label>
+            <div className="rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 border-none flex flex-col gap-2">
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Research Depth</Label>
               <div className="flex items-center gap-3">
-                <input type="range" min={1} max={5} step={1} value={researchDepth} onChange={(e) => setResearchDepth(Number(e.target.value))} className="flex-1 accent-primary" />
-                <span className="text-xs font-mono w-4 text-right">{researchDepth}</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={researchDepth}
+                  onChange={(e) => setResearchDepth(Number(e.target.value))}
+                  className="neu-slider flex-1"
+                />
+                <span className="rounded-full border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-base)] px-3 py-1 font-mono text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-pill)] text-xs text-center w-8">
+                  {researchDepth}
+                </span>
               </div>
-              <p className="text-[11px] text-muted-foreground">1 = Quick scan, 5 = Deep analysis</p>
+              <p className="text-[10px] text-[var(--neu-text-muted)]/60 font-semibold uppercase">1 = Quick scan, 5 = Deep analysis</p>
             </div>
             <div className={`grid ${workflowMode === "quick_trade" ? "grid-cols-1" : "grid-cols-2"} gap-3`}>
-              <div className="flex flex-col gap-1">
-                <Label className="text-xs font-medium">Max Debate Rounds</Label>
-                <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} className="text-xs" />
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Max Debate Rounds</Label>
+                <Input type="number" min={1} max={10} value={maxDebateRounds} onChange={(e) => setMaxDebateRounds(Number(e.target.value))} />
               </div>
               {workflowMode !== "quick_trade" && (
-                <div className="flex flex-col gap-1">
-                  <Label className="text-xs font-medium">Max Risk Rounds</Label>
-                  <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} className="text-xs" />
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Max Risk Rounds</Label>
+                  <Input type="number" min={1} max={10} value={maxRiskRounds} onChange={(e) => setMaxRiskRounds(Number(e.target.value))} />
                 </div>
               )}
             </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-xs font-medium">Max Recursion Limit</Label>
-              <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} className="w-32 text-xs" />
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Max Recursion Limit</Label>
+              <Input type="number" min={1} max={500} value={maxRecurLimit} onChange={(e) => setMaxRecurLimit(Number(e.target.value))} className="w-32" />
             </div>
-            <div className="flex flex-col gap-1">
-              <Label className="text-xs font-medium">Max Parallel Analyses</Label>
-              <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(25, Math.max(1, Number(e.target.value))))} className="w-32 text-xs" />
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Max Parallel Analyses</Label>
+              <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(25, Math.max(1, Number(e.target.value))))} className="w-32" />
             </div>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={checkpointEnabled} onChange={(e) => setCheckpointEnabled(e.target.checked)} className="mt-0.5 w-4 h-4 rounded border-border accent-primary" />
-              <div>
-                <span className="text-xs font-medium">Enable Checkpoints</span>
-                <p className="text-[11px] text-muted-foreground">Save state after each step so crashed runs can resume</p>
-              </div>
-            </label>
+            <NeuSwitch
+              checked={checkpointEnabled}
+              onChange={setCheckpointEnabled}
+              label="Enable Checkpoints"
+              description="Save state after each step so crashed runs can resume."
+              className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3.5"
+            />
           </CollapsibleSection>
 
           {/* LLM & Proxy Settings (collapsible) */}
@@ -1165,13 +1220,13 @@ function ScheduleFormDialog({
                   </button>
                 )}
                 {showEndpoints && endpoints.length > 1 && (
-                  <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                  <div className="absolute z-50 mt-1.5 w-full rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-float)] overflow-hidden max-h-48 overflow-y-auto backdrop-blur-xl">
                     {endpoints.map((ep) => (
                       <div
                         key={ep.url}
                         className={cn(
-                          "flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-muted transition-colors",
-                          ep.url === backendUrl && "bg-primary/10 text-primary",
+                          "flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))] transition-colors",
+                          ep.url === backendUrl && "bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold",
                         )}
                       >
                         <button
@@ -1241,11 +1296,11 @@ function ScheduleFormDialog({
           </CollapsibleSection>
 
           {/* Agent Model Overrides */}
-          <div className="rounded-xl border border-border/30 px-4 py-3">
+          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-4 space-y-4">
             <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
 
             {/* Auto-Trade */}
-            <div className="pt-3">
+            <div className="pt-2">
               <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
             </div>
           </div>
@@ -1265,18 +1320,18 @@ function ScheduleFormDialog({
 
 function CollapsibleSection({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-border/30 overflow-hidden">
+    <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
-        className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full px-4 py-3"
+        className="flex items-center gap-2 text-sm font-semibold text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_4%,var(--neu-surface-base))] transition-colors w-full px-4 py-3 cursor-pointer"
       >
         <svg className={cn("w-4 h-4 transition-transform duration-200", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
         {title}
       </button>
-      {open && <div className="px-4 pb-4 space-y-3 border-t border-border/20 pt-3">{children}</div>}
+      {open && <div className="px-4 pb-4 space-y-3 border-t border-[color:var(--neu-stroke-soft)] pt-3 bg-[var(--neu-surface-base)]">{children}</div>}
     </div>
   );
 }

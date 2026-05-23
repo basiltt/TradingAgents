@@ -23,7 +23,7 @@ import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
-import { NeuSwitch } from "@/design-system/neumorphism";
+import { NeuSwitch, NeuScoreBar } from "@/design-system/neumorphism";
 
 const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
 const CRYPTO_ANALYSTS = ["crypto_technical", "crypto_derivatives", "crypto_news", "crypto_fundamentals", "crypto_social"] as const;
@@ -38,28 +38,28 @@ const LANGUAGES = ["English", "Chinese", "Japanese", "Korean", "Spanish", "Frenc
 
 const STORAGE_KEY = "tradingagents_settings";
 const SCANNER_KEY = "tradingagents_scanner";
-const SCANNER_PANEL_CLASS = "glass-card aurora-border overflow-hidden rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*1.7)] border border-border/60";
-const SCANNER_SECTION_CLASS = "surface-lift rounded-[calc(var(--radius)*1.2)] sm:rounded-[calc(var(--radius)*1.3)] border border-border/60 px-3 py-3 sm:px-4.5 sm:py-4";
-const SCANNER_LABEL_CLASS = "section-eyebrow text-[0.62rem] tracking-[0.22em] text-muted-foreground";
-const SCANNER_SEGMENT_CLASS = "grid grid-cols-1 gap-1.5 sm:gap-2 rounded-[calc(var(--radius)*1.18)] border border-border/60 bg-background/55 p-1 sm:p-1.5 shadow-[var(--shadow-soft)] sm:grid-cols-2";
-const SCANNER_SEGMENT_BUTTON_CLASS = "inline-flex min-h-9 sm:min-h-11 items-center justify-center rounded-[calc(var(--radius)*0.95)] px-3 sm:px-4 py-1.5 sm:py-2 text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] sm:tracking-[0.18em] transition-all duration-200";
+const SCANNER_PANEL_CLASS = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)]";
+const SCANNER_SECTION_CLASS = "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] px-3 py-3 sm:px-4.5 sm:py-4 border-none shadow-[var(--shadow-card)]";
+const SCANNER_LABEL_CLASS = "section-eyebrow text-[0.62rem] tracking-[0.22em] text-[var(--neu-text-muted)]";
+const SCANNER_SEGMENT_CLASS = "grid grid-cols-1 gap-1.5 sm:gap-2 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 sm:p-1.5 shadow-[var(--neu-shadow-inset)] sm:grid-cols-2 border-none";
+const SCANNER_SEGMENT_BUTTON_CLASS = "inline-flex min-h-9 sm:min-h-11 items-center justify-center rounded-[var(--neu-radius-sm)] px-3 sm:px-4 py-1.5 sm:py-2 text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.16em] sm:tracking-[0.18em] transition-all duration-200";
 const TONE_PILL_STYLES = {
-  accent: "border-primary/20 bg-primary/10 text-primary shadow-[0_16px_32px_-22px_color-mix(in_oklch,var(--primary)_58%,transparent)]",
-  success: "border-emerald-500/25 bg-emerald-500/12 text-emerald-600 shadow-[0_16px_32px_-22px_color-mix(in_oklch,var(--success)_56%,transparent)] dark:text-emerald-300",
-  warning: "border-amber-400/25 bg-amber-400/12 text-amber-700 shadow-[0_16px_32px_-22px_rgba(245,158,11,0.42)] dark:text-amber-200",
-  danger: "border-rose-500/25 bg-rose-500/12 text-rose-600 shadow-[0_16px_32px_-22px_color-mix(in_oklch,var(--destructive)_58%,transparent)] dark:text-rose-300",
-  neutral: "border-border/65 bg-background/55 text-muted-foreground shadow-[var(--shadow-soft)]",
+  accent: "border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-pill)]",
+  success: "border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] shadow-[var(--neu-shadow-pill)]",
+  warning: "border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] shadow-[var(--neu-shadow-pill)]",
+  danger: "border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] shadow-[var(--neu-shadow-pill)]",
+  neutral: "border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-pill)]",
 } as const;
 const TONE_ICON_STYLES = {
-  accent: "border-primary/18 bg-primary/10 text-primary shadow-[var(--shadow-accent)]",
-  success: "border-emerald-500/20 bg-emerald-500/12 text-emerald-500 shadow-[0_20px_44px_-30px_color-mix(in_oklch,var(--success)_55%,transparent)] dark:text-emerald-300",
-  warning: "border-amber-400/24 bg-amber-400/12 text-amber-600 shadow-[0_20px_44px_-30px_rgba(245,158,11,0.42)] dark:text-amber-200",
-  danger: "border-rose-500/22 bg-rose-500/12 text-rose-500 shadow-[0_20px_44px_-30px_color-mix(in_oklch,var(--destructive)_55%,transparent)] dark:text-rose-300",
-  neutral: "border-border/60 bg-background/60 text-foreground shadow-[var(--shadow-soft)]",
+  accent: "border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]",
+  success: "border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] shadow-[var(--neu-shadow-inset)]",
+  warning: "border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] shadow-[var(--neu-shadow-inset)]",
+  danger: "border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] shadow-[var(--neu-shadow-inset)]",
+  neutral: "border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-inset)]",
 } as const;
 const SCANNER_NOTICE_STYLES = {
-  warning: "border-amber-400/25 bg-amber-400/10 text-amber-700 dark:text-amber-200",
-  accent: "border-primary/20 bg-primary/10 text-primary",
+  warning: "border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-warning)_8%,var(--neu-surface-base))] text-[var(--neu-warning)]",
+  accent: "border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))] text-[var(--neu-accent)]",
 } as const;
 
 function getToday(): string {
@@ -163,11 +163,11 @@ function ScannerMetricCard({
   label: string;
 }) {
   const toneText = {
-    accent: "text-primary",
-    success: "text-emerald-500 dark:text-emerald-300",
-    warning: "text-amber-600 dark:text-amber-200",
-    danger: "text-rose-500 dark:text-rose-300",
-    neutral: "text-foreground",
+    accent: "text-[var(--neu-accent)]",
+    success: "text-[var(--neu-success)]",
+    warning: "text-[var(--neu-warning)]",
+    danger: "text-[var(--neu-danger)]",
+    neutral: "text-[var(--neu-text-strong)]",
   }[tone];
 
   return (
@@ -181,33 +181,15 @@ function ScannerMetricCard({
 
 function ScannerMetaItem({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="surface-lift rounded-[calc(var(--radius)*1.15)] border border-border/55 px-3.5 py-3.5">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
-      <div className="mt-1.5 break-words text-sm font-semibold text-foreground">{value}</div>
+    <div className="bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] rounded-[var(--neu-radius-md)] px-3.5 py-3.5 border-none">
+      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">{label}</div>
+      <div className="mt-1.5 break-words text-sm font-semibold text-[var(--neu-text-strong)]">{value}</div>
     </div>
   );
 }
 
 
-function ScoreBar({ score }: { score: number }) {
-  const abs = Math.min(Math.abs(score), 10);
-  const pct = (abs / 10) * 100;
-  const color = score > 0
-    ? "bg-[linear-gradient(90deg,color-mix(in_oklch,var(--success)_65%,white),var(--success))] shadow-[0_12px_24px_-18px_color-mix(in_oklch,var(--success)_55%,transparent)]"
-    : score < 0
-      ? "bg-[linear-gradient(90deg,color-mix(in_oklch,var(--destructive)_65%,white),var(--destructive))] shadow-[0_12px_24px_-18px_color-mix(in_oklch,var(--destructive)_55%,transparent)]"
-      : "bg-muted-foreground/45";
-  return (
-    <div className="flex min-w-[8.5rem] items-center gap-2.5">
-      <div className="h-3 flex-1 overflow-hidden rounded-full border border-border/60 bg-background/55 p-0.5 shadow-[var(--shadow-soft)]">
-        <div className={cn("h-full rounded-full transition-all duration-500", color)} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={cn("w-8 text-right font-mono text-xs font-semibold tabular-nums", score > 0 ? "text-emerald-500 dark:text-emerald-300" : score < 0 ? "text-rose-500 dark:text-rose-300" : "text-muted-foreground")}>
-        {score > 0 ? "+" : ""}{score}
-      </span>
-    </div>
-  );
-}
+// ScoreBar removed in favor of design system's NeuScoreBar
 
 function ScanDurationBadge({ startedAt, completedAt, isRunning }: { startedAt?: string; completedAt?: string | null; isRunning: boolean }) {
   const [now, setNow] = useState(() => Date.now());
@@ -267,7 +249,7 @@ function ScannerToggle({
       label={title}
       description={description}
       accent={accent === "warning" ? "warning" : "accent"}
-      className="surface-lift rounded-[calc(var(--radius)*1.15)] border border-border/60 px-3.5 py-3.5"
+      className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3.5"
     />
   );
 }
@@ -279,13 +261,13 @@ function ScanConfigBanner({ scan }: { scan: ScanStatus }) {
   const mode = scan.workflow_mode === "quick_trade" ? "Quick Trade" : "Deep Analysis";
 
   return (
-    <div className="surface-lift overflow-hidden rounded-[calc(var(--radius)*1.35)] border border-border/60">
+    <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left sm:px-4.5"
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left sm:px-4.5 hover:bg-[color-mix(in_oklch,var(--neu-accent)_4%,var(--neu-surface-base))] transition-colors duration-150"
       >
-        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-[calc(var(--radius)*0.95)] border border-primary/20 bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-muted)] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)] border-none">
           <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -644,7 +626,7 @@ export function ScannerPage() {
                   <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     <div className="space-y-2">
                       <Label className={SCANNER_LABEL_CLASS}>Analysis date</Label>
-                      <Input type="date" value={analysisDate} max={getToday()} onChange={(e) => setAnalysisDate(e.target.value)} className="h-11 text-sm" />
+                      <Input type="date" value={analysisDate} max={getToday()} onChange={(e) => setAnalysisDate(e.target.value)} className="h-11 text-sm neu-input-base border-none shadow-[var(--shadow-input)] bg-[var(--neu-surface-muted)] focus-within:ring-2 focus-within:ring-[var(--neu-accent)]" />
                     </div>
                     <div className="space-y-2">
                       <Label className={SCANNER_LABEL_CLASS}>Kline interval</Label>
@@ -691,8 +673,8 @@ export function ScannerPage() {
                           className={cn(
                             SCANNER_SEGMENT_BUTTON_CLASS,
                             workflowMode === opt.value
-                              ? "gradient-primary text-primary-foreground shadow-[var(--shadow-accent)]"
-                              : "text-muted-foreground hover:bg-background/80 hover:text-foreground",
+                              ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                              : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]",
                           )}
                           onClick={() => setWorkflowMode(opt.value)}
                         >
@@ -711,7 +693,7 @@ export function ScannerPage() {
                     />
 
                     {taPrefilterEnabled ? (
-                      <div className="surface-lift flex flex-wrap items-center gap-3 rounded-[calc(var(--radius)*1.15)] border border-primary/18 bg-primary/8 px-4 py-3.5">
+                      <div className="bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] rounded-[var(--neu-radius-md)] flex flex-wrap items-center gap-3 px-4 py-3.5 border-none">
                         <Label htmlFor="scanner_ta_threshold" className={SCANNER_LABEL_CLASS}>Threshold</Label>
                         <Input
                           id="scanner_ta_threshold"
@@ -748,13 +730,13 @@ export function ScannerPage() {
                         type="button"
                         onClick={() => toggleAnalyst(a)}
                         className={cn(
-                          "inline-flex min-h-10 items-center gap-2 rounded-full border px-3.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                          "inline-flex min-h-10 items-center gap-2 rounded-[var(--neu-radius-pill)] border-none px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)]",
                           active
-                            ? "border-primary/24 bg-primary/10 text-primary shadow-[var(--shadow-accent)]"
-                            : "border-border/60 bg-background/55 text-muted-foreground shadow-[var(--shadow-soft)] hover:border-primary/22 hover:text-foreground",
+                            ? "neu-surface-base neu-surface-accent text-[var(--neu-accent)] shadow-[var(--neu-shadow-pill)]"
+                            : "neu-surface-base neu-surface-raised text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-raised)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:text-[var(--neu-text-strong)]",
                         )}
                       >
-                        <span className={cn("flex size-4 items-center justify-center rounded-full border", active ? "border-current bg-current/10" : "border-current/40")}>
+                        <span className={cn("flex size-4 items-center justify-center rounded-full border", active ? "border-[var(--neu-accent)] bg-[color-mix(in_oklch,var(--neu-accent)_15%,transparent)]" : "border-[var(--neu-text-muted)]/30")}>
                           {active ? (
                             <svg className="size-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -777,13 +759,13 @@ export function ScannerPage() {
               onClick={() => setShowWorkflow(!showWorkflow)}
               className="flex w-full items-center gap-3 px-5 py-4 text-left"
             >
-              <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-primary/18 bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+              <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-base)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-raised)]">
                 <svg className={cn("size-4 transition-transform duration-200", showWorkflow && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </span>
               <div className="flex min-w-0 items-center gap-3">
-                <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-primary/18 bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+                <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]">
                   <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                   </svg>
@@ -879,13 +861,13 @@ export function ScannerPage() {
               onClick={() => setShowLlm(!showLlm)}
               className="flex w-full items-center gap-3 px-5 py-4 text-left"
             >
-              <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-primary/18 bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+              <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-base)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-raised)]">
                 <svg className={cn("size-4 transition-transform duration-200", showLlm && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </span>
               <div className="flex min-w-0 items-center gap-3">
-                <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-primary/18 bg-primary/10 text-primary shadow-[var(--shadow-soft)]">
+                <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]">
                   <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
@@ -897,7 +879,7 @@ export function ScannerPage() {
               </div>
             </button>
             {showLlm ? (
-              <div className="border-t border-border/55 px-5 pb-5 pt-4">
+              <div className="border-t border-[var(--neu-stroke-strong)]/20 px-5 pb-5 pt-4">
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
                   <div className="space-y-4">
                     <div className={SCANNER_SECTION_CLASS}>
@@ -925,18 +907,18 @@ export function ScannerPage() {
                           </button>
                         ) : null}
                         {showEndpoints && endpoints.length > 1 ? (
-                          <div className="glass-card absolute z-50 mt-2 max-h-56 w-full overflow-y-auto rounded-[calc(var(--radius)*1.2)] p-2 shadow-[var(--shadow-popover)]">
+                          <div className="neu-surface-base neu-surface-raised absolute z-50 mt-1.5 max-h-56 w-full overflow-y-auto rounded-[var(--neu-radius-md)] p-2 border border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-float)] bg-[var(--neu-surface-raised)] backdrop-blur-xl">
                             {endpoints.map((ep) => (
                               <div
                                 key={ep.url}
                                 className={cn(
-                                  "flex items-center gap-2 rounded-[calc(var(--radius)*0.9)] px-2.5 py-2 transition-colors",
-                                  ep.url === backendUrl && "bg-primary/10",
+                                  "flex items-center gap-2 rounded-[calc(var(--radius)*0.9)] px-2.5 py-2 transition-colors hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]",
+                                  ep.url === backendUrl && "bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))]",
                                 )}
                               >
                                 <button
                                   type="button"
-                                  className={cn("min-w-0 flex-1 truncate text-left font-mono text-[12px]", ep.url === backendUrl ? "text-primary" : "text-foreground")}
+                                  className={cn("min-w-0 flex-1 truncate text-left font-mono text-[12px]", ep.url === backendUrl ? "text-[var(--neu-accent)] font-semibold" : "text-[var(--neu-text-strong)]")}
                                   onClick={() => selectEndpoint(ep)}
                                 >
                                   {ep.url}
@@ -1089,7 +1071,7 @@ export function ScannerPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 {isRunning && (
-                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-primary/18 bg-primary/10 text-primary shadow-[var(--shadow-accent)]">
+                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]">
                     <svg className="size-4 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -1097,14 +1079,14 @@ export function ScannerPage() {
                   </div>
                 )}
                 {scan.status === "completed" && (
-                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-emerald-500/20 bg-emerald-500/12 text-emerald-500 shadow-[0_18px_40px_-28px_color-mix(in_oklch,var(--success)_55%,transparent)] dark:text-emerald-300">
+                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] shadow-[var(--neu-shadow-inset)]">
                     <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
                 )}
                 {scan.status === "failed" && (
-                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-rose-500/20 bg-rose-500/12 text-rose-500 shadow-[0_18px_40px_-28px_color-mix(in_oklch,var(--destructive)_55%,transparent)] dark:text-rose-300">
+                  <div className="inline-flex size-10 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] shadow-[var(--neu-shadow-inset)]">
                     <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
@@ -1137,8 +1119,8 @@ export function ScannerPage() {
             )}
 
             {/* Progress bar */}
-            <div className="surface-lift rounded-[calc(var(--radius)*1.35)] border border-border/60 px-4 py-4">
-              <div className="mb-2 flex justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] px-4 py-4">
+              <div className="mb-2 flex justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">
                 <span>{scan.completed + scan.failed} / {scan.total} symbols completed</span>
                 <span>{scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0}%</span>
               </div>
@@ -1159,9 +1141,9 @@ export function ScannerPage() {
 
             {/* Auto-trade results */}
             {scan.auto_trade_results && scan.auto_trade_results.length > 0 && (
-              <div className="space-y-3 border-t border-border/55 pt-4">
+              <div className="space-y-3 border-t border-[color:var(--neu-stroke-soft)] pt-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Auto-trade executions</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">Auto-trade executions</p>
                   <TonePill tone="accent">{scan.auto_trade_results.length} routes</TonePill>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -1170,16 +1152,16 @@ export function ScannerPage() {
                 </div>
                 <div className="custom-scrollbar max-h-40 space-y-1.5 overflow-y-auto pr-1">
                   {scan.auto_trade_results.map((r, i) => (
-                    <div key={i} className="surface-lift rounded-[calc(var(--radius)*1.05)] border border-border/55 px-3.5 py-3" title={r.error || undefined}>
+                    <div key={i} className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3" title={r.error || undefined}>
                       <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
-                        <span className="font-mono font-semibold text-foreground">{r.symbol}</span>
+                        <span className="font-mono font-semibold text-[var(--neu-text-strong)]">{r.symbol}</span>
                         <TonePill tone={r.side === "buy" ? "success" : "danger"}>{r.side}</TonePill>
-                        <span className="truncate text-[11px] text-muted-foreground">{accountLabelMap[r.account_id] || r.account_id.slice(0, 8)}</span>
-                        <span className={cn("ml-auto shrink-0 text-sm font-semibold", r.status === "success" ? "text-emerald-500 dark:text-emerald-300" : "text-rose-500 dark:text-rose-300")}>
+                        <span className="truncate text-[11px] text-[var(--neu-text-muted)]">{accountLabelMap[r.account_id] || r.account_id.slice(0, 8)}</span>
+                        <span className={cn("ml-auto shrink-0 text-sm font-semibold", r.status === "success" ? "text-[var(--neu-success)]" : "text-[var(--neu-danger)]")}>
                           {r.status === "success" ? "✓" : "✗"}
                         </span>
                       </div>
-                      {r.error ? <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{r.error}</p> : null}
+                      {r.error ? <p className="mt-2 text-[11px] leading-5 text-[var(--neu-text-muted)]">{r.error}</p> : null}
                     </div>
                   ))}
                 </div>
@@ -1188,11 +1170,11 @@ export function ScannerPage() {
 
             {/* Auto-trade account summaries (stopped reasons, rule failures) */}
             {scan.auto_trade_summaries && scan.auto_trade_summaries.length > 0 && (
-              <div className="space-y-3 border-t border-border/55 pt-4">
+              <div className="space-y-3 border-t border-[var(--neu-stroke-strong)]/20 pt-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Account status</p>
                 <div className="space-y-2">
                   {scan.auto_trade_summaries.filter((s: AutoTradeSummary) => s.stopped_reason).map((s: AutoTradeSummary, i: number) => (
-                    <div key={i} className="rounded-[calc(var(--radius)*1.05)] border border-amber-400/22 bg-amber-400/10 px-3.5 py-3">
+                    <div key={i} className="rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-warning)_8%,var(--neu-surface-base))] text-[var(--neu-warning)] px-3.5 py-3 shadow-[var(--shadow-card)]">
                       <div className="flex items-center gap-3">
                         <span className="text-sm font-semibold text-foreground">{accountLabelMap[s.account_id] || s.account_id?.slice(0, 8)}</span>
                         <TonePill tone="warning" className="ml-auto">{s.stopped_reason?.replace(/_/g, " ")}</TonePill>
@@ -1205,7 +1187,7 @@ export function ScannerPage() {
 
             {/* Current batch tickers */}
             {isRunning && scan.current_tickers.length > 0 && (
-              <div className="space-y-3 border-t border-border/55 pt-4">
+              <div className="space-y-3 border-t border-[var(--neu-stroke-strong)]/20 pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Currently analyzing</p>
                   <TonePill tone="accent">{scan.current_tickers.length} live</TonePill>
@@ -1342,9 +1324,9 @@ export function ScannerPage() {
 }
 
 const COLOR_MAP: Record<string, { dot: string; tone: keyof typeof TONE_PILL_STYLES }> = {
-  emerald: { dot: "bg-emerald-500", tone: "success" },
-  red: { dot: "bg-rose-500", tone: "danger" },
-  amber: { dot: "bg-amber-500", tone: "warning" },
+  emerald: { dot: "bg-[var(--neu-success)]", tone: "success" },
+  red: { dot: "bg-[var(--neu-danger)]", tone: "danger" },
+  amber: { dot: "bg-[var(--neu-warning)]", tone: "warning" },
 };
 
 function CollapsibleResultCard({
@@ -1387,7 +1369,7 @@ function CollapsibleResultCard({
         onClick={toggle}
         className="flex w-full items-center gap-3 px-5 py-4 text-left"
       >
-        <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-border/60 bg-background/55 text-muted-foreground shadow-[var(--shadow-soft)]">
+        <span className="inline-flex size-9 items-center justify-center rounded-[calc(var(--radius)*1.05)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-base)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-raised)]">
           <svg className={cn("size-4 transition-transform duration-200", open && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
@@ -1400,7 +1382,7 @@ function CollapsibleResultCard({
         <TonePill tone={tone.tone}>{color}</TonePill>
       </button>
       {open && (
-        <div className="border-t border-border/55">
+        <div className="border-t border-[var(--neu-stroke-strong)]/20">
           {children}
         </div>
       )}
@@ -1442,7 +1424,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
     <div className="custom-scrollbar overflow-x-auto">
       <table className="w-full min-w-[44rem] text-sm">
         <thead>
-          <tr className="border-b border-border/55 bg-muted/18 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <tr className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)] bg-[var(--neu-surface-deep)] border-none">
             <th className="px-4 py-3 text-left">#</th>
             <th className="px-4 py-3 text-left">Symbol</th>
             <th className="hidden px-4 py-3 text-left md:table-cell">Signal</th>
@@ -1452,23 +1434,23 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
             <th className="px-4 py-3 text-right"></th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-border/45">
+        <tbody className="divide-y divide-[var(--neu-stroke-strong)]/20 bg-transparent">
           {results.map((r, i) => {
             const dir = DIRECTION_CONFIG[r.direction] ?? DIRECTION_CONFIG.unknown;
             const copied = copiedTicker === r.ticker;
             return (
-              <tr key={r.ticker} className="group transition-colors hover:bg-muted/16">
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{i + 1}</td>
+              <tr key={r.ticker} className="hover:bg-[color-mix(in_oklch,var(--neu-accent)_4%,var(--neu-surface-base))] border-b border-[var(--neu-stroke-strong)]/30 last:border-none transition-colors group">
+                <td className="px-4 py-3 font-mono text-xs text-[var(--neu-text-muted)]">{i + 1}</td>
                 <td className="px-4 py-3">
                   <button
                     type="button"
                     onClick={() => handleCopy(r.ticker)}
                     title="Tap to copy"
                     className={cn(
-                      "inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-mono font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                      "font-mono font-bold transition-all duration-150 rounded-[var(--neu-radius-sm)] px-2.5 py-1 -mx-2 active:scale-95 cursor-pointer border border-transparent text-sm",
                       copied
-                        ? "border-emerald-500/24 bg-emerald-500/12 text-emerald-600 shadow-[0_16px_34px_-24px_color-mix(in_oklch,var(--success)_55%,transparent)] dark:text-emerald-300"
-                        : "border-border/60 bg-background/55 text-foreground shadow-[var(--shadow-soft)] group-hover:border-primary/22 group-hover:text-primary",
+                        ? "text-[var(--neu-success)] bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]"
+                        : "text-[var(--neu-text-strong)] group-hover:text-[var(--neu-accent)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:border-[color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))]",
                     )}
                   >
                     {copied ? (
@@ -1484,8 +1466,13 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                 <td className="hidden px-4 py-3 md:table-cell">
                   <TonePill tone={dir.label === "Buy" ? "success" : dir.label === "Sell" ? "danger" : "warning"}>{dir.label}</TonePill>
                 </td>
-                <td className="hidden px-4 py-3 text-xs font-semibold capitalize text-muted-foreground md:table-cell">{r.confidence}</td>
-                <td className="px-4 py-3"><ScoreBar score={r.score} /></td>
+                <td className="hidden px-4 py-3 text-xs font-semibold capitalize text-[var(--neu-text-muted)] md:table-cell">{r.confidence}</td>
+                <td className="px-4 py-3">
+                  <NeuScoreBar
+                    score={r.score}
+                    direction={r.direction === "buy" ? "buy" : r.direction === "sell" ? "sell" : "neutral"}
+                  />
+                </td>
                 <td className="hidden px-4 py-3 md:table-cell">
                   {r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
@@ -1508,27 +1495,24 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                       tradedSymbols?.has(r.ticker) ? (
                         <span className="inline-flex items-center gap-1">
                           <TonePill tone="success" className="gap-1.5">
-                          <svg className="size-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                          Traded
+                            <svg className="size-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Traded
                           </TonePill>
                         </span>
                       ) : (
-                        <Button
-                          type="button"
+                        <button
                           onClick={() => onTrade(r.ticker, r.direction as "buy" | "sell")}
-                          variant="secondary"
-                          size="xs"
                           className={cn(
-                            "uppercase tracking-[0.14em]",
+                            "text-[10px] font-bold uppercase tracking-wider px-3.5 py-1.5 rounded-[var(--neu-radius-pill)] text-white hover:brightness-110 shadow-[var(--neu-shadow-pill)] hover:translate-y-[-1px] hover:shadow-[var(--neu-shadow-raised-hover)] transition-all cursor-pointer active:scale-95 border-none",
                             r.direction === "buy"
-                              ? "border-emerald-500/22 bg-emerald-500/12 text-emerald-600 dark:text-emerald-300"
-                              : "border-rose-500/22 bg-rose-500/12 text-rose-600 dark:text-rose-300",
+                              ? "bg-[var(--neu-success)]"
+                              : "bg-[var(--neu-danger)]"
                           )}
                         >
                           Trade
-                        </Button>
+                        </button>
                       )
                     )}
                     {r.run_id && (
