@@ -52,7 +52,7 @@ class BybitRateLimiter:
     woken when tokens become available.
     """
 
-    def __init__(self, capacity: float = 10, refill_rate: float = 8.0):
+    def __init__(self, capacity: float = 18, refill_rate: float = 18.0):
         self._capacity = capacity
         self._refill_rate = refill_rate
         self._tokens = capacity
@@ -1555,6 +1555,7 @@ def compute_correlation(
     """Compute rolling correlation of symbol returns vs BTC and ETH.
 
     Returns correlation coefficients and beta values.
+    Uses only the most recent 100 candles to minimize API calls.
     """
     symbol = normalize_bybit_symbol(symbol)
     cache_key = ("correlation", symbol, interval, start_ms, end_ms)
@@ -1563,9 +1564,17 @@ def compute_correlation(
         if _cached is not _CACHE_MISS:
             return _cached
 
+    # Limit to 100 candles from end_ms to reduce API calls (1 page per symbol)
+    _CORR_CANDLES = 100
+    _interval_ms_map = {"1": 60_000, "5": 300_000, "15": 900_000, "30": 1_800_000,
+                        "60": 3_600_000, "120": 7_200_000, "240": 14_400_000,
+                        "D": 86_400_000, "W": 604_800_000}
+    interval_ms = _interval_ms_map.get(str(interval), 3_600_000)
+    corr_start_ms = max(start_ms, end_ms - _CORR_CANDLES * interval_ms)
+
     def _fetch_closes(sym: str) -> pd.Series:
         raw = get_bybit_klines(
-            sym, interval, start_ms, end_ms,
+            sym, interval, corr_start_ms, end_ms,
             cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
             api_key=api_key, api_secret=api_secret,
         )
