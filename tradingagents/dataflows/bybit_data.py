@@ -1194,11 +1194,21 @@ def get_bybit_orderbook(
 
 
 
-def get_volatility_metrics(kline_csv: str, lookback: int = 90) -> dict:
+def get_volatility_metrics(kline_csv: str, lookback: int = 90, intervals_per_year: int | None = None) -> dict:
     df = _parse_kline_csv(kline_csv)
     if len(df) < 14:
         return {"atr_14": None, "rv_24h": None, "rv_7d": None,
                 "bb_width": None, "volatility_regime": "Normal"}
+
+    # Infer annualization factor from candle timestamps if not provided
+    if intervals_per_year is None and len(df) >= 2 and "timestamp" in df.columns:
+        gap_ms = int(df["timestamp"].iloc[-1]) - int(df["timestamp"].iloc[-2])
+        if gap_ms > 0:
+            intervals_per_year = int(365 * 24 * 3600 * 1000 / gap_ms)
+        else:
+            intervals_per_year = 365 * 24  # fallback: assume hourly
+    elif intervals_per_year is None:
+        intervals_per_year = 365 * 24  # fallback: assume hourly
 
     high, low, close = df["high"], df["low"], df["close"]
     prev_close = close.shift(1)
@@ -1210,14 +1220,19 @@ def get_volatility_metrics(kline_csv: str, lookback: int = 90) -> dict:
     atr_14 = tr.rolling(14).mean().iloc[-1]
 
     log_ret = np.log(close / close.shift(1)).dropna()
-    rv_24h = float(log_ret.tail(24).std() * np.sqrt(365 * 24)) if len(log_ret) >= 24 else None
-    rv_7d = float(log_ret.tail(168).std() * np.sqrt(365 * 24)) if len(log_ret) >= 168 else None
+    ann_factor = np.sqrt(intervals_per_year)
+    rv_24h = float(log_ret.tail(24).std() * ann_factor) if len(log_ret) >= 24 else None
+    rv_7d = float(log_ret.tail(168).std() * ann_factor) if len(log_ret) >= 168 else None
 
     sma_20 = close.rolling(20).mean()
     std_20 = close.rolling(20).std()
     bb_upper = sma_20 + 2 * std_20
     bb_lower = sma_20 - 2 * std_20
-    bb_width = float((bb_upper.iloc[-1] - bb_lower.iloc[-1]) / sma_20.iloc[-1]) if sma_20.iloc[-1] else None
+    if pd.notna(sma_20.iloc[-1]) and sma_20.iloc[-1] != 0:
+        _bw = (bb_upper.iloc[-1] - bb_lower.iloc[-1]) / sma_20.iloc[-1]
+        bb_width = float(_bw) if pd.notna(_bw) else None
+    else:
+        bb_width = None
 
     lb = min(lookback, len(tr) - 14)
     if lb >= 14:
@@ -1430,3 +1445,226 @@ def get_market_microstructure(
         micro["funding_projection"] = None
 
     return micro
+
+
+# ---------------------------------------------------------------------------
+# Recent Trades & CVD (Cumulative Volume Delta)
+# ---------------------------------------------------------------------------
+
+def get_bybit_recent_trades(
+    symbol: str,
+    limit: int = 500,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict:
+    """Fetch recent trades and compute CVD + whale detection.
+
+    Returns dict with: trades summary, CVD, buy/sell volume breakdown,
+    whale trades (>95th percentile size).
+    """
+    symbol = normalize_bybit_symbol(symbol)
+    cache_key = ("recent_trades", symbol, limit)
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
+
+    result = _bybit_request(
+        "/v5/market/recent-trade",
+        {"category": "linear", "symbol": symbol, "limit": min(limit, 1000)},
+        cache_key=cache_key,
+        cache=None,
+        limiter=limiter,
+        circuit_breaker=circuit_breaker,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
+
+    trades = result.get("list", [])
+    if not trades:
+        return {"cvd": 0, "buy_volume": 0, "sell_volume": 0,
+                "trade_count": 0, "whale_trades": [], "net_whale_flow": 0}
+
+    buy_vol = 0.0
+    sell_vol = 0.0
+    sizes = []
+    for t in trades:
+        qty = float(t.get("size", 0))
+        side = t.get("side", "")
+        sizes.append(qty)
+        if side == "Buy":
+            buy_vol += qty
+        else:
+            sell_vol += qty
+
+    cvd = buy_vol - sell_vol
+
+    # Whale detection: trades > 95th percentile
+    whale_trades = []
+    threshold = 0.0
+    if sizes:
+        threshold = float(np.percentile(sizes, 95))
+        whale_buy = 0.0
+        whale_sell = 0.0
+        for t in trades:
+            qty = float(t.get("size", 0))
+            if qty >= threshold:
+                side = t.get("side", "")
+                price = float(t.get("price", 0))
+                whale_trades.append({"side": side, "price": price, "size": qty})
+                if side == "Buy":
+                    whale_buy += qty
+                else:
+                    whale_sell += qty
+        net_whale_flow = whale_buy - whale_sell
+    else:
+        net_whale_flow = 0.0
+
+    out = {
+        "cvd": round(cvd, 4),
+        "buy_volume": round(buy_vol, 4),
+        "sell_volume": round(sell_vol, 4),
+        "trade_count": len(trades),
+        "whale_trades": whale_trades[:10],
+        "net_whale_flow": round(net_whale_flow, 4),
+        "whale_threshold_size": round(threshold, 4) if sizes else 0,
+    }
+    if cache is not None:
+        cache[cache_key] = out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Cross-Asset Correlation (BTC/ETH)
+# ---------------------------------------------------------------------------
+
+def compute_correlation(
+    symbol: str,
+    interval: str,
+    start_ms: int,
+    end_ms: int,
+    cache: dict | None = None,
+    limiter: BybitRateLimiter | None = None,
+    circuit_breaker: BybitCircuitBreaker | None = None,
+    api_key: str | None = None,
+    api_secret: str | None = None,
+) -> dict:
+    """Compute rolling correlation of symbol returns vs BTC and ETH.
+
+    Returns correlation coefficients and beta values.
+    """
+    symbol = normalize_bybit_symbol(symbol)
+    cache_key = ("correlation", symbol, interval, start_ms, end_ms)
+    if cache is not None:
+        _cached = cache.get(cache_key, _CACHE_MISS)
+        if _cached is not _CACHE_MISS:
+            return _cached
+
+    def _fetch_closes(sym: str) -> pd.Series:
+        raw = get_bybit_klines(
+            sym, interval, start_ms, end_ms,
+            cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+            api_key=api_key, api_secret=api_secret,
+        )
+        df = _parse_kline_csv(raw)
+        return df["close"]
+
+    try:
+        target_closes = _fetch_closes(symbol)
+    except Exception as exc:
+        logger.warning("Correlation: failed to fetch klines for %s: %s", symbol, exc)
+        return {"btc_corr": None, "eth_corr": None, "btc_beta": None, "eth_beta": None}
+
+    result = {}
+    for ref_symbol, key in [("BTCUSDT", "btc"), ("ETHUSDT", "eth")]:
+        if symbol == ref_symbol:
+            result[f"{key}_corr"] = 1.0
+            result[f"{key}_beta"] = 1.0
+            continue
+        try:
+            ref_closes = _fetch_closes(ref_symbol)
+            # Align lengths
+            min_len = min(len(target_closes), len(ref_closes))
+            if min_len < 5:
+                result[f"{key}_corr"] = None
+                result[f"{key}_beta"] = None
+                continue
+            t_ret = target_closes.tail(min_len).pct_change().dropna()
+            r_ret = ref_closes.tail(min_len).pct_change().dropna()
+            min_len2 = min(len(t_ret), len(r_ret))
+            if min_len2 < 2:
+                result[f"{key}_corr"] = None
+                result[f"{key}_beta"] = None
+                continue
+            t_ret = t_ret.tail(min_len2).reset_index(drop=True)
+            r_ret = r_ret.tail(min_len2).reset_index(drop=True)
+
+            corr = float(t_ret.corr(r_ret))
+            # Beta = cov(target, ref) / var(ref)
+            cov = float(t_ret.cov(r_ret))
+            var_ref = float(r_ret.var())
+            beta = cov / var_ref if var_ref > 0 else None
+
+            result[f"{key}_corr"] = round(corr, 4) if pd.notna(corr) else None
+            result[f"{key}_beta"] = round(beta, 4) if beta is not None and pd.notna(beta) else None
+        except Exception as exc:
+            logger.warning("Correlation: failed for %s vs %s: %s", symbol, ref_symbol, exc)
+            result[f"{key}_corr"] = None
+            result[f"{key}_beta"] = None
+
+    if cache is not None:
+        cache[cache_key] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Market Session Detection
+# ---------------------------------------------------------------------------
+
+def get_market_session() -> dict:
+    """Determine current trading session and overlap status.
+
+    Sessions (UTC):
+      Asia: 00:00 - 08:00
+      London: 07:00 - 16:00
+      New York: 13:00 - 22:00
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    hour = now.hour
+
+    sessions = []
+    if 0 <= hour < 8:
+        sessions.append("Asia")
+    if 7 <= hour < 16:
+        sessions.append("London")
+    if 13 <= hour < 22:
+        sessions.append("New York")
+    if not sessions:
+        sessions.append("Off-hours")
+
+    overlap = None
+    if "Asia" in sessions and "London" in sessions:
+        overlap = "Asia-London"
+    elif "London" in sessions and "New York" in sessions:
+        overlap = "London-New York"
+
+    volatility_profile = "normal"
+    if overlap == "London-New York":
+        volatility_profile = "high"
+    elif overlap == "Asia-London":
+        volatility_profile = "elevated"
+    elif "Off-hours" in sessions:
+        volatility_profile = "low"
+    elif "Asia" in sessions and len(sessions) == 1:
+        volatility_profile = "low-moderate"
+
+    return {
+        "active_sessions": sessions,
+        "overlap": overlap,
+        "volatility_profile": volatility_profile,
+        "utc_hour": hour,
+    }

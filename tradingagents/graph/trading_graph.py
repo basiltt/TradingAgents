@@ -229,7 +229,7 @@ class TradingAgentsGraph:
                 self._get_agent_llm("crypto_technical", self.quick_thinking_llm), crypto_tools
             )
             tool_nodes["crypto_technical"] = ToolNode(
-                [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
+                [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators", "get_volatility_regime", "get_btc_eth_correlation")]
             )
 
         coingecko_tools = make_coingecko_tools(
@@ -581,6 +581,51 @@ class TradingAgentsGraph:
                 init_agent_state["current_price_context"] = ""
         else:
             init_agent_state["current_price_context"] = ""
+
+        # Inject account state and market session for Trader context
+        if self.config.get("asset_type") == "crypto" and getattr(self, "_crypto_shared", None):
+            from tradingagents.dataflows.bybit_data import get_market_session
+            from tradingagents.dataflows.account_context import get_account_state, get_trade_history_summary
+
+            try:
+                session_data = get_market_session()
+                init_agent_state["market_session"] = (
+                    f"Active: {', '.join(session_data.get('active_sessions', []))} | "
+                    f"Overlap: {session_data.get('overlap') or 'None'} | "
+                    f"Volatility Profile: {session_data.get('volatility_profile', 'unknown')}"
+                )
+            except Exception as exc:
+                logger.warning("Failed to get market session: %s", exc)
+                init_agent_state["market_session"] = ""
+
+            creds = self.config.get("exchange_credentials", {}).get("bybit", {})
+            ak = (creds.get("api_key") or "").strip()
+            asec = (creds.get("api_secret") or "").strip()
+            if ak and asec:
+                try:
+                    init_agent_state["account_state"] = get_account_state(ak, asec)
+                except Exception as exc:
+                    logger.warning("Failed to fetch account state: %s", exc)
+                    init_agent_state["account_state"] = ""
+            else:
+                init_agent_state["account_state"] = ""
+
+            # Trade history (from config if provided)
+            trade_history = self.config.get("trade_history", [])
+            if trade_history:
+                try:
+                    init_agent_state["trade_history_summary"] = get_trade_history_summary(
+                        trade_history, symbol=company_name
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to build trade history summary: %s", exc)
+                    init_agent_state["trade_history_summary"] = ""
+            else:
+                init_agent_state["trade_history_summary"] = ""
+        else:
+            init_agent_state.setdefault("market_session", "")
+            init_agent_state.setdefault("account_state", "")
+            init_agent_state.setdefault("trade_history_summary", "")
 
         args = self.propagator.get_graph_args()
 

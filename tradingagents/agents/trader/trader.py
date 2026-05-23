@@ -57,6 +57,7 @@ _DIRECTION_USER = (
     "{instrument_context}\n\n"
     "## Research Manager's Investment Plan\n{investment_plan}\n\n"
     "## Technical Levels Summary\n{technical_levels}\n\n"
+    "{trade_history_section}"
     "Based on the alignment (or conflict) in the plan, provide your "
     "directional decision."
 )
@@ -91,6 +92,8 @@ _LEVELS_USER = (
     "Action: {action} | Confidence: {confidence}/10\n"
     "Reasoning: {reasoning}\n\n"
     "{price_data_section}"
+    "{account_state_section}"
+    "{market_session_section}"
     "Calculate precise execution levels grounded in the price data above."
 )
 
@@ -129,6 +132,12 @@ def create_trader(llm):
         investment_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
         technical_levels = wrap_external_data(filtered.get("technical_levels_summary", "Not available"), "technical_analyst")
 
+        # Trade history context for directional decision
+        trade_history = filtered.get("trade_history_summary", "")
+        trade_history_section = ""
+        if trade_history and trade_history.strip():
+            trade_history_section = "## Historical Performance Context\n" + trade_history + "\n\n"
+
         # ---- Pass 1: Directional Decision ----
         direction_messages = [
             {"role": "system", "content": _DIRECTION_SYSTEM},
@@ -139,6 +148,7 @@ def create_trader(llm):
                     instrument_context=instrument_context,
                     investment_plan=investment_plan,
                     technical_levels=technical_levels,
+                    trade_history_section=trade_history_section,
                 ),
             },
         ]
@@ -173,6 +183,17 @@ def create_trader(llm):
         # ---- Pass 2: Level Calculation ----
         price_data_section = _build_price_data_section(filtered)
 
+        # Account state and market session for execution context
+        account_state = filtered.get("account_state", "")
+        account_state_section = ""
+        if account_state and account_state.strip():
+            account_state_section = "## Account State\n" + account_state + "\n\n"
+
+        market_session = filtered.get("market_session", "")
+        market_session_section = ""
+        if market_session and market_session.strip():
+            market_session_section = "## Market Session\n" + market_session + "\n\n"
+
         levels_messages = [
             {"role": "system", "content": _LEVELS_SYSTEM},
             {
@@ -184,6 +205,8 @@ def create_trader(llm):
                     confidence=confidence,
                     reasoning=reasoning,
                     price_data_section=price_data_section,
+                    account_state_section=account_state_section,
+                    market_session_section=market_session_section,
                 ),
             },
         ]

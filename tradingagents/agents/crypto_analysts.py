@@ -66,7 +66,7 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
 
         from tradingagents.dataflows.bybit_data import get_higher_timeframe
-        tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators")]
+        tools = [t for t in crypto_tools if t.name in ("get_crypto_klines", "get_crypto_indicators", "get_volatility_regime", "get_btc_eth_correlation")]
         if not tools:
             raise ValueError("No technical analysis tools found in crypto_tools")
 
@@ -88,9 +88,15 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         system_message = (
             "You are a crypto futures technical analyst. Analyze OHLCV price data and "
             "technical indicators (RSI, MACD, Bollinger Bands, EMA) for the given perpetual "
-            "futures contract. Identify trends, support/resistance levels, momentum signals, "
+            "futures contract. Also assess:\n"
+            "- **Volatility regime**: Use get_volatility_regime to determine if volatility is "
+            "Low/Normal/High and recommend position size adjustments accordingly\n"
+            "- **Cross-asset correlation**: Use get_btc_eth_correlation to assess how correlated "
+            "this coin is to BTC/ETH — high beta means BTC moves amplify here\n"
+            "Identify trends, support/resistance levels, momentum signals, "
             "and potential entry/exit zones. Include the current price and data timestamp in "
-            "your report. Call get_crypto_klines first, then get_crypto_indicators. "
+            "your report. Call get_crypto_klines first, then get_crypto_indicators, then "
+            "get_volatility_regime, then get_btc_eth_correlation. "
             "If any tool returns an [ERROR], include a **Data Quality Warning** section "
             "at the end of your report listing which data sources were unavailable."
             " Write a detailed report with a Markdown summary table at the end."
@@ -142,10 +148,15 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
 
         system_message = (
             "You are a crypto derivatives analyst. Analyze funding rates, open interest "
-            "trends, long/short ratio, and ticker data for the given perpetual futures contract. "
-            "Assess funding cost impact on position holding, OI trends as a proxy for market "
-            "sentiment and potential liquidation cascades, long/short ratio for crowd positioning, "
-            "multi-timeframe price changes, and current market snapshot. "
+            "trends, long/short ratio, order book depth, CVD (cumulative volume delta), "
+            "whale trade activity, and funding cost projections for the given perpetual futures "
+            "contract. Assess:\n"
+            "- Funding cost impact on position holding (is it expensive to hold long/short?)\n"
+            "- OI trends as a proxy for market sentiment and potential liquidation cascades\n"
+            "- Order book imbalance and wall levels (liquidity traps, potential slippage zones)\n"
+            "- CVD (net buy vs sell aggression) and whale flow direction\n"
+            "- Long/short ratio for crowd positioning\n"
+            "- Funding cost projection: will holding cost erode profits?\n"
             "If any data source is unavailable, acknowledge it and continue with available data. "
             "If any tool returns an [ERROR], include a **Data Quality Warning** section "
             "at the end of your report listing which data sources were unavailable."

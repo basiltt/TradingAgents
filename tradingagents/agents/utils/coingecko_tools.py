@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import html
 import logging
+import re
+import time as _time
 from typing import Annotated
 
 from langchain_core.tools import tool
@@ -18,7 +20,11 @@ from tradingagents.dataflows.coingecko_data import (
 )
 from tradingagents.dataflows.bybit_data import (
     get_bybit_derivatives_summary,
+    get_bybit_orderbook,
+    get_bybit_recent_trades,
     get_bybit_price_changes,
+    project_funding_cost,
+    get_bybit_funding_rates,
     InvalidSymbolError,
     BybitRateLimiter,
     BybitCircuitBreaker,
@@ -118,14 +124,82 @@ def make_coingecko_tools(
     def get_crypto_derivatives_data(
         symbol: Annotated[str, "Crypto symbol, e.g. BTCUSDT or BTC"],
     ) -> str:
-        """Retrieve derivatives data from Bybit: open interest, funding rates, long/short ratio, price changes."""
+        """Retrieve comprehensive derivatives data from Bybit: OI, funding rates, long/short ratio, order book depth, CVD, whale trades, funding cost projection."""
         try:
             bybit_sym = _ensure_bybit_symbol(symbol)
-            raw = get_bybit_derivatives_summary(
-                bybit_sym, cache=cache, limiter=limiter,
-                circuit_breaker=circuit_breaker, api_key=api_key, api_secret=api_secret,
-            )
-            return _sanitize(raw)
+            parts: list[str] = []
+
+            # Core derivatives summary (OI, funding, L/S ratio, price changes)
+            try:
+                raw = get_bybit_derivatives_summary(
+                    bybit_sym, cache=cache, limiter=limiter,
+                    circuit_breaker=circuit_breaker, api_key=api_key, api_secret=api_secret,
+                )
+                parts.append(raw)
+            except Exception as exc:
+                parts.append(f"[Derivatives summary unavailable: {exc}]")
+
+            # Order book depth + liquidity
+            try:
+                ob = get_bybit_orderbook(
+                    bybit_sym, depth=50, cache=cache, limiter=limiter,
+                    circuit_breaker=circuit_breaker, api_key=api_key, api_secret=api_secret,
+                )
+                ob_lines = ["\n## Order Book Depth"]
+                ob_lines.append(f"Spread: {ob['spread_bps']:.2f} bps | Imbalance: {ob['imbalance_ratio']:+.4f}")
+                ob_lines.append(f"Bid Depth: {ob['bid_depth']:.2f} | Ask Depth: {ob['ask_depth']:.2f}")
+                if ob.get("wall_levels"):
+                    ob_lines.append("Walls:")
+                    for w in ob["wall_levels"][:5]:
+                        ob_lines.append(f"  {w['side'].upper()} @ {w['price']} (size: {w['size']:.2f})")
+                parts.append("\n".join(ob_lines))
+            except Exception as exc:
+                logger.debug("Order book unavailable for %s: %s", bybit_sym, exc)
+
+            # Recent trades + CVD + whale detection
+            try:
+                trades = get_bybit_recent_trades(
+                    bybit_sym, limit=500, cache=cache, limiter=limiter,
+                    circuit_breaker=circuit_breaker, api_key=api_key, api_secret=api_secret,
+                )
+                cvd_lines = ["\n## Trade Flow (CVD & Whales)"]
+                cvd_lines.append(f"CVD: {trades['cvd']:+.4f} | Buy Vol: {trades['buy_volume']:.2f} | Sell Vol: {trades['sell_volume']:.2f}")
+                cvd_lines.append(f"Net Whale Flow: {trades['net_whale_flow']:+.4f} (threshold: {trades.get('whale_threshold_size', 0):.2f})")
+                if trades.get("whale_trades"):
+                    cvd_lines.append("Recent whale trades:")
+                    for wt in trades["whale_trades"][:5]:
+                        cvd_lines.append(f"  {wt['side']} {wt['size']:.4f} @ {wt['price']}")
+                parts.append("\n".join(cvd_lines))
+            except Exception as exc:
+                logger.debug("Trade flow/CVD unavailable for %s: %s", bybit_sym, exc)
+
+            # Funding cost projection
+            try:
+                now_ms = int(_time.time() * 1000)
+                start_ms = now_ms - (7 * 24 * 60 * 60 * 1000)
+                funding_text = get_bybit_funding_rates(
+                    bybit_sym, start_ms, now_ms,
+                    cache=cache, limiter=limiter, circuit_breaker=circuit_breaker,
+                    api_key=api_key, api_secret=api_secret,
+                )
+                # Parse rates from text format "  Timestamp: X, Rate: Y"
+                rates = [float(m) for m in re.findall(r"Rate:\s*([-\d.]+)", funding_text)]
+                if rates:
+                    # Convert to CSV for project_funding_cost
+                    csv_lines = ["timestamp,rate"] + [f"0,{r}" for r in rates]
+                    proj = project_funding_cost("\n".join(csv_lines), hold_intervals=21)
+                    if proj.get("total_rate") is not None:
+                        fc_lines = ["\n## Funding Cost Projection (7-day hold)"]
+                        fc_lines.append(f"Projected Cost: {proj.get('break_even_move_pct', 0):.4f}% of position")
+                        fc_lines.append(f"Annualized: {proj.get('annualized_pct', 0):.2f}%")
+                        fc_lines.append(f"Severity: {proj.get('severity', 'unknown')}")
+                        if proj.get("severity") in ("elevated", "extreme"):
+                            fc_lines.append("⚠ HIGH FUNDING: Holding cost is significant, factor into R:R")
+                        parts.append("\n".join(fc_lines))
+            except Exception as exc:
+                logger.debug("Funding cost projection unavailable for %s: %s", bybit_sym, exc)
+
+            return _sanitize("\n".join(parts))
         except InvalidSymbolError:
             return _sanitize(f"Symbol '{symbol}' is not available on Bybit linear perpetuals")
         except Exception as exc:
