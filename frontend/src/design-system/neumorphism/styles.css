@@ -47,6 +47,9 @@
   --neu-shadow-float:
     12px 12px 24px var(--neu-shadow),
     -12px -12px 24px var(--neu-highlight);
+  --neu-shadow-overlay:
+    0 8px 32px rgba(0, 0, 0, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.08);
   --neu-shadow-accent:
     8px 8px 16px var(--neu-shadow),
     -8px -8px 16px var(--neu-highlight);
@@ -95,7 +98,7 @@
   --shadow-card-hover: var(--neu-shadow-raised-hover);
   --shadow-soft: var(--neu-shadow-pill);
   --shadow-accent: var(--neu-shadow-accent);
-  --shadow-popover: var(--neu-shadow-float);
+  --shadow-popover: var(--neu-shadow-overlay);
   --shadow-inset: var(--neu-shadow-inset);
   --surface-lift-bg: #e0e5ec;
   --surface-lift-border: rgba(255, 255, 255, 0.7);
@@ -141,6 +144,9 @@
   --neu-shadow-float:
     10px 10px 20px var(--neu-shadow),
     -10px -10px 20px var(--neu-highlight);
+  --neu-shadow-overlay:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.2);
   --neu-shadow-accent:
     7px 7px 14px var(--neu-shadow),
     -7px -7px 14px var(--neu-highlight);

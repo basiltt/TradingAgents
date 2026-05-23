@@ -55,7 +55,7 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           variant === "dialog"
-            ? "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1rem)] max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-raised)] p-5 text-sm text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-float)] duration-200 outline-none sm:max-w-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+            ? "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1rem)] max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-raised)] p-5 text-sm text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-overlay)] duration-200 outline-none sm:max-w-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
             : "fixed z-50 outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className,
         )}
