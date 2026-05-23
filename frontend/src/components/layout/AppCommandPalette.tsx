@@ -49,7 +49,7 @@ export function AppCommandPalette({
           id: item.id,
           label: item.label,
           description: item.description,
-          icon: <Icon className="size-4.5" />,
+          icon: Icon ? <Icon className="size-4.5" /> : undefined,
           active: item.matches(pathname),
           keywords: item.keywords,
           onSelect: () => navigate({ to: item.to as never }),

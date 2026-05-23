@@ -581,12 +581,11 @@ export function NeuTabs({
   orientation?: "horizontal" | "vertical";
   variant?: "pill" | "line" | "inset";
 }) {
-  const mappedVariant = variant === "line" ? "line" : "default";
 
   return (
     <Tabs value={value} onValueChange={onValueChange} orientation={orientation}>
       <TabsList
-        variant={mappedVariant}
+        variant={variant === "line" ? "line" : "default"}
         className={cn(
           variant === "inset" && "neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] p-2.5",
           variant === "pill" && "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-1.5",
@@ -596,7 +595,6 @@ export function NeuTabs({
           <TabsTrigger
             key={item.value}
             value={item.value}
-            className="rounded-[var(--neu-radius-sm)] px-3.5 py-2 data-[active]:border-[color:color-mix(in_oklch,var(--neu-accent)_22%,var(--neu-stroke-soft))] data-[active]:bg-[linear-gradient(145deg,color-mix(in_oklch,var(--neu-highlight)_30%,var(--neu-accent-muted)),color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))_48%,color-mix(in_oklch,var(--neu-accent-muted)_86%,var(--neu-surface-raised)))] data-[active]:text-[var(--neu-accent-ink)] data-[active]:shadow-[var(--neu-shadow-pill)]"
           >
             {item.icon}
             {item.label}
@@ -1014,7 +1012,7 @@ export function NeuSwitch({
   label,
   description,
   disabled,
-  accent = "accent",
+  accent: _accent = "accent",
   className,
 }: {
   checked: boolean;
@@ -1025,12 +1023,6 @@ export function NeuSwitch({
   accent?: "accent" | "success" | "warning";
   className?: string;
 }) {
-  const accentColorClass = {
-    accent: "bg-[var(--neu-accent)] text-[var(--neu-accent-ink)] border-[color:color-mix(in_oklch,var(--neu-accent)_22%,var(--neu-stroke-soft))]",
-    success: "bg-[var(--neu-success)] text-white border-[color:color-mix(in_oklch,var(--neu-success)_22%,var(--neu-stroke-soft))]",
-    warning: "bg-[var(--neu-warning)] text-[var(--neu-accent-ink)] border-[color:color-mix(in_oklch,var(--neu-warning)_22%,var(--neu-stroke-soft))]",
-  }[accent];
-
   return (
     <div className={cn("flex items-start gap-4 p-1", disabled && "opacity-50 pointer-events-none", className)}>
       <button
@@ -1040,14 +1032,18 @@ export function NeuSwitch({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full transition-all duration-300 ease-in-out active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none shadow-[var(--neu-shadow-inset)]",
-          checked ? accentColorClass : "bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]"
+          "relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full transition-all duration-300 ease-in-out active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none",
+          checked
+            ? "bg-[color-mix(in_oklch,var(--neu-surface-muted)_70%,var(--neu-shadow))] shadow-[var(--neu-shadow-inset)]"
+            : "bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]"
         )}
       >
         <span
           className={cn(
-            "pointer-events-none block size-6 rounded-full bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-pill)] ring-0 transition duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] transform",
-            checked ? "translate-x-[26px] translate-y-[3px]" : "translate-x-[4px] translate-y-[3px]"
+            "pointer-events-none block size-6 rounded-full bg-[var(--neu-surface-raised)] ring-0 transition duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] transform",
+            checked
+              ? "translate-x-[26px] translate-y-[3px] shadow-[var(--neu-shadow-raised-soft)]"
+              : "translate-x-[4px] translate-y-[3px] shadow-[var(--neu-shadow-pill)]"
           )}
         />
       </button>

@@ -348,7 +348,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                   className={cn(
                     SEGMENT_BUTTON_CLASS,
                     config.direction === value
-                      ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                      ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
                       : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]",
                   )}
                   onClick={() => onChange({ direction: value })}
@@ -373,7 +373,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                   className={cn(
                     SEGMENT_BUTTON_CLASS,
                     config.execution_mode === value
-                      ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                      ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
                       : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]",
                   )}
                   onClick={() => onChange({ execution_mode: value })}

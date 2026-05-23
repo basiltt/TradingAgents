@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { accountsApi, type WalletBalance, type Position, type OpenOrder, type PnlSummary } from "@/api/client";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { NeuTabs } from "@/design-system/neumorphism";
 import { WalletPanel } from "./WalletPanel";
 import { PositionsTable } from "./PositionsTable";
 import { OrdersTable } from "./OrdersTable";
@@ -375,57 +375,18 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
       )}
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <div className="w-full overflow-x-auto scrollbar-none">
-          <TabsList className="rounded-2xl h-auto inline-flex flex-nowrap min-w-full overflow-x-auto">
-            <TabsTrigger value="wallet">
-              Wallet
-            </TabsTrigger>
-            <TabsTrigger value="positions">
-              Positions
-              {positions.length > 0 && (
-                <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
-                  {positions.length}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="orders">
-              Orders
-              {orders.length > 0 && (
-                <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
-                  {orders.length}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="pnl">
-              PnL
-            </TabsTrigger>
-            <TabsTrigger value="analytics">
-              Analytics
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="wallet" className="mt-6">
-          {wallet && <WalletPanel wallet={wallet} />}
-        </TabsContent>
-
-        <TabsContent value="positions" className="mt-6">
-          <PositionsTable positions={positions} />
-        </TabsContent>
-
-        <TabsContent value="orders" className="mt-6">
-          <OrdersTable orders={orders} />
-        </TabsContent>
-
-        <TabsContent value="pnl" className="mt-6">
-          <PnLPanel pnlSummary={pnlSummary} accountId={accountId} />
-        </TabsContent>
-
-        <TabsContent value="analytics" className="mt-6">
-          <AnalyticsDashboard accountId={accountId} embedded />
-        </TabsContent>
-      </Tabs>
+      <NeuTabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        variant="inset"
+        items={[
+          { value: "wallet", label: "Wallet", content: wallet ? <WalletPanel wallet={wallet} /> : null },
+          { value: "positions", label: <>Positions{positions.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_15%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold tabular-nums">{positions.length}</span>}</>, content: <PositionsTable positions={positions} /> },
+          { value: "orders", label: <>Orders{orders.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_15%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold tabular-nums">{orders.length}</span>}</>, content: <OrdersTable orders={orders} /> },
+          { value: "pnl", label: "PnL", content: <PnLPanel pnlSummary={pnlSummary} accountId={accountId} /> },
+          { value: "analytics", label: "Analytics", content: <AnalyticsDashboard accountId={accountId} embedded /> },
+        ]}
+      />
 
       {renderDialogs()}
     </div>

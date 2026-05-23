@@ -1085,7 +1085,7 @@ function ScheduleFormDialog({
                     className={cn(
                       "flex min-h-9 items-center justify-center rounded-[var(--neu-radius-sm)] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer border-none",
                       workflowMode === opt.value
-                        ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                        ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
                         : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]"
                     )}
                     onClick={() => setWorkflowMode(opt.value)}

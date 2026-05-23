@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { accountsApi } from "@/api/client";
-import type { MasterCloseAllResult, DemoResetBalanceResult } from "@/api/client";
+import type { MasterCloseAllResult, DemoResetBalanceResult, DashboardCard } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
 import { useAccountPolling } from "@/hooks/useAccountPolling";
@@ -11,6 +11,74 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ArrowUp, ArrowDown } from "lucide-react";
+
+const SORT_STORAGE_KEY = "tradingagents_accounts_sort";
+
+type SortField = "name" | "equity" | "today_pnl" | "unrealised_pnl" | "positions" | "last_connected" | "status";
+type SortDirection = "asc" | "desc";
+
+interface SortConfig {
+  field: SortField;
+  direction: SortDirection;
+}
+
+const SORT_OPTIONS: Array<{ field: SortField; label: string }> = [
+  { field: "name", label: "Name" },
+  { field: "equity", label: "Equity" },
+  { field: "today_pnl", label: "Today PnL" },
+  { field: "unrealised_pnl", label: "Unreal. PnL" },
+  { field: "positions", label: "Positions" },
+  { field: "last_connected", label: "Last Connected" },
+  { field: "status", label: "Status" },
+];
+
+function loadSortConfig(): SortConfig {
+  try {
+    const raw = localStorage.getItem(SORT_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return { field: "name", direction: "asc" };
+}
+
+function saveSortConfig(config: SortConfig) {
+  localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(config));
+}
+
+function sortAccounts(accounts: DashboardCard[], config: SortConfig): DashboardCard[] {
+  const { field, direction } = config;
+  const mult = direction === "asc" ? 1 : -1;
+
+  return [...accounts].sort((a, b) => {
+    let cmp = 0;
+    switch (field) {
+      case "name":
+        cmp = a.label.localeCompare(b.label);
+        break;
+      case "equity":
+        cmp = parseFloat(a.total_equity || "0") - parseFloat(b.total_equity || "0");
+        break;
+      case "today_pnl":
+        cmp = parseFloat(a.today_pnl || "0") - parseFloat(b.today_pnl || "0");
+        break;
+      case "unrealised_pnl":
+        cmp = parseFloat(a.total_perp_upl || "0") - parseFloat(b.total_perp_upl || "0");
+        break;
+      case "positions":
+        cmp = (a.positions_count || 0) - (b.positions_count || 0);
+        break;
+      case "last_connected":
+        cmp = (a.last_connected_at || "").localeCompare(b.last_connected_at || "");
+        break;
+      case "status": {
+        const order = { active: 0, stale: 1, error: 2, disabled: 3 };
+        cmp = (order[a.status] ?? 4) - (order[b.status] ?? 4);
+        break;
+      }
+    }
+    return cmp * mult;
+  });
+}
 
 /** Top-level accounts dashboard: fetches account cards, displays stats/filters, and renders AccountCard grid. */
 export function AccountsDashboard() {
@@ -27,6 +95,7 @@ export function AccountsDashboard() {
   const [resetAmount, setResetAmount] = useState("100");
   const [resetResult, setResetResult] = useState<DemoResetBalanceResult | null>(null);
   const [resetProgress, setResetProgress] = useState<{ current: number; total: number; accounts: Array<{ name: string; status: string; amount?: number }> }>({ current: 0, total: 0, accounts: [] });
+  const [sortConfig, setSortConfig] = useState<SortConfig>(loadSortConfig);
   const resetTaskId = useRef<string | null>(null);
   const [resetSelectedIds, setResetSelectedIds] = useState<string[]>([]);
   useAccountPolling();
@@ -95,10 +164,13 @@ export function AccountsDashboard() {
     };
   }, [fetchDashboard]);
 
-  const filtered = dashboard.filter((card) => {
-    if (filterType === "all") return true;
-    return card.account_type === filterType;
-  });
+  const filtered = useMemo(() => {
+    const byType = dashboard.filter((card) => {
+      if (filterType === "all") return true;
+      return card.account_type === filterType;
+    });
+    return sortAccounts(byType, sortConfig);
+  }, [dashboard, filterType, sortConfig]);
 
   /** Sum a numeric field across filtered dashboard cards.
    * @param field - Key of DashboardCard to sum.
@@ -226,10 +298,9 @@ export function AccountsDashboard() {
         </div>
       </PageHeader>
 
-      <Card>
-        <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <h2 className="text-base font-semibold">Filter</h2>
-          <div className="flex flex-wrap gap-2">
+      <Card className="!transform-none !shadow-[var(--neu-shadow-raised)] hover:!shadow-[var(--neu-shadow-raised)]">
+        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             {(["all", "demo", "live"] as const).map((type) => (
               <Button
                 key={type}
@@ -240,6 +311,30 @@ export function AccountsDashboard() {
                 {type.charAt(0).toUpperCase() + type.slice(1)}
               </Button>
             ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-xs font-medium text-[var(--neu-text-muted)]">Sort:</span>
+            {SORT_OPTIONS.map((opt) => {
+              const isActive = sortConfig.field === opt.field;
+              return (
+                <Button
+                  key={opt.field}
+                  variant={isActive ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    const next: SortConfig = isActive
+                      ? { field: opt.field, direction: sortConfig.direction === "asc" ? "desc" : "asc" }
+                      : { field: opt.field, direction: "desc" };
+                    setSortConfig(next);
+                    saveSortConfig(next);
+                  }}
+                  className="h-7 gap-1 px-2 text-xs"
+                >
+                  {opt.label}
+                  {isActive && (sortConfig.direction === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
+                </Button>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

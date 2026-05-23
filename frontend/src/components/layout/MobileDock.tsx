@@ -30,7 +30,7 @@ export function MobileDock({
     return {
       id: item.id,
       label: item.shortLabel ?? item.label,
-      icon: <Icon className="size-4.5" />,
+      icon: Icon ? <Icon className="size-4.5" /> : null,
       active: isActive,
       onSelect: () => navigate({ to: item.to as never }),
     };

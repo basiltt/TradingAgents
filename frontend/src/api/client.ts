@@ -1013,7 +1013,7 @@ export const scheduledScansApi = {
 
 // ── Close Positions Types ─────────────────────────────────────
 
-export type TriggerType = "BALANCE_BELOW" | "BALANCE_ABOVE" | "EQUITY_DROP_PCT" | "EQUITY_RISE_PCT" | "PNL_BELOW" | "PNL_ABOVE";
+export type TriggerType = "BALANCE_BELOW" | "BALANCE_ABOVE" | "EQUITY_DROP_PCT" | "EQUITY_RISE_PCT" | "PNL_BELOW" | "PNL_ABOVE" | "BREAKEVEN_TIMEOUT" | "MAX_DURATION";
 
 export interface CloseRule {
   id: string;

@@ -1,12 +1,15 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
+  Clock,
   DollarSign,
   Loader2,
   Percent,
   Plus,
   ShieldCheck,
+  Timer,
   Trash2,
   TrendingDown,
   TrendingUp,
@@ -71,6 +74,20 @@ const TRIGGER_CONFIG: Record<TriggerType, { label: string; description: string; 
     tone: "text-[var(--neu-success)]",
     chip: "border-transparent bg-[color-mix(in_oklch,var(--neu-success)_12%,var(--neu-surface-raised))] text-[var(--neu-success)] shadow-[var(--neu-shadow-pill)]",
   },
+  BREAKEVEN_TIMEOUT: {
+    label: "Breakeven Timeout",
+    description: "Close positions if P&L hasn't moved past breakeven within the time window.",
+    icon: Timer,
+    tone: "text-[var(--neu-warning)]",
+    chip: "border-transparent bg-[color-mix(in_oklch,var(--neu-warning)_12%,var(--neu-surface-raised))] text-[var(--neu-warning)] shadow-[var(--neu-shadow-pill)]",
+  },
+  MAX_DURATION: {
+    label: "Max Duration",
+    description: "Force-close all positions after a maximum hold time regardless of P&L.",
+    icon: Clock,
+    tone: "text-[var(--neu-text-muted)]",
+    chip: "border-transparent bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-pill)]",
+  },
 };
 
 const TRIGGER_OPTIONS: TriggerType[] = [
@@ -80,9 +97,12 @@ const TRIGGER_OPTIONS: TriggerType[] = [
   "EQUITY_RISE_PCT",
   "PNL_BELOW",
   "PNL_ABOVE",
+  "BREAKEVEN_TIMEOUT",
+  "MAX_DURATION",
 ];
 
 const PCT_TYPES = new Set<TriggerType>(["EQUITY_DROP_PCT", "EQUITY_RISE_PCT"]);
+const TIME_TYPES = new Set<TriggerType>(["BREAKEVEN_TIMEOUT", "MAX_DURATION"]);
 
 export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountLabel, onSave }: Props) {
   const [rules, setRules] = useState<CloseRule[]>([]);
@@ -176,36 +196,35 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
   const activeCount = rules.filter((r) => r.status === "active" || r.status === "paused").length;
   const armedCount = rules.filter((r) => r.status === "active").length;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 sm:p-8"
       onClick={() => !saving && handleDialogClose()}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,oklch(0.6_0.12_220_/_0.18),transparent_34%),rgba(3,8,20,0.78)] backdrop-blur-md" />
       <div
-        className="relative flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[var(--neu-radius-lg)] border-0 shadow-[var(--neu-shadow-float)]"
+        className="relative flex max-h-[calc(100vh-3rem)] sm:max-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[var(--neu-radius-lg)] border-0 shadow-[var(--neu-shadow-float)]"
         onClick={(e) => e.stopPropagation()}
       >
         <NeuThemeScope className="flex flex-col flex-1 w-full p-0 overflow-hidden rounded-[var(--neu-radius-lg)] bg-[var(--neu-surface-base)]">
-          <div className="border-b border-[color:var(--neu-stroke-strong)]/20 px-5 py-5 sm:px-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="flex items-start gap-4">
-                <div className="flex size-14 shrink-0 items-center justify-center rounded-[var(--neu-radius-md)] bg-[var(--neu-accent)] text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]">
-                  <ShieldCheck className="size-6" />
+          {/* Header */}
+          <div className="shrink-0 border-b border-[color:var(--neu-stroke-strong)]/20 px-4 py-4 sm:px-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-[var(--neu-radius-md)] bg-[var(--neu-accent)] text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]">
+                  <ShieldCheck className="size-5" />
                 </div>
                 <div className="min-w-0">
-                  <p className="section-eyebrow">Automated risk governance</p>
-                  <h2 className="mt-1 text-xl font-semibold tracking-[-0.04em] text-[var(--neu-text-strong)] sm:text-[1.7rem]">
+                  <h2 className="text-base font-semibold tracking-[-0.02em] text-[var(--neu-text-strong)] sm:text-lg">
                     Conditional close rules
                   </h2>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--neu-text-muted)]">
-                    Protect <span className="font-semibold text-[var(--neu-text-strong)]">{accountLabel}</span> with threshold-based exits that react to equity,
-                    balance, and unrealized PnL without requiring manual intervention.
+                  <p className="mt-1 text-xs leading-5 text-[var(--neu-text-muted)] sm:text-sm">
+                    Protect <span className="font-semibold text-[var(--neu-text-strong)]">{accountLabel}</span> with threshold-based exits that react to equity, balance, and unrealized PnL.
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-3 lg:justify-end">
+              <div className="flex flex-wrap gap-2 sm:shrink-0">
                 {[
                   { label: "Configured", value: String(rules.length), tone: "accent" },
                   { label: "Armed", value: String(armedCount), tone: armedCount ? "success" : "neutral" },
@@ -213,53 +232,59 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
                 ].map((item) => (
                   <div
                     key={item.label}
-                    className="neu-input-base min-w-[8rem] rounded-[var(--neu-radius-md)] px-4 py-3 text-left relative overflow-hidden"
+                    className="neu-input-base relative overflow-hidden rounded-[var(--neu-radius-sm)] px-3 py-2 text-left"
                   >
                     <span className={cn(
-                      "absolute left-0 top-0 bottom-0 w-1",
+                      "absolute left-0 top-0 bottom-0 w-0.5",
                       item.tone === "accent" && "bg-[var(--neu-accent)]",
                       item.tone === "success" && "bg-[var(--neu-success)]",
                       item.tone === "warning" && "bg-[var(--neu-warning)]",
                       item.tone === "neutral" && "bg-[var(--neu-text-muted)] opacity-35"
                     )} />
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--neu-text-muted)] pl-1">{item.label}</div>
-                    <div className="mt-2 text-lg font-bold tracking-[-0.04em] text-[var(--neu-text-strong)] pl-1">{item.value}</div>
+                    <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">{item.label}</div>
+                    <div className="mt-0.5 text-base font-bold text-[var(--neu-text-strong)]">{item.value}</div>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">
-              <span className="inline-flex items-center gap-2 rounded-[var(--neu-radius-pill)] px-3 py-1 text-[var(--neu-success)] bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-raised))] border border-[color:color-mix(in_oklch,var(--neu-success)_18%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]">
-                <span className="relative flex size-2.5">
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-[var(--neu-text-muted)]">
+              <span className="inline-flex items-center gap-1.5 rounded-[var(--neu-radius-pill)] px-2.5 py-0.5 text-[var(--neu-success)] bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-raised))] border border-[color:color-mix(in_oklch,var(--neu-success)_18%,var(--neu-stroke-soft))] shadow-[var(--neu-shadow-pill)]">
+                <span className="relative flex size-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />
-                  <span className="relative inline-flex size-2.5 rounded-full bg-current" />
+                  <span className="relative inline-flex size-2 rounded-full bg-current" />
                 </span>
-                Evaluation heartbeat every 30s
+                Heartbeat 30s
               </span>
-              <span className="inline-flex items-center gap-2 rounded-[var(--neu-radius-pill)] px-3 py-1 text-[var(--neu-text-muted)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-pill)]">
-                <Activity className="size-3.5" />
-                Live synced with account close executions
+              <span className="inline-flex items-center gap-1.5 rounded-[var(--neu-radius-pill)] px-2.5 py-0.5 text-[var(--neu-text-muted)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-pill)]">
+                <Activity className="size-3" />
+                Live synced
               </span>
             </div>
           </div>
 
-        <div className="flex flex-col flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1.45fr)_20rem] lg:overflow-hidden">
-          <div className="neu-scrollbar lg:overflow-y-auto px-5 py-5 sm:px-6">
+          {/* Content: scrollable */}
+          <div className="flex-1 overflow-y-auto neu-scrollbar px-4 py-4 sm:px-6">
+            {/* Rules list */}
             {loading ? (
-              <div className="flex min-h-[22rem] items-center justify-center">
-                <div className="neu-surface-base neu-surface-raised flex items-center gap-3 rounded-[var(--neu-radius-md)] px-5 py-4 text-sm text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-pill)]">
+              <div className="flex min-h-[8rem] items-center justify-center">
+                <div className="flex items-center gap-3 text-sm text-[var(--neu-text-muted)]">
                   <Loader2 className="size-4 animate-spin text-[var(--neu-accent)]" />
                   Loading close rules...
                 </div>
               </div>
             ) : rules.length === 0 ? (
-              <div className="flex min-h-[22rem] flex-col items-center justify-center rounded-[var(--neu-radius-lg)] border-2 border-dashed border-[color:var(--neu-stroke-strong)] bg-[color-mix(in_oklch,var(--neu-surface-muted)_40%,transparent)] px-6 text-center shadow-[var(--neu-shadow-inset)]">
-                <div className="flex size-16 items-center justify-center rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-raised)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-pill)]">
-                  <Plus className="size-6" />
-                </div>
-                <h3 className="mt-5 text-lg font-semibold tracking-tight text-[var(--neu-text-strong)]">No automated exits configured</h3>
-                <p className="mt-2 max-w-md text-sm leading-6 text-[var(--neu-text-muted)]">
+              <div className="flex min-h-[8rem] flex-col items-center justify-center rounded-[var(--neu-radius-md)] border-2 border-dashed border-[color:var(--neu-stroke-strong)]/40 px-4 py-8 text-center">
+                <button
+                  type="button"
+                  onClick={handleAddRule}
+                  disabled={saving === "new" || activeCount >= 10}
+                  className="flex size-10 items-center justify-center rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-raised)] text-[var(--neu-text-muted)] shadow-[var(--neu-shadow-pill)] hover:shadow-[var(--neu-shadow-raised-soft)] hover:text-[var(--neu-accent)] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {saving === "new" ? <Loader2 className="size-5 animate-spin" /> : <Plus className="size-5" />}
+                </button>
+                <h3 className="mt-3 text-sm font-semibold text-[var(--neu-text-strong)]">No automated exits configured</h3>
+                <p className="mt-1 max-w-sm text-xs leading-5 text-[var(--neu-text-muted)]">
                   Create rules to automatically flatten the account when drawdown, profit, or equity thresholds are reached.
                 </p>
               </div>
@@ -277,32 +302,31 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
                 ))}
               </div>
             )}
-          </div>
 
-          <aside className="border-t border-[color:var(--neu-stroke-strong)]/20 bg-[var(--neu-surface-muted)]/15 px-5 py-5 sm:px-6 lg:border-l lg:border-t-0 lg:overflow-y-auto lg:custom-scrollbar">
-            <div className="space-y-4">
-              <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-4 shadow-[var(--neu-shadow-pill)]">
-                <p className="section-eyebrow">Rule strategy</p>
-                <h3 className="mt-2 text-sm font-semibold text-[var(--neu-text-strong)]">Suggested setup</h3>
-                <ul className="mt-3 space-y-2.5 text-sm leading-6 text-[var(--neu-text-muted)]">
-                  <li>• Pair one hard downside rule with one upside take-profit rule.</li>
-                  <li>• Use percentage triggers for portable rules across account sizes.</li>
-                  <li>• Keep “armed” rules below the limit to leave room for temporary overrides.</li>
+            {/* Info section - horizontal on desktop, stacked on mobile */}
+            <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.8fr]">
+              <div className="rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] p-3 shadow-[var(--neu-shadow-pill)]">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Rule strategy</p>
+                <h3 className="mt-1 text-xs font-semibold text-[var(--neu-text-strong)]">Suggested setup</h3>
+                <ul className="mt-2 space-y-1 text-xs leading-5 text-[var(--neu-text-muted)]">
+                  <li>* Pair one hard downside rule with one upside take-profit rule.</li>
+                  <li>* Use percentage triggers for portable rules across account sizes.</li>
+                  <li>* Keep armed rules below the limit for temporary overrides.</li>
                 </ul>
               </div>
 
-              <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-4 shadow-[var(--neu-shadow-pill)]">
-                <p className="section-eyebrow">Trigger types</p>
-                <div className="mt-3 space-y-2.5">
+              <div className="rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] p-3 shadow-[var(--neu-shadow-pill)]">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Trigger types</p>
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
                   {TRIGGER_OPTIONS.map((type) => {
                     const config = TRIGGER_CONFIG[type];
                     const Icon = config.icon;
                     return (
-                      <div key={type} className="neu-input-base flex items-start gap-3 rounded-[var(--neu-radius-sm)] p-3">
-                        <Icon className={cn("mt-0.5 size-4 shrink-0", config.tone)} />
+                      <div key={type} className="flex items-start gap-1.5">
+                        <Icon className={cn("mt-0.5 size-3 shrink-0", config.tone)} />
                         <div>
-                          <p className="text-sm font-semibold text-[var(--neu-text-strong)]">{config.label}</p>
-                          <p className="mt-1 text-[11px] leading-5 text-[var(--neu-text-muted)]">{config.description}</p>
+                          <p className="text-[11px] font-semibold text-[var(--neu-text-strong)]">{config.label}</p>
+                          <p className="text-[10px] leading-3.5 text-[var(--neu-text-muted)]">{config.description}</p>
                         </div>
                       </div>
                     );
@@ -310,33 +334,34 @@ export function ConditionalRulesDialog({ open, onOpenChange, accountId, accountL
                 </div>
               </div>
             </div>
-          </aside>
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-[color:var(--neu-stroke-strong)]/20 px-5 py-4 sm:px-6 sm:flex-row sm:items-center sm:justify-between bg-[var(--neu-surface-muted)]/10">
-          <p className="text-sm text-[var(--neu-text-muted)]">
-            Rules sync instantly after edits. Terminal states stay visible for audit context.
-          </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <NeuButton type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => handleDialogClose()}>
-              <X className="size-4" />
-              Close panel
-            </NeuButton>
-            <NeuButton
-              type="button"
-              variant="primary"
-              className="w-full sm:w-auto"
-              onClick={handleAddRule}
-              disabled={saving === "new" || activeCount >= 10}
-            >
-              {saving === "new" ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-              Add close rule
-            </NeuButton>
           </div>
-        </div>
-      </NeuThemeScope>
-    </div>
-  </div>
+
+          {/* Footer */}
+          <div className="shrink-0 flex items-center justify-between gap-3 border-t border-[color:var(--neu-stroke-strong)]/20 px-4 py-3 sm:px-6">
+            <p className="hidden sm:block text-xs text-[var(--neu-text-muted)]">
+              Rules sync instantly after edits.
+            </p>
+            <div className="flex gap-2 ml-auto">
+              <NeuButton type="button" variant="secondary" size="sm" onClick={() => handleDialogClose()}>
+                <X className="size-3.5" />
+                Close
+              </NeuButton>
+              <NeuButton
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={handleAddRule}
+                disabled={saving === "new" || activeCount >= 10}
+              >
+                {saving === "new" ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-3.5" />}
+                Add close rule
+              </NeuButton>
+            </div>
+          </div>
+        </NeuThemeScope>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -354,6 +379,7 @@ function RuleRow({
   onDelete: () => void;
 }) {
   const isPct = PCT_TYPES.has(rule.trigger_type);
+  const isTime = TIME_TYPES.has(rule.trigger_type);
   const isTriggered = rule.status === "triggered";
   const isExecuted = rule.status === "executed";
   const isExpired = rule.status === "expired";
@@ -452,9 +478,9 @@ function RuleRow({
             </div>
 
             <div className="neu-input-base rounded-[var(--neu-radius-md)] p-3.5 transition-all duration-200 focus-within:ring-2 focus-within:ring-[var(--neu-accent)]">
-              <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Threshold</span>
+              <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">{isTime ? "Minutes" : "Threshold"}</span>
               <div className="mt-1.5 flex items-center gap-2">
-                <span className="text-sm font-semibold text-[var(--neu-text-muted)]">{isPct ? "%" : "$"}</span>
+                <span className="text-sm font-semibold text-[var(--neu-text-muted)]">{isTime ? "min" : isPct ? "%" : "$"}</span>
                 <input
                   type="text"
                   className="w-full bg-transparent text-sm font-bold tabular-nums text-[var(--neu-text-strong)] outline-none disabled:opacity-60 border-none"
@@ -484,16 +510,16 @@ function RuleRow({
                   role="switch"
                   aria-checked={isActive}
                   className={cn(
-                    "relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none shadow-[var(--neu-shadow-inset)]",
-                    isActive ? "bg-[var(--neu-accent)]" : "bg-[var(--neu-surface-deep)]"
+                    "relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full transition-all duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none shadow-[var(--neu-shadow-inset)]",
+                    isActive ? "bg-[color-mix(in_oklch,var(--neu-surface-muted)_70%,var(--neu-shadow))]" : "bg-[var(--neu-surface-muted)]"
                   )}
                   onClick={onToggle}
                   aria-label={isActive ? "Pause rule" : "Activate rule"}
                 >
                   <span
                     className={cn(
-                      "pointer-events-none block size-5 rounded-full bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-pill)] ring-0 transition duration-200 ease-in-out transform",
-                      isActive ? "translate-x-[24px]" : "translate-x-[4px]"
+                      "pointer-events-none block size-5 rounded-full bg-[var(--neu-surface-raised)] ring-0 transition duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] transform",
+                      isActive ? "translate-x-[24px] shadow-[var(--neu-shadow-raised-soft)]" : "translate-x-[4px] shadow-[var(--neu-shadow-pill)]"
                     )}
                   />
                 </button>

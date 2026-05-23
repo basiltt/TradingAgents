@@ -673,7 +673,7 @@ export function ScannerPage() {
                           className={cn(
                             SCANNER_SEGMENT_BUTTON_CLASS,
                             workflowMode === opt.value
-                              ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                              ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
                               : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]",
                           )}
                           onClick={() => setWorkflowMode(opt.value)}

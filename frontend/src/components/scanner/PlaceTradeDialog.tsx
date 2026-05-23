@@ -452,7 +452,7 @@ export function PlaceTradeDialog({ open, onOpenChange, symbol, signalDirection, 
                             className={cn(
                               "inline-flex min-h-11 items-center justify-center rounded-[var(--neu-radius-sm)] px-3 py-2 text-[11px] font-bold uppercase tracking-[0.16em] transition-all duration-200 border-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)]",
                               settings.direction === direction
-                                ? "gradient-primary text-[var(--neu-accent-ink)] shadow-[var(--neu-shadow-pill)]"
+                                ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
                                 : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:bg-[color-mix(in_oklch,var(--neu-accent)_8%,var(--neu-surface-base))]",
                             )}
                           >
