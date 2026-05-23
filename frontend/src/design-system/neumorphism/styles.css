@@ -674,3 +674,45 @@ main > * {
     background-position: -180% 0, 0 0;
   }
 }
+
+/* === Dynamic Accent Definitions === */
+.neu-theme[data-neu-accent="cobalt"] {
+  --neu-accent: oklch(0.61 0.13 257);
+  --neu-accent-muted: oklch(0.92 0.03 257);
+  --neu-accent-ink: oklch(0.22 0.03 257);
+}
+.neu-theme[data-neu-accent="sage"] {
+  --neu-accent: oklch(0.69 0.11 154);
+  --neu-accent-muted: oklch(0.93 0.03 154);
+  --neu-accent-ink: oklch(0.26 0.03 154);
+}
+.neu-theme[data-neu-accent="amber"] {
+  --neu-accent: oklch(0.74 0.12 72);
+  --neu-accent-muted: oklch(0.95 0.03 72);
+  --neu-accent-ink: oklch(0.28 0.03 72);
+}
+.neu-theme[data-neu-accent="rose"] {
+  --neu-accent: oklch(0.64 0.14 9);
+  --neu-accent-muted: oklch(0.93 0.03 9);
+  --neu-accent-ink: oklch(0.24 0.04 9);
+}
+
+/* === Primary/Hero Gradient Overrides === */
+.neu-theme .gradient-primary {
+  background: linear-gradient(
+    135deg,
+    var(--neu-accent),
+    color-mix(in oklch, var(--neu-accent) 75%, var(--neu-highlight, #ffffff)),
+    color-mix(in oklch, var(--neu-accent) 55%, var(--neu-highlight, #ffffff))
+  ) !important;
+}
+
+.neu-theme .gradient-hero {
+  background: linear-gradient(
+    135deg,
+    var(--neu-accent),
+    color-mix(in oklch, var(--neu-accent) 75%, var(--neu-highlight, #ffffff)),
+    color-mix(in oklch, var(--neu-accent) 55%, var(--neu-highlight, #ffffff))
+  ) !important;
+}
+

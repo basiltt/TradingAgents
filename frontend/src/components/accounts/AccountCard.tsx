@@ -4,6 +4,7 @@ import { MoreVertical, XCircle, SlidersHorizontal, History } from "lucide-react"
 import type { DashboardCard } from "@/api/client";
 import type { Direction } from "@/store/accounts-slice";
 import { useAppSelector } from "@/store";
+import { cn } from "@/lib/utils";
 import { CloseAllConfirmDialog } from "./CloseAllConfirmDialog";
 import { ConditionalRulesDialog } from "./ConditionalRulesDialog";
 import { CloseHistoryDialog } from "./CloseHistoryDialog";
@@ -244,34 +245,37 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-2 z-50 min-w-[220px] rounded-[calc(var(--radius)*1.3)] border border-border/60 bg-popover/95 shadow-[var(--shadow-popover)] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 backdrop-blur-xl">
-                  <button
-                    className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-sm transition-colors ${
-                      hasPositions
-                        ? "text-red-400 hover:bg-red-500/10"
-                        : "text-muted-foreground/30 cursor-not-allowed"
-                    }`}
-                    disabled={!hasPositions}
-                    onClick={(e) => hasPositions && handleMenuClick(e, "close")}
-                    title={!hasPositions ? "No open positions" : undefined}
-                  >
-                    <XCircle className="w-4 h-4" />
-                    Close All Positions
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
-                    onClick={(e) => handleMenuClick(e, "rules")}
-                  >
-                    <SlidersHorizontal className="w-4 h-4" />
-                    Conditional Rules
-                  </button>
-                  <button
-                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-sm text-muted-foreground hover:bg-muted/30 transition-colors"
-                    onClick={(e) => handleMenuClick(e, "history")}
-                  >
-                    <History className="w-4 h-4" />
-                    View History
-                  </button>
+                <div className="absolute right-0 top-full mt-2 z-50 min-w-[220px]">
+                  <div className="neu-surface-base neu-surface-raised w-full rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-2 space-y-1 shadow-[var(--neu-shadow-float)] backdrop-blur-xl animate-in fade-in slide-in-from-top-1 duration-150">
+                    <button
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm rounded-[var(--neu-radius-sm)] border border-transparent transition-all duration-150",
+                        hasPositions
+                          ? "text-[var(--neu-danger)] hover:bg-[color:color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-raised))] hover:border-[color:color-mix(in_oklch,var(--neu-danger)_18%,var(--neu-stroke-soft))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)]"
+                          : "text-[var(--neu-text-soft)] opacity-40 cursor-not-allowed"
+                      )}
+                      disabled={!hasPositions}
+                      onClick={(e) => hasPositions && handleMenuClick(e, "close")}
+                      title={!hasPositions ? "No open positions" : undefined}
+                    >
+                      <XCircle className="w-4 h-4" />
+                      Close All Positions
+                    </button>
+                    <button
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] rounded-[var(--neu-radius-sm)] border border-transparent hover:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] hover:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)] transition-all duration-150"
+                      onClick={(e) => handleMenuClick(e, "rules")}
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                      Conditional Rules
+                    </button>
+                    <button
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] rounded-[var(--neu-radius-sm)] border border-transparent hover:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] hover:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)] transition-all duration-150"
+                      onClick={(e) => handleMenuClick(e, "history")}
+                    >
+                      <History className="w-4 h-4" />
+                      View History
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

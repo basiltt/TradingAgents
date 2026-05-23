@@ -1142,9 +1142,9 @@ export function ScannerPage() {
                 <span>{scan.completed + scan.failed} / {scan.total} symbols completed</span>
                 <span>{scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0}%</span>
               </div>
-              <div className="h-3 rounded-full border border-border/60 bg-background/55 p-0.5 shadow-[var(--shadow-soft)]">
+              <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-pill)] p-1 border-none">
                 <div
-                  className="h-full rounded-full gradient-primary transition-all duration-500 shadow-[var(--shadow-accent)]"
+                  className="h-3 rounded-[var(--neu-radius-pill)] gradient-primary transition-all duration-500 shadow-[var(--shadow-accent)]"
                   style={{ width: `${scan.total > 0 ? ((scan.completed + scan.failed) / scan.total) * 100 : 0}%` }}
                 />
               </div>

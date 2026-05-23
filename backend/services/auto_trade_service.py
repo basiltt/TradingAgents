@@ -87,8 +87,8 @@ class AutoTradeExecutor:
                 break
             try:
                 wallet = await self._accounts.get_wallet(account_id)
-                unrealized = float(wallet.get("totalPerpUPL") or "0")
-                if unrealized <= 0:
+                equity = float(wallet.get("totalEquity") or "0")
+                if equity <= 0:
                     continue
 
                 # Use the reference_value from the existing EQUITY_RISE_PCT rule as the base,
@@ -111,7 +111,11 @@ class AutoTradeExecutor:
                     reference_balance = float(wallet.get("totalWalletBalance") or "0")
 
                 if reference_balance > 0:
-                    pnl_pct = (unrealized / reference_balance) * 100
+                    # Use equity rise % (same formula as close_rule_evaluator) to include
+                    # both realized and unrealized PnL since the scan started
+                    pnl_pct = ((equity - reference_balance) / reference_balance) * 100
+                    if pnl_pct <= 0:
+                        continue
                     # Threshold = close_pct% of the target_goal equity rise
                     effective_threshold = (close_pct / 100) * target_goal
                     if pnl_pct >= effective_threshold:
@@ -575,8 +579,8 @@ class AutoTradeExecutor:
 
                 if has_positions and any_close_pct and any_target_goal and self._close_svc:
                     wallet = await self._accounts.get_wallet(account_id)
-                    unrealized = float(wallet.get("totalPerpUPL") or "0")
-                    if unrealized > 0:
+                    equity = float(wallet.get("totalEquity") or "0")
+                    if equity > 0:
                         # Get reference balance from existing rule
                         reference_balance = 0.0
                         try:
@@ -593,17 +597,20 @@ class AutoTradeExecutor:
                             reference_balance = float(wallet.get("totalWalletBalance") or "0")
 
                         if reference_balance > 0:
-                            pnl_pct = (unrealized / reference_balance) * 100
-                            effective_threshold = (any_close_pct / 100) * any_target_goal
-                            if pnl_pct >= effective_threshold:
-                                logger.info("post_scan_force_close_triggered", extra={
-                                    "account_id": account_id, "pnl_pct": round(pnl_pct, 2),
-                                    "effective_threshold": round(effective_threshold, 2),
-                                })
-                                await self._close_svc.close_all_positions(account_id)
-                                await asyncio.sleep(2)
-                                force_closed = True
-                                has_positions = False
+                            pnl_pct = ((equity - reference_balance) / reference_balance) * 100
+                            if pnl_pct <= 0:
+                                pass  # no growth, skip close check
+                            else:
+                                effective_threshold = (any_close_pct / 100) * any_target_goal
+                                if pnl_pct >= effective_threshold:
+                                    logger.info("post_scan_force_close_triggered", extra={
+                                        "account_id": account_id, "pnl_pct": round(pnl_pct, 2),
+                                        "effective_threshold": round(effective_threshold, 2),
+                                    })
+                                    await self._close_svc.close_all_positions(account_id)
+                                    await asyncio.sleep(2)
+                                    force_closed = True
+                                    has_positions = False
 
                 # If account still has positions and wasn't force-closed, skip
                 if has_positions and not force_closed:
