@@ -245,6 +245,8 @@ def create_app() -> FastAPI:
             )
             await rule_evaluator.start()
             app.state.rule_evaluator = rule_evaluator
+            account_ws_mgr.register_wallet_listener(rule_evaluator.on_wallet_update)
+            logger.info("CloseRuleEvaluator subscribed to WS wallet events")
 
             from backend.services.cycle_repository import CycleRepository
             from backend.services.trading_cycle_engine import TradingCycleEngine

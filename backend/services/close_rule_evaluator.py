@@ -1,4 +1,4 @@
-"""Background service that evaluates conditional close rules every 30 seconds."""
+"""Background service that evaluates conditional close rules via real-time WS events (debounced 1.5s) with a 60s polling fallback."""
 
 from __future__ import annotations
 
@@ -107,6 +107,8 @@ class CloseRuleEvaluator:
 
         active_ids = {r["id"] for r in rules}
         self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
+        active_account_ids = set(accounts.keys())
+        self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
 
     async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
         """Evaluate equity-based rules instantly on WS wallet event (debounced)."""
