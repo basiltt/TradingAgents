@@ -377,17 +377,11 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="w-full overflow-x-auto scrollbar-none">
-          <TabsList
-            className="rounded-2xl p-1.5 h-auto inline-flex flex-nowrap gap-1 border-0 min-w-full"
-            style={{
-              background: "var(--neu-surface-deep)",
-              boxShadow: "var(--neu-shadow-inset)",
-            }}
-          >
-            <TabsTrigger value="wallet" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+          <TabsList className="rounded-2xl h-auto inline-flex flex-nowrap min-w-full overflow-x-auto">
+            <TabsTrigger value="wallet">
               Wallet
             </TabsTrigger>
-            <TabsTrigger value="positions" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+            <TabsTrigger value="positions">
               Positions
               {positions.length > 0 && (
                 <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
@@ -395,7 +389,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="orders" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+            <TabsTrigger value="orders">
               Orders
               {orders.length > 0 && (
                 <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold tabular-nums">
@@ -403,10 +397,10 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="pnl" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+            <TabsTrigger value="pnl">
               PnL
             </TabsTrigger>
-            <TabsTrigger value="analytics" className="rounded-xl px-3 py-2 text-xs border-0 data-[state=active]:shadow-none shrink-0 transition-all duration-200 data-[state=active]:text-[var(--neu-accent)] data-[state=active]:font-bold" style={{ background: "transparent" }} data-neu-tab>
+            <TabsTrigger value="analytics">
               Analytics
             </TabsTrigger>
           </TabsList>

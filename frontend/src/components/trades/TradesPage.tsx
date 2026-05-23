@@ -257,18 +257,12 @@ export default function TradesPage() {
                     {wsConnected ? "Live feed" : "Reconnecting"}
                   </span>
 
-                  <TabsList className="grid w-full min-w-[15rem] grid-cols-2 rounded-[calc(var(--radius)*1.35)] bg-muted/35 p-1 shadow-none sm:w-auto">
-                    <TabsTrigger
-                      value="active"
-                      className="rounded-[calc(var(--radius)*1.1)] text-[11px] font-semibold uppercase tracking-[0.18em] data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-[var(--shadow-soft)]"
-                    >
+                  <TabsList className="min-w-[15rem] sm:w-auto">
+                    <TabsTrigger value="active">
                       <Waves className="size-3.5" />
                       Active
                     </TabsTrigger>
-                    <TabsTrigger
-                      value="history"
-                      className="rounded-[calc(var(--radius)*1.1)] text-[11px] font-semibold uppercase tracking-[0.18em] data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-[var(--shadow-soft)]"
-                    >
+                    <TabsTrigger value="history">
                       <History className="size-3.5" />
                       History
                     </TabsTrigger>

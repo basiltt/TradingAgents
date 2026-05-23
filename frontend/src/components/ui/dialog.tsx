@@ -55,22 +55,22 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           variant === "dialog"
-            ? "neu-surface-base neu-surface-raised fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-5 text-sm text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-float)] duration-200 outline-none sm:max-w-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
+            ? "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-1rem)] max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] bg-[var(--neu-surface-raised)] p-5 text-sm text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-float)] duration-200 outline-none sm:max-w-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95"
             : "fixed z-50 outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className,
         )}
         {...props}
       >
-        {children}
         {showCloseButton ? (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            render={<Button variant="ghost" className="absolute top-3 right-3" size="icon-sm" />}
+            render={<Button variant="ghost" className="justify-self-end -mt-1 -mr-1" size="icon-sm" />}
           >
             <XIcon />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         ) : null}
+        {children}
       </DialogPrimitive.Popup>
     </DialogPortal>
   );

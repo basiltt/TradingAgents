@@ -576,17 +576,17 @@ export function ConfigForm() {
                   name="asset_type"
                   control={control}
                   render={({ field }) => (
-                    <div className="flex p-1 bg-muted/60 rounded-xl border border-border/40" role="radiogroup" aria-label="Asset type">
+                    <div className="flex p-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]" role="radiogroup" aria-label="Asset type">
                       {(["stock", "crypto"] as const).map((t) => (
                         <button
                           key={t}
                           type="button"
                           role="radio"
                           aria-checked={field.value === t}
-                          className={`flex-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-lg text-[11px] sm:text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                          className={`flex-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-[var(--neu-radius-sm)] text-[11px] sm:text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                             field.value === t
-                              ? "bg-background text-foreground shadow shadow-black/5"
-                              : "text-muted-foreground hover:text-foreground"
+                              ? "bg-[var(--neu-surface-raised)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-pill)]"
+                              : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]"
                           }`}
                           onClick={() => {
                             field.onChange(t);
@@ -610,7 +610,7 @@ export function ConfigForm() {
                   name="workflow_mode"
                   control={control}
                   render={({ field }) => (
-                    <div className="flex p-1 bg-muted/60 rounded-xl border border-border/40" role="radiogroup" aria-label="Workflow mode">
+                    <div className="flex p-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]" role="radiogroup" aria-label="Workflow mode">
                       {([
                         { value: "quick_trade" as const, label: "Quick Trade Pipeline" },
                         { value: "deep_analysis" as const, label: "Deep Analysis Engine" },
@@ -620,10 +620,10 @@ export function ConfigForm() {
                           type="button"
                           role="radio"
                           aria-checked={field.value === opt.value}
-                          className={`flex-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-lg text-[11px] sm:text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                          className={`flex-1 px-3 sm:px-5 py-2 sm:py-2.5 rounded-[var(--neu-radius-sm)] text-[11px] sm:text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
                             field.value === opt.value
-                              ? "bg-background text-foreground shadow shadow-black/5"
-                              : "text-muted-foreground hover:text-foreground"
+                              ? "bg-[var(--neu-surface-raised)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-pill)]"
+                              : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]"
                           }`}
                           onClick={() => field.onChange(opt.value)}
                         >

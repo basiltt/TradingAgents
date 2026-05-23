@@ -116,17 +116,17 @@ export function AddAccountDialog({ open, onOpenChange, onCreated }: AddAccountDi
             </div>
             <div className="space-y-1.5">
               <Label className="font-bold text-xs uppercase tracking-wider text-muted-foreground/80 block">Account Type</Label>
-              <div className="flex p-1 bg-muted/40 rounded-xl border border-border/40" role="radiogroup" aria-label="Account Type">
+              <div className="flex p-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]" role="radiogroup" aria-label="Account Type">
                 {(["demo", "live"] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
                     role="radio"
                     aria-checked={accountType === t}
-                    className={`flex-1 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                    className={`flex-1 py-2.5 rounded-[var(--neu-radius-sm)] text-xs font-black uppercase tracking-wider transition-all duration-200 cursor-pointer ${
                       accountType === t
-                        ? "bg-background text-foreground shadow-sm border border-border/30"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-[var(--neu-surface-raised)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-pill)]"
+                        : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]"
                     }`}
                     onClick={() => setAccountType(t)}
                   >
