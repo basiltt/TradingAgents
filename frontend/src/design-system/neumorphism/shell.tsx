@@ -49,11 +49,11 @@ export function NeuNavItem({
   const content = (
     <div
       className={cn(
-        "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] group",
+        "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition-[background-color,color,box-shadow,transform,opacity] duration-200 ease-out group",
         touchFriendly ? "min-h-10 px-3 py-2 sm:min-h-0 sm:px-3 sm:py-2.5" : "px-3 py-2.5",
         active
           ? "neu-surface-base text-[var(--neu-accent)]"
-          : "hover:bg-[color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-base))] hover:text-[var(--neu-accent)] hover:translate-x-1",
+          : "hover:bg-[color-mix(in_oklch,var(--neu-highlight)_10%,var(--neu-surface-base))] hover:text-[var(--neu-accent)]",
       )}
       style={active ? {
         boxShadow: "var(--neu-shadow-pill)",
@@ -62,17 +62,17 @@ export function NeuNavItem({
     >
       {Icon ? (
         <span className={cn(
-          "inline-flex items-center justify-center rounded-[var(--neu-radius-sm)] transition-all duration-300",
+          "inline-flex items-center justify-center rounded-[var(--neu-radius-sm)] transition-[transform,opacity] duration-200 ease-out",
           touchFriendly ? "size-7 sm:size-8" : "size-8",
-          active ? "text-[var(--neu-accent)] scale-110" : "opacity-70 group-hover:opacity-100 group-hover:scale-110",
+          active ? "text-[var(--neu-accent)] scale-105" : "opacity-70 group-hover:opacity-100 group-hover:scale-105",
         )}>
-          <Icon className="size-4.5 transition-transform duration-300 group-hover:rotate-6" />
+          <Icon className="size-4.5" />
         </span>
       ) : null}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold">{label}</span>
         {!compact && description ? (
-          <span className="mt-1 block truncate text-xs transition-colors group-hover:text-[color-mix(in_oklch,var(--neu-text-muted)_70%,var(--neu-text-strong))]" style={{ color: "var(--neu-text-muted)" }}>
+          <span className="mt-1 block truncate text-xs transition-colors duration-200 group-hover:text-[color-mix(in_oklch,var(--neu-text-muted)_70%,var(--neu-text-strong))]" style={{ color: "var(--neu-text-muted)" }}>
             {description}
           </span>
         ) : null}
@@ -170,10 +170,10 @@ export function NeuSidebar({
                     onNavigate?.(item.href);
                   }}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] w-full text-left group",
+                    "flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-[background-color,color,box-shadow,transform,opacity] duration-200 ease-out w-full text-left group",
                     active
-                      ? "text-[var(--neu-accent)] font-bold scale-[1.01]"
-                      : "text-muted-foreground hover:text-[var(--neu-accent)] hover:translate-x-1 hover:bg-[color-mix(in_oklch,var(--neu-highlight)_6%,var(--neu-surface-base))]",
+                      ? "text-[var(--neu-accent)] font-bold"
+                      : "text-muted-foreground hover:text-[var(--neu-accent)] hover:bg-[color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-base))]",
                   )}
                   style={active ? {
                     boxShadow: "var(--neu-shadow-pill)",
@@ -182,10 +182,10 @@ export function NeuSidebar({
                 >
                   {Icon ? (
                     <span className={cn(
-                      "inline-flex items-center justify-center size-7 rounded-lg transition-all duration-300",
-                      active ? "scale-110 text-[var(--neu-accent)]" : "opacity-75 group-hover:scale-110 group-hover:opacity-100",
+                      "inline-flex items-center justify-center size-7 rounded-lg transition-[transform,opacity] duration-200 ease-out",
+                      active ? "scale-105 text-[var(--neu-accent)]" : "opacity-75 group-hover:scale-105 group-hover:opacity-100",
                     )}>
-                      <Icon className="size-4.5 transition-transform duration-300 group-hover:rotate-6" />
+                      <Icon className="size-4.5" />
                     </span>
                   ) : null}
                   <span className="text-sm font-semibold">{item.label}</span>
@@ -229,11 +229,11 @@ export function NeuSidebar({
                       onNavigate?.(item.href);
                     }}
                     className={cn(
-                      "flex items-center gap-3 rounded-xl px-3 py-2 transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] w-full text-left group",
+                      "flex items-center gap-3 rounded-xl px-3 py-2 transition-[background-color,color,box-shadow,transform,opacity] duration-200 ease-out w-full text-left group",
                       active
-                        ? "text-[var(--neu-accent)] font-bold scale-[1.01]"
-                        : "text-muted-foreground hover:text-[var(--neu-accent)] hover:translate-x-1 hover:bg-[color-mix(in_oklch,var(--neu-highlight)_6%,var(--neu-surface-base))]",
-                      collapsed && "justify-center px-2 hover:translate-x-0 hover:scale-105",
+                        ? "text-[var(--neu-accent)] font-bold"
+                        : "text-muted-foreground hover:text-[var(--neu-accent)] hover:bg-[color-mix(in_oklch,var(--neu-highlight)_10%,var(--neu-surface-base))]",
+                      collapsed && "justify-center px-2 hover:scale-105",
                     )}
                     style={active ? {
                       boxShadow: "var(--neu-shadow-pill)",
@@ -242,10 +242,10 @@ export function NeuSidebar({
                   >
                     {Icon ? (
                       <span className={cn(
-                        "inline-flex items-center justify-center size-7 rounded-lg transition-all duration-300",
-                        active ? "scale-110 text-[var(--neu-accent)]" : "opacity-75 group-hover:scale-110 group-hover:opacity-100",
+                        "inline-flex items-center justify-center size-7 rounded-lg transition-[transform,opacity] duration-200 ease-out",
+                        active ? "scale-105 text-[var(--neu-accent)]" : "opacity-75 group-hover:scale-105 group-hover:opacity-100",
                       )}>
-                        <Icon className="size-4.5 transition-transform duration-300 group-hover:rotate-6" />
+                        <Icon className="size-4.5" />
                       </span>
                     ) : null}
                     {!collapsed ? (
@@ -548,7 +548,7 @@ export function NeuCommandPalette({
             leadingIcon={<Search className="size-4" />}
           />
 
-          <div className="neu-scrollbar max-h-[32rem] space-y-4 overflow-auto pr-1">
+          <div className="neu-scrollbar max-h-[32rem] space-y-4 overflow-auto p-2 -m-2">
             {filteredGroups.length === 0 ? (
               <NeuSurface depth="inset" radius="md" padding="lg" className="text-center">
                 <p className="text-base font-semibold tracking-[-0.02em]">No matching commands</p>
@@ -571,7 +571,7 @@ export function NeuCommandPalette({
                           item.onSelect();
                           onSelect(item.id);
                         }}
-                        className="neu-surface-base neu-surface-raised neu-interactive flex w-full items-start gap-3 rounded-[var(--neu-radius-md)] px-3.5 py-3 text-left"
+                        className="neu-surface-base neu-interactive flex w-full items-start gap-3 rounded-[var(--neu-radius-md)] px-3.5 py-3 text-left shadow-[var(--neu-shadow-pill)]"
                       >
                         <span className="inline-flex size-10 items-center justify-center rounded-[var(--neu-radius-sm)] neu-surface-base neu-surface-inset">
                           {item.icon ?? <Search className="size-4" />}

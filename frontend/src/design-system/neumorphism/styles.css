@@ -652,14 +652,14 @@ main > * {
 }
 
 .neu-command-overlay {
-  background: color-mix(in oklch, var(--neu-surface-base) 82%, transparent);
-  backdrop-filter: blur(20px) saturate(1.2);
+  background: color-mix(in oklch, var(--neu-surface-base) 45%, transparent);
+  backdrop-filter: blur(8px) saturate(1.1);
   animation: neu-fade-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .neu-theme[data-neu-mode="graphite"] .neu-command-overlay {
-  background: color-mix(in oklch, var(--neu-surface-deep) 85%, transparent);
-  backdrop-filter: blur(20px) saturate(1.1);
+  background: color-mix(in oklch, var(--neu-surface-deep) 50%, transparent);
+  backdrop-filter: blur(8px) saturate(1.1);
 }
 
 .neu-slider {
