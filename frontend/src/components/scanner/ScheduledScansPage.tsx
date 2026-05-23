@@ -163,7 +163,7 @@ function ScheduleCard({
   const isRunning = s.is_running;
 
   return (
-    <div className="group relative neu-surface-base neu-surface-raised neu-card-hover border-none rounded-[var(--neu-radius-lg)] shadow-[var(--shadow-card)] overflow-hidden active:scale-[0.995]">
+    <div className="group relative neu-surface-base neu-surface-raised neu-card-hover border-none rounded-[var(--neu-radius-lg)] shadow-[var(--shadow-card)] overflow-hidden">
       {/* Subtle top accent line */}
       <div className={cn(
         "absolute top-0 left-0 right-0 h-[2px] opacity-60",
@@ -1296,14 +1296,10 @@ function ScheduleFormDialog({
           </CollapsibleSection>
 
           {/* Agent Model Overrides */}
-          <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-4 space-y-4">
-            <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
+          <AgentModelOverrides assetType="crypto" modelOptions={deepOptions} overrides={agentModelOverrides} onChange={setAgentModelOverrides} />
 
-            {/* Auto-Trade */}
-            <div className="pt-2">
-              <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
-            </div>
-          </div>
+          {/* Auto-Trade */}
+          <AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
