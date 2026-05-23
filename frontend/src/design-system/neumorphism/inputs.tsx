@@ -652,21 +652,25 @@ export function NeuCheckbox({
         disabled={disabled}
         onClick={() => onCheckedChange(checked === "indeterminate" ? true : !checked)}
         className={cn(
-          "mt-0.5 flex size-5.5 shrink-0 items-center justify-center rounded-[6px] border transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]",
+          "mt-0.5 flex size-5.5 shrink-0 items-center justify-center rounded-[6px] border transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] active:scale-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)]",
           isChecked || isIndeterminate
             ? accentTrackColor
             : "bg-[var(--neu-surface-deep)] border-[color:var(--neu-stroke-soft)]"
         )}
       >
-        {(isChecked || isIndeterminate) && (
-          <span className={cn("flex size-4 items-center justify-center rounded-[4px] bg-white shadow-[var(--neu-shadow-pill)] transition-transform duration-200", accentTextColor)}>
-            {isChecked ? (
-              <Check className="size-3.5 stroke-[3px]" />
-            ) : (
-              <span className="h-0.5 w-2 bg-current rounded-full" />
-            )}
-          </span>
-        )}
+        <span
+          className={cn(
+            "flex size-4 items-center justify-center rounded-[4px] bg-white shadow-[var(--neu-shadow-pill)] transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] origin-center",
+            isChecked || isIndeterminate ? "scale-100 opacity-100 rotate-0" : "scale-50 opacity-0 rotate-12",
+            accentTextColor
+          )}
+        >
+          {isChecked ? (
+            <Check className="size-3.5 stroke-[3.5px]" />
+          ) : (
+            <span className="h-0.5 w-2 bg-current rounded-full" />
+          )}
+        </span>
       </button>
       {(label || description) && (
         <div className="flex flex-col gap-0.5">
@@ -711,20 +715,23 @@ export function NeuRadioGroup({
               onClick={() => onChange(option.value)}
               className={cn(
                 "neu-focus-ring flex min-h-14 items-start gap-3 rounded-[var(--neu-radius-md)] border px-3.5 py-3 text-left transition",
-                active ? "neu-surface-base neu-surface-accent" : "neu-surface-base neu-surface-raised neu-interactive",
+                active ? "neu-surface-base neu-surface-accent scale-[1.01]" : "neu-surface-base neu-surface-raised neu-interactive",
               )}
             >
               <span
                 className={cn(
-                  "mt-1 flex size-5.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 shadow-[var(--neu-shadow-inset)]",
+                  "mt-1 flex size-5.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-300 shadow-[var(--neu-shadow-inset)]",
                   active
                     ? accentTrackColor
                     : "bg-[var(--neu-surface-deep)] border-[color:var(--neu-stroke-soft)]"
                 )}
               >
-                {active && (
-                  <span className="size-2.5 rounded-full bg-white shadow-[var(--neu-shadow-pill)]" />
-                )}
+                <span
+                  className={cn(
+                    "size-2.5 rounded-full bg-white shadow-[var(--neu-shadow-pill)] transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] origin-center",
+                    active ? "scale-100" : "scale-0"
+                  )}
+                />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold">{option.label}</span>
@@ -1033,13 +1040,13 @@ export function NeuSwitch({
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          "relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none shadow-[var(--neu-shadow-inset)]",
+          "relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full transition-all duration-300 ease-in-out active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)] border-none shadow-[var(--neu-shadow-inset)]",
           checked ? accentColorClass : "bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)]"
         )}
       >
         <span
           className={cn(
-            "pointer-events-none block size-6 rounded-full bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-pill)] ring-0 transition duration-200 ease-in-out transform",
+            "pointer-events-none block size-6 rounded-full bg-[var(--neu-surface-raised)] shadow-[var(--neu-shadow-pill)] ring-0 transition duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] transform",
             checked ? "translate-x-[26px] translate-y-[3px]" : "translate-x-[4px] translate-y-[3px]"
           )}
         />

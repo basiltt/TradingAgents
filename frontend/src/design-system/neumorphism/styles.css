@@ -317,22 +317,23 @@
 
 .neu-interactive {
   transition:
-    box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 160ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow 320ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 200ms ease,
+    border-color 200ms ease;
 }
 
 .neu-interactive:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px) scale(1.01);
   box-shadow: var(--neu-shadow-raised-hover);
-  filter: saturate(1.04);
+  filter: saturate(1.05) brightness(1.01);
 }
 
 .neu-pressed,
 .neu-interactive:active {
-  transform: translateY(1px) scale(0.995);
+  transform: translateY(1px) scale(0.985);
   box-shadow: var(--neu-shadow-press);
+  transition-duration: 80ms;
 }
 
 .neu-focus-ring:focus-visible {
@@ -358,30 +359,30 @@
 
 /* === Micro Animations === */
 
-/* Smooth page transitions */
+/* Smooth page transitions with premium slide-up + blur-fade */
 @keyframes neu-fade-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(10px) scale(0.99); filter: blur(3px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 @keyframes neu-fade-in-up {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(18px) scale(0.98); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 @keyframes neu-scale-in {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.95); filter: blur(2px); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
 }
 
 @keyframes neu-slide-in-right {
-  from { opacity: 0; transform: translateX(12px); }
-  to { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateX(12px) filter: blur(2px); }
+  to { opacity: 1; transform: translateX(0) filter: blur(0); }
 }
 
 @keyframes neu-pulse-soft {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(0.98); }
 }
 
 @keyframes neu-shimmer {
@@ -394,50 +395,106 @@
   50% { box-shadow: var(--neu-shadow-raised-hover); }
 }
 
+/* Hover Shine Reflection Effect */
+.neu-hover-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.neu-hover-shine::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08) 30%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.08) 70%,
+    transparent
+  );
+  transform: skewX(-25deg);
+  transition: none;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.neu-hover-shine:hover::before {
+  left: 150%;
+  transition: left 750ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.neu-theme[data-neu-mode="graphite"] .neu-hover-shine::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.03) 30%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.03) 70%,
+    transparent
+  );
+}
+
 /* Staggered children animation */
 .neu-stagger > * {
-  animation: neu-fade-in-up 400ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: neu-fade-in-up 450ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
 }
 .neu-stagger > *:nth-child(1) { animation-delay: 0ms; }
-.neu-stagger > *:nth-child(2) { animation-delay: 60ms; }
-.neu-stagger > *:nth-child(3) { animation-delay: 120ms; }
-.neu-stagger > *:nth-child(4) { animation-delay: 180ms; }
-.neu-stagger > *:nth-child(5) { animation-delay: 240ms; }
-.neu-stagger > *:nth-child(6) { animation-delay: 300ms; }
-.neu-stagger > *:nth-child(7) { animation-delay: 360ms; }
-.neu-stagger > *:nth-child(8) { animation-delay: 420ms; }
+.neu-stagger > *:nth-child(2) { animation-delay: 50ms; }
+.neu-stagger > *:nth-child(3) { animation-delay: 100ms; }
+.neu-stagger > *:nth-child(4) { animation-delay: 150ms; }
+.neu-stagger > *:nth-child(5) { animation-delay: 200ms; }
+.neu-stagger > *:nth-child(6) { animation-delay: 250ms; }
+.neu-stagger > *:nth-child(7) { animation-delay: 300ms; }
+.neu-stagger > *:nth-child(8) { animation-delay: 350ms; }
 
 /* Card hover lift */
 .neu-card-hover {
-  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    border-color 200ms ease;
 }
 .neu-card-hover:hover {
-  transform: translateY(-2px);
+  transform: translateY(-4px) scale(1.015);
   box-shadow: var(--neu-shadow-raised-hover);
 }
 .neu-card-hover:active {
-  transform: translateY(0) scale(0.98);
+  transform: translateY(1px) scale(0.98);
   box-shadow: var(--neu-shadow-inset);
-  transition-duration: 80ms;
+  transition-duration: 90ms;
 }
 
 /* Button press effect */
 .neu-btn-press {
-  transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 120ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 200ms ease,
+    border-color 200ms ease;
+}
+.neu-btn-press:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: var(--neu-shadow-raised-hover);
+  filter: brightness(1.03);
 }
 .neu-btn-press:active {
-  transform: scale(0.95);
-  box-shadow: var(--neu-shadow-inset);
+  transform: translateY(1px) scale(0.965);
+  box-shadow: var(--neu-shadow-press);
+  transition-duration: 75ms;
 }
 
 /* Tab content transition */
 [role="tabpanel"] {
-  animation: neu-fade-in 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: neu-fade-in 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* Main content area page transitions */
 main > * {
-  animation: neu-fade-in 350ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: neu-fade-in 400ms cubic-bezier(0.175, 0.885, 0.32, 1.15);
 }
 
 /* Badge pulse for attention items */

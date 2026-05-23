@@ -53,7 +53,7 @@ export function HomeDashboard() {
   return (
     <div className="page-shell space-y-3 sm:space-y-6 lg:space-y-8 pb-8 route-stage">
       {/* Hero section */}
-      <section className="rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*2)] p-3.5 sm:p-6 lg:p-8 shadow-[var(--shadow-card)] relative overflow-hidden">
+      <section className="rounded-[calc(var(--radius)*1.4)] sm:rounded-[calc(var(--radius)*2)] p-3.5 sm:p-6 lg:p-8 shadow-[var(--shadow-card)] relative overflow-hidden aurora-border">
         <div className="flex flex-col gap-3 sm:gap-6 lg:flex-row lg:items-center lg:justify-between relative z-10">
           <div className="space-y-1.5 sm:space-y-3">
             <div className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 shadow-[var(--shadow-inset)] text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -90,16 +90,15 @@ export function HomeDashboard() {
         {quickActions.map((card) => {
           const Icon = card.icon;
           return (
-            <Link key={card.title} to={card.to} className="block group">
+            <Link key={card.title} to={card.to} className="block group active:scale-[0.985] transition-transform duration-200">
               <Card className={cn(
-                "h-full rounded-[calc(var(--radius)*1.2)] sm:rounded-[calc(var(--radius)*1.5)] transition-all duration-300",
-                "group-hover:-translate-y-1 group-hover:shadow-[var(--shadow-card-hover)]",
-                "relative overflow-hidden"
+                "h-full rounded-[calc(var(--radius)*1.2)] sm:rounded-[calc(var(--radius)*1.5)]",
+                "neu-card-hover neu-hover-shine relative overflow-hidden"
               )}>
                 <div className={cn("absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-100 transition-opacity duration-300", card.gradient)} />
                 <div className="flex items-center gap-2.5 sm:gap-3 p-3 sm:p-5 relative">
-                  <div className="inline-flex size-8 sm:size-11 shrink-0 items-center justify-center rounded-[calc(var(--radius)*0.9)] shadow-[var(--shadow-inset)]">
-                    <Icon className="size-3.5 sm:size-5 text-primary" />
+                  <div className="inline-flex size-8 sm:size-11 shrink-0 items-center justify-center rounded-[calc(var(--radius)*0.9)] shadow-[var(--shadow-inset)] transition-all duration-300 group-hover:scale-105">
+                    <Icon className="size-3.5 sm:size-5 text-primary transition-transform duration-300 group-hover:scale-110 group-hover:rotate-6" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-[13px] sm:text-sm font-bold">{card.title}</p>
@@ -107,7 +106,7 @@ export function HomeDashboard() {
                       {card.description}
                     </p>
                   </div>
-                  <span className="shrink-0 inline-flex items-center text-xs font-semibold text-primary">
+                  <span className="shrink-0 inline-flex items-center text-xs font-semibold text-primary transition-transform duration-300 group-hover:translate-x-1">
                     <ArrowRight className="size-3.5" />
                   </span>
                 </div>
@@ -130,8 +129,8 @@ export function HomeDashboard() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {entries.map(([runId, run]) => (
-              <Link key={runId} to="/analysis/$runId" params={{ runId }} className="block group">
-                <Card className="h-full rounded-[calc(var(--radius)*1.4)] transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[var(--shadow-card-hover)]">
+              <Link key={runId} to="/analysis/$runId" params={{ runId }} className="block group active:scale-[0.985] transition-transform duration-200">
+                <Card className="h-full rounded-[calc(var(--radius)*1.4)] neu-card-hover neu-hover-shine">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="font-mono text-lg font-bold">{run.ticker}</CardTitle>

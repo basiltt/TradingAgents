@@ -163,7 +163,7 @@ export const MessagesPanel = memo(function MessagesPanel({ messages, isLoading }
               const colorClass = cfg?.color ?? "text-primary";
               const bgClass = cfg?.bg ?? "bg-muted";
               return (
-                <div key={msg.seq} className="rounded-xl border border-border/30 p-4 bg-muted/15 hover:bg-muted/35 hover:border-border/50 transition-all duration-300 shadow-sm">
+                <div key={msg.seq} className="rounded-xl border border-border/30 p-4 bg-muted/15 hover:bg-muted/35 hover:border-border/50 transition-all duration-300 shadow-sm animate-fade-in-up origin-bottom">
                   <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                     <span className={`inline-flex items-center text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border border-current/15 ${bgClass} ${colorClass}`}>
                       {formatSender(msg.sender)}

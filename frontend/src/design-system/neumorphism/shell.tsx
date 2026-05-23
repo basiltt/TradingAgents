@@ -49,11 +49,11 @@ export function NeuNavItem({
   const content = (
     <div
       className={cn(
-        "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition-all duration-200",
+        "flex items-center gap-3 rounded-[var(--neu-radius-md)] transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] group",
         touchFriendly ? "min-h-10 px-3 py-2 sm:min-h-0 sm:px-3 sm:py-2.5" : "px-3 py-2.5",
         active
           ? "neu-surface-base text-[var(--neu-accent)]"
-          : "hover:opacity-80",
+          : "hover:bg-[color-mix(in_oklch,var(--neu-highlight)_8%,var(--neu-surface-base))] hover:text-[var(--neu-accent)] hover:translate-x-1",
       )}
       style={active ? {
         boxShadow: "var(--neu-shadow-pill)",
@@ -62,17 +62,17 @@ export function NeuNavItem({
     >
       {Icon ? (
         <span className={cn(
-          "inline-flex items-center justify-center rounded-[var(--neu-radius-sm)]",
+          "inline-flex items-center justify-center rounded-[var(--neu-radius-sm)] transition-all duration-300",
           touchFriendly ? "size-7 sm:size-8" : "size-8",
-          active ? "text-[var(--neu-accent)]" : "opacity-70",
+          active ? "text-[var(--neu-accent)] scale-110" : "opacity-70 group-hover:opacity-100 group-hover:scale-110",
         )}>
-          <Icon className="size-4.5" />
+          <Icon className="size-4.5 transition-transform duration-300 group-hover:rotate-6" />
         </span>
       ) : null}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold">{label}</span>
         {!compact && description ? (
-          <span className="mt-1 block truncate text-xs" style={{ color: "var(--neu-text-muted)" }}>
+          <span className="mt-1 block truncate text-xs transition-colors group-hover:text-[color-mix(in_oklch,var(--neu-text-muted)_70%,var(--neu-text-strong))]" style={{ color: "var(--neu-text-muted)" }}>
             {description}
           </span>
         ) : null}
@@ -170,10 +170,10 @@ export function NeuSidebar({
                     onNavigate?.(item.href);
                   }}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-all duration-200 w-full text-left",
+                    "flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] w-full text-left group",
                     active
-                      ? "text-[var(--neu-accent)] font-bold"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "text-[var(--neu-accent)] font-bold scale-[1.01]"
+                      : "text-muted-foreground hover:text-[var(--neu-accent)] hover:translate-x-1 hover:bg-[color-mix(in_oklch,var(--neu-highlight)_6%,var(--neu-surface-base))]",
                   )}
                   style={active ? {
                     boxShadow: "var(--neu-shadow-pill)",
@@ -182,10 +182,10 @@ export function NeuSidebar({
                 >
                   {Icon ? (
                     <span className={cn(
-                      "inline-flex items-center justify-center size-7 rounded-lg transition-transform duration-200",
-                      active ? "scale-110" : "",
+                      "inline-flex items-center justify-center size-7 rounded-lg transition-all duration-300",
+                      active ? "scale-110 text-[var(--neu-accent)]" : "opacity-75 group-hover:scale-110 group-hover:opacity-100",
                     )}>
-                      <Icon className="size-4.5" />
+                      <Icon className="size-4.5 transition-transform duration-300 group-hover:rotate-6" />
                     </span>
                   ) : null}
                   <span className="text-sm font-semibold">{item.label}</span>
@@ -193,7 +193,7 @@ export function NeuSidebar({
                   {active ? (
                     <span
                       className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--neu-accent)] animate-pulse"
-                      style={{ boxShadow: "0 0 6px var(--neu-accent)" }}
+                      style={{ boxShadow: "0 0 8px var(--neu-accent)" }}
                     />
                   ) : null}
                 </button>
@@ -229,11 +229,11 @@ export function NeuSidebar({
                       onNavigate?.(item.href);
                     }}
                     className={cn(
-                      "flex items-center gap-3 rounded-xl px-3 py-2 transition-all duration-200 w-full text-left",
+                      "flex items-center gap-3 rounded-xl px-3 py-2 transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] w-full text-left group",
                       active
-                        ? "text-[var(--neu-accent)] font-bold"
-                        : "text-muted-foreground hover:text-foreground",
-                      collapsed && "justify-center px-2",
+                        ? "text-[var(--neu-accent)] font-bold scale-[1.01]"
+                        : "text-muted-foreground hover:text-[var(--neu-accent)] hover:translate-x-1 hover:bg-[color-mix(in_oklch,var(--neu-highlight)_6%,var(--neu-surface-base))]",
+                      collapsed && "justify-center px-2 hover:translate-x-0 hover:scale-105",
                     )}
                     style={active ? {
                       boxShadow: "var(--neu-shadow-pill)",
@@ -242,10 +242,10 @@ export function NeuSidebar({
                   >
                     {Icon ? (
                       <span className={cn(
-                        "inline-flex items-center justify-center size-7 rounded-lg transition-transform duration-200",
-                        active ? "scale-110" : "",
+                        "inline-flex items-center justify-center size-7 rounded-lg transition-all duration-300",
+                        active ? "scale-110 text-[var(--neu-accent)]" : "opacity-75 group-hover:scale-110 group-hover:opacity-100",
                       )}>
-                        <Icon className="size-4.5" />
+                        <Icon className="size-4.5 transition-transform duration-300 group-hover:rotate-6" />
                       </span>
                     ) : null}
                     {!collapsed ? (
@@ -255,7 +255,7 @@ export function NeuSidebar({
                     {!collapsed && active ? (
                       <span
                         className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--neu-accent)] animate-pulse"
-                        style={{ boxShadow: "0 0 6px var(--neu-accent)" }}
+                        style={{ boxShadow: "0 0 8px var(--neu-accent)" }}
                       />
                     ) : null}
                   </button>
@@ -665,15 +665,15 @@ export function NeuAppShell({
 }) {
   return (
     <div
-      className="grid min-h-screen gap-3 sm:gap-4 lg:grid-cols-[var(--neu-shell-sidebar-width)_minmax(0,1fr)]"
+      className="grid min-h-screen gap-3 sm:gap-4 lg:grid-cols-[var(--neu-shell-sidebar-width)_minmax(0,1fr)] transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]"
       style={{ ["--neu-shell-sidebar-width" as string]: sidebarWidth }}
     >
-      <aside className="hidden self-start lg:block" aria-label="Primary navigation">
-        <div className="lg:fixed lg:left-5 lg:top-5 lg:z-20 lg:h-[calc(100vh-2.5rem)] lg:w-[var(--neu-shell-sidebar-width)]">
+      <aside className="hidden self-start lg:block transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]" aria-label="Primary navigation">
+        <div className="lg:fixed lg:left-5 lg:top-5 lg:z-20 lg:h-[calc(100vh-2.5rem)] lg:w-[var(--neu-shell-sidebar-width)] transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]">
           {sidebar}
         </div>
       </aside>
-      <div className={cn("min-w-0 space-y-3 sm:space-y-4", contentClassName)}>
+      <div className={cn("min-w-0 space-y-3 sm:space-y-4 transition-all duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]", contentClassName)}>
         {topbar}
         <main className={cn("min-w-0", mainClassName)}>{children}</main>
       </div>

@@ -39,7 +39,7 @@ describe("HomeDashboard", () => {
     const { wrapper } = createWrapper(false);
     render(<HomeDashboard />, { wrapper });
     expect(
-      screen.getByRole("heading", { name: /autonomous trading research/i }),
+      screen.getByRole("heading", { name: /trading workspace/i }),
     ).toBeInTheDocument();
     const startLinks = screen.getAllByRole("link", { name: /start analysis/i });
     expect(startLinks.length).toBeGreaterThan(0);

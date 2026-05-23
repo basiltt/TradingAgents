@@ -22,7 +22,7 @@ describe("MemoryPage", () => {
   it("renders memory page heading", () => {
     render(<MemoryPage />, { wrapper: createWrapper() });
     expect(
-      screen.getByRole("heading", { name: /historical decisions/i }),
+      screen.getByRole("heading", { name: /agent memory/i }),
     ).toBeInTheDocument();
   });
 
