@@ -198,22 +198,28 @@ def get_trade_history_summary(
         sym_label = f" for {symbol}" if symbol else ""
         return f"No completed trades{sym_label} in the {period_label}."
 
-    wins = [t for t in filtered if float(t.get("pnl", 0)) > 0]
-    losses = [t for t in filtered if float(t.get("pnl", 0)) < 0]
-    breakeven = [t for t in filtered if float(t.get("pnl", 0)) == 0]
+    def _pnl(t: dict) -> float:
+        try:
+            return float(t.get("pnl", 0))
+        except (ValueError, TypeError):
+            return 0.0
+
+    wins = [t for t in filtered if _pnl(t) > 0]
+    losses = [t for t in filtered if _pnl(t) < 0]
+    breakeven = [t for t in filtered if _pnl(t) == 0]
 
     total = len(filtered)
     win_rate = len(wins) / total * 100
 
-    avg_win = sum(float(t.get("pnl", 0)) for t in wins) / len(wins) if wins else 0
-    avg_loss = sum(float(t.get("pnl", 0)) for t in losses) / len(losses) if losses else 0
-    total_pnl = sum(float(t.get("pnl", 0)) for t in filtered)
+    avg_win = sum(_pnl(t) for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(_pnl(t) for t in losses) / len(losses) if losses else 0
+    total_pnl = sum(_pnl(t) for t in filtered)
 
     # Current streak
     streak = 0
     streak_type = "none"
     for t in reversed(filtered):
-        pnl = float(t.get("pnl", 0))
+        pnl = _pnl(t)
         if streak == 0:
             streak_type = "win" if pnl > 0 else "loss"
             streak = 1
@@ -223,8 +229,8 @@ def get_trade_history_summary(
             break
 
     # Profit factor
-    gross_profit = sum(float(t.get("pnl", 0)) for t in wins)
-    gross_loss = abs(sum(float(t.get("pnl", 0)) for t in losses))
+    gross_profit = sum(_pnl(t) for t in wins)
+    gross_loss = abs(sum(_pnl(t) for t in losses))
     if gross_loss > 0:
         profit_factor = gross_profit / gross_loss
     elif gross_profit > 0:

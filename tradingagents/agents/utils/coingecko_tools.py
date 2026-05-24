@@ -6,7 +6,6 @@ and CoinGecko only for data Bybit cannot provide (market cap, supply, ATH/ATL, s
 
 from __future__ import annotations
 
-import html
 import logging
 import re
 import time as _time
@@ -32,14 +31,7 @@ from tradingagents.dataflows.bybit_data import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_OUTPUT_CHARS = 50 * 1024
-
-
-def _sanitize(raw: str) -> str:
-    if len(raw) > _MAX_OUTPUT_CHARS:
-        raw = raw[:_MAX_OUTPUT_CHARS] + "\n[truncated]"
-    escaped = html.escape(raw, quote=False)
-    return f"<data>{escaped}</data>"
+from tradingagents.agents.utils.tool_output import sanitize_tool_output as _sanitize
 
 
 def _ensure_bybit_symbol(symbol: str) -> str:

@@ -107,7 +107,5 @@ class AgentState(MessagesState):
     # Execution Monitor notes (post-decision addendum)
     execution_notes: Annotated[Optional[str], _last]
 
-    # Trader context: account state, trade history, market session
-    account_state: Annotated[Optional[str], _last]
-    trade_history_summary: Annotated[Optional[str], _last]
+    # Trader context: market session
     market_session: Annotated[Optional[str], _last]

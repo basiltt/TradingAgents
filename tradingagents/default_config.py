@@ -57,8 +57,6 @@ DEFAULT_CONFIG = {
             "api_secret": os.getenv("BYBIT_API_SECRET") or None,
         },
     },
-    # Trade history for LLM context (list of {symbol, side, pnl, closed_at})
-    "trade_history": [],
     # TA Pre-Filter: run technical analysis before LLM calls (crypto only)
     "ta_prefilter_enabled": False,
     "ta_prefilter_threshold": 40,

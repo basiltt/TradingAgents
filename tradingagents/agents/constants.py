@@ -68,7 +68,7 @@ READABLE_KEYS: dict[str, list[str]] = {
         "company_of_interest", "crypto_interval",
         "current_price_context", "investment_plan",
         "technical_levels_summary",
-        "account_state", "trade_history_summary", "market_session",
+        "market_session",
     ],
     "compliance_officer": [
         "company_of_interest", "crypto_interval",

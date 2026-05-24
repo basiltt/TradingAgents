@@ -1202,7 +1202,10 @@ def get_volatility_metrics(kline_csv: str, lookback: int = 90, intervals_per_yea
 
     # Infer annualization factor from candle timestamps if not provided
     if intervals_per_year is None and len(df) >= 2 and "timestamp" in df.columns:
-        gap_ms = int(df["timestamp"].iloc[-1]) - int(df["timestamp"].iloc[-2])
+        try:
+            gap_ms = int(float(df["timestamp"].iloc[-1])) - int(float(df["timestamp"].iloc[-2]))
+        except (ValueError, TypeError):
+            gap_ms = 0
         if gap_ms > 0:
             intervals_per_year = int(365 * 24 * 3600 * 1000 / gap_ms)
         else:
@@ -1221,8 +1224,10 @@ def get_volatility_metrics(kline_csv: str, lookback: int = 90, intervals_per_yea
 
     log_ret = np.log(close / close.shift(1)).dropna()
     ann_factor = np.sqrt(intervals_per_year)
-    rv_24h = float(log_ret.tail(24).std() * ann_factor) if len(log_ret) >= 24 else None
-    rv_7d = float(log_ret.tail(168).std() * ann_factor) if len(log_ret) >= 168 else None
+    _rv24 = float(log_ret.tail(24).std() * ann_factor) if len(log_ret) >= 24 else None
+    rv_24h = _rv24 if _rv24 is not None and pd.notna(_rv24) else None
+    _rv7 = float(log_ret.tail(168).std() * ann_factor) if len(log_ret) >= 168 else None
+    rv_7d = _rv7 if _rv7 is not None and pd.notna(_rv7) else None
 
     sma_20 = close.rolling(20).mean()
     std_20 = close.rolling(20).std()
@@ -1288,12 +1293,14 @@ def get_market_regime(kline_csv: str) -> dict:
     ], axis=1).max(axis=1)
 
     atr_14 = tr.ewm(span=14).mean()
-    plus_di = 100 * (plus_dm.ewm(span=14).mean() / atr_14)
-    minus_di = 100 * (minus_dm.ewm(span=14).mean() / atr_14)
+    plus_di = 100 * (plus_dm.ewm(span=14).mean() / atr_14.replace(0, np.nan))
+    minus_di = 100 * (minus_dm.ewm(span=14).mean() / atr_14.replace(0, np.nan))
     dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1))
     adx = dx.ewm(span=14).mean().iloc[-1]
 
-    if adx > 25:
+    if not pd.notna(adx):
+        regime = "Unknown"
+    elif adx > 25:
         regime = "Trending"
     elif adx < 20:
         regime = "Ranging"

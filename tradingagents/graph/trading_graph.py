@@ -582,10 +582,9 @@ class TradingAgentsGraph:
         else:
             init_agent_state["current_price_context"] = ""
 
-        # Inject account state and market session for Trader context
+        # Inject market session for Trader context
         if self.config.get("asset_type") == "crypto" and getattr(self, "_crypto_shared", None):
             from tradingagents.dataflows.bybit_data import get_market_session
-            from tradingagents.dataflows.account_context import get_account_state, get_trade_history_summary
 
             try:
                 session_data = get_market_session()
@@ -597,35 +596,8 @@ class TradingAgentsGraph:
             except Exception as exc:
                 logger.warning("Failed to get market session: %s", exc)
                 init_agent_state["market_session"] = ""
-
-            creds = self.config.get("exchange_credentials", {}).get("bybit", {})
-            ak = (creds.get("api_key") or "").strip()
-            asec = (creds.get("api_secret") or "").strip()
-            if ak and asec:
-                try:
-                    init_agent_state["account_state"] = get_account_state(ak, asec)
-                except Exception as exc:
-                    logger.warning("Failed to fetch account state: %s", exc)
-                    init_agent_state["account_state"] = ""
-            else:
-                init_agent_state["account_state"] = ""
-
-            # Trade history (from config if provided)
-            trade_history = self.config.get("trade_history", [])
-            if trade_history:
-                try:
-                    init_agent_state["trade_history_summary"] = get_trade_history_summary(
-                        trade_history, symbol=company_name
-                    )
-                except Exception as exc:
-                    logger.warning("Failed to build trade history summary: %s", exc)
-                    init_agent_state["trade_history_summary"] = ""
-            else:
-                init_agent_state["trade_history_summary"] = ""
         else:
             init_agent_state.setdefault("market_session", "")
-            init_agent_state.setdefault("account_state", "")
-            init_agent_state.setdefault("trade_history_summary", "")
 
         args = self.propagator.get_graph_args()
 
@@ -636,13 +608,12 @@ class TradingAgentsGraph:
 
         if self.debug:
             trace = []
-            for chunk in self.graph.stream(init_agent_state, **args):
-                if len(chunk["messages"]) == 0:
-                    pass
-                else:
-                    chunk["messages"][-1].pretty_print()
+            for chunk in self.graph.stream(init_agent_state, stream_mode="values", **args):
+                msgs = chunk.get("messages", [])
+                if msgs:
+                    msgs[-1].pretty_print()
                     trace.append(chunk)
-            final_state = trace[-1]
+            final_state = trace[-1] if trace else init_agent_state
         else:
             final_state = self.graph.invoke(init_agent_state, **args)
 
@@ -656,7 +627,7 @@ class TradingAgentsGraph:
         self.memory_log.store_decision(
             ticker=company_name,
             trade_date=trade_date,
-            final_trade_decision=final_state["final_trade_decision"],
+            final_trade_decision=final_state.get("final_trade_decision", ""),
         )
 
         # Clear checkpoint on successful completion to avoid stale state.
