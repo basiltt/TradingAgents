@@ -504,3 +504,34 @@ class AIManagerRepository:
                 description,
                 confidence,
             )
+
+    async def get_performance_metrics(self, account_id: str, period: str = "7d") -> Dict[str, Any]:
+        days = {"1d": 1, "7d": 7, "30d": 30}.get(period, 7)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT "
+                "  COUNT(*) AS total_decisions, "
+                "  COUNT(*) FILTER (WHERE outcome_label = 'profitable') AS wins, "
+                "  COUNT(*) FILTER (WHERE outcome_label = 'loss') AS losses, "
+                "  COALESCE(SUM((execution_result->>'realized_pnl')::numeric) FILTER (WHERE outcome_label = 'profitable'), 0) AS gross_profit, "
+                "  COALESCE(SUM(ABS((execution_result->>'realized_pnl')::numeric)) FILTER (WHERE outcome_label = 'loss'), 0) AS gross_loss "
+                "FROM ai_manager_decisions "
+                "WHERE account_id = $1 AND timestamp > NOW() - ($2 || ' days')::interval",
+                account_id, str(days),
+            )
+        total = row["total_decisions"]
+        wins = row["wins"]
+        losses = row["losses"]
+        gross_profit = float(row["gross_profit"])
+        gross_loss = float(row["gross_loss"])
+        return {
+            "period": period,
+            "total_decisions": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / total, 4) if total > 0 else 0.0,
+            "gross_profit": gross_profit,
+            "gross_loss": gross_loss,
+            "net_pnl": round(gross_profit - gross_loss, 8),
+            "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else 0.0,
+        }

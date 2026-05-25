@@ -252,6 +252,84 @@ class AIAccountManagerService:
             kill_switch=state.get("kill_switch_active", False),
         )
 
+    async def reset_kill_switch(self, account_id: str) -> None:
+        await self._repo.set_kill_switch(account_id, False)
+        task = self._tasks.get(account_id)
+        if task:
+            task._killed = False
+
+    async def patch_config(self, account_id: str, updates: dict) -> None:
+        state = await self._repo.get_state(account_id)
+        if not state:
+            raise ValueError(f"Account {account_id} not configured")
+        raw_config = state.get("config") or {}
+        if isinstance(raw_config, str):
+            import json as _json
+            raw_config = _json.loads(raw_config)
+        raw_config.update(updates)
+        config = AIManagerConfig(**raw_config)
+        await self._repo.sync_config_columns(account_id, config.model_dump())
+        task = self._tasks.get(account_id)
+        if task:
+            task.reload_config(config)
+
+    async def lock_position(self, account_id: str, symbol: str) -> None:
+        state = await self._repo.get_state(account_id)
+        if not state:
+            raise ValueError(f"Account {account_id} not configured")
+        raw_config = state.get("config") or {}
+        if isinstance(raw_config, str):
+            import json as _json
+            raw_config = _json.loads(raw_config)
+        locked = set(raw_config.get("locked_positions", []))
+        locked.add(symbol)
+        raw_config["locked_positions"] = sorted(locked)
+        config = AIManagerConfig(**raw_config)
+        await self._repo.sync_config_columns(account_id, config.model_dump())
+        task = self._tasks.get(account_id)
+        if task:
+            task.reload_config(config)
+
+    async def unlock_position(self, account_id: str, symbol: str) -> None:
+        state = await self._repo.get_state(account_id)
+        if not state:
+            raise ValueError(f"Account {account_id} not configured")
+        raw_config = state.get("config") or {}
+        if isinstance(raw_config, str):
+            import json as _json
+            raw_config = _json.loads(raw_config)
+        locked = set(raw_config.get("locked_positions", []))
+        locked.discard(symbol)
+        raw_config["locked_positions"] = sorted(locked)
+        config = AIManagerConfig(**raw_config)
+        await self._repo.sync_config_columns(account_id, config.model_dump())
+        task = self._tasks.get(account_id)
+        if task:
+            task.reload_config(config)
+
+    async def get_decisions(
+        self, account_id: str, limit: int = 50, cursor: Optional[str] = None, outcome_filter: Optional[str] = None
+    ) -> dict:
+        from datetime import datetime, timezone
+        cursor_ts = None
+        cursor_id = None
+        if cursor:
+            try:
+                parts = cursor.split("_", 1)
+                if len(parts) == 2:
+                    cursor_ts = datetime.fromisoformat(parts[0])
+                    cursor_id = int(parts[1])
+            except (ValueError, TypeError):
+                pass
+        items, next_cursor = await self._repo.get_decisions_page(
+            account_id, cursor_ts=cursor_ts, cursor_id=cursor_id,
+            limit=limit, outcome_filter=outcome_filter,
+        )
+        return {"decisions": items, "next_cursor": next_cursor}
+
+    async def get_performance(self, account_id: str, period: str = "7d") -> dict:
+        return await self._repo.get_performance_metrics(account_id, period=period)
+
     async def _spawn_task(self, account_id: str) -> None:
         from backend.services.ai_manager_task import AIManagerTask
 
@@ -281,6 +359,15 @@ class AIAccountManagerService:
         task = self._tasks.get(account_id)
         if task:
             await task.on_ws_event(wallet_data)
+
+    async def emit_event(self, account_id: str, event_type: str, payload: dict) -> None:
+        if self._ws_manager:
+            try:
+                await self._ws_manager.broadcast_to_account(
+                    account_id, f"ai_manager.{event_type}", payload
+                )
+            except Exception:
+                logger.debug("Failed to emit ai_manager.%s for %s", event_type, account_id)
 
     async def _health_sweep_loop(self) -> None:
         while not self._shutdown_event.is_set():

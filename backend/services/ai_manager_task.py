@@ -340,6 +340,10 @@ class AIManagerTask:
                 self._account_id, pnl, action_type
             )
 
+            await self._service.emit_event(self._account_id, "execution", {
+                "action": action_type, "symbol": symbol, "pnl": pnl,
+            })
+
         except Exception:
             logger.exception("Execution failed for %s %s", self._account_id, symbol)
             if decision_id is not None:

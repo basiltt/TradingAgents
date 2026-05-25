@@ -271,6 +271,18 @@ def create_app() -> FastAPI:
             rule_evaluator.set_cycle_callback(cycle_engine.on_rule_triggered)
             rule_evaluator.set_cycle_repo(cycle_repo)
 
+            # AI Account Manager service
+            from backend.services.ai_account_manager_service import AIAccountManagerService
+            ai_manager_service = AIAccountManagerService.create({
+                "accounts_service": app.state.accounts_service,
+                "close_positions_service": app.state.close_positions_service,
+                "account_ws_manager": account_ws_mgr,
+                "db_pool": db._pool,
+            })
+            await ai_manager_service.start()
+            app.state.ai_manager_service = ai_manager_service
+            account_ws_mgr.register_wallet_listener(ai_manager_service._on_ws_event)
+
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService
             trade_repo = TradeRepository(db=db)
@@ -325,6 +337,8 @@ def create_app() -> FastAPI:
         except asyncio.CancelledError:
             pass
         await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
+        if getattr(app.state, "ai_manager_service", None):
+            await _safe_shutdown("ai_manager_service", app.state.ai_manager_service.shutdown())
         if getattr(app.state, "rule_evaluator", None):
             await _safe_shutdown("rule_evaluator", app.state.rule_evaluator.shutdown())
         if getattr(app.state, "cycle_engine", None):
@@ -378,6 +392,7 @@ def create_app() -> FastAPI:
     from backend.routers.strategies import router as strategies_router
     from backend.routers.scheduled_scans import router as scheduled_scans_router
     from backend.routers.close_positions import router as close_positions_router
+    from backend.routers.ai_manager import router as ai_manager_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
@@ -393,6 +408,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(trades_router, prefix="/api/v1")
     app.include_router(close_positions_router, prefix="/api/v1")
+    app.include_router(ai_manager_router, prefix="/api/v1")
     from backend.routers.trading_cycles import router as trading_cycles_router
     app.include_router(trading_cycles_router, prefix="/api/v1")
     app.include_router(ws_router)
