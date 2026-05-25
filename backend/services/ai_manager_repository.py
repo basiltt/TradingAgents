@@ -180,6 +180,14 @@ class AIManagerRepository:
             )
             return [dict(r) for r in rows]
 
+    async def count_decisions(self, account_id: str) -> int:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) AS cnt FROM ai_manager_decisions WHERE account_id = $1",
+                account_id,
+            )
+            return row["cnt"] if row else 0
+
     async def get_decisions_page(
         self,
         account_id: str,
@@ -304,6 +312,31 @@ class AIManagerRepository:
                 "RETURNING realized_loss_today, equity_at_day_start",
                 account_id,
                 loss_amount,
+            )
+            return dict(row) if row else {}
+
+    async def init_equity_at_day_start(self, account_id: str, equity: float) -> None:
+        """Atomically set equity_at_day_start only if NULL (first writer wins)."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ai_manager_state "
+                "SET equity_at_day_start = $2, updated_at = NOW() "
+                "WHERE account_id = $1 AND equity_at_day_start IS NULL",
+                account_id,
+                equity,
+            )
+
+    async def record_realized_profit(
+        self, account_id: str, profit_amount: float
+    ) -> Dict[str, Any]:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "UPDATE ai_manager_state "
+                "SET realized_profit_today = COALESCE(realized_profit_today, 0) + $2, updated_at = NOW() "
+                "WHERE account_id = $1 "
+                "RETURNING realized_profit_today, equity_at_day_start",
+                account_id,
+                profit_amount,
             )
             return dict(row) if row else {}
 
@@ -433,4 +466,41 @@ class AIManagerRepository:
                 "UPDATE ai_manager_global_state SET int_value = $1, updated_at = NOW() "
                 "WHERE key = 'degradation_tier'",
                 tier,
+            )
+
+    async def generate_patterns_locked(self, account_id: str, callback) -> int:
+        """Execute pattern generation with advisory lock held on a single connection.
+        Callback receives (account_id, conn) — must use the provided connection for all DB ops.
+        """
+        import hashlib
+        lock_key = int(hashlib.md5(f"{account_id}:7001".encode()).hexdigest(), 16) % (2**31)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT pg_try_advisory_lock($1) AS acquired", lock_key
+            )
+            if not (row and row["acquired"]):
+                return 0
+            try:
+                return await callback(account_id, conn)
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock($1)", lock_key)
+
+    async def insert_pattern(
+        self,
+        account_id: str,
+        pattern_type: str,
+        symbol: str,
+        description: str,
+        confidence: float,
+    ) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO ai_manager_patterns "
+                "(account_id, pattern_type, symbol, description, confidence, active) "
+                "VALUES ($1, $2, $3, $4, $5, TRUE)",
+                account_id,
+                pattern_type,
+                symbol,
+                description,
+                confidence,
             )

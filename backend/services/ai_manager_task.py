@@ -9,10 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import copy
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig
+from backend.services.ai_manager_evaluator import AIManagerEvaluator
 
 if TYPE_CHECKING:
     from backend.services.ai_account_manager_service import AIAccountManagerService
@@ -55,6 +57,7 @@ class AIManagerTask:
         self._last_eval_symbols: Dict[str, float] = {}
         self._ws_buffer: Dict[str, Any] = {}
         self._heartbeat_at: float = 0.0
+        self._evaluator = AIManagerEvaluator()
 
     @property
     def state(self) -> str:
@@ -137,7 +140,13 @@ class AIManagerTask:
 
     async def _wait_for_resume(self) -> None:
         self._wake_event.clear()
-        await self._wake_event.wait()
+        while not self._wake_event.is_set():
+            try:
+                await asyncio.wait_for(self._wake_event.wait(), timeout=300.0)
+            except asyncio.TimeoutError:
+                await self._update_heartbeat()
+                if self._cancel_event.is_set():
+                    return
 
     async def _monitoring_cycle(self) -> None:
         try:
@@ -172,7 +181,7 @@ class AIManagerTask:
 
         try:
             async with self._service._llm_scheduler.slot(self._account_id, self._get_urgency()):
-                state_dict = self._build_graph_state()
+                state_dict = await self._build_graph_state()
                 result = await asyncio.wait_for(
                     self._graph.ainvoke(state_dict), timeout=90.0
                 )
@@ -240,10 +249,19 @@ class AIManagerTask:
 
         # Config gates
         if result.get("confidence", 0.0) < self._config.confidence_threshold:
+            logger.debug("Confidence too low for %s %s: %.2f < %.2f",
+                         self._account_id, symbol, result.get("confidence", 0.0), self._config.confidence_threshold)
             return
         if symbol in self._config.excluded_symbols:
+            logger.debug("Symbol %s excluded for %s", symbol, self._account_id)
             return
         if symbol in self._config.locked_positions:
+            logger.debug("Symbol %s locked for %s", symbol, self._account_id)
+            return
+
+        current_positions = {p.get("symbol", "") for p in (self._ws_buffer.get("positions") or [])}
+        if symbol not in current_positions:
+            logger.debug("Symbol %s no longer in positions for %s", symbol, self._account_id)
             return
 
         # Per-symbol cooldown (checked before lock, recorded after lock)
@@ -251,6 +269,10 @@ class AIManagerTask:
         last_eval = self._last_eval_symbols.get(symbol, 0.0)
         if now_mono - last_eval < _SYMBOL_COOLDOWN_S:
             return
+
+        if len(self._last_eval_symbols) > 100:
+            cutoff = now_mono - 60.0
+            self._last_eval_symbols = {k: v for k, v in self._last_eval_symbols.items() if v > cutoff}
 
         lock = self._service._lock_registry
         acquired = await lock.acquire(self._account_id, symbol, timeout=5.0)
@@ -263,6 +285,7 @@ class AIManagerTask:
 
         decision_id = None
         decision_ts = None
+        pnl = 0.0
         try:
             # Re-check kill switch AFTER acquiring lock (TOCTOU defense)
             kill_active = await self._service._repo.is_kill_switch_active(self._account_id)
@@ -285,7 +308,7 @@ class AIManagerTask:
                 "action_type": action_type,
                 "evaluation_type": "standard",
                 "urgency": self._get_urgency(),
-                "state_snapshot": self._ws_buffer,
+                "state_snapshot": copy.deepcopy(self._ws_buffer),
                 "action_taken": {"action": action_type, "symbol": symbol},
                 "reasoning": result.get("reason", "")[:2000],
                 "confidence": result.get("confidence", 0.0),
@@ -317,9 +340,6 @@ class AIManagerTask:
                 self._account_id, pnl, action_type
             )
 
-            if pnl < 0:
-                await self._service._repo.record_realized_loss(self._account_id, abs(pnl))
-
         except Exception:
             logger.exception("Execution failed for %s %s", self._account_id, symbol)
             if decision_id is not None:
@@ -334,12 +354,102 @@ class AIManagerTask:
         finally:
             lock.release(self._account_id, symbol)
 
-    def _build_graph_state(self) -> Dict[str, Any]:
+        try:
+            await self._enforce_daily_limits(pnl)
+        except Exception:
+            logger.critical("Daily limit enforcement failed for %s — pausing as fail-safe", self._account_id)
+            self.pause()
+
+    async def _enforce_daily_limits(self, pnl: float) -> None:
+        """Task 3.5: Daily loss enforcement after every AI-initiated close."""
+        equity_start = await self._get_equity_at_day_start()
+
+        if pnl < 0:
+            loss_data = await self._service._repo.record_realized_loss(self._account_id, abs(pnl))
+            realized_loss = loss_data.get("realized_loss_today", 0.0)
+
+            if equity_start and equity_start > 0:
+                loss_pct = (realized_loss / equity_start) * 100
+                if loss_pct >= self._config.max_daily_loss_pct:
+                    logger.warning(
+                        "Daily loss cap breached for %s: %.2f%% >= %.2f%%",
+                        self._account_id, loss_pct, self._config.max_daily_loss_pct,
+                    )
+                    self.pause()
+                    return
+
+                unrealized_loss = self._get_unrealized_loss()
+                total_loss_pct = ((realized_loss + unrealized_loss) / equity_start) * 100
+                if total_loss_pct >= self._config.max_daily_loss_pct * 2:
+                    logger.critical(
+                        "Kill switch triggered for %s: total loss %.2f%%",
+                        self._account_id, total_loss_pct,
+                    )
+                    await self._service._repo.set_kill_switch(self._account_id, True)
+                    self.set_killed()
+                    return
+
+        if pnl > 0:
+            profit_data = await self._service._repo.record_realized_profit(self._account_id, pnl)
+            if self._config.daily_profit_target_pct and equity_start and equity_start > 0:
+                realized_profit = profit_data.get("realized_profit_today", 0.0)
+                target = self._config.daily_profit_target_pct * equity_start / 100
+                if realized_profit >= target:
+                    logger.info("Profit target reached for %s", self._account_id)
+                    self._state = SLEEPING
+
+    async def _init_equity_at_day_start(self) -> Optional[float]:
+        """Atomically initialize equity_at_day_start if NULL."""
+        equity = self._ws_buffer.get("equity")
+        if equity is None:
+            return None
+        await self._service._repo.init_equity_at_day_start(self._account_id, float(equity))
+        return float(equity)
+
+    async def _get_equity_at_day_start(self) -> Optional[float]:
+        state = await self._service._repo.get_state(self._account_id)
+        if not state:
+            return None
+        equity = state.get("equity_at_day_start")
+        if equity is None:
+            return await self._init_equity_at_day_start()
+        return float(equity)
+
+    def _get_unrealized_loss(self) -> float:
+        """Sum negative unrealized PnL from current positions."""
+        positions = self._ws_buffer.get("positions") or []
+        total = 0.0
+        for pos in positions:
+            upnl = pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0.0))
+            try:
+                val = float(upnl)
+                if val < 0:
+                    total += abs(val)
+            except (TypeError, ValueError):
+                logger.warning("Malformed unrealisedPnl for %s: %r", self._account_id, upnl)
+        return total
+
+    async def _build_graph_state(self) -> Dict[str, Any]:
+        episodic = []
+        patterns = []
+        decision_count = 100
+        try:
+            if hasattr(self._service, '_memory') and self._service._memory:
+                episodic = await self._service._memory.get_episodic_context(self._account_id)
+                patterns = await self._service._memory.get_semantic_patterns(self._account_id)
+                decision_count = await self._service._memory.get_decision_count(self._account_id)
+        except Exception:
+            logger.warning("Memory fetch failed for %s", self._account_id)
+
         return {
             "account_id": self._account_id,
             "config": self._config.model_dump(),
-            "ws_snapshot": dict(self._ws_buffer),
+            "ws_snapshot": copy.deepcopy(self._ws_buffer),
             "market_data": {},
+            "_evaluator": self._evaluator,
+            "episodic_memory": episodic,
+            "patterns": patterns,
+            "decision_count": decision_count,
         }
 
     def _get_urgency(self) -> str:

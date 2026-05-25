@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS ai_manager_state (
     max_hourly_actions INTEGER NOT NULL DEFAULT 10,
     equity_at_day_start NUMERIC(18,8),
     realized_loss_today NUMERIC(18,8) NOT NULL DEFAULT 0,
+    realized_profit_today NUMERIC(18,8) NOT NULL DEFAULT 0,
     token_budget_used_today INTEGER NOT NULL DEFAULT 0,
     last_analysis_at TIMESTAMPTZ,
     last_action_at TIMESTAMPTZ,

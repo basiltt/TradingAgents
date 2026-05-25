@@ -25,13 +25,18 @@ def mock_service():
     svc._repo.insert_decision = AsyncMock(return_value=(1, datetime.now(timezone.utc)))
     svc._repo.update_decision_outcome = AsyncMock()
     svc._repo.insert_failed_outcome = AsyncMock()
-    svc._repo.record_realized_loss = AsyncMock()
+    svc._repo.record_realized_loss = AsyncMock(return_value={"realized_loss_today": 10.0, "equity_at_day_start": 1000.0})
+    svc._repo.record_realized_profit = AsyncMock(return_value={"realized_profit_today": 5.0, "equity_at_day_start": 1000.0})
     svc._repo.increment_actions_atomic = AsyncMock(return_value=True)
     svc._repo.is_kill_switch_active = AsyncMock(return_value=False)
+    svc._repo.get_state = AsyncMock(return_value={"equity_at_day_start": 1000.0})
+    svc._repo.init_equity_at_day_start = AsyncMock()
+    svc._repo.set_kill_switch = AsyncMock()
     svc._repo.update_heartbeat = AsyncMock()
     svc._hmac_key = "test-hmac-key"
     svc._close_positions_service = MagicMock()
     svc._close_positions_service.close_position = AsyncMock(return_value={"realized_pnl": -5.0})
+    svc._memory = None
     return svc
 
 
@@ -523,3 +528,132 @@ async def test_budget_exception_still_releases_lock(task, stub_graph, mock_servi
     await task._evaluate()
     mock_service._close_positions_service.close_position.assert_not_called()
     mock_service._lock_registry.release.assert_called_once()
+
+
+# === _enforce_daily_limits tests ===
+
+
+@pytest.mark.asyncio
+async def test_daily_loss_cap_triggers_pause(task, mock_service):
+    """When realized loss exceeds max_daily_loss_pct, task should pause."""
+    mock_service._repo.record_realized_loss = AsyncMock(
+        return_value={"realized_loss_today": 60.0}
+    )
+    mock_service._repo.get_state = AsyncMock(
+        return_value={"equity_at_day_start": 1000.0}
+    )
+    task._config.max_daily_loss_pct = 5.0
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
+
+    await task._enforce_daily_limits(-10.0)
+    assert task.state == "paused"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_triggered_on_extreme_loss(task, mock_service):
+    """When realized+unrealized >= 2x max_daily_loss_pct, kill switch fires."""
+    mock_service._repo.record_realized_loss = AsyncMock(
+        return_value={"realized_loss_today": 40.0}
+    )
+    mock_service._repo.get_state = AsyncMock(
+        return_value={"equity_at_day_start": 1000.0}
+    )
+    task._config.max_daily_loss_pct = 5.0
+    # realized=40 (4%) < 5%, so won't pause on first check
+    # unrealized=70, total=110 (11%) >= 10% (2x5%), triggers kill switch
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT", "unrealisedPnl": -70.0}]}
+
+    await task._enforce_daily_limits(-10.0)
+    mock_service._repo.set_kill_switch.assert_called_once_with("acc-1", True)
+    assert task._killed is True
+
+
+@pytest.mark.asyncio
+async def test_profit_target_reached_transitions_to_sleeping(task, mock_service):
+    """When realized profit >= target, state transitions to sleeping."""
+    mock_service._repo.record_realized_profit = AsyncMock(
+        return_value={"realized_profit_today": 100.0}
+    )
+    mock_service._repo.get_state = AsyncMock(
+        return_value={"equity_at_day_start": 1000.0}
+    )
+    task._config.daily_profit_target_pct = 5.0
+    task._state = "monitoring"
+
+    await task._enforce_daily_limits(20.0)
+    assert task.state == "sleeping"
+
+
+@pytest.mark.asyncio
+async def test_daily_limits_none_equity_skips_enforcement(task, mock_service):
+    """When equity_at_day_start is None, enforcement is skipped."""
+    mock_service._repo.get_state = AsyncMock(return_value={"equity_at_day_start": None})
+    mock_service._repo.init_equity_at_day_start = AsyncMock(return_value=None)
+    task._ws_buffer = {}
+    task._state = "monitoring"
+
+    await task._enforce_daily_limits(-50.0)
+    assert task.state == "monitoring"
+    mock_service._repo.set_kill_switch.assert_not_called()
+
+
+# === _get_unrealized_loss tests ===
+
+
+@pytest.mark.asyncio
+async def test_unrealized_loss_malformed_data(task):
+    """Malformed unrealisedPnl should be skipped without error."""
+    task._ws_buffer = {"positions": [
+        {"symbol": "A", "unrealisedPnl": "bad"},
+        {"symbol": "B", "unrealisedPnl": None},
+        {"symbol": "C", "unrealisedPnl": -5.0},
+    ]}
+    result = task._get_unrealized_loss()
+    assert result == 5.0
+
+
+# === _build_graph_state memory tests ===
+
+
+@pytest.mark.asyncio
+async def test_build_graph_state_memory_failure_defaults(task, mock_service):
+    """When memory fetch raises, defaults to empty lists and count=100."""
+    mock_memory = MagicMock()
+    mock_memory.get_episodic_context = AsyncMock(side_effect=Exception("DB down"))
+    mock_service._memory = mock_memory
+    task._ws_buffer = {"positions": []}
+
+    state = await task._build_graph_state()
+    assert state["episodic_memory"] == []
+    assert state["patterns"] == []
+    assert state["decision_count"] == 100
+
+
+@pytest.mark.asyncio
+async def test_build_graph_state_memory_success(task, mock_service):
+    """When memory is available, its data flows into graph state."""
+    mock_memory = MagicMock()
+    mock_memory.get_episodic_context = AsyncMock(return_value=[{"action": "HOLD"}])
+    mock_memory.get_semantic_patterns = AsyncMock(return_value=[{"type": "reversal"}])
+    mock_memory.get_decision_count = AsyncMock(return_value=42)
+    mock_service._memory = mock_memory
+    task._ws_buffer = {"positions": []}
+
+    state = await task._build_graph_state()
+    assert state["episodic_memory"] == [{"action": "HOLD"}]
+    assert state["patterns"] == [{"type": "reversal"}]
+    assert state["decision_count"] == 42
+
+
+@pytest.mark.asyncio
+async def test_enforce_daily_limits_exception_triggers_failsafe_pause(task, mock_service, stub_graph):
+    """If _enforce_daily_limits raises, the fail-safe in _execute_action pauses the task."""
+    mock_service._repo.get_state = AsyncMock(side_effect=Exception("DB down"))
+    stub_graph.ainvoke = AsyncMock(return_value={"action": "FULL_CLOSE", "symbol": "BTCUSDT", "reason": "test", "confidence": 0.9})
+    mock_service._close_positions_service.close_position = AsyncMock(return_value={"realized_pnl": -5.0})
+    task._state = "monitoring"
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
+    task._config.confidence_threshold = 0.5
+
+    await task._evaluate()
+    assert task.state == "paused"
