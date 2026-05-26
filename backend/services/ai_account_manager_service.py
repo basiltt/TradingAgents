@@ -273,7 +273,12 @@ class AIAccountManagerService:
         if isinstance(raw_config, str):
             import json as _json
             raw_config = _json.loads(raw_config)
-        raw_config.update(updates)
+        # Null values mean "reset to default" — remove from config so AIManagerConfig defaults apply
+        for key, val in updates.items():
+            if val is None:
+                raw_config.pop(key, None)
+            else:
+                raw_config[key] = val
         config = AIManagerConfig(**raw_config)
         await self._repo.sync_config_columns(account_id, config.model_dump())
         task = self._tasks.get(account_id)
@@ -407,7 +412,7 @@ class AIAccountManagerService:
                                         logger.warning("Stalled task detected: %s (%.0fs), restarting", account_id, re_elapsed)
                                         t.cancel()
                                         self._tasks.pop(account_id, None)
-                                        await self._lock_registry.cleanup_account(account_id)
+                                        await self._lock_registry.cleanup_account(account_id, force=True)
                                         await self._spawn_task(account_id)
             except asyncio.CancelledError:
                 break
