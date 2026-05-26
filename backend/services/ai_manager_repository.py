@@ -5,7 +5,6 @@ Async repository using raw asyncpg pool queries.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
@@ -227,9 +226,7 @@ class AIManagerRepository:
         next_cursor = None
         if len(rows) > limit:
             last = results[-1]
-            next_cursor = base64.b64encode(
-                json.dumps({"id": last["id"], "ts": last["timestamp"].isoformat()}).encode()
-            ).decode()
+            next_cursor = f"{last['timestamp'].isoformat()}_{last['id']}"
 
         return (results, next_cursor)
 
