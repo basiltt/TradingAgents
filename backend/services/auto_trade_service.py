@@ -872,7 +872,8 @@ class AutoTradeExecutor:
                 self._ai_manager_enabled_accounts.add(account_id)
                 if self._ai_manager_service:
                     try:
-                        await self._ai_manager_service.enable(account_id)
+                        from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+                        await self._ai_manager_service.enable(account_id, _AIMConfig())
                         logger.info("ai_manager_auto_enabled", extra={"account_id": account_id})
                     except Exception as e:
                         logger.warning("ai_manager_auto_enable_failed", extra={
