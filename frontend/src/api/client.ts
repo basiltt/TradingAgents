@@ -650,6 +650,7 @@ export interface DashboardCard {
     threshold_value: string | null;
     reference_value: string | null;
   }>;
+  ai_manager_state?: string | null;
 }
 
 export interface DailySnapshot {

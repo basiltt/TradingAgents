@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 router = APIRouter(tags=["portfolio"])
+logger = logging.getLogger(__name__)
 
 
 def _get_service(request: Request):
@@ -23,6 +26,16 @@ async def get_dashboard(
     cards = await svc.get_dashboard()
     if account_type:
         cards = [c for c in cards if c.get("account_type") == account_type]
+
+    # Enrich with AI manager task state
+    ai_mgr = getattr(request.app.state, "ai_manager_service", None)
+    try:
+        task_states = ai_mgr.get_all_task_states() if ai_mgr else {}
+    except Exception:
+        logger.debug("Failed to get AI manager task states")
+        task_states = {}
+    for card in cards:
+        card["ai_manager_state"] = task_states.get(card["id"])
     return cards
 
 

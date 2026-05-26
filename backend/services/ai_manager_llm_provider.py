@@ -1,10 +1,11 @@
 """AI Manager LLM Provider — creates the async callable for LLM decisions.
 
-Reads provider config from environment variables (same pattern as analysis_service):
-  - TRADINGAGENTS_LLM_PROVIDER: "openai", "anthropic", or "azure"
-  - OPENAI_API_KEY / ANTHROPIC_API_KEY / AZURE_OPENAI_API_KEY
-  - TRADINGAGENTS_QUICK_THINK_LLM: model name for fast decisions (default: gpt-4o-mini)
-  - TRADINGAGENTS_BACKEND_URL: optional proxy/backend URL
+Supports explicit parameters (from scan_config) with fallback to environment
+variables, matching the same resolution pattern as analysis_service:
+  - provider: "openai", "anthropic", or "azure"
+  - api_key: the provider's API key
+  - model: model name for decisions
+  - backend_url: optional proxy/backend URL (e.g. Minimax endpoint)
 
 Returns an async callable with signature: async (system_prompt: str, context_prompt: str) -> str
 """
@@ -28,25 +29,30 @@ _PROVIDER_KEY_MAP = {
 }
 
 
-def create_llm_callable() -> Optional[LLMCallable]:
-    """Create an LLM callable based on environment configuration. Returns None if not configured."""
-    provider = os.getenv("TRADINGAGENTS_LLM_PROVIDER", "").lower()
+def create_llm_callable(
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    backend_url: Optional[str] = None,
+) -> Optional[LLMCallable]:
+    """Create an LLM callable. Explicit params take priority over env vars."""
+    provider = (provider or os.getenv("TRADINGAGENTS_LLM_PROVIDER", "")).lower()
     if not provider:
         logger.warning("AI Manager: No LLM provider configured (set TRADINGAGENTS_LLM_PROVIDER)")
         return None
 
-    env_key = _PROVIDER_KEY_MAP.get(provider)
-    if not env_key:
-        logger.warning("AI Manager: Unsupported LLM provider '%s'", provider)
-        return None
-
-    api_key = os.getenv(env_key)
     if not api_key:
-        logger.warning("AI Manager: %s not set — LLM disabled", env_key)
-        return None
+        env_key = _PROVIDER_KEY_MAP.get(provider)
+        if not env_key:
+            logger.warning("AI Manager: Unsupported LLM provider '%s'", provider)
+            return None
+        api_key = os.getenv(env_key)
+        if not api_key:
+            logger.warning("AI Manager: %s not set — LLM disabled", env_key)
+            return None
 
-    model = os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-4o-mini")
-    backend_url = os.getenv("TRADINGAGENTS_BACKEND_URL")
+    model = model or os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-4o-mini")
+    backend_url = backend_url or os.getenv("TRADINGAGENTS_BACKEND_URL")
 
     if provider == "openai" or provider == "azure":
         return _create_openai_callable(api_key, model, backend_url, provider)

@@ -176,10 +176,25 @@ class AIAccountManagerService:
             logger.warning("Stranded decision %d recovered to dead-letter", s["id"])
 
         # Spawn tasks for enabled accounts (staggered)
+        logger.info(
+            "AI Manager startup: %d enabled account(s) found",
+            len(rows),
+        )
         for i, row in enumerate(rows):
+            logger.info(
+                "AI Manager: spawning task for account %s (cb_count=%d, cb_active=%s)",
+                row["account_id"],
+                row.get("circuit_breaker_count", 0),
+                row.get("circuit_breaker_active", False),
+            )
             await self._spawn_task(row["account_id"])
             if (i + 1) % 5 == 0:
                 await asyncio.sleep(1.0)
+
+        logger.info(
+            "AI Manager startup complete: %d task(s) running",
+            len(self._tasks),
+        )
 
     def _get_account_lock(self, account_id: str) -> asyncio.Lock:
         if account_id not in self._account_locks:
@@ -245,6 +260,10 @@ class AIAccountManagerService:
             task = self._tasks.get(account_id)
             if task:
                 task.reload_config(config)
+
+    def get_all_task_states(self) -> Dict[str, str]:
+        """Return {account_id: state} for all active (non-dead) AI manager tasks."""
+        return {aid: t.state for aid, t in self._tasks.items() if not t.is_dead()}
 
     async def get_status(self, account_id: str) -> Optional[AIManagerStatus]:
         state = await self._repo.get_state(account_id)

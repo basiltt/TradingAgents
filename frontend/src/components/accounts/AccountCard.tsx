@@ -226,6 +226,25 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {card.ai_manager_state && (
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 ${
+                card.ai_manager_state === "sleeping"
+                  ? "bg-zinc-500/15 text-zinc-400"
+                  : card.ai_manager_state === "paused"
+                    ? "bg-orange-500/15 text-orange-400"
+                    : card.ai_manager_state === "error"
+                      ? "bg-red-500/15 text-red-400"
+                      : "bg-emerald-500/15 text-emerald-400"
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  card.ai_manager_state === "sleeping" ? "bg-zinc-400" :
+                  card.ai_manager_state === "paused" ? "bg-orange-400" :
+                  card.ai_manager_state === "error" ? "bg-red-400 animate-pulse" :
+                  "bg-emerald-400 animate-pulse"
+                }`} />
+                AI {card.ai_manager_state}
+              </span>
+            )}
             {activeRules > 0 && (
               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 font-medium">
                 {activeRules} rule{activeRules !== 1 ? "s" : ""}
