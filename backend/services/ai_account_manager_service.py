@@ -478,8 +478,7 @@ class AIAccountManagerService:
                             )
                         except Exception:
                             logger.warning("Pattern generation failed for %s", account_id)
-                    # Stagger: 1 account per 2 seconds
-                    if (i + 1) % 1 == 0:
+                    if (i + 1) % 5 == 0:
                         await asyncio.sleep(2.0)
             except asyncio.CancelledError:
                 break

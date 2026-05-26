@@ -48,7 +48,7 @@ class PositionLockRegistry:
                 lock = self._locks[key]
                 if lock.locked() and force:
                     lock.release()
-                if not lock.locked():
+                if not lock.locked() and not lock._waiters:
                     del self._locks[key]
                     self._last_used.pop(key, None)
 
