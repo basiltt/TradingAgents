@@ -211,13 +211,13 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,oklch(0.72_var(--accent-chroma)_var(--accent-hue)_/_0.08),transparent_42%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
         {/* Header */}
-        <div className="relative flex items-center justify-between px-4.5 pt-4.5 pb-2.5">
+        <div className="relative flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4.5 pt-4.5 pb-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="space-y-1">
               <p className="section-eyebrow">Trading account</p>
               <h3 className="font-semibold text-sm truncate">{card.label}</h3>
             </div>
-            <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium uppercase tracking-[0.18em] border ${
+            <span className={`text-[10px] px-2.5 py-1 rounded-full font-medium uppercase tracking-[0.18em] border whitespace-nowrap shrink-0 ${
               card.account_type === "live"
                 ? "border-amber-500/30 text-amber-500 bg-amber-500/[0.06]"
                 : "border-blue-500/30 text-blue-500 bg-blue-500/[0.06]"
@@ -225,9 +225,9 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
               {card.account_type}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
             {card.ai_manager_state && (
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 ${
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 whitespace-nowrap shrink-0 ${
                 card.ai_manager_state === "sleeping"
                   ? "bg-zinc-500/15 text-zinc-400"
                   : card.ai_manager_state === "paused"
@@ -236,7 +236,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
                       ? "bg-red-500/15 text-red-400"
                       : "bg-emerald-500/15 text-emerald-400"
               }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                   card.ai_manager_state === "sleeping" ? "bg-zinc-400" :
                   card.ai_manager_state === "paused" ? "bg-orange-400" :
                   card.ai_manager_state === "error" ? "bg-red-400 animate-pulse" :
@@ -246,15 +246,15 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
               </span>
             )}
             {activeRules > 0 && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 font-medium">
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 font-medium whitespace-nowrap shrink-0">
                 {activeRules} rule{activeRules !== 1 ? "s" : ""}
               </span>
             )}
             <StatusDot status={card.status} />
-            <span className="text-[11px] font-medium capitalize text-muted-foreground">{card.status}</span>
+            <span className="text-[11px] font-medium capitalize text-muted-foreground whitespace-nowrap shrink-0">{card.status}</span>
 
             {/* Kebab menu */}
-            <div ref={menuRef} className="relative" onClick={(e) => e.stopPropagation()}>
+            <div ref={menuRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
               <button
                 aria-label={`Account actions for ${card.label}`}
                 className="p-2 rounded-xl border border-transparent bg-card/55 text-muted-foreground/50 hover:border-border/60 hover:text-foreground hover:bg-card/85 transition-colors"

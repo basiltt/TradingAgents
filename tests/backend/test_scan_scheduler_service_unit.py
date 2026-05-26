@@ -168,3 +168,60 @@ class TestResolveConfig:
     def test_preserves_explicit_values(self, svc):
         result = svc._resolve_scan_config({"provider": "anthropic"})
         assert result["provider"] == "anthropic"
+
+
+class TestAIManagerTrigger:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_reconcile_triggered_on_crud(self, svc, db):
+        import asyncio
+        mock_aim = MagicMock()
+        mock_aim.reconcile_active_schedules = AsyncMock()
+        svc.set_ai_manager_service(mock_aim)
+
+        # Trigger create
+        db.count_scheduled_scans = AsyncMock(return_value=0)
+        db.insert_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan = AsyncMock(return_value={"id": "s1", "name": "Test"})
+        await svc.create({
+            "name": "Test", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 60},
+            "scan_config": {},
+        })
+        await asyncio.sleep(0.01) # Yield to background tasks
+        mock_aim.reconcile_active_schedules.assert_called_once()
+        mock_aim.reconcile_active_schedules.reset_mock()
+
+        # Trigger update
+        db.get_scheduled_scan = AsyncMock(return_value={
+            "id": "s1", "name": "Old", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 60},
+            "scan_config": {},
+        })
+        db.update_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan.side_effect = [
+            {"id": "s1", "name": "Old", "schedule_type": "interval", "schedule_config": {"interval_minutes": 60}, "scan_config": {}},
+            {"id": "s1", "name": "New"},
+        ]
+        await svc.update("s1", {"name": "New"})
+        await asyncio.sleep(0.01)
+        mock_aim.reconcile_active_schedules.assert_called_once()
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_reconcile_triggered_on_completion(self, svc, db, scanner):
+        import asyncio
+        mock_aim = MagicMock()
+        mock_aim.reconcile_active_schedules = AsyncMock()
+        svc.set_ai_manager_service(mock_aim)
+
+        # Mock an in-flight scan
+        svc._in_flight["s1"] = 123  # exec_id = 123
+        
+        db.get_scheduled_scan = AsyncMock(return_value={"id": "s1", "last_scan_id": "scan-123", "schedule_type": "once"})
+        scanner.get_scan = AsyncMock(return_value={"status": "completed"})
+        db.update_schedule_execution = AsyncMock()
+        db.update_scheduled_scan = AsyncMock()
+
+        await svc._check_in_flight_completions()
+        await asyncio.sleep(0.01)  # Yield to background tasks
+        
+        mock_aim.reconcile_active_schedules.assert_called_once()

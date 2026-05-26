@@ -33,14 +33,18 @@ def _is_sentinel(val: Any) -> bool:
 
 
 class ScanSchedulerService:
-    def __init__(self, scanner_service: Any, db: Any, config_service: Any):
+    def __init__(self, scanner_service: Any, db: Any, config_service: Any, ai_manager_service: Any = None):
         self._scanner = scanner_service
         self._db = db
         self._config = config_service
+        self._ai_manager_service = ai_manager_service
         self._loop_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
         self._in_flight: Dict[str, Any] = {}  # schedule_id -> exec_id (int/str) or sentinel datetime
         self._last_cleanup: Optional[datetime] = None
+
+    def set_ai_manager_service(self, ai_manager_service: Any) -> None:
+        self._ai_manager_service = ai_manager_service
 
     # ── CRUD ─────────────────────────────────────────────────────────
 
@@ -86,6 +90,8 @@ class ScanSchedulerService:
         schedule["next_run_at"] = self._compute_next_run(schedule)
         await self._db.insert_scheduled_scan(schedule)
         logger.info("Created schedule %s (%s)", scan_id, data["name"])
+        if self._ai_manager_service:
+            asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
         return await self._db.get_scheduled_scan(scan_id)
 
     async def update(self, scan_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -119,6 +125,8 @@ class ScanSchedulerService:
         updates["next_run_at"] = self._compute_next_run(merged)
         await self._db.update_scheduled_scan(scan_id, updates)
         logger.info("Updated schedule %s", scan_id)
+        if self._ai_manager_service:
+            asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
         return await self._db.get_scheduled_scan(scan_id)
 
     async def delete(self, scan_id: str) -> bool:
@@ -126,6 +134,8 @@ class ScanSchedulerService:
         if result:
             self._in_flight.pop(scan_id, None)
             logger.info("Deleted schedule %s", scan_id)
+            if self._ai_manager_service:
+                asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
         return result
 
     async def list_all(self) -> List[Dict[str, Any]]:
@@ -150,6 +160,8 @@ class ScanSchedulerService:
             {"status": "paused", "next_run_at": None, "updated_at": now},
         )
         logger.info("Paused schedule %s", scan_id)
+        if self._ai_manager_service:
+            asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
         return await self._db.get_scheduled_scan(scan_id)
 
     async def resume(self, scan_id: str) -> Dict[str, Any]:
@@ -170,6 +182,8 @@ class ScanSchedulerService:
             {"status": "active", "next_run_at": next_run, "consecutive_failures": 0, "updated_at": now},
         )
         logger.info("Resumed schedule %s", scan_id)
+        if self._ai_manager_service:
+            asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
         return await self._db.get_scheduled_scan(scan_id)
 
     async def trigger(self, scan_id: str) -> Dict[str, Any]:
@@ -441,6 +455,8 @@ class ScanSchedulerService:
 
         for sid in completed:
             self._in_flight.pop(sid, None)
+        if completed and self._ai_manager_service:
+            asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
 
     async def _record_failure(self, schedule_id: str) -> None:
         schedule = await self._db.get_scheduled_scan(schedule_id)

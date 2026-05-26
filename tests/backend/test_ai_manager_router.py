@@ -46,6 +46,7 @@ def client(mock_service):
 
 def test_enable(client, mock_service):
     mock_service.get_status = AsyncMock(return_value=None)
+    mock_service.get_config = AsyncMock(return_value={})
     resp = client.post("/api/v1/accounts/acc-1/ai-manager/enable")
     assert resp.status_code == 200
     assert resp.json()["status"] == "enabled"
@@ -54,9 +55,12 @@ def test_enable(client, mock_service):
 
 def test_enable_already_enabled(client, mock_service):
     mock_service.get_status = AsyncMock(return_value=MagicMock(enabled=True))
+    mock_service.get_config = AsyncMock(return_value={"auto_enabled": True})
     resp = client.post("/api/v1/accounts/acc-1/ai-manager/enable")
     assert resp.status_code == 200
-    mock_service.enable.assert_not_called()
+    mock_service.enable.assert_called_once()
+    args, _ = mock_service.enable.call_args
+    assert args[1].auto_enabled is False
 
 
 def test_disable(client, mock_service):

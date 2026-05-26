@@ -46,6 +46,7 @@ class AIAccountManagerService:
         self._hmac_key = hmac_key
         self._tasks: Dict[str, "AIManagerTask"] = {}
         self._account_locks: Dict[str, asyncio.Lock] = {}
+        self._reconcile_lock = asyncio.Lock()
         self._compiled_graph = None
         self._health_task: Optional[asyncio.Task] = None
         self._dead_letter_task: Optional[asyncio.Task] = None
@@ -116,6 +117,11 @@ class AIAccountManagerService:
             self._ws_manager.register_wallet_listener(self._on_ws_event)
 
         logger.info("AIAccountManagerService started")
+
+        try:
+            await self.reconcile_active_schedules()
+        except Exception:
+            logger.exception("AI Manager: failed to reconcile active schedules on startup")
 
     async def shutdown(self) -> None:
         self._shutdown_event.set()
@@ -205,7 +211,11 @@ class AIAccountManagerService:
         lock = self._get_account_lock(account_id)
         async with lock:
             if account_id in self._tasks:
-                return  # Already enabled (idempotent)
+                task = self._tasks[account_id]
+                if getattr(task._config, "auto_enabled", False) != config.auto_enabled:
+                    await self._repo.sync_config_columns(account_id, config.model_dump())
+                    task.reload_config(config)
+                return
             await self._repo.upsert_state(account_id, enabled=True, fsm_state="sleeping")
             await self._repo.sync_config_columns(account_id, config.model_dump())
             await self._spawn_task(account_id)
@@ -269,9 +279,16 @@ class AIAccountManagerService:
         state = await self._repo.get_state(account_id)
         if not state:
             return None
+        
+        # Resolve real-time FSM state from in-memory task if active
+        fsm_state = state["fsm_state"]
+        task = self._tasks.get(account_id)
+        if task and not task.is_dead():
+            fsm_state = task.state
+
         return AIManagerStatus(
             enabled=state["enabled"],
-            state=state["fsm_state"],
+            state=fsm_state,
             last_analysis_at=state.get("last_analysis_at"),
             circuit_breaker={
                 "count": state.get("circuit_breaker_count", 0),
@@ -386,6 +403,76 @@ class AIAccountManagerService:
     async def get_performance(self, account_id: str, period: str = "7d") -> dict:
         return await self._repo.get_performance_metrics(account_id, period=period)
 
+    async def reconcile_active_schedules(self) -> None:
+        """Query active schedules and enable AI manager for accounts that have ai_manager_enabled=True."""
+        if not self._repo._pool:
+            return
+        async with self._reconcile_lock:
+            try:
+                # Query all active, paused, or errored scheduled scans
+                async with self._repo._pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
+                    )
+                
+                enabled_accounts_in_schedules = set()
+                for row in rows:
+                    try:
+                        import json as _json
+                        scan_config = row["scan_config"]
+                        if isinstance(scan_config, str):
+                            scan_config = _json.loads(scan_config)
+                        
+                        auto_configs = scan_config.get("auto_trade_configs") or []
+                        for cfg in auto_configs:
+                            account_id = cfg.get("account_id")
+                            if account_id and cfg.get("ai_manager_enabled"):
+                                enabled_accounts_in_schedules.add(account_id)
+                    except Exception:
+                        logger.warning("Failed to parse scan_config in scheduled_scans reconciliation", exc_info=True)
+                
+                # 1. Enable and spawn tasks for accounts enabled in schedules
+                for account_id in enabled_accounts_in_schedules:
+                    if account_id not in self._tasks:
+                        config = None
+                        try:
+                            existing_config = await self.get_config(account_id)
+                            from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+                            config = _AIMConfig(**existing_config)
+                        except Exception:
+                            pass
+                        if not config:
+                            from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+                            config = _AIMConfig()
+                        
+                        config.auto_enabled = True
+                        logger.info("Auto-starting AI manager for account %s due to scheduled scan setting", account_id)
+                        await self.enable(account_id, config)
+
+                # 2. Disable tasks for accounts that were auto-started but are no longer in any active schedules
+                db_enabled_rows = await self._repo.get_enabled_accounts()
+                currently_enabled = set(self._tasks.keys()) | {r["account_id"] for r in db_enabled_rows}
+
+                for account_id in currently_enabled:
+                    if account_id not in enabled_accounts_in_schedules:
+                        config = None
+                        try:
+                            existing_config = await self.get_config(account_id)
+                            from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+                            config = _AIMConfig(**existing_config)
+                        except Exception:
+                            pass
+                        
+                        if config and config.auto_enabled:
+                            logger.info(
+                                "Auto-disabling AI manager for account %s (auto-started but no longer in active schedules)",
+                                account_id,
+                            )
+                            await self.disable(account_id)
+
+            except Exception:
+                logger.exception("Error during scheduled scans AI manager reconciliation")
+
     async def _spawn_task(self, account_id: str) -> None:
         from backend.services.ai_manager_task import AIManagerTask
 
@@ -401,6 +488,13 @@ class AIAccountManagerService:
         except Exception:
             logger.warning("Invalid config for %s, using defaults", account_id)
             config = AIManagerConfig()
+
+        # Load circuit breaker state from DB
+        await self._circuit_breaker.load_from_db(
+            account_id,
+            state.get("circuit_breaker_count", 0),
+            state.get("circuit_breaker_active", False),
+        )
 
         task = AIManagerTask(
             account_id=account_id,

@@ -657,3 +657,17 @@ async def test_enforce_daily_limits_exception_triggers_failsafe_pause(task, mock
 
     await task._evaluate()
     assert task.state == "paused"
+
+
+@pytest.mark.asyncio
+async def test_pause_wakes_sleep_cycle(task):
+    """Calling pause() wakes the sleep cycle immediately."""
+    task._state = "sleeping"
+    task._wake_event = MagicMock()
+    task._pause_event = MagicMock()
+    
+    task.pause()
+    
+    task._wake_event.set.assert_called_once()
+    task._pause_event.set.assert_called_once()
+    assert task.state == "paused"

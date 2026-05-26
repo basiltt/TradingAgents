@@ -81,6 +81,7 @@ class AIManagerTask:
     def pause(self) -> None:
         self._state = PAUSED
         self._pause_event.set()
+        self._wake_event.set()
 
     def resume(self) -> None:
         if self._has_open_positions(self._ws_buffer):

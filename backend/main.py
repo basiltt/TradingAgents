@@ -288,6 +288,8 @@ def create_app() -> FastAPI:
             app.state.ai_manager_service = ai_manager_service
             app.state.market_data_cache = market_data_cache
             app.state.scanner_service._ai_manager_service = ai_manager_service
+            if getattr(app.state, "scheduler_service", None):
+                app.state.scheduler_service.set_ai_manager_service(ai_manager_service)
 
             # Wire LLM callable for AI Manager decisions
             from backend.services.ai_manager_llm_provider import create_llm_callable

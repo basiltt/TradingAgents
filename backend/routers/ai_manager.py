@@ -30,10 +30,19 @@ async def enable_ai_manager(request: Request, account_id: str):
     await _check_rate_limit(account_id)
     svc = _get_service(request)
     from backend.ai_manager_schemas import AIManagerConfig
-    config = AIManagerConfig()
-    existing_state = await svc.get_status(account_id)
-    if existing_state and existing_state.enabled:
-        return {"status": "enabled", "account_id": account_id}
+    
+    existing_config = None
+    try:
+        existing_config = await svc.get_config(account_id)
+    except Exception:
+        pass
+
+    if existing_config:
+        config = AIManagerConfig(**existing_config)
+    else:
+        config = AIManagerConfig()
+    
+    config.auto_enabled = False
     await svc.enable(account_id, config)
     return {"status": "enabled", "account_id": account_id}
 

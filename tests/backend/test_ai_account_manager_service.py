@@ -182,3 +182,147 @@ async def test_dead_letter_loop_increments_retry(service, mock_repo):
             await mock_repo.increment_retry(item["id"])
 
     mock_repo.increment_retry.assert_called_once_with(2)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_active_schedules(service, mock_repo):
+    """reconcile_active_schedules fetches active scan configs and enables AI managers."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[
+        {"scan_config": '{"auto_trade_configs": [{"account_id": "acc-1", "ai_manager_enabled": true}]}'}
+    ])
+    mock_repo._pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+    # Patch enable method
+    service.enable = AsyncMock()
+    service.get_config = AsyncMock(return_value={})
+
+    await service.reconcile_active_schedules()
+
+    service.enable.assert_called_once()
+    args, _ = service.enable.call_args
+    assert args[0] == "acc-1"
+    assert args[1].auto_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_active_schedules_disables(service, mock_repo):
+    """reconcile_active_schedules disables AI managers that are checked false in active/paused/error schedules if auto_enabled."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[
+        {"scan_config": '{"auto_trade_configs": [{"account_id": "acc-2", "ai_manager_enabled": false}]}'}
+    ])
+    mock_repo._pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+    # Mock task and state to make it look like the manager is currently enabled
+    service._tasks["acc-2"] = MagicMock()
+    service.get_config = AsyncMock(return_value={"auto_enabled": True})
+    mock_repo.get_enabled_accounts.return_value = [{"account_id": "acc-2"}]
+    
+    # Patch disable method
+    service.disable = AsyncMock()
+
+    await service.reconcile_active_schedules()
+
+    service.disable.assert_called_once_with("acc-2")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_active_schedules_does_not_disable_if_not_auto_enabled(service, mock_repo):
+    """reconcile_active_schedules does NOT disable AI managers if auto_enabled is False."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[
+        {"scan_config": '{"auto_trade_configs": [{"account_id": "acc-2", "ai_manager_enabled": false}]}'}
+    ])
+    mock_repo._pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+    # Mock task to make it look like the manager is currently enabled manually
+    service._tasks["acc-2"] = MagicMock()
+    service.get_config = AsyncMock(return_value={"auto_enabled": False})
+    mock_repo.get_enabled_accounts.return_value = [{"account_id": "acc-2"}]
+    
+    # Patch disable method
+    service.disable = AsyncMock()
+
+    await service.reconcile_active_schedules()
+
+    service.disable.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_active_schedules_disables_on_schedule_deletion(service, mock_repo):
+    """reconcile_active_schedules disables AI manager if schedule was deleted and it was auto_enabled."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])  # No active schedules at all!
+    mock_repo._pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+    # Mock task to make it look like the manager is currently enabled and was auto-started
+    service._tasks["acc-2"] = MagicMock()
+    service.get_config = AsyncMock(return_value={"auto_enabled": True})
+    mock_repo.get_enabled_accounts.return_value = [{"account_id": "acc-2"}]
+    
+    # Patch disable method
+    service.disable = AsyncMock()
+
+    await service.reconcile_active_schedules()
+
+    service.disable.assert_called_once_with("acc-2")
+
+
+@pytest.mark.asyncio
+async def test_enable_reloads_config_on_auto_enabled_change(service, mock_repo):
+    """enable() reloads config on a running task if its auto_enabled status changes."""
+    mock_task = MagicMock()
+    mock_task._config = MagicMock()
+    mock_task._config.auto_enabled = True
+    service._tasks["acc-1"] = mock_task
+
+    from backend.ai_manager_schemas import AIManagerConfig
+    new_config = AIManagerConfig(auto_enabled=False)
+
+    await service.enable("acc-1", new_config)
+
+    mock_repo.sync_config_columns.assert_called_once()
+    mock_task.reload_config.assert_called_once_with(new_config)
+
+
+@pytest.mark.asyncio
+async def test_get_status_resolves_real_time_fsm_state(service, mock_repo):
+    """get_status() returns the real-time state of the running task rather than the stale DB state."""
+    mock_task = MagicMock()
+    mock_task.state = "analyzing"
+    mock_task.is_dead = MagicMock(return_value=False)
+    service._tasks["acc-1"] = mock_task
+
+    mock_repo.get_state = AsyncMock(return_value={
+        "enabled": True,
+        "fsm_state": "sleeping",
+        "config": "{}",
+        "circuit_breaker_count": 0,
+        "circuit_breaker_active": False,
+    })
+
+    status = await service.get_status("acc-1")
+    assert status.state == "analyzing"
+
+
+@pytest.mark.asyncio
+async def test_spawn_task_loads_circuit_breaker_state(service, mock_repo):
+    """_spawn_task() loads circuit breaker state from DB into the circuit breaker manager."""
+    mock_repo.get_state.return_value = {
+        "enabled": True,
+        "fsm_state": "sleeping",
+        "config": "{}",
+        "circuit_breaker_count": 4,
+        "circuit_breaker_active": True,
+    }
+    service._circuit_breaker = MagicMock()
+    service._circuit_breaker.load_from_db = AsyncMock()
+
+    with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
+        mock_task_inst = MagicMock()
+        MockTask.return_value = mock_task_inst
+        
+        await service._spawn_task("acc-1")
+        
+        service._circuit_breaker.load_from_db.assert_called_once_with("acc-1", 4, True)
