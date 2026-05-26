@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_DAILY_TOKEN_BUDGET = 100_000
+MAX_DAILY_TOKEN_BUDGET = 20_000_000
 
 
 class AIAccountManagerService:

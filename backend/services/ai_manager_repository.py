@@ -600,10 +600,15 @@ class AIManagerRepository:
         params.append(limit + 1)
 
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                f"SELECT id, timestamp, level, category, message, details FROM ai_manager_logs WHERE {where} ORDER BY id DESC LIMIT ${idx}",
-                *params,
-            )
+            try:
+                rows = await conn.fetch(
+                    f"SELECT id, timestamp, level, category, message, details FROM ai_manager_logs WHERE {where} ORDER BY id DESC LIMIT ${idx}",
+                    *params,
+                )
+            except Exception as e:
+                if "UndefinedTableError" in type(e).__name__ or "does not exist" in str(e):
+                    return {"logs": [], "next_cursor": None}
+                raise
 
         has_more = len(rows) > limit
         items = rows[:limit]

@@ -25,6 +25,8 @@ jobs:
             npm install --silent
             npm run build
             cd ..
+            # Run DB migrations before restart (idempotent, advisory-locked)
+            python -m backend.migrate
             systemctl restart tradingagents-backend
             systemctl restart tradingagents-frontend
             sleep 5
