@@ -54,6 +54,12 @@ class AIAccountManagerService:
         self._singleton_conn = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
+        self._memory = None
+        try:
+            from backend.services.ai_manager_memory import AIManagerMemory
+            self._memory = AIManagerMemory(repo=ai_manager_repo)
+        except Exception:
+            logger.warning("AIManagerMemory not available")
 
     async def start(self) -> None:
         """Compile LangGraph ONCE. Load enabled managers (stagger 5/s). Start health sweep."""

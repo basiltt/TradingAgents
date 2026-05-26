@@ -281,7 +281,6 @@ def create_app() -> FastAPI:
             })
             await ai_manager_service.start()
             app.state.ai_manager_service = ai_manager_service
-            account_ws_mgr.register_wallet_listener(ai_manager_service._on_ws_event)
 
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService

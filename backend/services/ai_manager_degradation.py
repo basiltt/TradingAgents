@@ -29,7 +29,7 @@ class DegradationTierManager:
     async def check_health(self, event: str) -> None:
         async with self._lock:
             now = time.monotonic()
-            if event == "success":
+            if event in ("success", "indeterminate"):
                 if self._tier == 0:
                     return
                 if self._health_streak_start == 0:
