@@ -54,6 +54,7 @@ class AIAccountManagerService:
         self._singleton_conn = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
+        self._pattern_llm_callable = None  # Set externally when LLM provider is configured
         self._memory = None
         try:
             from backend.services.ai_manager_memory import AIManagerMemory
@@ -447,7 +448,9 @@ class AIAccountManagerService:
                     account_id = row["account_id"]
                     if hasattr(self, '_memory') and self._memory:
                         try:
-                            await self._memory.generate_patterns(account_id)
+                            await self._memory.generate_patterns(
+                                account_id, llm_callable=self._pattern_llm_callable
+                            )
                         except Exception:
                             logger.warning("Pattern generation failed for %s", account_id)
                     # Stagger: 1 account per 2 seconds

@@ -218,9 +218,9 @@ async def test_loss_accounting_on_negative_pnl(task, stub_graph, mock_service):
         "reason": "stop_loss",
         "confidence": 0.9,
     }
-    mock_service._close_positions_service.close_all_for_rule.return_value = {"total": 1, "closed": 1, "failed": 0, "results": [{"realized_pnl": -10.0}]}
+    mock_service._close_positions_service.close_all_for_rule.return_value = {"total": 1, "closed": 1, "failed": 0, "results": []}
     task._state = "monitoring"
-    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT", "unrealisedPnl": "-10.0"}]}
     await task._evaluate()
     mock_service._repo.record_realized_loss.assert_called_once_with("acc-1", 10.0)
 

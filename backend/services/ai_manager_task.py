@@ -381,13 +381,16 @@ class AIManagerTask:
                 ),
                 timeout=30.0,
             )
-            # Adapt close_all_for_rule result to exec_result format
-            realized_pnl = 0.0
-            for r in close_result.get("results", []):
-                realized_pnl += float(r.get("realized_pnl", 0.0))
+            # Use position's unrealized PnL as estimated realized (close converts unrealized → realized)
+            estimated_pnl = 0.0
+            try:
+                upnl = position.get("unrealisedPnl", position.get("unrealized_pnl", 0.0))
+                estimated_pnl = float(upnl)
+            except (TypeError, ValueError):
+                pass
             exec_result = {
                 "status": "closed" if close_result.get("closed", 0) > 0 else "failed",
-                "realized_pnl": realized_pnl,
+                "realized_pnl": estimated_pnl,
                 "close_result": close_result,
             }
 
