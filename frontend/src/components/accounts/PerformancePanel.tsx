@@ -43,21 +43,35 @@ export function PerformancePanel({ accountId }: PerformancePanelProps) {
         <div className="grid grid-cols-2 gap-3 text-xs">
           <div>
             <span className="text-muted-foreground">Total Decisions</span>
-            <p className="text-lg font-mono">{perf.total_decisions}</p>
+            <p className="text-lg font-mono">{perf.total_decisions ?? 0}</p>
           </div>
           <div>
             <span className="text-muted-foreground">Win Rate</span>
-            <p className="text-lg font-mono">{(perf.win_rate * 100).toFixed(1)}%</p>
+            <p className="text-lg font-mono">{((perf.win_rate ?? 0) * 100).toFixed(1)}%</p>
           </div>
           <div>
             <span className="text-muted-foreground">Total PnL</span>
-            <p className={`text-lg font-mono ${perf.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {perf.net_pnl >= 0 ? "+" : ""}{perf.net_pnl.toFixed(2)}
+            <p className={`text-lg font-mono ${(perf.net_pnl ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {(perf.net_pnl ?? 0) >= 0 ? "+" : ""}{(perf.net_pnl ?? 0).toFixed(2)}
             </p>
           </div>
           <div>
             <span className="text-muted-foreground">Wins / Losses</span>
-            <p className="text-lg font-mono">{perf.wins} / {perf.losses}</p>
+            <p className="text-lg font-mono">{perf.wins ?? 0} / {perf.losses ?? 0}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Profit Factor</span>
+            <p className="text-lg font-mono">
+              {perf.profit_factor == null || !isFinite(perf.profit_factor) ? "—" : perf.profit_factor.toFixed(2)}
+            </p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Gross P/L</span>
+            <p className="text-lg font-mono">
+              <span className="text-green-400">+{(perf.gross_profit ?? 0).toFixed(2)}</span>
+              {" / "}
+              <span className="text-red-400">-{Math.abs(perf.gross_loss ?? 0).toFixed(2)}</span>
+            </p>
           </div>
         </div>
       )}

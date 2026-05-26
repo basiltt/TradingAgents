@@ -96,12 +96,27 @@ class AIManagerTask:
     def is_dead(self) -> bool:
         return self._task is not None and self._task.done()
 
-    _WS_ALLOWED_KEYS = frozenset({"positions", "wallet", "equity", "margin", "available_balance"})
+    async def on_ws_event(self, event: dict) -> None:
+        event_type = event.get("type")
+        data = event.get("data", {})
 
-    async def on_ws_event(self, wallet_data: dict) -> None:
-        filtered = {k: v for k, v in wallet_data.items() if k in self._WS_ALLOWED_KEYS}
-        self._ws_buffer = filtered
-        if self._state == SLEEPING and self._has_open_positions(filtered):
+        if event_type == "wallet_update":
+            self._ws_buffer["equity"] = data.get("totalEquity")
+            self._ws_buffer["available_balance"] = data.get("totalWalletBalance")
+            self._ws_buffer["wallet"] = data
+        elif event_type == "position_update":
+            positions = self._ws_buffer.get("positions") or []
+            symbol = data.get("symbol")
+            size = data.get("size", "0")
+            positions = [p for p in positions if p.get("symbol") != symbol]
+            try:
+                if size and float(size) != 0:
+                    positions.append(data)
+            except (ValueError, TypeError):
+                positions.append(data)
+            self._ws_buffer["positions"] = positions
+
+        if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
             self._state = MONITORING
             self._wake_event.set()
 
@@ -153,9 +168,12 @@ class AIManagerTask:
 
     async def _monitoring_cycle(self) -> None:
         try:
-            await asyncio.sleep(self._config.evaluation_interval_s)
-        except asyncio.CancelledError:
-            raise
+            await asyncio.wait_for(
+                self._cancel_event.wait(), timeout=self._config.evaluation_interval_s
+            )
+            return  # cancel_event was set
+        except asyncio.TimeoutError:
+            pass
 
         if self._cancel_event.is_set() or self._killed:
             return
@@ -237,7 +255,10 @@ class AIManagerTask:
 
     def _transition_post_eval(self) -> None:
         if self._state != PAUSED:
-            self._state = MONITORING
+            if self._has_open_positions(self._ws_buffer):
+                self._state = MONITORING
+            else:
+                self._state = SLEEPING
         asyncio.ensure_future(self._emit_state_change())
 
     async def _emit_state_change(self) -> None:
@@ -524,7 +545,7 @@ class AIManagerTask:
             "account_id": self._account_id,
             "config": self._config.model_dump(),
             "ws_snapshot": copy.deepcopy(self._ws_buffer),
-            "market_data": {},
+            "market_data": self._get_market_data(),
             "_evaluator": self._evaluator,
             "_llm_callable": self._service._llm_callable,
             "episodic_memory": episodic,
@@ -537,6 +558,16 @@ class AIManagerTask:
         if tier == 0:
             return "FAST"
         return "STANDARD"
+
+    def _get_market_data(self) -> dict:
+        cache = self._service._market_data_cache
+        if not cache:
+            return {}
+        positions = self._ws_buffer.get("positions") or []
+        symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+        if symbols:
+            cache.track_symbols(symbols)
+        return cache.get_all_indicators()
 
     def _has_open_positions(self, data: dict) -> bool:
         positions = data.get("positions") or []

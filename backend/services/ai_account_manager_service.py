@@ -234,10 +234,12 @@ class AIAccountManagerService:
             task.set_killed()
 
     async def update_config(self, account_id: str, config: AIManagerConfig) -> None:
-        await self._repo.sync_config_columns(account_id, config.model_dump())
-        task = self._tasks.get(account_id)
-        if task:
-            task.reload_config(config)
+        lock = self._get_account_lock(account_id)
+        async with lock:
+            await self._repo.sync_config_columns(account_id, config.model_dump())
+            task = self._tasks.get(account_id)
+            if task:
+                task.reload_config(config)
 
     async def get_status(self, account_id: str) -> Optional[AIManagerStatus]:
         state = await self._repo.get_state(account_id)
@@ -266,7 +268,7 @@ class AIAccountManagerService:
         if task:
             task._killed = False
 
-    async def patch_config(self, account_id: str, updates: dict) -> None:
+    async def get_config(self, account_id: str) -> dict:
         state = await self._repo.get_state(account_id)
         if not state:
             raise ValueError(f"Account {account_id} not configured")
@@ -274,51 +276,68 @@ class AIAccountManagerService:
         if isinstance(raw_config, str):
             import json as _json
             raw_config = _json.loads(raw_config)
-        # Null values mean "reset to default" — remove from config so AIManagerConfig defaults apply
-        for key, val in updates.items():
-            if val is None:
-                raw_config.pop(key, None)
-            else:
-                raw_config[key] = val
         config = AIManagerConfig(**raw_config)
-        await self._repo.sync_config_columns(account_id, config.model_dump())
-        task = self._tasks.get(account_id)
-        if task:
-            task.reload_config(config)
+        return config.model_dump()
+
+    async def patch_config(self, account_id: str, updates: dict) -> None:
+        lock = self._get_account_lock(account_id)
+        async with lock:
+            state = await self._repo.get_state(account_id)
+            if not state:
+                raise ValueError(f"Account {account_id} not configured")
+            raw_config = state.get("config") or {}
+            if isinstance(raw_config, str):
+                import json as _json
+                raw_config = _json.loads(raw_config)
+            # Null values mean "reset to default" — remove from config so AIManagerConfig defaults apply
+            for key, val in updates.items():
+                if val is None:
+                    raw_config.pop(key, None)
+                else:
+                    raw_config[key] = val
+            config = AIManagerConfig(**raw_config)
+            await self._repo.sync_config_columns(account_id, config.model_dump())
+            task = self._tasks.get(account_id)
+            if task:
+                task.reload_config(config)
 
     async def lock_position(self, account_id: str, symbol: str) -> None:
-        state = await self._repo.get_state(account_id)
-        if not state:
-            raise ValueError(f"Account {account_id} not configured")
-        raw_config = state.get("config") or {}
-        if isinstance(raw_config, str):
-            import json as _json
-            raw_config = _json.loads(raw_config)
-        locked = set(raw_config.get("locked_positions", []))
-        locked.add(symbol)
-        raw_config["locked_positions"] = sorted(locked)
-        config = AIManagerConfig(**raw_config)
-        await self._repo.sync_config_columns(account_id, config.model_dump())
-        task = self._tasks.get(account_id)
-        if task:
-            task.reload_config(config)
+        lock = self._get_account_lock(account_id)
+        async with lock:
+            state = await self._repo.get_state(account_id)
+            if not state:
+                raise ValueError(f"Account {account_id} not configured")
+            raw_config = state.get("config") or {}
+            if isinstance(raw_config, str):
+                import json as _json
+                raw_config = _json.loads(raw_config)
+            locked = set(raw_config.get("locked_positions", []))
+            locked.add(symbol)
+            raw_config["locked_positions"] = sorted(locked)
+            config = AIManagerConfig(**raw_config)
+            await self._repo.sync_config_columns(account_id, config.model_dump())
+            task = self._tasks.get(account_id)
+            if task:
+                task.reload_config(config)
 
     async def unlock_position(self, account_id: str, symbol: str) -> None:
-        state = await self._repo.get_state(account_id)
-        if not state:
-            raise ValueError(f"Account {account_id} not configured")
-        raw_config = state.get("config") or {}
-        if isinstance(raw_config, str):
-            import json as _json
-            raw_config = _json.loads(raw_config)
-        locked = set(raw_config.get("locked_positions", []))
-        locked.discard(symbol)
-        raw_config["locked_positions"] = sorted(locked)
-        config = AIManagerConfig(**raw_config)
-        await self._repo.sync_config_columns(account_id, config.model_dump())
-        task = self._tasks.get(account_id)
-        if task:
-            task.reload_config(config)
+        lock = self._get_account_lock(account_id)
+        async with lock:
+            state = await self._repo.get_state(account_id)
+            if not state:
+                raise ValueError(f"Account {account_id} not configured")
+            raw_config = state.get("config") or {}
+            if isinstance(raw_config, str):
+                import json as _json
+                raw_config = _json.loads(raw_config)
+            locked = set(raw_config.get("locked_positions", []))
+            locked.discard(symbol)
+            raw_config["locked_positions"] = sorted(locked)
+            config = AIManagerConfig(**raw_config)
+            await self._repo.sync_config_columns(account_id, config.model_dump())
+            task = self._tasks.get(account_id)
+            if task:
+                task.reload_config(config)
 
     async def get_decisions(
         self, account_id: str, limit: int = 50, cursor: Optional[str] = None, outcome_filter: Optional[str] = None
@@ -368,10 +387,10 @@ class AIAccountManagerService:
         self._tasks[account_id] = task
         task.start()
 
-    async def _on_ws_event(self, account_id: str, wallet_data: dict) -> None:
+    async def _on_ws_event(self, account_id: str, event: dict) -> None:
         task = self._tasks.get(account_id)
         if task:
-            await task.on_ws_event(wallet_data)
+            await task.on_ws_event(event)
 
     async def emit_event(self, account_id: str, event_type: str, payload: dict) -> None:
         if self._ws_manager:

@@ -8,6 +8,7 @@ import {
   resumeAIManager,
   killAIManager,
   resetKillSwitch,
+  globalKill,
 } from "@/store/ai-manager-slice";
 import type { RootState } from "@/store";
 import { Button } from "@/components/ui/button";
@@ -112,6 +113,18 @@ export function AIManagerCard({ accountId }: AIManagerCardProps) {
             {status.circuit_breaker.count}{status.circuit_breaker.active ? " ⚠" : ""}
           </p>
         </div>
+        <div>
+          <span className="text-muted-foreground">Degradation</span>
+          <p className="font-mono">Tier {status.degradation_tier ?? 0}</p>
+        </div>
+        <div className="col-span-2">
+          <span className="text-muted-foreground">Last Analysis</span>
+          <p className="font-mono">
+            {status.last_analysis_at
+              ? new Date(status.last_analysis_at).toLocaleTimeString()
+              : "—"}
+          </p>
+        </div>
       </div>
 
       {status.enabled && (
@@ -127,6 +140,15 @@ export function AIManagerCard({ accountId }: AIManagerCardProps) {
           )}
           <Button size="sm" variant="destructive" disabled={loading["kill"]} onClick={() => dispatch(killAIManager(accountId))}>
             Kill
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="ml-auto"
+            disabled={loading["globalKill"]}
+            onClick={() => { if (confirm("Kill ALL AI managers across all accounts?")) dispatch(globalKill()); }}
+          >
+            Global Kill
           </Button>
         </div>
       )}

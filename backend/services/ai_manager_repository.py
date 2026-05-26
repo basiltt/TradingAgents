@@ -530,5 +530,5 @@ class AIManagerRepository:
             "gross_profit": gross_profit,
             "gross_loss": gross_loss,
             "net_pnl": round(gross_profit - gross_loss, 8),
-            "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else 0.0,
+            "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else None,
         }

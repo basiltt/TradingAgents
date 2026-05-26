@@ -69,8 +69,9 @@ class AccountWSManager:
         async def on_event(event: dict[str, Any]) -> None:
             event["account_id"] = account_id
             await self._broadcast(event)
-            if event.get("type") == "wallet_update" and self._wallet_listeners:
-                await self._notify_wallet_listeners(account_id, event.get("data", {}))
+            event_type = event.get("type")
+            if event_type in ("wallet_update", "position_update") and self._wallet_listeners:
+                await self._notify_wallet_listeners(account_id, event)
 
         client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
         self._clients[account_id] = client

@@ -62,6 +62,17 @@ async def get_ai_manager_status(request: Request, account_id: str):
 # --- Config ---
 
 
+@router.get("/accounts/{account_id}/ai-manager/config")
+async def get_config(request: Request, account_id: str):
+    await _check_rate_limit(account_id)
+    svc = _get_service(request)
+    try:
+        config = await svc.get_config(account_id)
+    except ValueError as e:
+        raise HTTPException(404, detail=str(e))
+    return config
+
+
 @router.patch("/accounts/{account_id}/ai-manager/config")
 async def patch_config(request: Request, account_id: str, body: AIManagerConfigPatch):
     await _check_rate_limit(account_id)

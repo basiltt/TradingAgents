@@ -81,13 +81,13 @@ async def test_start_creates_asyncio_task(task):
 
 @pytest.mark.asyncio
 async def test_ws_event_transitions_to_monitoring(task):
-    await task.on_ws_event({"positions": [{"symbol": "BTCUSDT"}]})
+    await task.on_ws_event({"type": "position_update", "data": {"symbol": "BTCUSDT", "size": "0.1"}})
     assert task.state == "monitoring"
 
 
 @pytest.mark.asyncio
 async def test_ws_event_no_positions_stays_sleeping(task):
-    await task.on_ws_event({"positions": []})
+    await task.on_ws_event({"type": "position_update", "data": {"symbol": "BTCUSDT", "size": "0"}})
     assert task.state == "sleeping"
 
 
@@ -143,6 +143,7 @@ async def test_circuit_breaker_tripped_skips_eval(task, mock_service, stub_graph
     mock_service._circuit_breaker.is_tripped.return_value = True
     mock_service._circuit_breaker.check_cooldown = AsyncMock(return_value=False)
     task._state = "monitoring"
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"}]}
     await task._evaluate()
     assert task.state == "monitoring"
     stub_graph.ainvoke.assert_not_called()
@@ -152,6 +153,7 @@ async def test_circuit_breaker_tripped_skips_eval(task, mock_service, stub_graph
 async def test_degradation_tier_3_skips_eval(task, mock_service, stub_graph):
     mock_service._degradation.get_tier.return_value = 3
     task._state = "monitoring"
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"}]}
     await task._evaluate()
     assert task.state == "monitoring"
     stub_graph.ainvoke.assert_not_called()
@@ -260,8 +262,10 @@ async def test_dry_run_blocks_execution(task, stub_graph, mock_service):
 
 @pytest.mark.asyncio
 async def test_positions_none_safe(task):
-    """ws_event with positions=None must not crash."""
-    await task.on_ws_event({"positions": None, "wallet": {}})
+    """ws_event with missing/null data must not crash."""
+    await task.on_ws_event({"type": "position_update", "data": {}})
+    assert task.state == "sleeping"
+    await task.on_ws_event({"type": "wallet_update", "data": {}})
     assert task.state == "sleeping"
 
 
@@ -472,16 +476,11 @@ async def test_lock_acquire_fails_skips_execution(task, stub_graph, mock_service
 
 
 @pytest.mark.asyncio
-async def test_ws_event_filters_unknown_keys(task):
-    """Unknown keys in ws_event data should be dropped."""
-    await task.on_ws_event({
-        "positions": [{"symbol": "X"}],
-        "rogue_key": 123,
-        "wallet": {"balance": 100},
-    })
-    assert "rogue_key" not in task._ws_buffer
-    assert "positions" in task._ws_buffer
-    assert "wallet" in task._ws_buffer
+async def test_ws_event_ignores_unknown_event_types(task):
+    """Unknown event types should not modify the buffer."""
+    task._ws_buffer = {"positions": [{"symbol": "X"}]}
+    await task.on_ws_event({"type": "unknown_type", "data": {"foo": "bar"}})
+    assert task._ws_buffer == {"positions": [{"symbol": "X"}]}
 
 
 @pytest.mark.asyncio

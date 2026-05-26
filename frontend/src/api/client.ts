@@ -1318,6 +1318,9 @@ export const aiManagerApi = {
   getStatus: (accountId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/status`, undefined, signal),
 
+  getConfig: (accountId: string, signal?: AbortSignal) =>
+    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, undefined, signal),
+
   patchConfig: (accountId: string, updates: Record<string, unknown>) =>
     mutate<{ status: string }>("PATCH", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, updates),
 

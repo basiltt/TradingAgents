@@ -272,15 +272,29 @@ def create_app() -> FastAPI:
             rule_evaluator.set_cycle_repo(cycle_repo)
 
             # AI Account Manager service
+            from backend.services.ai_manager_market_data import MarketDataCache
+            market_data_cache = MarketDataCache()
+            await market_data_cache.start()
+
             from backend.services.ai_account_manager_service import AIAccountManagerService
             ai_manager_service = AIAccountManagerService.create({
                 "accounts_service": app.state.accounts_service,
                 "close_positions_service": app.state.close_positions_service,
                 "account_ws_manager": account_ws_mgr,
                 "db_pool": db._pool,
+                "market_data_cache": market_data_cache,
             })
             await ai_manager_service.start()
             app.state.ai_manager_service = ai_manager_service
+            app.state.market_data_cache = market_data_cache
+
+            # Wire LLM callable for AI Manager decisions
+            from backend.services.ai_manager_llm_provider import create_llm_callable
+            llm_callable = create_llm_callable()
+            if llm_callable:
+                ai_manager_service._llm_callable = llm_callable
+                ai_manager_service._pattern_llm_callable = llm_callable
+                logger.info("AI Manager LLM callable configured")
 
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService
@@ -338,6 +352,10 @@ def create_app() -> FastAPI:
         await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
         if getattr(app.state, "ai_manager_service", None):
             await _safe_shutdown("ai_manager_service", app.state.ai_manager_service.shutdown())
+            from backend.services.ai_manager_llm_provider import close_llm_clients
+            await _safe_shutdown("ai_manager_llm_clients", close_llm_clients())
+        if getattr(app.state, "market_data_cache", None):
+            await _safe_shutdown("market_data_cache", app.state.market_data_cache.stop())
         if getattr(app.state, "rule_evaluator", None):
             await _safe_shutdown("rule_evaluator", app.state.rule_evaluator.shutdown())
         if getattr(app.state, "cycle_engine", None):

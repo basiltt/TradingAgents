@@ -32,6 +32,7 @@ export function DecisionLog({ accountId }: DecisionLogProps) {
               <th className="text-left py-1 pr-2">Action</th>
               <th className="text-left py-1 pr-2">Symbol</th>
               <th className="text-right py-1 pr-2">Conf</th>
+              <th className="text-left py-1 pr-2">Outcome</th>
               <th className="text-left py-1">Reasoning</th>
             </tr>
           </thead>
@@ -43,7 +44,13 @@ export function DecisionLog({ accountId }: DecisionLogProps) {
                 </td>
                 <td className="py-1 pr-2">{d.action_taken?.action}</td>
                 <td className="py-1 pr-2 font-mono">{d.action_taken?.symbol}</td>
-                <td className="py-1 pr-2 text-right font-mono">{(d.confidence * 100).toFixed(0)}%</td>
+                <td className="py-1 pr-2 text-right font-mono">{((d.confidence ?? 0) * 100).toFixed(0)}%</td>
+                <td className={`py-1 pr-2 font-mono ${
+                  d.outcome_label === "win" ? "text-green-400" :
+                  d.outcome_label === "loss" ? "text-red-400" : "text-muted-foreground"
+                }`}>
+                  {d.outcome_label || "—"}
+                </td>
                 <td className="py-1 truncate max-w-[200px]">{d.reasoning}</td>
               </tr>
             ))}

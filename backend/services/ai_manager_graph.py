@@ -263,7 +263,10 @@ def _parse_llm_response(raw: str) -> Optional[Dict[str, Any]]:
         return None
 
     symbol = sanitize_for_injection(str(data.get("symbol", "")))
-    confidence = float(data.get("confidence", 0.0))
+    try:
+        confidence = float(data.get("confidence", 0.0))
+    except (ValueError, TypeError):
+        confidence = 0.0
     reason = str(data.get("reason", ""))[:2000]
 
     if not math.isfinite(confidence):

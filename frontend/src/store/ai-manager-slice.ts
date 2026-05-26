@@ -39,6 +39,7 @@ export interface AIManagerPerformance {
 
 interface AIManagerState {
   statusByAccount: Record<string, AIManagerStatus | null>;
+  configByAccount: Record<string, Record<string, unknown> | null>;
   decisionsbyAccount: Record<string, AIManagerDecision[]>;
   decisionCursors: Record<string, string | null>;
   performanceByAccount: Record<string, AIManagerPerformance | null>;
@@ -48,6 +49,7 @@ interface AIManagerState {
 
 const initialState: AIManagerState = {
   statusByAccount: {},
+  configByAccount: {},
   decisionsbyAccount: {},
   decisionCursors: {},
   performanceByAccount: {},
@@ -91,6 +93,14 @@ export const patchAIManagerConfig = createAsyncThunk(
   async ({ accountId, updates }: { accountId: string; updates: Record<string, unknown> }) => {
     await aiManagerApi.patchConfig(accountId, updates);
     return { accountId };
+  },
+);
+
+export const fetchConfig = createAsyncThunk(
+  "aiManager/fetchConfig",
+  async (accountId: string) => {
+    const data = await aiManagerApi.getConfig(accountId);
+    return { accountId, data };
   },
 );
 
@@ -166,7 +176,7 @@ const aiManagerSlice = createSlice({
       const existing = state.statusByAccount[account_id];
       if (existing) {
         existing.actions_today += 1;
-        existing.budget_remaining.actions -= 1;
+        existing.budget_remaining.actions = Math.max(0, existing.budget_remaining.actions - 1);
       }
     },
     clearError(state) {
@@ -198,7 +208,20 @@ const aiManagerSlice = createSlice({
       .addCase(enableAIManager.fulfilled, (state, action) => {
         state.loading["enable"] = false;
         const s = state.statusByAccount[action.payload.accountId];
-        if (s) s.enabled = true;
+        if (s) {
+          s.enabled = true;
+        } else {
+          state.statusByAccount[action.payload.accountId] = {
+            enabled: true,
+            state: "sleeping",
+            last_analysis_at: null,
+            circuit_breaker: { count: 0, active: false },
+            actions_today: 0,
+            budget_remaining: { actions: 30 },
+            degradation_tier: 0,
+            kill_switch: false,
+          } as any;
+        }
       })
       .addCase(enableAIManager.rejected, setError("enable"))
 
@@ -242,9 +265,16 @@ const aiManagerSlice = createSlice({
       })
       .addCase(resetKillSwitch.rejected, setError("resetKill"))
 
-      .addCase(patchAIManagerConfig.pending, setLoading("config"))
-      .addCase(patchAIManagerConfig.fulfilled, clearLoading("config"))
-      .addCase(patchAIManagerConfig.rejected, setError("config"))
+      .addCase(patchAIManagerConfig.pending, setLoading("patchConfig"))
+      .addCase(patchAIManagerConfig.fulfilled, clearLoading("patchConfig"))
+      .addCase(patchAIManagerConfig.rejected, setError("patchConfig"))
+
+      .addCase(fetchConfig.pending, setLoading("fetchConfig"))
+      .addCase(fetchConfig.fulfilled, (state, action) => {
+        state.loading["fetchConfig"] = false;
+        state.configByAccount[action.payload.accountId] = action.payload.data;
+      })
+      .addCase(fetchConfig.rejected, setError("fetchConfig"))
 
       .addCase(fetchDecisions.pending, setLoading("decisions"))
       .addCase(fetchDecisions.fulfilled, (state, action) => {
