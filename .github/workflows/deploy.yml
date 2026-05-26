@@ -26,6 +26,7 @@ jobs:
             npm run build
             cd ..
             # Run DB migrations before restart (idempotent, advisory-locked)
+            set -a; source .env; set +a
             python -m backend.migrate
             systemctl restart tradingagents-backend
             systemctl restart tradingagents-frontend
