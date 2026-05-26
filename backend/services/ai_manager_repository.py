@@ -34,7 +34,7 @@ class AIManagerRepository:
         "circuit_breaker_active", "circuit_breaker_half_open_used",
         "actions_today", "actions_this_hour", "max_daily_actions",
         "max_hourly_actions", "equity_at_day_start", "realized_loss_today",
-        "token_budget_used_today", "last_analysis_at", "last_action_at",
+        "realized_profit_today", "token_budget_used_today", "last_analysis_at", "last_action_at",
         "heartbeat_at", "counters_reset_at", "hourly_reset_at",
         "kill_switch_active", "strategy_version", "updated_at",
     })

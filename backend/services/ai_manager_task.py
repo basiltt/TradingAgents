@@ -373,15 +373,23 @@ class AIManagerTask:
                 self._account_id, decision_data, self._service._hmac_key
             )
 
-            exec_result = await asyncio.wait_for(
-                self._service._close_positions_service.close_position(
-                    account_id=self._account_id,
-                    symbol=symbol,
-                    close_type=action_type,
-                    reason=f"ai_manager: {result.get('reason', '')[:200]}",
+            close_result = await asyncio.wait_for(
+                self._service._close_positions_service.close_all_for_rule(
+                    self._account_id,
+                    rule_id=None,
+                    symbols=[symbol],
                 ),
                 timeout=30.0,
             )
+            # Adapt close_all_for_rule result to exec_result format
+            realized_pnl = 0.0
+            for r in close_result.get("results", []):
+                realized_pnl += float(r.get("realized_pnl", 0.0))
+            exec_result = {
+                "status": "closed" if close_result.get("closed", 0) > 0 else "failed",
+                "realized_pnl": realized_pnl,
+                "close_result": close_result,
+            }
 
         except Exception:
             logger.exception("Execution failed for %s %s", self._account_id, symbol)

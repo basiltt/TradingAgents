@@ -36,7 +36,7 @@ def mock_service():
     svc._repo.update_heartbeat = AsyncMock()
     svc._hmac_key = "test-hmac-key"
     svc._close_positions_service = MagicMock()
-    svc._close_positions_service.close_position = AsyncMock(return_value={"realized_pnl": -5.0})
+    svc._close_positions_service.close_all_for_rule = AsyncMock(return_value={"total": 1, "closed": 1, "failed": 0, "results": [{"realized_pnl": -5.0}]})
     svc._memory = None
     return svc
 
@@ -134,7 +134,7 @@ async def test_evaluate_close_executes(task, stub_graph, mock_service):
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
     assert task.state == "monitoring"
-    mock_service._close_positions_service.close_position.assert_called_once()
+    mock_service._close_positions_service.close_all_for_rule.assert_called_once()
     mock_service._circuit_breaker.record_outcome.assert_called_once()
 
 
@@ -169,7 +169,7 @@ async def test_kill_switch_blocks_execution(task, mock_service, stub_graph):
     mock_service._repo.is_kill_switch_active.return_value = True
     task._state = "monitoring"
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -187,7 +187,7 @@ async def test_execution_exception_records_dead_letter(task, stub_graph, mock_se
         "reason": "reversal",
         "confidence": 0.85,
     }
-    mock_service._close_positions_service.close_position.side_effect = Exception("exchange timeout")
+    mock_service._close_positions_service.close_all_for_rule.side_effect = Exception("exchange timeout")
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
@@ -218,7 +218,7 @@ async def test_loss_accounting_on_negative_pnl(task, stub_graph, mock_service):
         "reason": "stop_loss",
         "confidence": 0.9,
     }
-    mock_service._close_positions_service.close_position.return_value = {"realized_pnl": -10.0}
+    mock_service._close_positions_service.close_all_for_rule.return_value = {"total": 1, "closed": 1, "failed": 0, "results": [{"realized_pnl": -10.0}]}
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
@@ -237,13 +237,13 @@ async def test_budget_exhausted_blocks_execution(task, stub_graph, mock_service)
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
     mock_service._lock_registry.release.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_dry_run_blocks_execution(task, stub_graph, mock_service):
-    """dry_run=True should log but never call close_position."""
+    """dry_run=True should log but never call close_all_for_rule."""
     stub_graph.ainvoke.return_value = {
         "action": "FULL_CLOSE",
         "symbol": "BTCUSDT",
@@ -254,7 +254,7 @@ async def test_dry_run_blocks_execution(task, stub_graph, mock_service):
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
     mock_service._repo.insert_decision.assert_not_called()
 
 
@@ -314,7 +314,7 @@ async def test_half_open_execution_negative_pnl_resets_and_restarts(task, stub_g
     mock_service._circuit_breaker.is_tripped.return_value = True
     mock_service._circuit_breaker.check_cooldown = AsyncMock(return_value=True)
     mock_service._repo.upsert_state = AsyncMock()
-    mock_service._close_positions_service.close_position.return_value = {"realized_pnl": -5.0}
+    mock_service._close_positions_service.close_all_for_rule.return_value = {"total": 1, "closed": 1, "failed": 0, "results": [{"realized_pnl": -5.0}]}
 
     stub_graph.ainvoke.return_value = {
         "action": "FULL_CLOSE",
@@ -375,7 +375,7 @@ async def test_confidence_below_threshold_skips_execution(task, stub_graph, mock
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ async def test_excluded_symbol_skips_execution(task, stub_graph, mock_service):
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -409,12 +409,12 @@ async def test_symbol_cooldown_prevents_rapid_eval(task, stub_graph, mock_servic
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     # First eval succeeds
     await task._evaluate()
-    assert mock_service._close_positions_service.close_position.call_count == 1
+    assert mock_service._close_positions_service.close_all_for_rule.call_count == 1
 
     # Second eval within cooldown is blocked
     task._state = "monitoring"
     await task._evaluate()
-    assert mock_service._close_positions_service.close_position.call_count == 1
+    assert mock_service._close_positions_service.close_all_for_rule.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -440,7 +440,7 @@ async def test_hmac_key_missing_blocks_execution(task, stub_graph, mock_service)
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
     mock_service._lock_registry.release.assert_called_once()
 
 
@@ -468,7 +468,7 @@ async def test_lock_acquire_fails_skips_execution(task, stub_graph, mock_service
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
     mock_service._repo.insert_decision.assert_not_called()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -496,7 +496,7 @@ async def test_slot_unavailable_normal_flow(task, stub_graph, mock_service):
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
     assert task.state == "monitoring"
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -527,7 +527,7 @@ async def test_budget_exception_still_releases_lock(task, stub_graph, mock_servi
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     await task._evaluate()
-    mock_service._close_positions_service.close_position.assert_not_called()
+    mock_service._close_positions_service.close_all_for_rule.assert_not_called()
     mock_service._lock_registry.release.assert_called_once()
 
 
@@ -651,7 +651,7 @@ async def test_enforce_daily_limits_exception_triggers_failsafe_pause(task, mock
     """If _enforce_daily_limits raises, the fail-safe in _execute_action pauses the task."""
     mock_service._repo.get_state = AsyncMock(side_effect=Exception("DB down"))
     stub_graph.ainvoke = AsyncMock(return_value={"action": "FULL_CLOSE", "symbol": "BTCUSDT", "reason": "test", "confidence": 0.9})
-    mock_service._close_positions_service.close_position = AsyncMock(return_value={"realized_pnl": -5.0})
+    mock_service._close_positions_service.close_all_for_rule = AsyncMock(return_value={"total": 1, "closed": 1, "failed": 0, "results": [{"realized_pnl": -5.0}]})
     task._state = "monitoring"
     task._ws_buffer = {"positions": [{"symbol": "BTCUSDT"}]}
     task._config.confidence_threshold = 0.5

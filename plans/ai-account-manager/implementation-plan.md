@@ -30,6 +30,7 @@ CREATE TABLE ai_manager_state (
     max_hourly_actions INTEGER NOT NULL DEFAULT 10,
     equity_at_day_start NUMERIC(18,8),
     realized_loss_today NUMERIC(18,8) DEFAULT 0,
+    realized_profit_today NUMERIC(18,8) DEFAULT 0,
     token_budget_used_today INTEGER DEFAULT 0,
     last_analysis_at TIMESTAMPTZ,
     last_action_at TIMESTAMPTZ,
@@ -140,7 +141,7 @@ Guard with extension check: `DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_extension W
 Use `cron.schedule` which is idempotent (updates existing job with same name):
 ```sql
 SELECT cron.schedule('ai_mgr_daily_reset', '0 0 * * *',
-    $$UPDATE ai_manager_state SET actions_today=0, realized_loss_today=0, token_budget_used_today=0, equity_at_day_start=NULL, counters_reset_at=NOW() WHERE enabled=TRUE$$);
+    $$UPDATE ai_manager_state SET actions_today=0, realized_loss_today=0, realized_profit_today=0, token_budget_used_today=0, equity_at_day_start=NULL, counters_reset_at=NOW() WHERE enabled=TRUE$$);
 SELECT cron.schedule('ai_mgr_hourly_reset', '0 * * * *',
     $$UPDATE ai_manager_state SET actions_this_hour=0, hourly_reset_at=NOW() WHERE enabled=TRUE$$);
 SELECT cron.schedule('ai_mgr_nonce_cleanup', '*/10 * * * *',
