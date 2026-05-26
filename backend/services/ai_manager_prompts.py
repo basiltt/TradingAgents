@@ -164,7 +164,7 @@ def build_context_prompt(
         for mem in episodic_memory[:10]:
             action = sanitize_for_injection(str(mem.get("action", "")), max_len=20)
             symbol = sanitize_for_injection(str(mem.get("symbol", "")), max_len=50)
-            outcome = mem.get("outcome", "unknown")
+            outcome = mem.get("outcome_label", "unknown")
             parts.append(f"  {action} {symbol} → {outcome}")
 
     # Patterns

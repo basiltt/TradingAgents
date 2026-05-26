@@ -51,13 +51,13 @@ export function PerformancePanel({ accountId }: PerformancePanelProps) {
           </div>
           <div>
             <span className="text-muted-foreground">Total PnL</span>
-            <p className={`text-lg font-mono ${perf.total_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {perf.total_pnl >= 0 ? "+" : ""}{perf.total_pnl.toFixed(2)}
+            <p className={`text-lg font-mono ${perf.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {perf.net_pnl >= 0 ? "+" : ""}{perf.net_pnl.toFixed(2)}
             </p>
           </div>
           <div>
-            <span className="text-muted-foreground">Success / Failed</span>
-            <p className="text-lg font-mono">{perf.successful} / {perf.failed}</p>
+            <span className="text-muted-foreground">Wins / Losses</span>
+            <p className="text-lg font-mono">{perf.wins} / {perf.losses}</p>
           </div>
         </div>
       )}

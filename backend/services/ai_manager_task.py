@@ -414,13 +414,20 @@ class AIManagerTask:
                 await self._service._repo.update_decision_outcome(
                     decision_id, decision_ts, exec_result or {}
                 )
-                pnl = exec_result.get("realized_pnl", 0.0) if exec_result else 0.0
-                await self._service._circuit_breaker.record_outcome(
-                    self._account_id, pnl, action_type
-                )
-                await self._service.emit_event(self._account_id, "execution", {
-                    "action": action_type, "symbol": symbol, "pnl": pnl,
-                })
+                # Only feed circuit breaker and daily limits if exchange actually closed
+                if exec_result.get("status") == "closed":
+                    pnl = exec_result.get("realized_pnl", 0.0) if exec_result else 0.0
+                    await self._service._circuit_breaker.record_outcome(
+                        self._account_id, pnl, action_type
+                    )
+                    await self._service.emit_event(self._account_id, "execution", {
+                        "action": action_type, "symbol": symbol, "pnl": pnl,
+                    })
+                else:
+                    await self._service.emit_event(self._account_id, "execution", {
+                        "action": action_type, "symbol": symbol, "pnl": 0.0,
+                        "status": "failed",
+                    })
             except Exception:
                 logger.exception("Post-execution bookkeeping failed for %s %s", self._account_id, symbol)
 

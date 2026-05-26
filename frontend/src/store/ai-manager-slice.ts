@@ -28,10 +28,13 @@ export interface AIManagerDecision {
 export interface AIManagerPerformance {
   period: string;
   total_decisions: number;
-  successful: number;
-  failed: number;
-  total_pnl: number;
+  wins: number;
+  losses: number;
   win_rate: number;
+  gross_profit: number;
+  gross_loss: number;
+  net_pnl: number;
+  profit_factor: number;
 }
 
 interface AIManagerState {
