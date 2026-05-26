@@ -103,10 +103,11 @@ async def test_generate_patterns_fewer_than_5_decisions(memory_with_lock, mock_c
 
 @pytest.mark.asyncio
 async def test_generate_patterns_happy_path(memory_with_lock, mock_conn):
-    llm = AsyncMock(return_value=[
+    import json
+    llm = AsyncMock(return_value=json.dumps([
         {"type": "reversal", "symbol": "BTCUSDT", "description": "RSI divergence", "confidence": 0.8},
         {"type": "momentum", "symbol": "ETHUSDT", "description": "Strong trend", "confidence": 0.6},
-    ])
+    ]))
     result = await memory_with_lock.generate_patterns("acc-1", llm_callable=llm)
     assert result == 2
     assert mock_conn.execute.call_count == 2
@@ -114,10 +115,11 @@ async def test_generate_patterns_happy_path(memory_with_lock, mock_conn):
 
 @pytest.mark.asyncio
 async def test_generate_patterns_50_cap_deactivates(memory_with_lock, mock_conn):
+    import json
     mock_conn.fetchrow = AsyncMock(return_value={"cnt": 50})
-    llm = AsyncMock(return_value=[
+    llm = AsyncMock(return_value=json.dumps([
         {"type": "t", "symbol": "S", "description": "d", "confidence": 0.5},
-    ])
+    ]))
     await memory_with_lock.generate_patterns("acc-1", llm_callable=llm)
     # First execute call should be the deactivation UPDATE
     first_call = mock_conn.execute.call_args_list[0]
@@ -126,19 +128,20 @@ async def test_generate_patterns_50_cap_deactivates(memory_with_lock, mock_conn)
 
 @pytest.mark.asyncio
 async def test_generate_patterns_empty_description_skipped(memory_with_lock, mock_conn):
-    llm = AsyncMock(return_value=[
+    import json
+    llm = AsyncMock(return_value=json.dumps([
         {"type": "t", "symbol": "S", "description": "", "confidence": 0.5},
         {"type": "t2", "symbol": "S2", "description": "valid", "confidence": 0.7},
-    ])
+    ]))
     result = await memory_with_lock.generate_patterns("acc-1", llm_callable=llm)
     assert result == 1
 
 
 @pytest.mark.asyncio
 async def test_generate_patterns_llm_timeout(memory_with_lock, mock_conn):
-    async def slow_llm(prompt):
+    async def slow_llm(system, prompt):
         await asyncio.sleep(100)
-        return []
+        return "[]"
 
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(

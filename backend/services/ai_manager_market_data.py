@@ -140,9 +140,18 @@ class MarketDataCache:
                 if elapsed > 0:
                     indicators["pnl_velocity_30s"] = ((last_price - prev_price) / prev_price) * (30.0 / elapsed)
 
+            # Carry forward prev_rsi_14 for threshold-crossover detection
+            indicators["prev_rsi_14"] = prev.get("rsi_14")
+
             # Merge kline-derived indicators
             kline_indicators = self._compute_kline_indicators(symbol)
             indicators.update(kline_indicators)
+
+            # Compute candle body from most recent kline for volatility spike detection
+            kline_candles = self._kline_data.get(symbol)
+            if kline_candles and len(kline_candles) >= 1:
+                last_candle = kline_candles[-1]
+                indicators["candle_1m_body"] = last_candle[4] - last_candle[1]  # close - open
 
             self._data[symbol] = indicators
 
@@ -233,6 +242,14 @@ class MarketDataCache:
         atr = _compute_atr(highs, lows, closes, 14)
         if atr is not None:
             indicators["atr_14"] = atr
+
+        # Conflicting signal detection: EMA trend vs RSI divergence
+        if ema_9 is not None and ema_21 is not None and rsi is not None:
+            ema_bullish = ema_9 > ema_21
+            rsi_overbought = rsi >= 70
+            rsi_oversold = rsi <= 30
+            if (ema_bullish and rsi_overbought) or (not ema_bullish and rsi_oversold):
+                indicators["conflicting"] = True
 
         return indicators
 
