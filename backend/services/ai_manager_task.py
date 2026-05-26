@@ -61,6 +61,9 @@ class AIManagerTask:
         self._ws_buffer: Dict[str, Any] = {}
         self._heartbeat_at: float = 0.0
         self._evaluator = AIManagerEvaluator()
+        self._emergency_in_progress: bool = False
+        self._emergency_cooldown_until: float = 0.0
+        self._emergency_closed_symbols: Dict[str, float] = {}  # symbol → monotonic time of last emergency close
 
     @property
     def state(self) -> str:
@@ -125,6 +128,14 @@ class AIManagerTask:
         if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
             self._state = MONITORING
             self._wake_event.set()
+
+        # Emergency fast-path: check on every WS event (no debounce, no LLM)
+        # Runs even during PAUSED — crash protection must never be gated by daily limits
+        if self._state in (MONITORING, ANALYZING, PAUSED) and self._has_open_positions(self._ws_buffer):
+            try:
+                await self._check_emergency_close()
+            except Exception:
+                logger.exception("Emergency close check failed for %s", self._account_id)
 
     def _update_peak_pnl(self, symbol: str, position_data: dict) -> None:
         """Track per-position peak unrealized PnL for drawdown-from-peak detection."""
@@ -199,6 +210,10 @@ class AIManagerTask:
 
         if not self._has_open_positions(self._ws_buffer):
             self._state = SLEEPING
+            return
+
+        # Emergency fast-path before LLM evaluation
+        if await self._check_emergency_close():
             return
 
         await self._evaluate()
@@ -330,8 +345,17 @@ class AIManagerTask:
             return
         position = current_positions[0]
 
-        # Min position age check
-        if self._config.min_position_age_s and position.get("createdTime"):
+        # Determine urgency for gate-skipping (FAST/EMERGENCY bypasses protective caps)
+        _current_urgency = self._evaluator.classify_urgency(
+            self._ws_buffer.get("positions") or [],
+            self._get_market_data(),
+            peak_pnl=self._ws_buffer.get("_peak_pnl"),
+            emergency_pnl_velocity_pct=self._config.emergency_pnl_velocity_pct / 100,
+        )
+        _is_urgent = _current_urgency in ("FAST", "EMERGENCY")
+
+        # Min position age check — skipped during urgent conditions
+        if not _is_urgent and self._config.min_position_age_s and position.get("createdTime"):
             try:
                 created_ms = int(position["createdTime"])
                 age_s = (time.time() * 1000 - created_ms) / 1000
@@ -342,8 +366,8 @@ class AIManagerTask:
             except (ValueError, TypeError):
                 pass
 
-        # Max single decision loss check
-        if self._config.max_single_decision_loss_pct:
+        # Max single decision loss check — skipped during urgent conditions
+        if not _is_urgent and self._config.max_single_decision_loss_pct:
             upnl = position.get("unrealisedPnl", position.get("unrealized_pnl", 0.0))
             equity = self._ws_buffer.get("equity")
             try:
@@ -607,6 +631,205 @@ class AIManagerTask:
     def _has_open_positions(self, data: dict) -> bool:
         positions = data.get("positions") or []
         return len(positions) > 0
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Emergency close — deterministic fast-path (no LLM)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _check_emergency_close(self) -> bool:
+        """Deterministic fast-path: close ALL losing positions on extreme signals.
+
+        Bypasses LLM entirely. Returns True if emergency action was taken.
+        """
+        if not self._config.emergency_close_enabled:
+            return False
+        if self._killed:
+            return False
+        if self._emergency_in_progress:
+            return False
+        if self._config.dry_run:
+            return False
+
+        # Cooldown: don't re-trigger equity drop within 30s of last emergency close
+        # Velocity checks still run (they're per-position, not account-wide)
+        equity_cooldown_active = time.monotonic() < self._emergency_cooldown_until
+
+        positions = self._ws_buffer.get("positions") or []
+        equity = self._ws_buffer.get("equity")
+        if not positions or not equity:
+            return False
+
+        try:
+            equity_val = float(equity)
+        except (ValueError, TypeError):
+            return False
+
+        triggered = False
+        trigger_reason = ""
+
+        # Condition 1: Account equity dropped > emergency_equity_drop_pct from reference
+        # Reference ratchets upward (trailing high-water mark) to protect accumulated gains
+        # Suppressed during cooldown (equity reference resets after close, needs time to stabilize)
+        reference_equity = self._ws_buffer.get("_emergency_ref_equity")
+        if reference_equity and reference_equity > 0:
+            # Always ratchet upward even during cooldown
+            if equity_val > reference_equity:
+                self._ws_buffer["_emergency_ref_equity"] = equity_val
+                reference_equity = equity_val
+            if not equity_cooldown_active:
+                drop_pct = ((reference_equity - equity_val) / reference_equity) * 100
+                if drop_pct >= self._config.emergency_equity_drop_pct:
+                    triggered = True
+                    trigger_reason = f"equity_drop_{drop_pct:.1f}pct"
+        elif not reference_equity:
+            self._ws_buffer["_emergency_ref_equity"] = equity_val
+
+        # Condition 2: Per-position PnL velocity exceeds emergency threshold
+        # Only close the SPECIFIC positions with extreme velocity, not all losers
+        velocity_emergency_symbols: list[str] = []
+        if not triggered:
+            market_data = self._get_market_data()
+            velocity_threshold = self._config.emergency_pnl_velocity_pct / 100
+            now_mono = time.monotonic()
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                if not symbol:
+                    continue
+                # Per-symbol cooldown: don't re-trigger same symbol within 30s
+                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < 30.0:
+                    continue
+                sym_indicators = market_data.get(symbol, {})
+                if self._evaluator.check_emergency_signals(pos, sym_indicators, velocity_threshold):
+                    velocity_emergency_symbols.append(symbol)
+            if velocity_emergency_symbols:
+                triggered = True
+                trigger_reason = "pnl_velocity_emergency"
+
+        if not triggered:
+            return False
+
+        # Determine which symbols to close based on trigger type
+        excluded = set(self._config.excluded_symbols or [])
+        locked = set(self._config.locked_positions or [])
+
+        if trigger_reason.startswith("equity_drop"):
+            # Account-wide crash: close ALL losing positions (capital preservation)
+            close_symbols = []
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                if not symbol or symbol in excluded or symbol in locked:
+                    continue
+                try:
+                    upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)))
+                except (ValueError, TypeError):
+                    upnl = 0.0
+                if upnl < 0:
+                    close_symbols.append(symbol)
+        else:
+            # Velocity trigger: only close the specific positions with extreme signals
+            close_symbols = [s for s in velocity_emergency_symbols if s not in excluded and s not in locked]
+
+        if not close_symbols:
+            return False
+
+        logger.warning(
+            "EMERGENCY_CLOSE triggered for %s: reason=%s, closing %d positions",
+            self._account_id, trigger_reason, len(close_symbols),
+        )
+
+        self._emergency_in_progress = True
+        try:
+            await self._execute_emergency_batch_close(close_symbols, trigger_reason)
+        finally:
+            self._emergency_in_progress = False
+            # Record per-symbol cooldown for velocity triggers
+            now_mono = time.monotonic()
+            for s in close_symbols:
+                self._emergency_closed_symbols[s] = now_mono
+            # Prune stale entries
+            if len(self._emergency_closed_symbols) > 50:
+                cutoff = now_mono - 60.0
+                self._emergency_closed_symbols = {k: v for k, v in self._emergency_closed_symbols.items() if v > cutoff}
+            # Clear reference equity so it re-initializes from the NEXT WS wallet
+            # update (which reflects post-close balance). Using current buffer value
+            # would be stale (pre-close) and could re-trigger after cooldown.
+            self._ws_buffer.pop("_emergency_ref_equity", None)
+            # Cooldown: suppress equity-drop re-trigger for 30s
+            self._emergency_cooldown_until = time.monotonic() + 30.0
+        return True
+
+    async def _execute_emergency_batch_close(self, symbols: list, reason: str) -> None:
+        """Close multiple positions immediately — no LLM, no confidence, no cooldown."""
+        # Capture UPnL BEFORE close — WS events may remove positions from buffer during await
+        symbol_set = set(symbols)
+        pre_close_positions = self._ws_buffer.get("positions") or []
+        estimated_upnl = sum(
+            float(p.get("unrealisedPnl", p.get("unrealized_pnl", 0)) or 0)
+            for p in pre_close_positions if p.get("symbol") in symbol_set
+        )
+
+        try:
+            close_result = await asyncio.wait_for(
+                self._service._close_positions_service.close_all_for_rule(
+                    self._account_id,
+                    rule_id=None,
+                    symbols=symbols,
+                ),
+                timeout=30.0,
+            )
+            if close_result.get("skipped"):
+                logger.warning(
+                    "Emergency batch close SKIPPED for %s (concurrent close in progress), reason=%s",
+                    self._account_id, reason,
+                )
+                return
+            closed = close_result.get("closed", 0)
+            logger.info(
+                "Emergency batch close completed for %s: closed=%d, reason=%s",
+                self._account_id, closed, reason,
+            )
+
+            # Track realized loss for daily limit enforcement
+            realized_pnl = close_result.get("realized_pnl")
+            if realized_pnl is None:
+                realized_pnl = estimated_upnl
+            try:
+                pnl_val = float(realized_pnl) if realized_pnl else 0.0
+                if pnl_val < 0:
+                    await self._enforce_daily_limits(pnl_val)
+            except Exception:
+                logger.warning("Daily limit tracking failed after emergency close for %s", self._account_id)
+
+            # Emit execution event for frontend/WS listeners
+            try:
+                await self._service.emit_event(self._account_id, "execution", {
+                    "action": "EMERGENCY_CLOSE", "symbols": symbols,
+                    "pnl": float(realized_pnl or 0), "reason": reason,
+                })
+            except Exception:
+                pass
+
+            # Record as decision for audit trail
+            if hasattr(self._service, '_repo') and self._service._repo:
+                decision_data = {
+                    "timestamp": datetime.now(timezone.utc),
+                    "action_type": "EMERGENCY_CLOSE",
+                    "evaluation_type": "emergency",
+                    "urgency": "EMERGENCY",
+                    "state_snapshot": {"symbols": symbols, "reason": reason},
+                    "action_taken": {"action": "EMERGENCY_CLOSE", "symbol": ",".join(symbols), "symbols": symbols},
+                    "reasoning": f"Deterministic emergency close: {reason}",
+                    "confidence": 1.0,
+                    "graph_path": "emergency_fast_path",
+                    "strategy_version": self._config.strategy_version,
+                    "chain_key_version": 1,
+                }
+                await self._service._repo.insert_decision(
+                    self._account_id, decision_data,
+                    self._service._hmac_key or "emergency",
+                )
+        except Exception:
+            logger.exception("Emergency batch close FAILED for %s", self._account_id)
 
     async def _update_heartbeat(self) -> None:
         try:

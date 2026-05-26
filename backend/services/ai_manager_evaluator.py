@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _PNL_VELOCITY_THRESHOLD = 0.02  # 2% in 30s
+_EMERGENCY_PNL_VELOCITY_THRESHOLD = 0.05  # 5% in 30s — triggers non-LLM emergency close
 _RSI_UPPER = 70
 _RSI_LOWER = 30
 _ATR_MULTIPLIER = 2.0
@@ -29,19 +30,31 @@ class AIManagerEvaluator:
         positions: List[Dict[str, Any]],
         indicators: Optional[Dict[str, Any]] = None,
         peak_pnl: Optional[Dict[str, float]] = None,
+        emergency_pnl_velocity_pct: float = 0.05,
     ) -> str:
-        """Returns 'FAST', 'STANDARD', or 'DEEP'."""
+        """Returns 'EMERGENCY', 'FAST', 'STANDARD', or 'DEEP'.
+
+        EMERGENCY: extreme signals requiring immediate non-LLM close.
+        """
         if not positions:
             return "STANDARD"
 
         indicators = indicators or {}
         peak_pnl = peak_pnl or {}
         fast_signals = 0
+        emergency_signals = 0
         conflicting = False
 
         for pos in positions:
             symbol = pos.get("symbol", "")
             if not symbol:
+                continue
+
+            sym_indicators = indicators.get(symbol, {})
+
+            # Check for EMERGENCY-level signals (no cooldown — always evaluate)
+            if self.check_emergency_signals(pos, sym_indicators, emergency_pnl_velocity_pct):
+                emergency_signals += 1
                 continue
 
             # Per-symbol urgent cooldown
@@ -50,7 +63,6 @@ class AIManagerEvaluator:
             if now - last < _SYMBOL_URGENT_COOLDOWN_S:
                 continue
 
-            sym_indicators = indicators.get(symbol, {})
             urgent = self._check_urgent_signals(pos, sym_indicators)
 
             # Drawdown-from-peak urgency: if profit dropped >40% from peak, it's urgent
@@ -72,38 +84,74 @@ class AIManagerEvaluator:
             if sym_indicators.get("conflicting"):
                 conflicting = True
 
+        if emergency_signals > 0:
+            return "EMERGENCY"
         if fast_signals > 0:
             return "FAST"
         if conflicting:
             return "DEEP"
         return "STANDARD"
 
+    def check_emergency_signals(
+        self, position: Dict[str, Any], indicators: Dict[str, Any], velocity_threshold: float
+    ) -> bool:
+        """Check for extreme signals that bypass LLM entirely."""
+        pnl_velocity = indicators.get("pnl_velocity_30s")
+        if pnl_velocity is not None:
+            try:
+                upnl = float(position.get("unrealisedPnl", position.get("unrealized_pnl", 0)))
+                vel = float(pnl_velocity)
+                if upnl < 0 and abs(vel) >= velocity_threshold:
+                    # vel is price velocity: negative = price dropping, positive = price rising
+                    # LONG loses when price drops (vel < 0), SHORT loses when price rises (vel > 0)
+                    side = position.get("side", "")
+                    if (side == "Buy" and vel < 0) or (side == "Sell" and vel > 0):
+                        return True
+            except (ValueError, TypeError):
+                pass
+        return False
+
     def _check_urgent_signals(self, position: Dict[str, Any], indicators: Dict[str, Any]) -> bool:
         """Check if position has urgent signals requiring immediate evaluation."""
         # PnL velocity: >2% in 30s
         pnl_velocity = indicators.get("pnl_velocity_30s")
-        if pnl_velocity is not None and abs(pnl_velocity) >= _PNL_VELOCITY_THRESHOLD:
-            return True
+        try:
+            if pnl_velocity is not None and abs(float(pnl_velocity)) >= _PNL_VELOCITY_THRESHOLD:
+                return True
+        except (TypeError, ValueError):
+            pass
 
         # RSI divergence: crosses 70/30 threshold (require both current and previous)
         rsi = indicators.get("rsi_14")
         prev_rsi = indicators.get("prev_rsi_14")
-        if rsi is not None and prev_rsi is not None:
-            if (prev_rsi < _RSI_UPPER and rsi >= _RSI_UPPER) or (prev_rsi > _RSI_LOWER and rsi <= _RSI_LOWER):
-                return True
+        try:
+            if rsi is not None and prev_rsi is not None:
+                rsi_f, prev_f = float(rsi), float(prev_rsi)
+                if (prev_f < _RSI_UPPER and rsi_f >= _RSI_UPPER) or (prev_f > _RSI_LOWER and rsi_f <= _RSI_LOWER):
+                    return True
+        except (TypeError, ValueError):
+            pass
 
         # Funding rate flip
         funding = indicators.get("funding_rate")
         prev_funding = indicators.get("prev_funding_rate")
-        if funding is not None and prev_funding is not None:
-            if funding != 0 and prev_funding != 0 and (funding > 0) != (prev_funding > 0):
-                return True
+        try:
+            if funding is not None and prev_funding is not None:
+                f_f, pf_f = float(funding), float(prev_funding)
+                if f_f != 0 and pf_f != 0 and (f_f > 0) != (pf_f > 0):
+                    return True
+        except (TypeError, ValueError):
+            pass
 
         # Volatility spike: 1m candle body > 2x ATR
         candle_body = indicators.get("candle_1m_body")
         atr = indicators.get("atr_14")
-        if candle_body is not None and atr is not None and atr > 0:
-            if abs(candle_body) > _ATR_MULTIPLIER * atr:
-                return True
+        try:
+            if candle_body is not None and atr is not None:
+                atr_f = float(atr)
+                if atr_f > 0 and abs(float(candle_body)) > _ATR_MULTIPLIER * atr_f:
+                    return True
+        except (TypeError, ValueError):
+            pass
 
         return False

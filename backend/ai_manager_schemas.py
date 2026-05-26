@@ -31,6 +31,10 @@ class AIManagerConfig(BaseModel):
     strategy_version: str = Field(
         default="default", pattern=r"^[a-zA-Z0-9_\-]{1,50}$"
     )
+    # Emergency close (non-LLM deterministic fast-path for crash protection)
+    emergency_close_enabled: bool = True
+    emergency_equity_drop_pct: float = Field(default=10.0, ge=3.0, le=50.0)
+    emergency_pnl_velocity_pct: float = Field(default=5.0, ge=2.0, le=20.0)
 
 
 class PositionAction(BaseModel):
@@ -92,3 +96,6 @@ class AIManagerConfigPatch(BaseModel):
     locked_positions: Optional[
         List[Annotated[str, Field(max_length=20, pattern=r"^[A-Z0-9]{1,20}$")]]
     ] = Field(default=None, max_length=50)
+    emergency_close_enabled: Optional[bool] = None
+    emergency_equity_drop_pct: Optional[float] = Field(default=None, ge=3.0, le=50.0)
+    emergency_pnl_velocity_pct: Optional[float] = Field(default=None, ge=2.0, le=20.0)

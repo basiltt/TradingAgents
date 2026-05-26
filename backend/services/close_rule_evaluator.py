@@ -30,6 +30,7 @@ class CloseRuleEvaluator:
         self._last_ws_eval: dict[str, float] = {}
         self._ws_debounce_interval = 1.5
         self._ws_eval_locks: dict[str, asyncio.Lock] = {}
+        self._rules_cache: dict[str, list] = {}
 
     def set_cycle_callback(self, callback: Any) -> None:
         self._cycle_callback = callback
@@ -113,43 +114,65 @@ class CloseRuleEvaluator:
         active_account_ids = set(accounts.keys())
         self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
         self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids and not v.locked()}
+        self._rules_cache = {k: v for k, v in self._rules_cache.items() if k in active_account_ids}
 
     async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
-        """Evaluate equity-based rules instantly on WS wallet event (debounced)."""
+        """Evaluate equity-based rules instantly on WS wallet event.
+
+        Drawdown rules (EQUITY_DROP_PCT) bypass debounce for fastest reaction.
+        Profit/other rules keep 1.5s debounce to reduce noise.
+        """
         if self._shutting_down:
             return
 
+        # WS events arrive as {"type": "...", "data": {...}} — only process wallet updates
+        event_type = wallet_data.get("type")
+        if event_type and event_type != "wallet_update":
+            return
+        data = wallet_data.get("data", wallet_data) if event_type else wallet_data
+
+        try:
+            equity = Decimal(data.get("totalEquity") or "0")
+            pnl = Decimal(data.get("totalPerpUPL") or "0")
+            balance = Decimal(data.get("totalWalletBalance") or "0")
+        except Exception:
+            logger.warning("Invalid WS wallet data for account %s", account_id)
+            return
+
+        # Debounce DB query: fetch rules at most once per 1.5s regardless of path
         now = time.monotonic()
         last = self._last_ws_eval.get(account_id, 0.0)
-        if (now - last) < self._ws_debounce_interval:
-            return
-
-        self._last_ws_eval[account_id] = now
-
-        # Per-account lock prevents re-entrant evaluation if close takes >1.5s
-        lock = self._ws_eval_locks.setdefault(account_id, asyncio.Lock())
-        if lock.locked():
-            return
-
-        async with lock:
-            try:
-                equity = Decimal(wallet_data.get("totalEquity") or "0")
-                pnl = Decimal(wallet_data.get("totalPerpUPL") or "0")
-                balance = Decimal(wallet_data.get("totalWalletBalance") or "0")
-            except Exception:
-                logger.warning("Invalid WS wallet data for account %s", account_id)
-                return
-
+        if (now - last) >= self._ws_debounce_interval or account_id not in self._rules_cache:
             rules = await self._db.list_active_rules_for_account(account_id)
-            if not rules:
-                return
+            self._rules_cache[account_id] = rules
+            self._last_ws_eval[account_id] = now
+        else:
+            rules = self._rules_cache.get(account_id)
 
-            # Only evaluate equity-based rules (time-based stay on polling loop)
-            equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION")]
-            if not equity_rules:
-                return
+        if not rules:
+            return
 
-            await self._evaluate_account_rules_with_data(account_id, equity_rules, equity, pnl, balance)
+        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION")]
+        if not equity_rules:
+            return
+
+        # Split: drawdown rules get zero debounce, others wait for debounce interval
+        drawdown_rules = [r for r in equity_rules if r["trigger_type"] == "EQUITY_DROP_PCT"]
+        other_rules = [r for r in equity_rules if r["trigger_type"] != "EQUITY_DROP_PCT"]
+
+        # Evaluate drawdown rules immediately (no debounce, skip if lock held)
+        if drawdown_rules:
+            lock = self._ws_eval_locks.setdefault(account_id, asyncio.Lock())
+            if not lock.locked():
+                async with lock:
+                    await self._evaluate_account_rules_with_data(account_id, drawdown_rules, equity, pnl, balance)
+
+        # Evaluate other rules only when debounce has passed (use same debounce timestamp)
+        if other_rules and (now - last) >= self._ws_debounce_interval:
+            lock = self._ws_eval_locks.setdefault(account_id, asyncio.Lock())
+            if not lock.locked():
+                async with lock:
+                    await self._evaluate_account_rules_with_data(account_id, other_rules, equity, pnl, balance)
 
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         try:

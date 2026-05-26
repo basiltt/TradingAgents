@@ -122,16 +122,21 @@ async def test_lock_prevents_reentrant_evaluation(evaluator, mock_deps):
     """If evaluation is in progress (lock held), subsequent calls skip."""
     _, _, db = mock_deps
 
-    # Make list_active_rules_for_account slow to simulate long close operation
-    call_count = 0
+    # Return a drawdown rule so the code enters the locked evaluation path
+    eval_count = 0
+    original_evaluate = evaluator._evaluate_account_rules_with_data
 
-    async def slow_query(account_id):
-        nonlocal call_count
-        call_count += 1
+    async def counting_evaluate(*args, **kwargs):
+        nonlocal eval_count
+        eval_count += 1
         await asyncio.sleep(0.1)
-        return []
 
-    db.list_active_rules_for_account = slow_query
+    evaluator._evaluate_account_rules_with_data = counting_evaluate
+
+    db.list_active_rules_for_account = AsyncMock(return_value=[
+        {"id": "r1", "account_id": "acc1", "trigger_type": "EQUITY_DROP_PCT",
+         "threshold_value": "5", "reference_value": "1100", "cycle_id": None},
+    ])
 
     wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
 
@@ -147,7 +152,7 @@ async def test_lock_prevents_reentrant_evaluation(evaluator, mock_deps):
     )
 
     # Only one should have actually run (the other skipped due to lock)
-    assert call_count == 1
+    assert eval_count == 1
 
 
 @pytest.mark.asyncio
