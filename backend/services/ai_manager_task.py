@@ -32,6 +32,7 @@ ERROR = "error"
 _HEARTBEAT_SLEEPING = 60.0
 _HEARTBEAT_MONITORING = 10.0
 _SYMBOL_COOLDOWN_S = 15.0
+_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "REDUCE"})
 
 
 class AIManagerTask:
@@ -252,6 +253,10 @@ class AIManagerTask:
         if self._killed:
             return
 
+        if action_type not in _ALLOWED_ACTIONS:
+            logger.warning("Rejected invalid action_type '%s' for %s", action_type, self._account_id)
+            return
+
         if self._config.dry_run:
             logger.info("dry_run: would execute %s %s for %s", action_type, symbol, self._account_id)
             return
@@ -295,6 +300,7 @@ class AIManagerTask:
         decision_id = None
         decision_ts = None
         pnl = 0.0
+        exec_result = None
         try:
             # Re-check kill switch AFTER acquiring lock (TOCTOU defense)
             kill_active = await self._service._repo.is_kill_switch_active(self._account_id)
@@ -340,19 +346,6 @@ class AIManagerTask:
                 timeout=30.0,
             )
 
-            await self._service._repo.update_decision_outcome(
-                decision_id, decision_ts, exec_result or {}
-            )
-
-            pnl = exec_result.get("realized_pnl", 0.0) if exec_result else 0.0
-            await self._service._circuit_breaker.record_outcome(
-                self._account_id, pnl, action_type
-            )
-
-            await self._service.emit_event(self._account_id, "execution", {
-                "action": action_type, "symbol": symbol, "pnl": pnl,
-            })
-
         except Exception:
             logger.exception("Execution failed for %s %s", self._account_id, symbol)
             if decision_id is not None:
@@ -366,6 +359,22 @@ class AIManagerTask:
                 logger.error("Budget consumed but no decision created for %s %s", self._account_id, symbol)
         finally:
             lock.release(self._account_id, symbol)
+
+        # Post-execution bookkeeping (outside position lock)
+        if exec_result is not None and decision_id is not None:
+            try:
+                await self._service._repo.update_decision_outcome(
+                    decision_id, decision_ts, exec_result or {}
+                )
+                pnl = exec_result.get("realized_pnl", 0.0) if exec_result else 0.0
+                await self._service._circuit_breaker.record_outcome(
+                    self._account_id, pnl, action_type
+                )
+                await self._service.emit_event(self._account_id, "execution", {
+                    "action": action_type, "symbol": symbol, "pnl": pnl,
+                })
+            except Exception:
+                logger.exception("Post-execution bookkeeping failed for %s %s", self._account_id, symbol)
 
         try:
             await self._enforce_daily_limits(pnl)
@@ -448,9 +457,11 @@ class AIManagerTask:
         decision_count = 100
         try:
             if hasattr(self._service, '_memory') and self._service._memory:
-                episodic = await self._service._memory.get_episodic_context(self._account_id)
-                patterns = await self._service._memory.get_semantic_patterns(self._account_id)
-                decision_count = await self._service._memory.get_decision_count(self._account_id)
+                episodic, patterns, decision_count = await asyncio.gather(
+                    self._service._memory.get_episodic_context(self._account_id),
+                    self._service._memory.get_semantic_patterns(self._account_id),
+                    self._service._memory.get_decision_count(self._account_id),
+                )
         except Exception:
             logger.warning("Memory fetch failed for %s", self._account_id)
 
