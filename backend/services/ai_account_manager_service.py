@@ -66,7 +66,8 @@ class AIAccountManagerService:
     async def start(self) -> None:
         """Compile LangGraph ONCE. Load enabled managers (stagger 5/s). Start health sweep."""
         if not self._hmac_key:
-            raise RuntimeError("AI_MANAGER_HMAC_KEY is required but not set")
+            logger.warning("AI_MANAGER_HMAC_KEY not set — AI Manager disabled (set env var to enable)")
+            return
 
         # Single-worker assertion via advisory lock (held for service lifetime)
         if self._repo._pool:

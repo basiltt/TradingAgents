@@ -51,7 +51,7 @@ def create_llm_callable() -> Optional[LLMCallable]:
     if provider == "openai" or provider == "azure":
         return _create_openai_callable(api_key, model, backend_url, provider)
     elif provider == "anthropic":
-        return _create_anthropic_callable(api_key, model)
+        return _create_anthropic_callable(api_key, model, backend_url)
 
     return None
 
@@ -85,10 +85,11 @@ def _create_openai_callable(
     return call_openai
 
 
-def _create_anthropic_callable(api_key: str, model: str) -> LLMCallable:
+def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[str] = None) -> LLMCallable:
     import httpx
 
-    url = "https://api.anthropic.com/v1/messages"
+    base = backend_url or "https://api.anthropic.com"
+    url = base.rstrip("/") + "/v1/messages"
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
@@ -99,7 +100,7 @@ def _create_anthropic_callable(api_key: str, model: str) -> LLMCallable:
 
     async def call_anthropic(system_prompt: str, context_prompt: str) -> str:
         payload = {
-            "model": model if "claude" in model.lower() else "claude-sonnet-4-20250514",
+            "model": model,
             "system": system_prompt,
             "messages": [{"role": "user", "content": context_prompt}],
             "temperature": 0.2,
