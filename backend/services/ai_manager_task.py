@@ -7,10 +7,11 @@ cycling through: sleeping → monitoring → analyzing → executing.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig
@@ -675,6 +676,9 @@ class AIManagerTask:
             # Always ratchet upward even during cooldown
             if equity_val > reference_equity:
                 self._ws_buffer["_emergency_ref_equity"] = equity_val
+                # Persist ratchet if moved >=0.5% (throttle DB writes)
+                if (equity_val - reference_equity) / reference_equity >= 0.005:
+                    asyncio.ensure_future(self._persist_ref_equity(equity_val))
                 reference_equity = equity_val
             if not equity_cooldown_active:
                 drop_pct = ((reference_equity - equity_val) / reference_equity) * 100
@@ -683,6 +687,7 @@ class AIManagerTask:
                     trigger_reason = f"equity_drop_{drop_pct:.1f}pct"
         elif not reference_equity:
             self._ws_buffer["_emergency_ref_equity"] = equity_val
+            asyncio.ensure_future(self._persist_ref_equity(equity_val))
 
         # Condition 2: Per-position PnL velocity exceeds emergency threshold
         # Only close the SPECIFIC positions with extreme velocity, not all losers
@@ -738,35 +743,45 @@ class AIManagerTask:
         )
 
         self._emergency_in_progress = True
+        actually_closed = False
         try:
-            await self._execute_emergency_batch_close(close_symbols, trigger_reason)
+            actually_closed = await self._execute_emergency_batch_close(close_symbols, trigger_reason)
         finally:
             self._emergency_in_progress = False
-            # Record per-symbol cooldown for velocity triggers
-            now_mono = time.monotonic()
-            for s in close_symbols:
-                self._emergency_closed_symbols[s] = now_mono
-            # Prune stale entries
-            if len(self._emergency_closed_symbols) > 50:
-                cutoff = now_mono - 60.0
-                self._emergency_closed_symbols = {k: v for k, v in self._emergency_closed_symbols.items() if v > cutoff}
-            # Clear reference equity so it re-initializes from the NEXT WS wallet
-            # update (which reflects post-close balance). Using current buffer value
-            # would be stale (pre-close) and could re-trigger after cooldown.
-            self._ws_buffer.pop("_emergency_ref_equity", None)
-            # Cooldown: suppress equity-drop re-trigger for 30s
-            self._emergency_cooldown_until = time.monotonic() + 30.0
-        return True
+            if actually_closed:
+                # Record per-symbol cooldown for velocity triggers
+                now_mono = time.monotonic()
+                for s in close_symbols:
+                    self._emergency_closed_symbols[s] = now_mono
+                # Prune stale entries
+                if len(self._emergency_closed_symbols) > 50:
+                    cutoff = now_mono - 60.0
+                    self._emergency_closed_symbols = {k: v for k, v in self._emergency_closed_symbols.items() if v > cutoff}
+                # Clear reference equity so it re-initializes from the NEXT WS wallet
+                # update (which reflects post-close balance). Using current buffer value
+                # would be stale (pre-close) and could re-trigger after cooldown.
+                self._ws_buffer.pop("_emergency_ref_equity", None)
+                # Cooldown: suppress equity-drop re-trigger for 30s
+                self._emergency_cooldown_until = time.monotonic() + 30.0
+        # Persist state to DB for restart recovery
+        if actually_closed:
+            await self._persist_emergency_state()
+        return actually_closed
 
-    async def _execute_emergency_batch_close(self, symbols: list, reason: str) -> None:
-        """Close multiple positions immediately — no LLM, no confidence, no cooldown."""
+    async def _execute_emergency_batch_close(self, symbols: list, reason: str) -> bool:
+        """Close multiple positions immediately — no LLM, no confidence, no cooldown.
+
+        Returns True if positions were actually closed."""
         # Capture UPnL BEFORE close — WS events may remove positions from buffer during await
         symbol_set = set(symbols)
         pre_close_positions = self._ws_buffer.get("positions") or []
-        estimated_upnl = sum(
-            float(p.get("unrealisedPnl", p.get("unrealized_pnl", 0)) or 0)
-            for p in pre_close_positions if p.get("symbol") in symbol_set
-        )
+        estimated_upnl = 0.0
+        for p in pre_close_positions:
+            if p.get("symbol") in symbol_set:
+                try:
+                    estimated_upnl += float(p.get("unrealisedPnl", p.get("unrealized_pnl", 0)) or 0)
+                except (ValueError, TypeError):
+                    pass
 
         try:
             close_result = await asyncio.wait_for(
@@ -782,7 +797,7 @@ class AIManagerTask:
                     "Emergency batch close SKIPPED for %s (concurrent close in progress), reason=%s",
                     self._account_id, reason,
                 )
-                return
+                return False
             closed = close_result.get("closed", 0)
             logger.info(
                 "Emergency batch close completed for %s: closed=%d, reason=%s",
@@ -828,11 +843,84 @@ class AIManagerTask:
                     self._account_id, decision_data,
                     self._service._hmac_key or "emergency",
                 )
+            return True
         except Exception:
             logger.exception("Emergency batch close FAILED for %s", self._account_id)
+            return False
 
     async def _update_heartbeat(self) -> None:
         try:
             await self._service._repo.update_heartbeat(self._account_id)
         except Exception:
             logger.warning("Heartbeat update failed for %s", self._account_id)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Emergency state persistence (survives restart)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _restore_emergency_state(self, state: dict) -> None:
+        """Restore emergency close state from DB after restart."""
+        ref_equity = state.get("emergency_ref_equity")
+        if ref_equity is not None:
+            self._ws_buffer["_emergency_ref_equity"] = float(ref_equity)
+
+        cooldown_until = state.get("emergency_cooldown_until")
+        if cooldown_until is not None:
+            if isinstance(cooldown_until, str):
+                cooldown_until = datetime.fromisoformat(cooldown_until.replace("Z", "+00:00"))
+            if cooldown_until.tzinfo is None:
+                cooldown_until = cooldown_until.replace(tzinfo=timezone.utc)
+            remaining = (cooldown_until - datetime.now(timezone.utc)).total_seconds()
+            if remaining > 0:
+                self._emergency_cooldown_until = time.monotonic() + remaining
+
+        closed_symbols = state.get("emergency_closed_symbols")
+        if closed_symbols:
+            if isinstance(closed_symbols, str):
+                closed_symbols = json.loads(closed_symbols)
+            now_mono = time.monotonic()
+            now_utc = datetime.now(timezone.utc)
+            for sym, ts_str in closed_symbols.items():
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                age_s = (now_utc - ts).total_seconds()
+                if age_s < 30.0:
+                    self._emergency_closed_symbols[sym] = now_mono - age_s
+
+    async def _persist_emergency_state(self) -> None:
+        """Write emergency close state to DB for restart recovery."""
+        now_utc = datetime.now(timezone.utc)
+        now_mono = time.monotonic()
+
+        ref_eq = self._ws_buffer.get("_emergency_ref_equity")
+
+        cooldown_until = None
+        remaining = self._emergency_cooldown_until - now_mono
+        if remaining > 0:
+            cooldown_until = now_utc + timedelta(seconds=remaining)
+
+        symbols_json: dict = {}
+        for sym, mono_ts in self._emergency_closed_symbols.items():
+            age = now_mono - mono_ts
+            if age < 30.0:
+                symbols_json[sym] = (now_utc - timedelta(seconds=age)).isoformat()
+
+        try:
+            await self._service._repo.upsert_state(
+                self._account_id,
+                emergency_ref_equity=ref_eq,
+                emergency_cooldown_until=cooldown_until,
+                emergency_closed_symbols=json.dumps(symbols_json),
+            )
+        except Exception:
+            logger.warning("Failed to persist emergency state for %s", self._account_id)
+
+    async def _persist_ref_equity(self, value: float) -> None:
+        """Persist reference equity ratchet to DB (fire-and-forget)."""
+        try:
+            await self._service._repo.upsert_state(
+                self._account_id, emergency_ref_equity=value,
+            )
+        except Exception:
+            pass

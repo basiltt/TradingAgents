@@ -247,6 +247,11 @@ CREATE INDEX IF NOT EXISTS idx_ai_state_orphan ON ai_manager_state (fsm_state, h
 CREATE INDEX IF NOT EXISTS idx_ai_state_enabled ON ai_manager_state (enabled) WHERE enabled = TRUE
     """)
 
+    # Emergency close state persistence (added for restart recovery)
+    await conn.execute("ALTER TABLE ai_manager_state ADD COLUMN IF NOT EXISTS emergency_ref_equity NUMERIC(18,8)")
+    await conn.execute("ALTER TABLE ai_manager_state ADD COLUMN IF NOT EXISTS emergency_cooldown_until TIMESTAMPTZ")
+    await conn.execute("ALTER TABLE ai_manager_state ADD COLUMN IF NOT EXISTS emergency_closed_symbols JSONB DEFAULT '{}'")
+
     await conn.execute("""
 CREATE TABLE IF NOT EXISTS ai_manager_decisions (
     id BIGSERIAL,

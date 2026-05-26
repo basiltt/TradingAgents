@@ -37,6 +37,7 @@ class AIManagerRepository:
         "realized_profit_today", "token_budget_used_today", "last_analysis_at", "last_action_at",
         "heartbeat_at", "counters_reset_at", "hourly_reset_at",
         "kill_switch_active", "strategy_version", "updated_at",
+        "emergency_ref_equity", "emergency_cooldown_until", "emergency_closed_symbols",
     })
 
     async def upsert_state(self, account_id: str, **fields) -> Dict[str, Any]:

@@ -200,7 +200,11 @@ class AIAccountManagerService:
             task = self._tasks.pop(account_id, None)
             if task:
                 task.cancel()
-            await self._repo.upsert_state(account_id, enabled=False, fsm_state="sleeping")
+            await self._repo.upsert_state(
+                account_id, enabled=False, fsm_state="sleeping",
+                emergency_ref_equity=None, emergency_cooldown_until=None,
+                emergency_closed_symbols="{}",
+            )
             await self._lock_registry.cleanup_account(account_id, force=True)
         self._account_locks.pop(account_id, None)
 
@@ -384,6 +388,7 @@ class AIAccountManagerService:
             config=config,
             compiled_graph=self._compiled_graph,
         )
+        task._restore_emergency_state(state)
         self._tasks[account_id] = task
         task.start()
 
