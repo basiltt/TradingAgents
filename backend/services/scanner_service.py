@@ -314,12 +314,13 @@ class ScannerBusyError(Exception):
 class ScannerService:
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
         self._accounts = accounts_service
         self._close_svc = close_positions_service
+        self._ai_manager_service = ai_manager_service
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -366,7 +367,7 @@ class ScannerService:
         # Initialize auto-trade executor if configs provided
         auto_configs = config.get("auto_trade_configs")
         if auto_configs and self._accounts:
-            executor = AutoTradeExecutor(self._accounts, self._close_svc)
+            executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service)
             executor.init_configs(auto_configs)
             await executor.init_balances()
             scan["auto_trade_executor"] = executor
@@ -522,7 +523,7 @@ class ScannerService:
             # Restore auto-trade executor on resume — use prior results to restore trade counters
             auto_configs = config.get("auto_trade_configs")
             if auto_configs and self._accounts:
-                executor = AutoTradeExecutor(self._accounts, self._close_svc)
+                executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service)
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB
                 prior_auto_results = (db_results or {}).get("auto_trade_results", [])

@@ -216,6 +216,7 @@ export interface AutoTradeConfig {
   close_on_profit_pct?: number | null;
   breakeven_timeout_hours?: number | null;
   max_trade_duration_hours?: number | null;
+  ai_manager_enabled?: boolean;
 }
 
 export interface ScanRequest {

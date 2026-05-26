@@ -29,11 +29,13 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any, close_positions_service: Any = None):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None):
         self._accounts = accounts_service
         self._close_svc = close_positions_service
+        self._ai_manager_service = ai_manager_service
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
+        self._ai_manager_enabled_accounts: set = set()
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
         self._state.clear()
@@ -864,6 +866,19 @@ class AutoTradeExecutor:
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
             })
+
+            # Enable AI Manager for this account if configured
+            if cfg.get("ai_manager_enabled") and account_id not in self._ai_manager_enabled_accounts:
+                self._ai_manager_enabled_accounts.add(account_id)
+                if self._ai_manager_service:
+                    try:
+                        await self._ai_manager_service.enable(account_id)
+                        logger.info("ai_manager_auto_enabled", extra={"account_id": account_id})
+                    except Exception as e:
+                        logger.warning("ai_manager_auto_enable_failed", extra={
+                            "account_id": account_id, "error": str(e)[:200],
+                        })
+
             return execution
 
         except Exception as e:
