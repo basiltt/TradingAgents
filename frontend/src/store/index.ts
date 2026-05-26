@@ -6,6 +6,7 @@ import { uiSlice } from "./ui-slice";
 import accountsReducer from "./accounts-slice";
 import strategiesReducer from "./strategies-slice";
 import tradesReducer from "./trades-slice";
+import aiManagerReducer from "./ai-manager-slice";
 
 export const store = configureStore({
   reducer: {
@@ -15,6 +16,7 @@ export const store = configureStore({
     accounts: accountsReducer,
     strategies: strategiesReducer,
     trades: tradesReducer,
+    aiManager: aiManagerReducer,
   },
 });
 

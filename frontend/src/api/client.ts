@@ -1307,3 +1307,45 @@ export const tradesApi = {
       signal,
     ),
 };
+
+export const aiManagerApi = {
+  enable: (accountId: string) =>
+    mutate<{ status: string; account_id: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/enable`),
+
+  disable: (accountId: string) =>
+    mutate<{ status: string; account_id: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/disable`),
+
+  getStatus: (accountId: string, signal?: AbortSignal) =>
+    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/status`, undefined, signal),
+
+  patchConfig: (accountId: string, updates: Record<string, unknown>) =>
+    mutate<{ status: string }>("PATCH", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, updates),
+
+  pause: (accountId: string) =>
+    mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/pause`),
+
+  resume: (accountId: string) =>
+    mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/resume`),
+
+  kill: (accountId: string) =>
+    mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/kill`),
+
+  resetKill: (accountId: string) =>
+    mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/kill/reset`),
+
+  getDecisions: (accountId: string, params?: { limit?: number; cursor?: string }) => {
+    const sp = new URLSearchParams();
+    if (params?.limit) sp.set("limit", String(params.limit));
+    if (params?.cursor) sp.set("cursor", params.cursor);
+    const qs = sp.toString();
+    return request<{ decisions: unknown[]; next_cursor: string | null }>(
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/decisions${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getPerformance: (accountId: string, period = "7d") =>
+    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${period}`),
+
+  globalKill: () =>
+    mutate<{ status: string }>("POST", "/api/v1/ai-manager/global-kill"),
+};
