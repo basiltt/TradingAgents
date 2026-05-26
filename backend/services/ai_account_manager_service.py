@@ -54,6 +54,7 @@ class AIAccountManagerService:
         self._singleton_conn = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
+        self._llm_callable = None  # Set externally: async (system_prompt, context_prompt) -> str
         self._pattern_llm_callable = None  # Set externally when LLM provider is configured
         self._memory = None
         try:

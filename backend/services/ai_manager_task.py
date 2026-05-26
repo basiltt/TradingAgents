@@ -526,6 +526,7 @@ class AIManagerTask:
             "ws_snapshot": copy.deepcopy(self._ws_buffer),
             "market_data": {},
             "_evaluator": self._evaluator,
+            "_llm_callable": self._service._llm_callable,
             "episodic_memory": episodic,
             "patterns": patterns,
             "decision_count": decision_count,
