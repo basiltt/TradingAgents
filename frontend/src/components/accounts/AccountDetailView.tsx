@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { accountsApi, type WalletBalance, type Position, type OpenOrder, type PnlSummary } from "@/api/client";
 import { NeuTabs } from "@/design-system/neumorphism";
@@ -7,7 +7,10 @@ import { PositionsTable } from "./PositionsTable";
 import { OrdersTable } from "./OrdersTable";
 import { PnLPanel } from "./PnLPanel";
 import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
-import { useAppDispatch } from "@/store";
+import { useAppDispatch, useAppSelector } from "@/store";
+import type { RootState } from "@/store";
+import { fetchAIManagerStatus } from "@/store/ai-manager-slice";
+import { AIMonitorPanel } from "./AIMonitorPanel";
 import { removeAccount } from "@/store/accounts-slice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -28,6 +31,7 @@ interface AccountDetailViewProps {
 export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
+  const status = useAppSelector((s: RootState) => s.aiManager.statusByAccount[accountId]);
   const [wallet, setWallet] = useState<WalletBalance | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<OpenOrder[]>([]);
@@ -42,6 +46,18 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   const [credSecret, setCredSecret] = useState("");
   const [credSaving, setCredSaving] = useState(false);
   const [credError, setCredError] = useState<string | null>(null);
+
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; });
+
+  useEffect(() => {
+    dispatch(fetchAIManagerStatus(accountId));
+    // Retry after 5s in case backend is still starting up the AI manager task
+    const retryTimer = setTimeout(() => {
+      if (!statusRef.current) dispatch(fetchAIManagerStatus(accountId));
+    }, 5000);
+    return () => clearTimeout(retryTimer);
+  }, [dispatch, accountId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -385,6 +401,24 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
           { value: "orders", label: <>Orders{orders.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_15%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold tabular-nums">{orders.length}</span>}</>, content: <OrdersTable orders={orders} /> },
           { value: "pnl", label: "PnL", content: <PnLPanel pnlSummary={pnlSummary} accountId={accountId} /> },
           { value: "analytics", label: "Analytics", content: <AnalyticsDashboard accountId={accountId} embedded /> },
+          {
+            value: "ai-monitor",
+            label: (
+              <div className="flex items-center gap-1.5">
+                <span>AI Monitor</span>
+                {status?.enabled && (
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    status.state === "monitoring" ? "bg-blue-400 animate-pulse" :
+                    status.state === "executing" ? "bg-green-400 animate-pulse" :
+                    status.state === "analyzing" ? "bg-yellow-400 animate-pulse" :
+                    status.state === "paused" ? "bg-orange-400" :
+                    "bg-muted-foreground/30"
+                  }`} />
+                )}
+              </div>
+            ),
+            content: <AIMonitorPanel accountId={accountId} />
+          },
         ]}
       />
 

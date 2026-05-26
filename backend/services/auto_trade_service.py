@@ -873,7 +873,16 @@ class AutoTradeExecutor:
                 if self._ai_manager_service:
                     try:
                         from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
-                        await self._ai_manager_service.enable(account_id, _AIMConfig())
+                        # Preserve any existing config — only use defaults if no config exists yet
+                        existing_config = None
+                        try:
+                            existing_dict = await self._ai_manager_service.get_config(account_id)
+                            existing_config = _AIMConfig(**existing_dict)
+                        except Exception:
+                            pass
+                        config_to_use = existing_config or _AIMConfig()
+                        config_to_use.auto_enabled = True
+                        await self._ai_manager_service.enable(account_id, config_to_use)
                         logger.info("ai_manager_auto_enabled", extra={"account_id": account_id})
                     except Exception as e:
                         logger.warning("ai_manager_auto_enable_failed", extra={

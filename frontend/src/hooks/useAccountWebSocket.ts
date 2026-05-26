@@ -3,7 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAppDispatch } from "@/store";
 import { updateCardRealtime, handleCloseExecution, setDashboard } from "@/store/accounts-slice";
-import { onStateChange as onAIStateChange, onExecution as onAIExecution } from "@/store/ai-manager-slice";
+import {
+  onStateChange as onAIStateChange,
+  onExecution as onAIExecution,
+  fetchAIManagerStatus,
+  fetchDecisions,
+} from "@/store/ai-manager-slice";
 import type { Trade } from "@/components/trades/types";
 import {
   addActiveTrade,
@@ -138,10 +143,19 @@ export function useAccountWebSocket() {
         toast.error(`Close failed: ${(msg.error_message as string) || "unknown error"}`);
       }
       if (msg.type === "ai_manager.state_change" && msg.account_id) {
+        const accountId = msg.account_id as string;
         dispatch(onAIStateChange(msg as unknown as { account_id: string; state: string; enabled: boolean }));
+        dispatch(fetchAIManagerStatus(accountId));
       }
       if (msg.type === "ai_manager.execution" && msg.account_id) {
+        const accountId = msg.account_id as string;
         dispatch(onAIExecution(msg as unknown as { account_id: string; action: string; symbol: string; pnl: number }));
+        dispatch(fetchAIManagerStatus(accountId));
+        // Refresh decisions to show the newly recorded decision; limit=15 matches panel default
+        dispatch(fetchDecisions({ accountId, limit: 15 }));
+        // Note: fetchPerformance is intentionally not called here because we don't know
+        // the user's selected period (1d/7d/30d). The AIMonitorPanel polls status every 30s
+        // and the user can switch periods manually.
       }
     };
 

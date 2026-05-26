@@ -225,7 +225,7 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
               {card.account_type}
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
             {card.ai_manager_state && (
               <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 whitespace-nowrap shrink-0 ${
                 card.ai_manager_state === "sleeping"

@@ -6,7 +6,10 @@ Orchestrates per-account AI manager tasks, health sweeps, and lifecycle manageme
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
+import time as _time
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig, AIManagerStatus
@@ -210,12 +213,17 @@ class AIAccountManagerService:
     async def enable(self, account_id: str, config: AIManagerConfig) -> None:
         lock = self._get_account_lock(account_id)
         async with lock:
-            if account_id in self._tasks:
-                task = self._tasks[account_id]
-                if getattr(task._config, "auto_enabled", False) != config.auto_enabled:
+            existing_task = self._tasks.get(account_id)
+            if existing_task and not existing_task.is_dead():
+                # Task is alive — just sync config if it changed
+                if getattr(existing_task._config, "auto_enabled", False) != config.auto_enabled:
                     await self._repo.sync_config_columns(account_id, config.model_dump())
-                    task.reload_config(config)
+                    existing_task.reload_config(config)
                 return
+            # No task or dead task — (re)spawn
+            if existing_task and existing_task.is_dead():
+                logger.info("AI Manager: respawning dead task for account %s on enable()", account_id)
+                self._tasks.pop(account_id, None)
             await self._repo.upsert_state(account_id, enabled=True, fsm_state="sleeping")
             await self._repo.sync_config_columns(account_id, config.model_dump())
             await self._spawn_task(account_id)
@@ -283,8 +291,53 @@ class AIAccountManagerService:
         # Resolve real-time FSM state from in-memory task if active
         fsm_state = state["fsm_state"]
         task = self._tasks.get(account_id)
+        
+        emergency_ref_equity = state.get("emergency_ref_equity")
+        emergency_cooldown_until = state.get("emergency_cooldown_until")
+        raw_closed_symbols = state.get("emergency_closed_symbols")
+        
         if task and not task.is_dead():
             fsm_state = task.state
+            now_mono = _time.monotonic()
+            now_utc = datetime.now(timezone.utc)
+            
+            # Get real-time ref equity
+            ws_buf = getattr(task, "_ws_buffer", None)
+            if isinstance(ws_buf, dict):
+                emergency_ref_equity = ws_buf.get("_emergency_ref_equity")
+            
+            # Get real-time cooldown
+            cooldown_val = getattr(task, "_emergency_cooldown_until", None)
+            if isinstance(cooldown_val, (int, float)):
+                remaining = cooldown_val - now_mono
+                if remaining > 0:
+                    emergency_cooldown_until = now_utc + timedelta(seconds=remaining)
+                else:
+                    emergency_cooldown_until = None
+            else:
+                emergency_cooldown_until = None
+                
+            # Get real-time closed symbols
+            closed_syms = getattr(task, "_emergency_closed_symbols", None)
+            if isinstance(closed_syms, dict):
+                symbols_json = {}
+                for sym, mono_ts in closed_syms.items():
+                    if isinstance(mono_ts, (int, float)):
+                        age = now_mono - mono_ts
+                        if age < 30.0:
+                            symbols_json[sym] = (now_utc - timedelta(seconds=age)).isoformat()
+                raw_closed_symbols = symbols_json
+
+        # Parse closed symbols
+        if isinstance(raw_closed_symbols, str):
+            try:
+                emergency_closed_symbols = _json.loads(raw_closed_symbols)
+            except Exception:
+                emergency_closed_symbols = {}
+        elif isinstance(raw_closed_symbols, dict):
+            emergency_closed_symbols = raw_closed_symbols
+        else:
+            emergency_closed_symbols = {}
 
         return AIManagerStatus(
             enabled=state["enabled"],
@@ -296,18 +349,31 @@ class AIAccountManagerService:
             },
             actions_today=state.get("actions_today", 0),
             budget_remaining={
-                "actions": state.get("max_daily_actions", 30) - state.get("actions_today", 0),
-                "tokens": MAX_DAILY_TOKEN_BUDGET - state.get("token_budget_used_today", 0),
+                "actions": max(0, state.get("max_daily_actions", 30) - state.get("actions_today", 0)),
+                "tokens": max(0, MAX_DAILY_TOKEN_BUDGET - state.get("token_budget_used_today", 0)),
             },
             degradation_tier=self._degradation.get_tier(),
             kill_switch=state.get("kill_switch_active", False),
+            emergency_ref_equity=emergency_ref_equity,
+            emergency_cooldown_until=emergency_cooldown_until,
+            emergency_closed_symbols=emergency_closed_symbols,
         )
 
     async def reset_kill_switch(self, account_id: str) -> None:
         await self._repo.set_kill_switch(account_id, False)
-        task = self._tasks.get(account_id)
-        if task:
-            task._killed = False
+        lock = self._get_account_lock(account_id)
+        async with lock:
+            task = self._tasks.get(account_id)
+            if task:
+                task._killed = False
+                # If the underlying asyncio task was cancelled by set_killed(), respawn immediately
+                if task.is_dead():
+                    logger.info("AI Manager: respawning dead task for account %s after kill switch reset", account_id)
+                    self._tasks.pop(account_id, None)
+                    await self._spawn_task(account_id)
+            else:
+                # No task at all — spawn one (DB row is enabled since set_kill_switch doesn't set enabled=False)
+                await self._spawn_task(account_id)
 
     async def get_config(self, account_id: str) -> dict:
         state = await self._repo.get_state(account_id)
@@ -418,7 +484,6 @@ class AIAccountManagerService:
                 enabled_accounts_in_schedules = set()
                 for row in rows:
                     try:
-                        import json as _json
                         scan_config = row["scan_config"]
                         if isinstance(scan_config, str):
                             scan_config = _json.loads(scan_config)
@@ -433,27 +498,29 @@ class AIAccountManagerService:
                 
                 # 1. Enable and spawn tasks for accounts enabled in schedules
                 for account_id in enabled_accounts_in_schedules:
-                    if account_id not in self._tasks:
-                        config = None
-                        try:
-                            existing_config = await self.get_config(account_id)
-                            from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
-                            config = _AIMConfig(**existing_config)
-                        except Exception:
-                            pass
-                        if not config:
-                            from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
-                            config = _AIMConfig()
-                        
-                        config.auto_enabled = True
-                        logger.info("Auto-starting AI manager for account %s due to scheduled scan setting", account_id)
-                        await self.enable(account_id, config)
+                    existing_task = self._tasks.get(account_id)
+                    # Skip if there's already a healthy running task
+                    if existing_task and not existing_task.is_dead():
+                        continue
+                    config = None
+                    try:
+                        existing_config = await self.get_config(account_id)
+                        from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+                        config = _AIMConfig(**existing_config)
+                    except Exception:
+                        pass
+                    if not config:
+                        from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+                        config = _AIMConfig()
+                    
+                    config.auto_enabled = True
+                    logger.info("Auto-starting AI manager for account %s due to scheduled scan setting", account_id)
+                    await self.enable(account_id, config)
 
-                # 2. Disable tasks for accounts that were auto-started but are no longer in any active schedules
-                db_enabled_rows = await self._repo.get_enabled_accounts()
-                currently_enabled = set(self._tasks.keys()) | {r["account_id"] for r in db_enabled_rows}
-
-                for account_id in currently_enabled:
+                # 2. Disable tasks for accounts that were auto-started but are no longer in any active schedules.
+                # Only consider accounts currently running in memory to avoid touching manually-enabled accounts
+                # that may not have spawned tasks yet (e.g. still in DB-only state from a prior restart).
+                for account_id in list(self._tasks.keys()):
                     if account_id not in enabled_accounts_in_schedules:
                         config = None
                         try:
@@ -463,6 +530,7 @@ class AIAccountManagerService:
                         except Exception:
                             pass
                         
+                        # Only auto-disable accounts that were auto-started (not manually enabled by user)
                         if config and config.auto_enabled:
                             logger.info(
                                 "Auto-disabling AI manager for account %s (auto-started but no longer in active schedules)",

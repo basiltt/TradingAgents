@@ -73,26 +73,54 @@ class AIManagerTask:
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name=f"ai-mgr-{self._account_id}")
 
+    def transition_to(self, new_state: str) -> None:
+        if self._state == new_state:
+            return
+        old_state = self._state
+        self._state = new_state
+        logger.info("AI Manager task %s transitioning state: %s -> %s", self._account_id, old_state, new_state)
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(self._persist_and_emit_state())
+        except RuntimeError:
+            pass
+
+    async def _persist_and_emit_state(self) -> None:
+        try:
+            if self._service and self._service._repo:
+                await self._service._repo.upsert_state(self._account_id, fsm_state=self._state)
+        except Exception:
+            logger.warning("Failed to persist state transition to %s in DB for %s", self._state, self._account_id)
+        try:
+            if self._service:
+                await self._service.emit_event(self._account_id, "state_change", {
+                    "account_id": self._account_id, "state": self._state, "enabled": True,
+                })
+        except Exception:
+            pass
+
     def cancel(self) -> None:
         self._cancel_event.set()
         if self._task and not self._task.done():
             self._task.cancel()
 
     def pause(self) -> None:
-        self._state = PAUSED
+        self.transition_to(PAUSED)
         self._pause_event.set()
         self._wake_event.set()
 
     def resume(self) -> None:
         if self._has_open_positions(self._ws_buffer):
-            self._state = MONITORING
+            self.transition_to(MONITORING)
         else:
-            self._state = SLEEPING
+            self.transition_to(SLEEPING)
         self._pause_event.clear()
         self._wake_event.set()
 
     def set_killed(self) -> None:
         self._killed = True
+        self.transition_to(ERROR)
         self._cancel_event.set()
 
     def reload_config(self, config: AIManagerConfig) -> None:

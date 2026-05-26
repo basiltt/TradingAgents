@@ -11,6 +11,9 @@ export interface AIManagerStatus {
   budget_remaining: { actions: number; tokens: number };
   degradation_tier: number;
   kill_switch: boolean;
+  emergency_ref_equity?: number | null;
+  emergency_cooldown_until?: string | null;
+  emergency_closed_symbols?: Record<string, string> | null;
 }
 
 export interface AIManagerDecision {
@@ -99,8 +102,15 @@ export const patchAIManagerConfig = createAsyncThunk(
 export const fetchConfig = createAsyncThunk(
   "aiManager/fetchConfig",
   async (accountId: string) => {
-    const data = await aiManagerApi.getConfig(accountId);
-    return { accountId, data };
+    try {
+      const data = await aiManagerApi.getConfig(accountId);
+      return { accountId, data };
+    } catch (e: unknown) {
+      if (e && typeof e === "object" && "status" in e && (e as { status: number }).status === 404) {
+        return { accountId, data: null };
+      }
+      throw e;
+    }
   },
 );
 
@@ -167,8 +177,22 @@ const aiManagerSlice = createSlice({
       const { account_id, state: fsmState, enabled } = action.payload;
       const existing = state.statusByAccount[account_id];
       if (existing) {
-        existing.state = fsmState;
+        existing.state = enabled ? fsmState : "sleeping";
         existing.enabled = enabled;
+      }
+      // If not yet in store, create a stub so the UI reflects the state immediately
+      // before the fetchAIManagerStatus call completes
+      if (!existing && enabled) {
+        state.statusByAccount[account_id] = {
+          enabled: true,
+          state: fsmState,
+          last_analysis_at: null,
+          circuit_breaker: { count: 0, active: false },
+          actions_today: 0,
+          budget_remaining: { actions: 30, tokens: 100000 },
+          degradation_tier: 0,
+          kill_switch: false,
+        };
       }
     },
     onExecution(state, action: PayloadAction<{ account_id: string; action: string; symbol: string; pnl: number }>) {
@@ -217,10 +241,10 @@ const aiManagerSlice = createSlice({
             last_analysis_at: null,
             circuit_breaker: { count: 0, active: false },
             actions_today: 0,
-            budget_remaining: { actions: 30 },
+            budget_remaining: { actions: 30, tokens: 100000 },
             degradation_tier: 0,
             kill_switch: false,
-          } as any;
+          } as AIManagerStatus;
         }
       })
       .addCase(enableAIManager.rejected, setError("enable"))
@@ -272,7 +296,7 @@ const aiManagerSlice = createSlice({
       .addCase(fetchConfig.pending, setLoading("fetchConfig"))
       .addCase(fetchConfig.fulfilled, (state, action) => {
         state.loading["fetchConfig"] = false;
-        state.configByAccount[action.payload.accountId] = action.payload.data;
+        state.configByAccount[action.payload.accountId] = action.payload.data ?? null;
       })
       .addCase(fetchConfig.rejected, setError("fetchConfig"))
 

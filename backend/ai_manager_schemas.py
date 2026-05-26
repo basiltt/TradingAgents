@@ -65,6 +65,9 @@ class AIManagerStatus(BaseModel):
     budget_remaining: dict
     degradation_tier: int
     kill_switch: bool
+    emergency_ref_equity: Optional[float] = None
+    emergency_cooldown_until: Optional[datetime] = None
+    emergency_closed_symbols: Optional[dict] = None
 
 
 class AIManagerDecisionResponse(BaseModel):

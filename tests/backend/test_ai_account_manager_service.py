@@ -326,3 +326,35 @@ async def test_spawn_task_loads_circuit_breaker_state(service, mock_repo):
         await service._spawn_task("acc-1")
         
         service._circuit_breaker.load_from_db.assert_called_once_with("acc-1", 4, True)
+
+
+@pytest.mark.asyncio
+async def test_get_status_includes_emergency_metrics(service, mock_repo):
+    """get_status() returns emergency metrics from the running task if active."""
+    import time
+    from datetime import datetime, timezone
+    
+    mock_task = MagicMock()
+    mock_task.state = "monitoring"
+    mock_task.is_dead = MagicMock(return_value=False)
+    mock_task._ws_buffer = {"_emergency_ref_equity": 10500.50}
+    mock_task._emergency_cooldown_until = time.monotonic() + 10.0
+    mock_task._emergency_closed_symbols = {"SOLUSDT": time.monotonic() - 5.0}
+    
+    service._tasks["acc-1"] = mock_task
+    
+    mock_repo.get_state = AsyncMock(return_value={
+        "enabled": True,
+        "fsm_state": "monitoring",
+        "config": "{}",
+        "circuit_breaker_count": 0,
+        "circuit_breaker_active": False,
+        "emergency_ref_equity": 10000.0,
+        "emergency_cooldown_until": None,
+        "emergency_closed_symbols": "{}",
+    })
+    
+    status = await service.get_status("acc-1")
+    assert status.emergency_ref_equity == 10500.50
+    assert status.emergency_cooldown_until is not None
+    assert "SOLUSDT" in status.emergency_closed_symbols
