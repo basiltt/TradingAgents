@@ -227,6 +227,8 @@ class AIAccountManagerService:
             await self._repo.upsert_state(account_id, enabled=True, fsm_state="sleeping")
             await self._repo.sync_config_columns(account_id, config.model_dump())
             await self._spawn_task(account_id)
+            source = "auto" if config.auto_enabled else "manual"
+            await self._repo.insert_log(account_id, "info", "lifecycle", f"AI Manager enabled ({source})")
 
     async def disable(self, account_id: str) -> None:
         lock = self._get_account_lock(account_id)
@@ -240,6 +242,7 @@ class AIAccountManagerService:
                 emergency_closed_symbols="{}",
             )
             await self._lock_registry.cleanup_account(account_id, force=True)
+            await self._repo.insert_log(account_id, "info", "lifecycle", "AI Manager disabled")
         self._account_locks.pop(account_id, None)
 
     async def pause(self, account_id: str, duration_hours: Optional[float] = None) -> None:
@@ -248,7 +251,9 @@ class AIAccountManagerService:
             task = self._tasks.get(account_id)
             if task:
                 task.pause()
-            await self._repo.upsert_state(account_id, fsm_state="paused")
+            else:
+                # No task running — persist directly
+                await self._repo.upsert_state(account_id, fsm_state="paused")
 
     async def resume(self, account_id: str) -> None:
         lock = self._get_account_lock(account_id)
@@ -256,7 +261,6 @@ class AIAccountManagerService:
             task = self._tasks.get(account_id)
             if task:
                 task.resume()
-                await self._repo.upsert_state(account_id, fsm_state=task.state)
             else:
                 await self._repo.upsert_state(account_id, fsm_state="sleeping")
 
@@ -339,6 +343,92 @@ class AIAccountManagerService:
         else:
             emergency_closed_symbols = {}
 
+        # --- Build runtime telemetry ---
+        # Daily P&L
+        equity_at_start = state.get("equity_at_day_start")
+        realized_profit = float(state.get("realized_profit_today", 0) or 0)
+        realized_loss = float(state.get("realized_loss_today", 0) or 0)
+        net_daily = realized_profit - realized_loss
+        # Config values from JSONB
+        raw_config = state.get("config") or {}
+        if isinstance(raw_config, str):
+            raw_config = _json.loads(raw_config)
+        max_daily_loss_pct = float(raw_config.get("max_daily_loss_pct") or 5.0)
+        daily_profit_target_pct = raw_config.get("daily_profit_target_pct")
+
+        daily_pnl_data = {
+            "equity_at_start": float(equity_at_start) if equity_at_start else None,
+            "realized_profit": realized_profit,
+            "realized_loss": realized_loss,
+            "net_pnl": net_daily,
+            "loss_pct_used": None,
+            "profit_target_progress": None,
+        }
+        if equity_at_start and float(equity_at_start) > 0:
+            daily_pnl_data["loss_pct_used"] = round(
+                (realized_loss / float(equity_at_start)) * 100 / max_daily_loss_pct * 100, 1
+            )
+            if daily_profit_target_pct and float(daily_profit_target_pct) > 0:
+                target_val = float(daily_profit_target_pct) * float(equity_at_start) / 100
+                daily_pnl_data["profit_target_progress"] = round(
+                    min(realized_profit / target_val * 100, 100), 1
+                ) if target_val > 0 else None
+
+        # Token budget
+        token_used = int(state.get("token_budget_used_today", 0) or 0)
+        token_budget_data = {
+            "used": token_used,
+            "max": MAX_DAILY_TOKEN_BUDGET,
+            "pct": round(token_used / MAX_DAILY_TOKEN_BUDGET * 100, 1),
+        }
+
+        # Live positions & current equity from in-memory WS buffer
+        live_positions = None
+        current_equity = None
+        if task and not task.is_dead():
+            ws_buf = getattr(task, "_ws_buffer", None)
+            if isinstance(ws_buf, dict):
+                eq = ws_buf.get("equity")
+                if eq is not None:
+                    try:
+                        current_equity = float(eq)
+                    except (ValueError, TypeError):
+                        pass
+
+                positions = ws_buf.get("positions") or []
+                peak_pnl = ws_buf.get("_peak_pnl") or {}
+                now_ms = _time.time() * 1000
+                live_positions = []
+                for pos in positions:
+                    symbol = pos.get("symbol", "")
+                    if not symbol:
+                        continue
+                    upnl_raw = pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0))
+                    try:
+                        upnl = float(upnl_raw)
+                    except (ValueError, TypeError):
+                        upnl = 0.0
+                    peak_val = peak_pnl.get(symbol, upnl)
+                    drawdown = peak_val - upnl if peak_val > upnl else 0.0
+                    # Position age
+                    created_ms = pos.get("createdTime")
+                    age_s = None
+                    if created_ms:
+                        try:
+                            age_s = int((now_ms - int(created_ms)) / 1000)
+                        except (ValueError, TypeError):
+                            pass
+                    live_positions.append({
+                        "symbol": symbol,
+                        "side": pos.get("side", ""),
+                        "size": pos.get("size", "0"),
+                        "entry_price": pos.get("avgPrice", pos.get("entryPrice", "")),
+                        "current_upnl": round(upnl, 4),
+                        "peak_pnl": round(float(peak_val), 4) if peak_val is not None else 0.0,
+                        "drawdown_from_peak": round(drawdown, 4),
+                        "age_s": age_s,
+                    })
+
         return AIManagerStatus(
             enabled=state["enabled"],
             state=fsm_state,
@@ -350,13 +440,17 @@ class AIAccountManagerService:
             actions_today=state.get("actions_today", 0),
             budget_remaining={
                 "actions": max(0, state.get("max_daily_actions", 30) - state.get("actions_today", 0)),
-                "tokens": max(0, MAX_DAILY_TOKEN_BUDGET - state.get("token_budget_used_today", 0)),
+                "tokens": max(0, MAX_DAILY_TOKEN_BUDGET - token_used),
             },
             degradation_tier=self._degradation.get_tier(),
             kill_switch=state.get("kill_switch_active", False),
             emergency_ref_equity=emergency_ref_equity,
             emergency_cooldown_until=emergency_cooldown_until,
             emergency_closed_symbols=emergency_closed_symbols,
+            daily_pnl=daily_pnl_data,
+            token_budget=token_budget_data,
+            live_positions=live_positions,
+            current_equity=current_equity,
         )
 
     async def reset_kill_switch(self, account_id: str) -> None:
@@ -468,6 +562,23 @@ class AIAccountManagerService:
 
     async def get_performance(self, account_id: str, period: str = "7d") -> dict:
         return await self._repo.get_performance_metrics(account_id, period=period)
+
+    async def get_logs(
+        self, account_id: str, limit: int = 100,
+        level: str | None = None, category: str | None = None,
+        cursor_id: int | None = None,
+    ) -> dict:
+        return await self._repo.get_logs(
+            account_id, limit=limit,
+            level_filter=level, category_filter=category,
+            cursor_id=cursor_id,
+        )
+
+    async def write_log(
+        self, account_id: str, level: str, category: str, message: str,
+        details: dict | None = None,
+    ) -> None:
+        await self._repo.insert_log(account_id, level, category, message, details)
 
     async def reconcile_active_schedules(self) -> None:
         """Query active schedules and enable AI manager for accounts that have ai_manager_enabled=True."""

@@ -176,6 +176,26 @@ async def get_decisions(
     return result
 
 
+# --- Logs ---
+
+
+@router.get("/accounts/{account_id}/ai-manager/logs")
+async def get_logs(
+    request: Request,
+    account_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    level: Optional[str] = Query(default=None, pattern="^(debug|info|warning|error|critical)$"),
+    category: Optional[str] = Query(default=None),
+    cursor: Optional[int] = Query(default=None),
+):
+    await _check_rate_limit(account_id)
+    svc = _get_service(request)
+    result = await svc.get_logs(
+        account_id, limit=limit, level=level, category=category, cursor_id=cursor,
+    )
+    return result
+
+
 # --- Performance ---
 
 

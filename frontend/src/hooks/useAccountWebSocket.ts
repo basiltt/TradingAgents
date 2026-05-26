@@ -8,6 +8,7 @@ import {
   onExecution as onAIExecution,
   fetchAIManagerStatus,
   fetchDecisions,
+  fetchLogs,
 } from "@/store/ai-manager-slice";
 import type { Trade } from "@/components/trades/types";
 import {
@@ -146,6 +147,7 @@ export function useAccountWebSocket() {
         const accountId = msg.account_id as string;
         dispatch(onAIStateChange(msg as unknown as { account_id: string; state: string; enabled: boolean }));
         dispatch(fetchAIManagerStatus(accountId));
+        dispatch(fetchLogs({ accountId, limit: 50 }));
       }
       if (msg.type === "ai_manager.execution" && msg.account_id) {
         const accountId = msg.account_id as string;
@@ -153,6 +155,7 @@ export function useAccountWebSocket() {
         dispatch(fetchAIManagerStatus(accountId));
         // Refresh decisions to show the newly recorded decision; limit=15 matches panel default
         dispatch(fetchDecisions({ accountId, limit: 15 }));
+        dispatch(fetchLogs({ accountId, limit: 50 }));
         // Note: fetchPerformance is intentionally not called here because we don't know
         // the user's selected period (1d/7d/30d). The AIMonitorPanel polls status every 30s
         // and the user can switch periods manually.

@@ -73,12 +73,24 @@ class AIManagerTask:
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name=f"ai-mgr-{self._account_id}")
 
+    def _log_async(self, level: str, category: str, message: str, details: dict | None = None) -> None:
+        """Fire-and-forget log write to DB."""
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running() and self._service and self._service._repo:
+                loop.create_task(
+                    self._service._repo.insert_log(self._account_id, level, category, message, details)
+                )
+        except RuntimeError:
+            pass
+
     def transition_to(self, new_state: str) -> None:
         if self._state == new_state:
             return
         old_state = self._state
         self._state = new_state
         logger.info("AI Manager task %s transitioning state: %s -> %s", self._account_id, old_state, new_state)
+        self._log_async("info", "lifecycle", f"State transition: {old_state} → {new_state}")
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
@@ -156,7 +168,7 @@ class AIManagerTask:
             self._ws_buffer["positions"] = positions
 
         if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
-            self._state = MONITORING
+            self.transition_to(MONITORING)
             self._wake_event.set()
 
         # Emergency fast-path: check on every WS event (no debounce, no LLM)
@@ -202,13 +214,15 @@ class AIManagerTask:
                     self._update_peak_pnl(symbol, pos)
 
             logger.info("AI Manager task %s initialized state from exchange: %d position(s) found", self._account_id, len(positions))
+            self._log_async("info", "lifecycle", f"Task started, {len(positions)} open position(s) found")
             
             # Transition to MONITORING if we have open positions on startup
             if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
-                self._state = MONITORING
+                self.transition_to(MONITORING)
                 self._wake_event.set()
         except Exception:
             logger.exception("AI Manager task %s failed to initialize state from exchange", self._account_id)
+            self._log_async("error", "lifecycle", "Failed to initialize state from exchange")
 
     async def _run(self) -> None:
         try:
@@ -233,13 +247,14 @@ class AIManagerTask:
                     await self._evaluate()
                 elif self._state == ERROR:
                     await asyncio.sleep(30.0)
-                    self._state = SLEEPING
+                    self.transition_to(SLEEPING)
 
         except asyncio.CancelledError:
             pass
         except Exception:
             logger.exception("AIManagerTask %s crashed", self._account_id)
-            self._state = ERROR
+            self.transition_to(ERROR)
+            self._log_async("critical", "lifecycle", "Task crashed unexpectedly")
 
     async def _sleep_cycle(self) -> None:
         try:
@@ -272,7 +287,7 @@ class AIManagerTask:
             return
 
         if not self._has_open_positions(self._ws_buffer):
-            self._state = SLEEPING
+            self.transition_to(SLEEPING)
             return
 
         # Emergency fast-path before LLM evaluation
@@ -356,7 +371,12 @@ class AIManagerTask:
                 self._state = MONITORING
             else:
                 self._state = SLEEPING
-        asyncio.ensure_future(self._emit_state_change())
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(self._emit_state_change())
+        except RuntimeError:
+            pass
 
     async def _emit_state_change(self) -> None:
         try:
@@ -479,6 +499,7 @@ class AIManagerTask:
             budget_ok = await self._service._repo.increment_actions_atomic(self._account_id)
             if not budget_ok:
                 logger.warning("Budget exhausted for %s, skipping action", self._account_id)
+                self._log_async("warning", "budget", f"Action budget exhausted, skipping {action_type} on {symbol}", {"action": action_type, "symbol": symbol})
                 return
 
             now_utc = datetime.now(timezone.utc)
@@ -547,10 +568,12 @@ class AIManagerTask:
                     await self._service._circuit_breaker.record_outcome(
                         self._account_id, pnl, action_type
                     )
+                    self._log_async("info", "execution", f"Executed {action_type} on {symbol}, PnL: ${pnl:.2f}", {"action": action_type, "symbol": symbol, "pnl": pnl})
                     await self._service.emit_event(self._account_id, "execution", {
                         "action": action_type, "symbol": symbol, "pnl": pnl,
                     })
                 else:
+                    self._log_async("warning", "execution", f"Execution failed for {action_type} on {symbol}", {"action": action_type, "symbol": symbol})
                     await self._service.emit_event(self._account_id, "execution", {
                         "action": action_type, "symbol": symbol, "pnl": 0.0,
                         "status": "failed",
@@ -600,7 +623,7 @@ class AIManagerTask:
                 target = self._config.daily_profit_target_pct * equity_start / 100
                 if realized_profit >= target:
                     logger.info("Profit target reached for %s", self._account_id)
-                    self._state = SLEEPING
+                    self.transition_to(SLEEPING)
 
     async def _init_equity_at_day_start(self) -> Optional[float]:
         """Atomically initialize equity_at_day_start if NULL."""
@@ -865,6 +888,7 @@ class AIManagerTask:
                 "Emergency batch close completed for %s: closed=%d, reason=%s",
                 self._account_id, closed, reason,
             )
+            self._log_async("critical", "emergency", f"Emergency close: {closed} position(s) closed. Reason: {reason}", {"symbols": symbols, "closed": closed, "reason": reason})
 
             # Track realized loss for daily limit enforcement
             realized_pnl = close_result.get("realized_pnl")

@@ -68,6 +68,11 @@ class AIManagerStatus(BaseModel):
     emergency_ref_equity: Optional[float] = None
     emergency_cooldown_until: Optional[datetime] = None
     emergency_closed_symbols: Optional[dict] = None
+    # Runtime telemetry
+    daily_pnl: Optional[dict] = None
+    token_budget: Optional[dict] = None
+    live_positions: Optional[list] = None
+    current_equity: Optional[float] = None
 
 
 class AIManagerDecisionResponse(BaseModel):

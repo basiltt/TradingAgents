@@ -204,16 +204,65 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
   return (
     <>
       <div
-        className="group relative overflow-hidden rounded-[calc(var(--radius)*1.7)] border border-border/60 bg-card/72 shadow-[var(--shadow-soft)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-[var(--shadow-card-hover)] cursor-pointer"
+        className="group relative rounded-[calc(var(--radius)*1.7)] border border-border/60 bg-card/72 shadow-[var(--shadow-soft)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-[var(--shadow-card-hover)] cursor-pointer"
         onClick={() => navigate({ to: "/accounts/$accountId", params: { accountId: card.id } })}
       >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent opacity-75" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,oklch(0.72_var(--accent-chroma)_var(--accent-hue)_/_0.08),transparent_42%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+        <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent opacity-75" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,oklch(0.72_var(--accent-chroma)_var(--accent-hue)_/_0.08),transparent_42%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+        </div>
 
         {/* Header */}
-        <div className="relative flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4.5 pt-4.5 pb-2.5">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="space-y-1">
+        <div className="relative px-4.5 pt-4.5 pb-2.5">
+          {/* Kebab menu — absolute top-right */}
+          <div ref={menuRef} className="absolute top-3 right-3 z-10" onClick={(e) => e.stopPropagation()}>
+            <button
+              aria-label={`Account actions for ${card.label}`}
+              className="p-2 rounded-xl border border-transparent bg-card/55 text-muted-foreground/50 hover:border-border/60 hover:text-foreground hover:bg-card/85 transition-colors"
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-2 z-50 min-w-[220px]">
+                <div className="neu-surface-base neu-surface-raised w-full rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-2 space-y-1 shadow-[var(--neu-shadow-float)] backdrop-blur-xl animate-in fade-in slide-in-from-top-1 duration-150">
+                  <button
+                    className={cn(
+                      "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm rounded-[var(--neu-radius-sm)] border border-transparent transition-all duration-150",
+                      hasPositions
+                        ? "text-[var(--neu-danger)] hover:bg-[color:color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-raised))] hover:border-[color:color-mix(in_oklch,var(--neu-danger)_18%,var(--neu-stroke-soft))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)]"
+                        : "text-[var(--neu-text-soft)] opacity-40 cursor-not-allowed"
+                    )}
+                    disabled={!hasPositions}
+                    onClick={(e) => hasPositions && handleMenuClick(e, "close")}
+                    title={!hasPositions ? "No open positions" : undefined}
+                  >
+                    <XCircle className="w-4 h-4" />
+                    Close All Positions
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] rounded-[var(--neu-radius-sm)] border border-transparent hover:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] hover:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)] transition-all duration-150"
+                    onClick={(e) => handleMenuClick(e, "rules")}
+                  >
+                    <SlidersHorizontal className="w-4 h-4" />
+                    Conditional Rules
+                  </button>
+                  <button
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] rounded-[var(--neu-radius-sm)] border border-transparent hover:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] hover:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)] transition-all duration-150"
+                    onClick={(e) => handleMenuClick(e, "history")}
+                  >
+                    <History className="w-4 h-4" />
+                    View History
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Title row */}
+          <div className="flex items-center gap-2.5 min-w-0 pr-10">
+            <div className="space-y-1 min-w-0">
               <p className="section-eyebrow">Trading account</p>
               <h3 className="font-semibold text-sm truncate">{card.label}</h3>
             </div>
@@ -225,7 +274,9 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
               {card.account_type}
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+
+          {/* Badges row */}
+          <div className="flex flex-wrap items-center gap-1.5 mt-2 pr-10">
             {card.ai_manager_state && (
               <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1 whitespace-nowrap shrink-0 ${
                 card.ai_manager_state === "sleeping"
@@ -252,52 +303,6 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
             )}
             <StatusDot status={card.status} />
             <span className="text-[11px] font-medium capitalize text-muted-foreground whitespace-nowrap shrink-0">{card.status}</span>
-
-            {/* Kebab menu */}
-            <div ref={menuRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-              <button
-                aria-label={`Account actions for ${card.label}`}
-                className="p-2 rounded-xl border border-transparent bg-card/55 text-muted-foreground/50 hover:border-border/60 hover:text-foreground hover:bg-card/85 transition-colors"
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </button>
-
-              {menuOpen && (
-                <div className="absolute right-0 top-full mt-2 z-50 min-w-[220px]">
-                  <div className="neu-surface-base neu-surface-raised w-full rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-2 space-y-1 shadow-[var(--neu-shadow-float)] backdrop-blur-xl animate-in fade-in slide-in-from-top-1 duration-150">
-                    <button
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm rounded-[var(--neu-radius-sm)] border border-transparent transition-all duration-150",
-                        hasPositions
-                          ? "text-[var(--neu-danger)] hover:bg-[color:color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-raised))] hover:border-[color:color-mix(in_oklch,var(--neu-danger)_18%,var(--neu-stroke-soft))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)]"
-                          : "text-[var(--neu-text-soft)] opacity-40 cursor-not-allowed"
-                      )}
-                      disabled={!hasPositions}
-                      onClick={(e) => hasPositions && handleMenuClick(e, "close")}
-                      title={!hasPositions ? "No open positions" : undefined}
-                    >
-                      <XCircle className="w-4 h-4" />
-                      Close All Positions
-                    </button>
-                    <button
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] rounded-[var(--neu-radius-sm)] border border-transparent hover:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] hover:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)] transition-all duration-150"
-                      onClick={(e) => handleMenuClick(e, "rules")}
-                    >
-                      <SlidersHorizontal className="w-4 h-4" />
-                      Conditional Rules
-                    </button>
-                    <button
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] rounded-[var(--neu-radius-sm)] border border-transparent hover:border-[color:color-mix(in_oklch,var(--neu-accent)_18%,var(--neu-stroke-soft))] hover:bg-[color:color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-raised))] hover:shadow-[var(--neu-shadow-pill)] active:shadow-[var(--neu-shadow-inset)] transition-all duration-150"
-                      onClick={(e) => handleMenuClick(e, "history")}
-                    >
-                      <History className="w-4 h-4" />
-                      View History
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
 

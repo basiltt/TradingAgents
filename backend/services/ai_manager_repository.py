@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -532,4 +533,93 @@ class AIManagerRepository:
             "gross_loss": gross_loss,
             "net_pnl": round(gross_profit - gross_loss, 8),
             "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else None,
+        }
+
+    # ─── Logs ──────────────────────────────────────────────────────────────
+
+    async def insert_log(
+        self,
+        account_id: str,
+        level: str,
+        category: str,
+        message: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert a structured log entry for an AI-managed account."""
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO ai_manager_logs (account_id, level, category, message, details)
+                       VALUES ($1, $2, $3, $4, $5::jsonb)""",
+                    account_id,
+                    level,
+                    category,
+                    message,
+                    json.dumps(details) if details else None,
+                )
+                # Probabilistic retention: ~2% of inserts trigger cleanup to cap at 1000 rows/account
+                if random.random() < 0.02:
+                    await conn.execute(
+                        """DELETE FROM ai_manager_logs WHERE account_id = $1 AND id NOT IN (
+                            SELECT id FROM ai_manager_logs WHERE account_id = $1 ORDER BY id DESC LIMIT 1000
+                        )""",
+                        account_id,
+                    )
+        except Exception:
+            logger.debug("Failed to insert AI manager log for %s", account_id)
+
+    async def get_logs(
+        self,
+        account_id: str,
+        limit: int = 100,
+        level_filter: Optional[str] = None,
+        category_filter: Optional[str] = None,
+        cursor_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Get paginated logs for an account, newest first."""
+        conditions = ["account_id = $1"]
+        params: list = [account_id]
+        idx = 2
+
+        if level_filter:
+            conditions.append(f"level = ${idx}")
+            params.append(level_filter)
+            idx += 1
+
+        if category_filter:
+            conditions.append(f"category = ${idx}")
+            params.append(category_filter)
+            idx += 1
+
+        if cursor_id:
+            conditions.append(f"id < ${idx}")
+            params.append(cursor_id)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        params.append(limit + 1)
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT id, timestamp, level, category, message, details FROM ai_manager_logs WHERE {where} ORDER BY id DESC LIMIT ${idx}",
+                *params,
+            )
+
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor = items[-1]["id"] if has_more and items else None
+
+        return {
+            "logs": [
+                {
+                    "id": r["id"],
+                    "timestamp": r["timestamp"].isoformat() if r["timestamp"] else None,
+                    "level": r["level"],
+                    "category": r["category"],
+                    "message": r["message"],
+                    "details": (json.loads(r["details"]) if isinstance(r["details"], str) else r["details"]) if r["details"] else None,
+                }
+                for r in items
+            ],
+            "next_cursor": next_cursor,
         }

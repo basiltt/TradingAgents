@@ -1351,6 +1351,18 @@ export const aiManagerApi = {
   getPerformance: (accountId: string, period = "7d") =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${period}`),
 
+  getLogs: (accountId: string, params?: { limit?: number; level?: string; category?: string; cursor?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.limit) sp.set("limit", String(params.limit));
+    if (params?.level) sp.set("level", params.level);
+    if (params?.category) sp.set("category", params.category);
+    if (params?.cursor) sp.set("cursor", String(params.cursor));
+    const qs = sp.toString();
+    return request<{ logs: Array<{ id: number; timestamp: string; level: string; category: string; message: string; details: Record<string, unknown> | null }>; next_cursor: number | null }>(
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/logs${qs ? `?${qs}` : ""}`,
+    );
+  },
+
   globalKill: () =>
     mutate<{ status: string }>("POST", "/api/v1/ai-manager/global-kill"),
 };

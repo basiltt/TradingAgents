@@ -5,6 +5,7 @@ import {
   fetchConfig,
   fetchDecisions,
   fetchPerformance,
+  fetchLogs,
   enableAIManager,
   disableAIManager,
   pauseAIManager,
@@ -15,7 +16,7 @@ import {
 import type { RootState } from "@/store";
 import { NeuBadge } from "@/design-system/neumorphism/display";
 import { NeuButton } from "@/design-system/neumorphism/inputs";
-import { Shield, ShieldAlert, Zap, Calendar, Activity } from "lucide-react";
+import { Shield, ShieldAlert, Zap, Calendar, Activity, ScrollText, TrendingUp, TrendingDown, Cpu, Clock } from "lucide-react";
 
 interface AIMonitorPanelProps {
   accountId: string;
@@ -37,9 +38,12 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
   const decisions = useAppSelector((s: RootState) => s.aiManager.decisionsbyAccount[accountId] || []);
   const cursor = useAppSelector((s: RootState) => s.aiManager.decisionCursors[accountId]);
   const performance = useAppSelector((s: RootState) => s.aiManager.performanceByAccount[accountId]);
+  const logs = useAppSelector((s: RootState) => s.aiManager.logsByAccount[accountId] || []);
+  const logCursor = useAppSelector((s: RootState) => s.aiManager.logCursors[accountId]);
   const loading = useAppSelector((s: RootState) => s.aiManager.loading);
 
   const [perfPeriod, setPerfPeriod] = useState("7d");
+  const [logLevelFilter, setLogLevelFilter] = useState<string | undefined>(undefined);
 
   // Load all AI Manager details on mount
   useEffect(() => {
@@ -47,6 +51,7 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
     dispatch(fetchConfig(accountId));
     dispatch(fetchDecisions({ accountId, limit: 15 }));
     dispatch(fetchPerformance({ accountId, period: perfPeriod }));
+    dispatch(fetchLogs({ accountId, limit: 50 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, accountId]);
 
@@ -111,6 +116,7 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
                 dispatch(fetchConfig(accountId));
                 dispatch(fetchDecisions({ accountId, limit: 15 }));
                 dispatch(fetchPerformance({ accountId, period: perfPeriod }));
+                dispatch(fetchLogs({ accountId, limit: 50 }));
               })
             }
           >
@@ -195,6 +201,7 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
                       dispatch(fetchConfig(accountId));
                       dispatch(fetchDecisions({ accountId, limit: 15 }));
                       dispatch(fetchPerformance({ accountId, period: perfPeriod }));
+                      dispatch(fetchLogs({ accountId, limit: 50 }));
                     })
                   }
                 >
@@ -329,6 +336,177 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
           ) : (
             <div className="h-28 flex items-center justify-center">
               <span className="text-xs text-muted-foreground/40 font-mono">No telemetry in this period</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Runtime Telemetry: Daily P&L + Token Budget + Live Positions */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Daily P&L Progress */}
+        <div
+          className="rounded-2xl p-5 space-y-4"
+          style={{
+            background: "var(--neu-surface-base)",
+            boxShadow: "var(--neu-shadow-pill)",
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            <h4 className="text-xs uppercase tracking-widest font-semibold text-muted-foreground/80">Daily P&L</h4>
+          </div>
+          {status.daily_pnl ? (
+            <div className="space-y-3.5">
+              {/* Net P&L */}
+              <div className="text-center pb-2 border-b border-border/10">
+                <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wider block">Net Today</span>
+                <span className={`text-xl font-bold font-mono ${(status.daily_pnl.net_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {(status.daily_pnl.net_pnl ?? 0) >= 0 ? "+" : ""}${(status.daily_pnl.net_pnl ?? 0).toFixed(2)}
+                </span>
+                {status.daily_pnl.equity_at_start && (
+                  <span className="text-[9px] text-muted-foreground/40 font-mono block mt-0.5">
+                    Start: ${status.daily_pnl.equity_at_start.toFixed(2)}
+                    {status.current_equity != null && ` → Now: $${status.current_equity.toFixed(2)}`}
+                  </span>
+                )}
+              </div>
+              {/* Profit / Loss breakdown */}
+              <div className="grid grid-cols-2 gap-3 text-center">
+                <div>
+                  <span className="text-[9px] text-muted-foreground/40 block">Profit</span>
+                  <span className="text-sm font-bold font-mono text-emerald-400">+${(status.daily_pnl.realized_profit ?? 0).toFixed(2)}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-muted-foreground/40 block">Loss</span>
+                  <span className="text-sm font-bold font-mono text-red-400">-${(status.daily_pnl.realized_loss ?? 0).toFixed(2)}</span>
+                </div>
+              </div>
+              {/* Loss Limit Progress Bar */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-muted-foreground/50">Loss Limit Used</span>
+                  <span className="font-mono text-muted-foreground/70">{status.daily_pnl.loss_pct_used != null ? `${status.daily_pnl.loss_pct_used}%` : "—"}</span>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--neu-surface-deep)", boxShadow: "var(--neu-shadow-inset)" }}>
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(status.daily_pnl.loss_pct_used ?? 0, 100)}%`,
+                      background: (status.daily_pnl.loss_pct_used ?? 0) > 80 ? "var(--neu-danger, #ef4444)" : (status.daily_pnl.loss_pct_used ?? 0) > 50 ? "#f59e0b" : "var(--neu-accent)",
+                    }}
+                  />
+                </div>
+              </div>
+              {/* Profit Target Progress Bar */}
+              {status.daily_pnl.profit_target_progress != null && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-muted-foreground/50">Profit Target</span>
+                    <span className="font-mono text-emerald-400/80">{status.daily_pnl.profit_target_progress}%</span>
+                  </div>
+                  <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--neu-surface-deep)", boxShadow: "var(--neu-shadow-inset)" }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-500 bg-emerald-500"
+                      style={{ width: `${Math.min(status.daily_pnl.profit_target_progress, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="h-28 flex items-center justify-center">
+              <span className="text-xs text-muted-foreground/40 font-mono">No daily data yet</span>
+            </div>
+          )}
+        </div>
+
+        {/* Live Positions (from AI perspective) */}
+        <div
+          className="rounded-2xl p-5 space-y-4 md:col-span-2"
+          style={{
+            background: "var(--neu-surface-base)",
+            boxShadow: "var(--neu-shadow-pill)",
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400" />
+              <h4 className="text-xs uppercase tracking-widest font-semibold text-muted-foreground/80">Live Positions (AI View)</h4>
+            </div>
+            {status.token_budget && (
+              <div className="flex items-center gap-2">
+                <Cpu className="w-3 h-3 text-muted-foreground/40" />
+                <div className="flex items-center gap-1.5">
+                  <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--neu-surface-deep)" }}>
+                    <div className="h-full rounded-full bg-violet-500/70 transition-all" style={{ width: `${Math.min(status.token_budget.pct, 100)}%` }} />
+                  </div>
+                  <span className="text-[9px] font-mono text-muted-foreground/50">{status.token_budget.pct}% tokens</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {status.live_positions && status.live_positions.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] text-muted-foreground/50 uppercase tracking-wider">
+                    <th className="text-left pb-2 font-semibold">Symbol</th>
+                    <th className="text-left pb-2 font-semibold">Side</th>
+                    <th className="text-right pb-2 font-semibold">Current UPnL</th>
+                    <th className="text-right pb-2 font-semibold">Peak PnL ↗</th>
+                    <th className="text-right pb-2 font-semibold">Drawdown</th>
+                    <th className="text-right pb-2 font-semibold">Age</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/5">
+                  {status.live_positions.map((pos) => (
+                    <tr key={pos.symbol} className="group/row hover:bg-muted/5 transition-colors">
+                      <td className="py-2 font-mono font-semibold text-muted-foreground/90">{pos.symbol}</td>
+                      <td className="py-2">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase font-bold ${
+                          pos.side === "Buy" ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+                        }`}>
+                          {pos.side}
+                        </span>
+                      </td>
+                      <td className={`py-2 text-right font-mono font-semibold ${pos.current_upnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {pos.current_upnl >= 0 ? "+" : ""}{pos.current_upnl.toFixed(2)}
+                      </td>
+                      <td className="py-2 text-right font-mono text-emerald-400/70">
+                        <TrendingUp className="w-3 h-3 inline-block mr-0.5 opacity-50" />
+                        {pos.peak_pnl.toFixed(2)}
+                      </td>
+                      <td className={`py-2 text-right font-mono ${pos.drawdown_from_peak > 0 ? "text-orange-400" : "text-muted-foreground/40"}`}>
+                        {pos.drawdown_from_peak > 0 ? (
+                          <><TrendingDown className="w-3 h-3 inline-block mr-0.5 opacity-50" />-{pos.drawdown_from_peak.toFixed(2)}</>
+                        ) : "—"}
+                      </td>
+                      <td className="py-2 text-right font-mono text-muted-foreground/50">
+                        {pos.age_s != null ? (
+                          <span className="inline-flex items-center gap-0.5">
+                            <Clock className="w-3 h-3 opacity-40" />
+                            {pos.age_s >= 3600 ? `${Math.floor(pos.age_s / 3600)}h ${Math.floor((pos.age_s % 3600) / 60)}m` : pos.age_s >= 60 ? `${Math.floor(pos.age_s / 60)}m` : `${pos.age_s}s`}
+                          </span>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div
+              className="rounded-xl p-6 text-center space-y-2"
+              style={{
+                background: "var(--neu-surface-deep)",
+                boxShadow: "var(--neu-shadow-inset)",
+              }}
+            >
+              <Zap className="w-6 h-6 mx-auto text-muted-foreground/20" />
+              <p className="text-xs text-muted-foreground/40 font-mono">
+                {status.state === "sleeping" ? "No open positions — AI is sleeping" : "Position data unavailable (task may be restarting)"}
+              </p>
             </div>
           )}
         </div>
@@ -491,6 +669,115 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* AI Manager Activity Logs */}
+      <div
+        className="rounded-2xl p-5 space-y-4"
+        style={{
+          background: "var(--neu-surface-base)",
+          boxShadow: "var(--neu-shadow-pill)",
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ScrollText className="w-4 h-4 text-cyan-400" />
+            <h4 className="text-xs uppercase tracking-widest font-semibold text-muted-foreground/80">AI Manager Logs</h4>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[undefined, "info", "warning", "error", "critical"].map((lvl) => (
+              <button
+                key={lvl ?? "all"}
+                onClick={() => {
+                  setLogLevelFilter(lvl);
+                  dispatch(fetchLogs({ accountId, limit: 50, level: lvl }));
+                }}
+                className={`text-[10px] px-2 py-0.5 rounded-md font-mono transition-all ${
+                  logLevelFilter === lvl
+                    ? "bg-[color-mix(in_oklch,var(--neu-accent)_12%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold"
+                    : "text-muted-foreground/50 hover:text-muted-foreground"
+                }`}
+              >
+                {lvl ?? "all"}
+              </button>
+            ))}
+            {loading["logs"] && (
+              <div className="w-3 h-3 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+            )}
+          </div>
+        </div>
+
+        {logs.length > 0 ? (
+          <div className="space-y-1.5 max-h-[320px] overflow-y-auto pr-1">
+            {logs.map((log) => {
+              const levelColor =
+                log.level === "critical" ? "text-red-400 bg-red-500/10 border-red-500/20" :
+                log.level === "error" ? "text-red-400 bg-red-500/8 border-red-500/15" :
+                log.level === "warning" ? "text-orange-400 bg-orange-500/8 border-orange-500/15" :
+                log.level === "info" ? "text-cyan-400 bg-cyan-500/8 border-cyan-500/15" :
+                "text-muted-foreground/50 bg-muted/5 border-border/10";
+
+              return (
+                <div
+                  key={log.id}
+                  className={`rounded-lg px-3 py-2 border text-xs ${levelColor} transition-all`}
+                  style={{
+                    background: "var(--neu-surface-deep)",
+                    boxShadow: "var(--neu-shadow-inset)",
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase font-bold shrink-0 ${
+                        log.level === "critical" || log.level === "error" ? "bg-red-500/20 text-red-400" :
+                        log.level === "warning" ? "bg-orange-500/20 text-orange-400" :
+                        "bg-cyan-500/15 text-cyan-400"
+                      }`}>
+                        {log.level}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/40 font-mono shrink-0">[{log.category}]</span>
+                      <span className="text-[11px] text-muted-foreground/80 truncate">{log.message}</span>
+                    </div>
+                    <span className="text-[9px] text-muted-foreground/40 font-mono whitespace-nowrap shrink-0">
+                      {(() => {
+                        const d = new Date(log.timestamp);
+                        const today = new Date();
+                        const isToday = d.toDateString() === today.toDateString();
+                        return isToday
+                          ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                          : d.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div
+            className="rounded-xl p-6 text-center space-y-2"
+            style={{
+              background: "var(--neu-surface-deep)",
+              boxShadow: "var(--neu-shadow-inset)",
+            }}
+          >
+            <ScrollText className="w-6 h-6 mx-auto text-muted-foreground/20" />
+            <p className="text-xs text-muted-foreground/40 font-mono">No activity logs yet</p>
+          </div>
+        )}
+
+        {logCursor && (
+          <div className="pt-1 text-center">
+            <NeuButton
+              variant="soft-tonal"
+              size="sm"
+              disabled={loading["logs"]}
+              onClick={() => dispatch(fetchLogs({ accountId, limit: 50, level: logLevelFilter, cursor: logCursor, append: true }))}
+            >
+              {loading["logs"] ? "Loading..." : "Load More Logs"}
+            </NeuButton>
+          </div>
+        )}
       </div>
 
       {/* Bottom Section: Activity Log / Decisions timeline */}

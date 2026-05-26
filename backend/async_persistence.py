@@ -365,6 +365,25 @@ INSERT INTO ai_manager_global_state (key, int_value) VALUES ('degradation_tier',
     """)
 
     await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_logs (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    level TEXT NOT NULL DEFAULT 'info',
+    category TEXT NOT NULL DEFAULT 'general',
+    message TEXT NOT NULL,
+    details JSONB,
+    CONSTRAINT chk_log_level CHECK (level IN ('debug','info','warning','error','critical'))
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_logs_account_ts ON ai_manager_logs(account_id, timestamp DESC)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_logs_level ON ai_manager_logs(account_id, level, timestamp DESC)
+    """)
+
+    await conn.execute("""
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'auto_trade_configs') THEN

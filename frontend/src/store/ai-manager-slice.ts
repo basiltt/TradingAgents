@@ -14,6 +14,27 @@ export interface AIManagerStatus {
   emergency_ref_equity?: number | null;
   emergency_cooldown_until?: string | null;
   emergency_closed_symbols?: Record<string, string> | null;
+  // Runtime telemetry
+  daily_pnl?: {
+    equity_at_start: number | null;
+    realized_profit: number;
+    realized_loss: number;
+    net_pnl: number;
+    loss_pct_used: number | null;
+    profit_target_progress: number | null;
+  } | null;
+  token_budget?: { used: number; max: number; pct: number } | null;
+  live_positions?: Array<{
+    symbol: string;
+    side: string;
+    size: string;
+    entry_price: string;
+    current_upnl: number;
+    peak_pnl: number;
+    drawdown_from_peak: number;
+    age_s: number | null;
+  }> | null;
+  current_equity?: number | null;
 }
 
 export interface AIManagerDecision {
@@ -40,12 +61,23 @@ export interface AIManagerPerformance {
   profit_factor: number;
 }
 
+export interface AIManagerLog {
+  id: number;
+  timestamp: string;
+  level: string;
+  category: string;
+  message: string;
+  details: Record<string, unknown> | null;
+}
+
 interface AIManagerState {
   statusByAccount: Record<string, AIManagerStatus | null>;
   configByAccount: Record<string, Record<string, unknown> | null>;
   decisionsbyAccount: Record<string, AIManagerDecision[]>;
   decisionCursors: Record<string, string | null>;
   performanceByAccount: Record<string, AIManagerPerformance | null>;
+  logsByAccount: Record<string, AIManagerLog[]>;
+  logCursors: Record<string, number | null>;
   loading: Record<string, boolean>;
   error: string | null;
 }
@@ -56,6 +88,8 @@ const initialState: AIManagerState = {
   decisionsbyAccount: {},
   decisionCursors: {},
   performanceByAccount: {},
+  logsByAccount: {},
+  logCursors: {},
   loading: {},
   error: null,
 };
@@ -166,6 +200,16 @@ export const globalKill = createAsyncThunk(
   "aiManager/globalKill",
   async () => {
     await aiManagerApi.globalKill();
+  },
+);
+
+export const fetchLogs = createAsyncThunk(
+  "aiManager/fetchLogs",
+  async ({ accountId, limit = 100, level, category, cursor, append = false }: {
+    accountId: string; limit?: number; level?: string; category?: string; cursor?: number | null; append?: boolean;
+  }) => {
+    const result = await aiManagerApi.getLogs(accountId, { limit, level, category, cursor: cursor || undefined });
+    return { accountId, logs: result.logs as AIManagerLog[], nextCursor: result.next_cursor, append };
   },
 );
 
@@ -327,7 +371,20 @@ const aiManagerSlice = createSlice({
           if (s) s.kill_switch = true;
         }
       })
-      .addCase(globalKill.rejected, setError("globalKill"));
+      .addCase(globalKill.rejected, setError("globalKill"))
+
+      .addCase(fetchLogs.pending, setLoading("logs"))
+      .addCase(fetchLogs.fulfilled, (state, action) => {
+        state.loading["logs"] = false;
+        const { accountId, logs, nextCursor, append } = action.payload;
+        if (append) {
+          state.logsByAccount[accountId] = [...(state.logsByAccount[accountId] || []), ...logs];
+        } else {
+          state.logsByAccount[accountId] = logs;
+        }
+        state.logCursors[accountId] = nextCursor;
+      })
+      .addCase(fetchLogs.rejected, setError("logs"));
   },
 });
 
