@@ -81,26 +81,53 @@ def truncate_to_token_budget(prompt: str, max_tokens: int = 4000) -> str:
 def build_system_prompt(
     risk_tolerance: str = "moderate",
     cold_start: bool = False,
+    daily_profit_target_pct: Optional[float] = None,
 ) -> str:
     """Build immutable system prompt for AI Manager LLM call."""
     risk_params = _RISK_TOLERANCE_MAP.get(risk_tolerance, _RISK_TOLERANCE_MAP["moderate"])
 
     prompt = (
-        "You are a trading position manager. Your role is to evaluate open positions "
-        "and decide whether to HOLD, FULL_CLOSE, or PARTIAL_CLOSE each position.\n\n"
-        "Rules:\n"
-        "- Only recommend closing if you have high confidence in a trend reversal or abnormality.\n"
-        "- Consider the account's recent history, patterns, and current market regime.\n"
-        "- Never recommend actions on symbols not currently in the position list.\n"
-        "- Provide a clear, concise reason for your decision.\n"
+        "You are an AI trading position manager. Your primary goal is to MAXIMIZE daily profit "
+        "while protecting capital from excessive drawdowns.\n\n"
+        "## Decision Framework\n"
+        "Evaluate each open position and decide: HOLD, FULL_CLOSE, or PARTIAL_CLOSE.\n\n"
+        "## When to CLOSE (high confidence required):\n"
+        "1. **Trend Reversal**: Price action, moving averages, or momentum indicators confirm "
+        "the trend has reversed against the position direction.\n"
+        "2. **Profit Preservation**: Position reached a significant profit peak but is now "
+        "declining. If drawdown-from-peak exceeds 30-50% of peak profit, consider closing "
+        "to preserve gains rather than risk giving them back.\n"
+        "3. **Abnormal Market Conditions**: Sudden volatility spikes, funding rate flips, "
+        "or volume anomalies that signal unpredictable price movement.\n"
+        "4. **Adverse Momentum**: PnL velocity is strongly negative and accelerating.\n"
+        "5. **Risk-Reward Deterioration**: The remaining upside potential is poor relative "
+        "to the downside risk given current market structure.\n\n"
+        "## When to HOLD:\n"
+        "- Trend is intact and aligned with position direction\n"
+        "- Normal market fluctuations within expected range\n"
+        "- Position is young and hasn't had time to develop\n"
+        "- No clear reversal signals present\n\n"
+        "## Key Principles:\n"
+        "- Never recommend actions on symbols not in the position list.\n"
+        "- Consider the account's recent decision history and learned patterns.\n"
+        "- A position with high unrealized profit that starts declining is URGENT — "
+        "preserving realized profit is better than hoping for more.\n"
+        "- Use multi-indicator confluence: one signal alone is not enough.\n"
         f"- Risk sensitivity: {risk_params['loss_sensitivity']:.1f}x (higher = more cautious).\n"
         f"- Confidence adjustment: {risk_params['confidence_boost']:+.2f}.\n"
     )
 
+    if daily_profit_target_pct:
+        prompt += (
+            f"\n## Daily Target: {daily_profit_target_pct:.1f}% of equity\n"
+            "If cumulative realized profit is approaching or has reached the daily target, "
+            "be more aggressive about closing remaining positions to lock in the target.\n"
+        )
+
     if cold_start:
         prompt += (
             "\nIMPORTANT: This is a new account with limited history. "
-            "Be conservative — only act on very clear signals.\n"
+            "Be very conservative — only act on extremely clear signals with high confluence.\n"
         )
 
     prompt += (
@@ -122,6 +149,9 @@ def build_context_prompt(
     patterns: Optional[List[Dict[str, Any]]] = None,
     regime: str = "ranging",
     session: str = "unknown",
+    peak_pnl: Optional[Dict[str, float]] = None,
+    daily_realized_pnl: float = 0.0,
+    daily_profit_target: Optional[float] = None,
 ) -> str:
     """Build user context prompt with all available data."""
     regime = validate_regime(regime)
@@ -139,24 +169,70 @@ def build_context_prompt(
         available = wallet.get("available_balance", "N/A")
         parts.append(f"Equity: {equity}, Available: {available}")
 
-    # Positions
+    # Daily P&L progress
+    if daily_profit_target and daily_profit_target > 0:
+        progress_pct = (daily_realized_pnl / daily_profit_target) * 100 if daily_profit_target else 0
+        parts.append(
+            f"Daily realized PnL: ${daily_realized_pnl:.2f} "
+            f"(target: ${daily_profit_target:.2f}, progress: {progress_pct:.0f}%)"
+        )
+    elif daily_realized_pnl != 0:
+        parts.append(f"Daily realized PnL: ${daily_realized_pnl:.2f}")
+
+    # Positions with drawdown-from-peak
     parts.append("\nOpen positions:")
+    peak_pnl = peak_pnl or {}
     for pos in (positions or []):
         symbol = sanitize_for_injection(str(pos.get("symbol", "")), max_len=50)
         side = pos.get("side", "")
         size = pos.get("size", 0)
-        avg_price = pos.get("avgPrice", 0)
+        avg_price = pos.get("avgPrice", pos.get("entryPrice", 0))
         unrealized_pnl = pos.get("unrealisedPnl", pos.get("unrealized_pnl", "N/A"))
-        parts.append(f"  {symbol} {side} size={size} entry={avg_price} uPnL={unrealized_pnl}")
+        mark_price = pos.get("markPrice", "N/A")
+        line = f"  {symbol} {side} size={size} entry={avg_price} mark={mark_price} uPnL={unrealized_pnl}"
 
-    # Indicators
+        # Drawdown from peak
+        peak = peak_pnl.get(symbol, 0.0)
+        try:
+            current_pnl = float(unrealized_pnl) if unrealized_pnl != "N/A" else 0.0
+            if peak > 0 and current_pnl < peak:
+                drawdown_pct = ((peak - current_pnl) / peak) * 100
+                line += f" peakPnL={peak:.2f} drawdown={drawdown_pct:.0f}%"
+            elif peak > 0:
+                line += f" peakPnL={peak:.2f} (at/near peak)"
+        except (ValueError, TypeError):
+            pass
+
+        parts.append(line)
+
+    # Indicators (enriched)
     if indicators:
-        parts.append("\nIndicators:")
+        parts.append("\nMarket indicators:")
         for sym, data in indicators.items():
             sym_clean = sanitize_for_injection(str(sym), max_len=50)
-            rsi = data.get("rsi_14", "N/A")
-            atr = data.get("atr_14", "N/A")
-            parts.append(f"  {sym_clean}: RSI={rsi}, ATR={atr}")
+            lines = [f"  {sym_clean}:"]
+            if data.get("mark_price") is not None:
+                lines.append(f"    price={data['mark_price']:.4f}")
+            if data.get("ema_9") is not None and data.get("ema_21") is not None:
+                trend = "bullish" if data["ema_9"] > data["ema_21"] else "bearish"
+                lines.append(f"    EMA9={data['ema_9']:.4f} EMA21={data['ema_21']:.4f} ({trend})")
+            if data.get("rsi_14") is not None:
+                lines.append(f"    RSI14={data['rsi_14']:.1f}")
+            if data.get("atr_14") is not None:
+                lines.append(f"    ATR14={data['atr_14']:.4f}")
+            if data.get("price_24h_pct") is not None:
+                lines.append(f"    24h_change={data['price_24h_pct']*100:.2f}%")
+            if data.get("funding_rate") is not None:
+                lines.append(f"    funding={data['funding_rate']:.6f}")
+            if data.get("pnl_velocity_30s") is not None:
+                lines.append(f"    pnl_velocity_30s={data['pnl_velocity_30s']:.4f}")
+            if data.get("volume_24h") is not None:
+                lines.append(f"    volume_24h=${data['volume_24h']:,.0f}")
+            if data.get("open_interest") is not None:
+                lines.append(f"    open_interest=${data['open_interest']:,.0f}")
+            if data.get("ema_trend_strength") is not None:
+                lines.append(f"    trend_strength={data['ema_trend_strength']:.4f}")
+            parts.append("\n".join(lines))
 
     # Episodic memory
     if episodic_memory:

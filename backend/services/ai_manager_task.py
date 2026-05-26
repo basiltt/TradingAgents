@@ -112,6 +112,7 @@ class AIManagerTask:
             try:
                 if size and float(size) != 0:
                     positions.append(data)
+                    self._update_peak_pnl(symbol, data)
             except (ValueError, TypeError):
                 positions.append(data)
             self._ws_buffer["positions"] = positions
@@ -119,6 +120,19 @@ class AIManagerTask:
         if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
             self._state = MONITORING
             self._wake_event.set()
+
+    def _update_peak_pnl(self, symbol: str, position_data: dict) -> None:
+        """Track per-position peak unrealized PnL for drawdown-from-peak detection."""
+        peaks = self._ws_buffer.setdefault("_peak_pnl", {})
+        try:
+            current_pnl = float(
+                position_data.get("unrealisedPnl", position_data.get("unrealized_pnl", 0))
+            )
+        except (ValueError, TypeError):
+            return
+        prev_peak = peaks.get(symbol, 0.0)
+        if current_pnl > prev_peak:
+            peaks[symbol] = current_pnl
 
     async def _run(self) -> None:
         try:
@@ -541,11 +555,27 @@ class AIManagerTask:
         except Exception:
             logger.warning("Memory fetch failed for %s", self._account_id)
 
+        # Daily P&L context for the LLM
+        daily_realized_pnl = 0.0
+        daily_profit_target = None
+        try:
+            state = await self._service._repo.get_state(self._account_id)
+            if state:
+                daily_realized_pnl = float(state.get("realized_profit_today", 0) or 0) - float(state.get("realized_loss_today", 0) or 0)
+            equity_start = await self._get_equity_at_day_start()
+            if equity_start and self._config.daily_profit_target_pct:
+                daily_profit_target = self._config.daily_profit_target_pct * equity_start / 100
+        except Exception:
+            pass
+
         return {
             "account_id": self._account_id,
             "config": self._config.model_dump(),
             "ws_snapshot": copy.deepcopy(self._ws_buffer),
             "market_data": self._get_market_data(),
+            "peak_pnl": dict(self._ws_buffer.get("_peak_pnl", {})),
+            "daily_realized_pnl": daily_realized_pnl,
+            "daily_profit_target": daily_profit_target,
             "_evaluator": self._evaluator,
             "_llm_callable": self._service._llm_callable,
             "episodic_memory": episodic,

@@ -200,6 +200,7 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
     system_prompt = build_system_prompt(
         risk_tolerance=risk_tolerance,
         cold_start=cold_start,
+        daily_profit_target_pct=config.get("daily_profit_target_pct"),
     )
     context_prompt = build_context_prompt(
         positions=state.get("positions", []),
@@ -209,6 +210,9 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         patterns=state.get("patterns"),
         regime=state.get("regime", "ranging"),
         session=state.get("session", "unknown"),
+        peak_pnl=state.get("peak_pnl"),
+        daily_realized_pnl=state.get("daily_realized_pnl", 0.0),
+        daily_profit_target=state.get("daily_profit_target"),
     )
 
     # LLM call (injected via state for testability)
