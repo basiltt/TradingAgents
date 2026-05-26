@@ -226,6 +226,15 @@ class AIManagerTask:
     def _transition_post_eval(self) -> None:
         if self._state != PAUSED:
             self._state = MONITORING
+        asyncio.ensure_future(self._emit_state_change())
+
+    async def _emit_state_change(self) -> None:
+        try:
+            await self._service.emit_event(self._account_id, "state_change", {
+                "account_id": self._account_id, "state": self._state, "enabled": True,
+            })
+        except Exception:
+            pass
 
     async def _reset_half_open(self, circuit_breaker) -> None:
         try:

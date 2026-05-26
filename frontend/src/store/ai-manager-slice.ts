@@ -16,11 +16,13 @@ export interface AIManagerStatus {
 export interface AIManagerDecision {
   id: number;
   timestamp: string;
-  action_type: string;
-  symbol: string;
+  action_taken: { action: string; symbol: string };
   confidence: number;
   reasoning: string;
+  urgency: string;
+  execution_result: Record<string, unknown> | null;
   outcome: Record<string, unknown> | null;
+  outcome_label: string | null;
 }
 
 export interface AIManagerPerformance {

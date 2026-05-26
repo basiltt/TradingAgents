@@ -41,8 +41,8 @@ export function DecisionLog({ accountId }: DecisionLogProps) {
                 <td className="py-1 pr-2 font-mono whitespace-nowrap">
                   {new Date(d.timestamp).toLocaleTimeString()}
                 </td>
-                <td className="py-1 pr-2">{d.action_type}</td>
-                <td className="py-1 pr-2 font-mono">{d.symbol}</td>
+                <td className="py-1 pr-2">{d.action_taken?.action}</td>
+                <td className="py-1 pr-2 font-mono">{d.action_taken?.symbol}</td>
                 <td className="py-1 pr-2 text-right font-mono">{(d.confidence * 100).toFixed(0)}%</td>
                 <td className="py-1 truncate max-w-[200px]">{d.reasoning}</td>
               </tr>

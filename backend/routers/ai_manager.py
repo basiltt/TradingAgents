@@ -6,8 +6,8 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
 
+from backend.ai_manager_schemas import AIManagerConfigPatch
 from backend.rate_limit import check_rate_limit as _check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -20,17 +20,6 @@ def _get_service(request: Request):
     if svc is None:
         raise HTTPException(503, detail="AI Manager feature not available")
     return svc
-
-
-class ConfigPatchBody(BaseModel):
-    confidence_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
-    max_daily_loss_pct: Optional[float] = Field(None, ge=0.5, le=50.0)
-    daily_profit_target_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
-    evaluation_interval_s: Optional[float] = Field(None, ge=5.0, le=600.0)
-    risk_tolerance: Optional[str] = Field(None, pattern="^(conservative|moderate|aggressive)$")
-    excluded_symbols: Optional[list] = None
-    locked_positions: Optional[list] = None
-    dry_run: Optional[bool] = None
 
 
 # --- Enable / Disable ---
@@ -74,7 +63,7 @@ async def get_ai_manager_status(request: Request, account_id: str):
 
 
 @router.patch("/accounts/{account_id}/ai-manager/config")
-async def patch_config(request: Request, account_id: str, body: ConfigPatchBody):
+async def patch_config(request: Request, account_id: str, body: AIManagerConfigPatch):
     await _check_rate_limit(account_id)
     svc = _get_service(request)
     updates = body.model_dump(exclude_unset=True)
