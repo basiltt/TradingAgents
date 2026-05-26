@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from backend.ai_manager_schemas import AIManagerConfig
 from backend.services.ai_manager_evaluator import AIManagerEvaluator
 
+MAX_DAILY_TOKEN_BUDGET = 100_000
+
 if TYPE_CHECKING:
     from backend.services.ai_account_manager_service import AIAccountManagerService
 
@@ -32,7 +34,7 @@ ERROR = "error"
 _HEARTBEAT_SLEEPING = 60.0
 _HEARTBEAT_MONITORING = 10.0
 _SYMBOL_COOLDOWN_S = 15.0
-_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "REDUCE"})
+_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE"})
 
 
 class AIManagerTask:
@@ -182,6 +184,15 @@ class AIManagerTask:
 
         try:
             async with self._service._llm_scheduler.slot(self._account_id, self._get_urgency()):
+                # Token budget gate
+                budget_ok = await self._service._repo.increment_token_budget_atomic(
+                    self._account_id, 1000, MAX_DAILY_TOKEN_BUDGET
+                )
+                if not budget_ok:
+                    logger.warning("Token budget exhausted for %s", self._account_id)
+                    self._transition_post_eval()
+                    return
+
                 state_dict = await self._build_graph_state()
                 result = await asyncio.wait_for(
                     self._graph.ainvoke(state_dict), timeout=90.0
@@ -273,10 +284,36 @@ class AIManagerTask:
             logger.debug("Symbol %s locked for %s", symbol, self._account_id)
             return
 
-        current_positions = {p.get("symbol", "") for p in (self._ws_buffer.get("positions") or [])}
-        if symbol not in current_positions:
+        current_positions = [p for p in (self._ws_buffer.get("positions") or []) if p.get("symbol", "") == symbol]
+        if not current_positions:
             logger.debug("Symbol %s no longer in positions for %s", symbol, self._account_id)
             return
+        position = current_positions[0]
+
+        # Min position age check
+        if self._config.min_position_age_s and position.get("createdTime"):
+            try:
+                created_ms = int(position["createdTime"])
+                age_s = (time.time() * 1000 - created_ms) / 1000
+                if age_s < self._config.min_position_age_s:
+                    logger.debug("Position %s too young (%.0fs < %ds) for %s",
+                                 symbol, age_s, self._config.min_position_age_s, self._account_id)
+                    return
+            except (ValueError, TypeError):
+                pass
+
+        # Max single decision loss check
+        if self._config.max_single_decision_loss_pct:
+            upnl = position.get("unrealisedPnl", position.get("unrealized_pnl", 0.0))
+            equity = self._ws_buffer.get("equity")
+            try:
+                loss_pct = abs(float(upnl)) / float(equity) * 100 if equity and float(upnl) < 0 else 0
+                if loss_pct > self._config.max_single_decision_loss_pct:
+                    logger.warning("Single decision loss %.2f%% exceeds cap %.2f%% for %s %s",
+                                   loss_pct, self._config.max_single_decision_loss_pct, self._account_id, symbol)
+                    return
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
 
         # Per-symbol cooldown (checked before lock, recorded after lock)
         now_mono = time.monotonic()

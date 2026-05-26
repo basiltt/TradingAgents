@@ -432,8 +432,25 @@ class AIAccountManagerService:
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.sleep(86400.0)  # 24h
+                if self._shutdown_event.is_set():
+                    break
+                rows = await self._repo.get_enabled_accounts()
+                for i, row in enumerate(rows):
+                    if self._shutdown_event.is_set():
+                        break
+                    account_id = row["account_id"]
+                    if hasattr(self, '_memory') and self._memory:
+                        try:
+                            await self._memory.generate_patterns(account_id)
+                        except Exception:
+                            logger.warning("Pattern generation failed for %s", account_id)
+                    # Stagger: 1 account per 2 seconds
+                    if (i + 1) % 1 == 0:
+                        await asyncio.sleep(2.0)
             except asyncio.CancelledError:
                 break
+            except Exception:
+                logger.exception("Pattern generation loop error")
 
     @classmethod
     def create(cls, app_state) -> "AIAccountManagerService":
