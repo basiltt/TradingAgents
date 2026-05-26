@@ -137,7 +137,7 @@ async def signal_detection_node(state: Dict[str, Any]) -> Dict[str, Any]:
     evaluator = state.get("_evaluator") or AIManagerEvaluator()
     positions = state.get("positions", [])
     indicators = state.get("indicators", {})
-    urgency = evaluator.classify_urgency(positions, indicators)
+    urgency = evaluator.classify_urgency(positions, indicators, peak_pnl=state.get("peak_pnl"))
     state["urgency"] = urgency
     state["graph_path"] = "preflight→data_aggregation→signal_detection"
 
@@ -178,13 +178,51 @@ async def context_enrichment_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _do_enrichment(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Perform actual enrichment (memory, patterns, regime)."""
+    """Perform actual enrichment (memory, patterns, regime from indicators)."""
+    # Derive regime from indicator data
+    indicators = state.get("indicators", {})
+    regime = _detect_regime(indicators)
+
     return {
-        "regime": validate_regime(state.get("_raw_regime", "ranging")),
+        "regime": validate_regime(regime),
         "session": validate_market_session(state.get("_raw_session", "unknown")),
         "episodic_memory": state.get("episodic_memory", []),
         "patterns": state.get("patterns", []),
     }
+
+
+def _detect_regime(indicators: Dict[str, Any]) -> str:
+    """Derive market regime from aggregated indicator signals."""
+    if not indicators:
+        return "ranging"
+
+    trend_scores = []
+    volatile_count = 0
+
+    for sym, data in indicators.items():
+        strength = data.get("ema_trend_strength")
+        if strength is not None:
+            trend_scores.append(strength)
+
+        # Volatility check: if 24h change > 5% or pnl_velocity extreme
+        pct_24h = data.get("price_24h_pct")
+        if pct_24h is not None and abs(pct_24h) > 0.05:
+            volatile_count += 1
+
+    if not trend_scores:
+        return "ranging"
+
+    avg_trend = sum(trend_scores) / len(trend_scores)
+
+    # If majority of symbols are volatile, regime is volatile
+    if volatile_count > len(trend_scores) * 0.5:
+        return "volatile"
+
+    if avg_trend > 0.002:
+        return "trending_up"
+    elif avg_trend < -0.002:
+        return "trending_down"
+    return "ranging"
 
 
 async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:

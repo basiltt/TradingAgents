@@ -28,12 +28,14 @@ class AIManagerEvaluator:
         self,
         positions: List[Dict[str, Any]],
         indicators: Optional[Dict[str, Any]] = None,
+        peak_pnl: Optional[Dict[str, float]] = None,
     ) -> str:
         """Returns 'FAST', 'STANDARD', or 'DEEP'."""
         if not positions:
             return "STANDARD"
 
         indicators = indicators or {}
+        peak_pnl = peak_pnl or {}
         fast_signals = 0
         conflicting = False
 
@@ -50,6 +52,18 @@ class AIManagerEvaluator:
 
             sym_indicators = indicators.get(symbol, {})
             urgent = self._check_urgent_signals(pos, sym_indicators)
+
+            # Drawdown-from-peak urgency: if profit dropped >40% from peak, it's urgent
+            if not urgent and symbol in peak_pnl:
+                peak = peak_pnl[symbol]
+                if peak > 0:
+                    try:
+                        current = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)))
+                        if current < peak and ((peak - current) / peak) > 0.4:
+                            urgent = True
+                    except (ValueError, TypeError):
+                        pass
+
             if urgent:
                 fast_signals += 1
                 self._last_urgent[symbol] = now

@@ -88,8 +88,22 @@ class AIManagerMemory:
                 return 0
 
             prompt = self._build_pattern_prompt(decisions)
-            raw_patterns = await asyncio.wait_for(llm_callable(prompt), timeout=60.0)
-            if not raw_patterns:
+            system = "You are a trading pattern analyst. Analyze decision history and extract reusable behavioral patterns. Return a JSON array of objects with: type, symbol, description, confidence."
+            raw_response = await asyncio.wait_for(llm_callable(system, prompt), timeout=60.0)
+            if not raw_response:
+                return 0
+
+            # Parse LLM JSON response
+            import json as _json
+            try:
+                text = raw_response.strip()
+                if text.startswith("```"):
+                    lines = text.split("\n")
+                    text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+                raw_patterns = _json.loads(text)
+                if not isinstance(raw_patterns, list):
+                    return 0
+            except (_json.JSONDecodeError, ValueError):
                 return 0
 
             generated = 0

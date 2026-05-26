@@ -113,6 +113,11 @@ class AIManagerTask:
                 if size and float(size) != 0:
                     positions.append(data)
                     self._update_peak_pnl(symbol, data)
+                else:
+                    # Position closed — reset peak PnL tracker for this symbol
+                    peaks = self._ws_buffer.get("_peak_pnl")
+                    if peaks:
+                        peaks.pop(symbol, None)
             except (ValueError, TypeError):
                 positions.append(data)
             self._ws_buffer["positions"] = positions

@@ -108,6 +108,7 @@ def build_system_prompt(
         "- Position is young and hasn't had time to develop\n"
         "- No clear reversal signals present\n\n"
         "## Key Principles:\n"
+        "- You can only act on ONE position per evaluation. Choose the most urgent one.\n"
         "- Never recommend actions on symbols not in the position list.\n"
         "- Consider the account's recent decision history and learned patterns.\n"
         "- A position with high unrealized profit that starts declining is URGENT — "
@@ -189,7 +190,17 @@ def build_context_prompt(
         avg_price = pos.get("avgPrice", pos.get("entryPrice", 0))
         unrealized_pnl = pos.get("unrealisedPnl", pos.get("unrealized_pnl", "N/A"))
         mark_price = pos.get("markPrice", "N/A")
+        leverage = pos.get("leverage", "N/A")
+        liq_price = pos.get("liqPrice", "")
+        position_value = pos.get("positionValue", "")
+
         line = f"  {symbol} {side} size={size} entry={avg_price} mark={mark_price} uPnL={unrealized_pnl}"
+        if leverage and leverage != "N/A" and leverage != "0":
+            line += f" lev={leverage}x"
+        if liq_price and liq_price != "" and liq_price != "0":
+            line += f" liq={liq_price}"
+        if position_value and position_value != "0":
+            line += f" value=${position_value}"
 
         # Drawdown from peak
         peak = peak_pnl.get(symbol, 0.0)

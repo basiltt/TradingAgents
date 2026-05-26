@@ -216,10 +216,17 @@ class BybitWSClient:
                     "side": pos.get("side", ""),
                     "size": pos.get("size", "0"),
                     "unrealisedPnl": pos.get("unrealisedPnl", "0"),
+                    "cumRealisedPnl": pos.get("cumRealisedPnl", "0"),
                     "markPrice": pos.get("markPrice", "0"),
                     "avgPrice": pos.get("entryPrice", "0"),
                     "leverage": pos.get("leverage", "0"),
                     "liqPrice": pos.get("liqPrice", "0"),
+                    "createdTime": pos.get("createdTime", ""),
+                    "updatedTime": pos.get("updatedTime", ""),
+                    "trailingStop": pos.get("trailingStop", "0"),
+                    "takeProfit": pos.get("takeProfit", ""),
+                    "stopLoss": pos.get("stopLoss", ""),
+                    "positionValue": pos.get("positionValue", "0"),
                 },
             })
 
