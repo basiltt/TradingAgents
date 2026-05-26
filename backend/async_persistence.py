@@ -365,7 +365,12 @@ INSERT INTO ai_manager_global_state (key, int_value) VALUES ('degradation_tier',
     """)
 
     await conn.execute("""
-ALTER TABLE auto_trade_configs ADD COLUMN IF NOT EXISTS ai_manager_config JSONB DEFAULT NULL
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'auto_trade_configs') THEN
+        ALTER TABLE auto_trade_configs ADD COLUMN IF NOT EXISTS ai_manager_config JSONB DEFAULT NULL;
+    END IF;
+END $$;
     """)
 
     await conn.execute("""

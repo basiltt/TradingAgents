@@ -9,7 +9,8 @@ echo "=== Deploying TradingAgents ==="
 cd "$PROJECT_DIR"
 
 echo "[1/6] Pulling latest code..."
-git pull origin "$BRANCH"
+git fetch origin "$BRANCH"
+git reset --hard "origin/$BRANCH"
 
 echo "[2/6] Installing Python dependencies..."
 source .venv/bin/activate
