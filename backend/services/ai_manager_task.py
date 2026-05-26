@@ -152,8 +152,40 @@ class AIManagerTask:
         if current_pnl > prev_peak:
             peaks[symbol] = current_pnl
 
+    async def _init_ws_buffer_from_exchange(self) -> None:
+        """Fetch current positions and wallet balance from accounts_service to initialize state on startup."""
+        try:
+            if not self._service._accounts_service:
+                return
+            # Fetch positions
+            positions = await self._service._accounts_service.get_positions(self._account_id) or []
+            self._ws_buffer["positions"] = positions
+            
+            # Fetch wallet/equity
+            wallet = await self._service._accounts_service.get_wallet(self._account_id) or {}
+            self._ws_buffer["equity"] = wallet.get("totalEquity")
+            self._ws_buffer["available_balance"] = wallet.get("totalWalletBalance")
+            self._ws_buffer["wallet"] = wallet
+            
+            # Initialize peak PnL tracking for active positions
+            for pos in positions:
+                symbol = pos.get("symbol")
+                if symbol:
+                    self._update_peak_pnl(symbol, pos)
+
+            logger.info("AI Manager task %s initialized state from exchange: %d position(s) found", self._account_id, len(positions))
+            
+            # Transition to MONITORING if we have open positions on startup
+            if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
+                self._state = MONITORING
+                self._wake_event.set()
+        except Exception:
+            logger.exception("AI Manager task %s failed to initialize state from exchange", self._account_id)
+
     async def _run(self) -> None:
         try:
+            await self._init_ws_buffer_from_exchange()
+
             while not self._cancel_event.is_set():
                 if self._killed:
                     break
@@ -186,7 +218,8 @@ class AIManagerTask:
             self._wake_event.clear()
             await asyncio.wait_for(self._wake_event.wait(), timeout=_HEARTBEAT_SLEEPING)
         except asyncio.TimeoutError:
-            pass
+            # Periodically refresh state from exchange to recover from missed WS events or startup race conditions
+            await self._init_ws_buffer_from_exchange()
 
     async def _wait_for_resume(self) -> None:
         self._wake_event.clear()

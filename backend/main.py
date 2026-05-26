@@ -133,8 +133,11 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
         if os.environ.get("LOG_FORMAT", "").lower() == "json":
-            configure_structured_logging(os.environ.get("LOG_LEVEL", "INFO"))
+            configure_structured_logging(log_level)
+        else:
+            logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
 
         loop = asyncio.get_running_loop()
 

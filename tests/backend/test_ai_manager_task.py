@@ -671,3 +671,42 @@ async def test_pause_wakes_sleep_cycle(task):
     task._wake_event.set.assert_called_once()
     task._pause_event.set.assert_called_once()
     assert task.state == "paused"
+
+
+@pytest.mark.asyncio
+async def test_init_ws_buffer_from_exchange_success(task, mock_service):
+    """_init_ws_buffer_from_exchange populates ws_buffer and transitions state to monitoring if positions exist."""
+    mock_service._accounts_service.get_positions = AsyncMock(return_value=[{"symbol": "BTCUSDT", "size": "0.1"}])
+    mock_service._accounts_service.get_wallet = AsyncMock(return_value={"totalEquity": 1000.0, "totalWalletBalance": 800.0})
+
+    task._state = "sleeping"
+    await task._init_ws_buffer_from_exchange()
+
+    assert task._ws_buffer["positions"] == [{"symbol": "BTCUSDT", "size": "0.1"}]
+    assert task._ws_buffer["equity"] == 1000.0
+    assert task.state == "monitoring"
+
+
+@pytest.mark.asyncio
+async def test_init_ws_buffer_from_exchange_no_positions(task, mock_service):
+    """_init_ws_buffer_from_exchange keeps state as sleeping if no positions exist."""
+    mock_service._accounts_service.get_positions = AsyncMock(return_value=[])
+    mock_service._accounts_service.get_wallet = AsyncMock(return_value={"totalEquity": 1000.0})
+
+    task._state = "sleeping"
+    await task._init_ws_buffer_from_exchange()
+
+    assert task._ws_buffer["positions"] == []
+    assert task.state == "sleeping"
+
+
+@pytest.mark.asyncio
+async def test_sleep_cycle_timeout_refreshes_from_exchange(task):
+    """_sleep_cycle calls _init_ws_buffer_from_exchange when timeout occurs."""
+    task._init_ws_buffer_from_exchange = AsyncMock()
+
+    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        await task._sleep_cycle()
+
+    task._init_ws_buffer_from_exchange.assert_called_once()
+
