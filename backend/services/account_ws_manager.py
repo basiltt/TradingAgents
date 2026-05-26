@@ -69,8 +69,9 @@ class AccountWSManager:
         async def on_event(event: dict[str, Any]) -> None:
             event["account_id"] = account_id
             await self._broadcast(event)
-            if event.get("type") == "wallet_update" and self._wallet_listeners:
-                await self._notify_wallet_listeners(account_id, event.get("data", {}))
+            event_type = event.get("type")
+            if event_type in ("wallet_update", "position_update") and self._wallet_listeners:
+                await self._notify_wallet_listeners(account_id, event)
 
         client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
         self._clients[account_id] = client
@@ -99,6 +100,12 @@ class AccountWSManager:
 
     def register_wallet_listener(self, callback: Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]) -> None:
         self._wallet_listeners.append(callback)
+
+    def deregister_wallet_listener(self, callback: Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]) -> None:
+        try:
+            self._wallet_listeners.remove(callback)
+        except ValueError:
+            pass
 
     async def _notify_wallet_listeners(self, account_id: str, wallet_data: dict[str, Any]) -> None:
         for listener in self._wallet_listeners:

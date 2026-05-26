@@ -444,6 +444,7 @@ class AutoTradeConfig(BaseModel):
     close_on_profit_pct: Optional[float] = Field(None, gt=0, le=100)
     breakeven_timeout_hours: Optional[float] = Field(None, gt=0, le=720)
     max_trade_duration_hours: Optional[float] = Field(None, gt=0, le=720)
+    ai_manager_enabled: bool = False
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":

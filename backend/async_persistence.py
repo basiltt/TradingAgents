@@ -209,6 +209,208 @@ async def _fix_close_rules_constraints(conn) -> None:
     await conn.execute("ALTER TABLE close_rules ALTER COLUMN reference_value TYPE VARCHAR(100)")
 
 
+async def _add_ai_manager_tables(conn) -> None:
+    """Migration 33: AI Account Manager tables."""
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_state (
+    account_id TEXT PRIMARY KEY REFERENCES trading_accounts(id),
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    fsm_state TEXT NOT NULL DEFAULT 'sleeping',
+    config JSONB NOT NULL DEFAULT '{}',
+    circuit_breaker_count INTEGER NOT NULL DEFAULT 0,
+    circuit_breaker_active BOOLEAN NOT NULL DEFAULT FALSE,
+    circuit_breaker_half_open_used BOOLEAN NOT NULL DEFAULT FALSE,
+    actions_today INTEGER NOT NULL DEFAULT 0,
+    actions_this_hour INTEGER NOT NULL DEFAULT 0,
+    max_daily_actions INTEGER NOT NULL DEFAULT 30,
+    max_hourly_actions INTEGER NOT NULL DEFAULT 10,
+    equity_at_day_start NUMERIC(18,8),
+    realized_loss_today NUMERIC(18,8) NOT NULL DEFAULT 0,
+    realized_profit_today NUMERIC(18,8) NOT NULL DEFAULT 0,
+    token_budget_used_today INTEGER NOT NULL DEFAULT 0,
+    last_analysis_at TIMESTAMPTZ,
+    last_action_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    counters_reset_at TIMESTAMPTZ,
+    hourly_reset_at TIMESTAMPTZ,
+    kill_switch_active BOOLEAN NOT NULL DEFAULT FALSE,
+    strategy_version TEXT DEFAULT 'default',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_fsm_state CHECK (fsm_state IN ('sleeping','monitoring','analyzing','executing','paused','error'))
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_state_orphan ON ai_manager_state (fsm_state, heartbeat_at) WHERE fsm_state NOT IN ('sleeping')
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_state_enabled ON ai_manager_state (enabled) WHERE enabled = TRUE
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_decisions (
+    id BIGSERIAL,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    timestamp TIMESTAMPTZ NOT NULL,
+    evaluation_type TEXT NOT NULL,
+    urgency TEXT NOT NULL,
+    state_snapshot JSONB NOT NULL,
+    action_taken JSONB NOT NULL,
+    reasoning TEXT NOT NULL,
+    confidence FLOAT NOT NULL,
+    graph_path TEXT,
+    execution_result JSONB,
+    outcome JSONB,
+    outcome_label TEXT,
+    strategy_version TEXT NOT NULL,
+    prev_decision_hash TEXT,
+    decision_hash TEXT NOT NULL,
+    chain_key_version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (id, timestamp)
+) PARTITION BY RANGE (timestamp)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_account ON ai_manager_decisions(account_id, timestamp DESC) INCLUDE (action_taken, confidence, outcome_label, execution_result)
+    """)
+    await conn.execute("""
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_decisions_hash ON ai_manager_decisions(account_id, decision_hash, timestamp)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_outcome ON ai_manager_decisions(account_id, outcome_label, timestamp DESC)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_stranded ON ai_manager_decisions(created_at) WHERE execution_result IS NULL
+    """)
+
+    # Create default partition to catch any edge cases
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_decisions_default PARTITION OF ai_manager_decisions DEFAULT
+    """)
+
+    # Create current month and next month partitions
+    await conn.execute("""
+DO $$ BEGIN
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS ai_manager_decisions_%s PARTITION OF ai_manager_decisions FOR VALUES FROM (%L) TO (%L)',
+        to_char(date_trunc('month', NOW()), 'YYYY_MM'),
+        date_trunc('month', NOW()),
+        date_trunc('month', NOW()) + interval '1 month'
+    );
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS ai_manager_decisions_%s PARTITION OF ai_manager_decisions FOR VALUES FROM (%L) TO (%L)',
+        to_char(date_trunc('month', NOW()) + interval '1 month', 'YYYY_MM'),
+        date_trunc('month', NOW()) + interval '1 month',
+        date_trunc('month', NOW()) + interval '2 months'
+    );
+END $$
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_patterns (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    pattern_type TEXT NOT NULL,
+    symbol TEXT,
+    description TEXT NOT NULL,
+    evidence_count INTEGER DEFAULT 1,
+    confidence FLOAT DEFAULT 0.5,
+    last_validated TIMESTAMPTZ,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT chk_pattern_description_len CHECK (char_length(description) <= 200)
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_ai_patterns_account ON ai_manager_patterns(account_id, active, confidence DESC)
+    """)
+    await conn.execute("""
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_patterns_natural_key ON ai_manager_patterns(account_id, pattern_type, COALESCE(symbol, '')) WHERE active = TRUE
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_failed_outcomes (
+    id BIGSERIAL PRIMARY KEY,
+    decision_id BIGINT NOT NULL,
+    decision_timestamp TIMESTAMPTZ NOT NULL,
+    execution_result JSONB NOT NULL,
+    failure_reason TEXT NOT NULL,
+    retry_count INTEGER DEFAULT 0,
+    max_retries INTEGER DEFAULT 5,
+    next_retry_at TIMESTAMPTZ,
+    resolved BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_failed_outcomes_retry ON ai_manager_failed_outcomes(resolved, next_retry_at) WHERE resolved = FALSE
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_global_state (
+    key TEXT PRIMARY KEY,
+    int_value INTEGER,
+    text_value TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+)
+    """)
+    await conn.execute("""
+INSERT INTO ai_manager_global_state (key, int_value) VALUES ('degradation_tier', 0) ON CONFLICT (key) DO NOTHING
+    """)
+
+    await conn.execute("""
+ALTER TABLE auto_trade_configs ADD COLUMN IF NOT EXISTS ai_manager_config JSONB DEFAULT NULL
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS security_events (
+    id BIGSERIAL PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    account_id TEXT,
+    actor_user_id TEXT NOT NULL,
+    actor_ip INET,
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    success BOOLEAN NOT NULL,
+    detail JSONB
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type, timestamp DESC)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_security_events_actor ON security_events(actor_user_id, timestamp DESC)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_security_events_bf ON security_events(actor_user_id, event_type, timestamp DESC) WHERE success = FALSE
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS reauth_nonces (
+    actor_user_id TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (actor_user_id, nonce)
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_reauth_nonces_expires ON reauth_nonces(expires_at)
+    """)
+
+    # Add ai_closed column to trades
+    await conn.execute("""
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS ai_closed BOOLEAN DEFAULT FALSE
+    """)
+    await conn.execute("""
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS ai_decision_id BIGINT
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_trades_ai_decision_id ON trades(ai_decision_id) WHERE ai_decision_id IS NOT NULL
+    """)
+
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -510,6 +712,7 @@ ALTER TABLE trades ADD CONSTRAINT trades_source_check CHECK (source IN ('manual'
 """),
     (31, _fix_source_constraint),
     (32, _fix_close_rules_constraints),
+    (33, _add_ai_manager_tables),
 ]
 
 

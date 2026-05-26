@@ -32,6 +32,7 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   close_on_profit_pct: null,
   breakeven_timeout_hours: null,
   max_trade_duration_hours: null,
+  ai_manager_enabled: false,
 };
 
 const SEGMENT_CONTAINER_CLASS = "grid grid-cols-2 gap-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 shadow-[var(--neu-shadow-inset)] border-none";
@@ -627,6 +628,17 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
               })}
               title="Trade duration limits"
               description="Auto-adjust or close trades based on how long they've been open."
+            />
+            <ToggleRow
+              checked={config.ai_manager_enabled ?? false}
+              onChange={(checked) => onChange({ ai_manager_enabled: checked })}
+              title="AI Position Manager"
+              description="Automatically monitor and close positions using AI-driven analysis (trend reversals, profit preservation, abnormal conditions)."
+              trailing={
+                config.ai_manager_enabled ? (
+                  <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wider bg-[color-mix(in_oklch,var(--neu-accent)_12%,var(--neu-surface-base))] text-[var(--neu-accent)] border-[color-mix(in_oklch,var(--neu-accent)_30%,var(--neu-stroke-soft))]">AI</Badge>
+                ) : null
+              }
             />
           </div>
 

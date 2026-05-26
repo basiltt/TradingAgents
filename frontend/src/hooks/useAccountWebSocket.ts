@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAppDispatch } from "@/store";
 import { updateCardRealtime, handleCloseExecution, setDashboard } from "@/store/accounts-slice";
+import { onStateChange as onAIStateChange, onExecution as onAIExecution } from "@/store/ai-manager-slice";
 import type { Trade } from "@/components/trades/types";
 import {
   addActiveTrade,
@@ -135,6 +136,12 @@ export function useAccountWebSocket() {
         dispatch(revertOptimisticUpdate(msg.trade_id as string));
         dispatch(clearPendingAction(msg.trade_id as string));
         toast.error(`Close failed: ${(msg.error_message as string) || "unknown error"}`);
+      }
+      if (msg.type === "ai_manager.state_change" && msg.account_id) {
+        dispatch(onAIStateChange(msg as unknown as { account_id: string; state: string; enabled: boolean }));
+      }
+      if (msg.type === "ai_manager.execution" && msg.account_id) {
+        dispatch(onAIExecution(msg as unknown as { account_id: string; action: string; symbol: string; pnl: number }));
       }
     };
 
