@@ -1083,8 +1083,6 @@ class AIManagerTask:
                 current_price = float(pos.get("markPrice", 0) or 0)
                 _, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
 
-                current_state = self._sweep_state.get(symbol, "INACTIVE")
-
                 if current_state == "INACTIVE" and sweep:
                     await self._handle_sweep_detected(symbol, sweep, my_sl or 0.0)
                 elif current_state == "DEFENDING" and not sweep:
