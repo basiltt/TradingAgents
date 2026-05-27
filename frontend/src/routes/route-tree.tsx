@@ -106,7 +106,7 @@ function RouteErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
     <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
       <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-8 max-w-md w-full shadow-[var(--neu-shadow-float)]">
         <h2 className="text-lg font-bold text-[var(--neu-text-strong)] mb-2">Something went wrong</h2>
-        <p className="text-sm text-[var(--neu-text-muted)] mb-4">{error.message}</p>
+        <p className="text-sm text-[var(--neu-text-muted)] mb-4">{error instanceof Error ? error.message : String(error)}</p>
         <button
           onClick={resetErrorBoundary}
           className="px-4 py-2 text-sm font-medium rounded-[var(--neu-radius-md)] bg-[var(--neu-accent)] text-white hover:opacity-90 transition-opacity"
