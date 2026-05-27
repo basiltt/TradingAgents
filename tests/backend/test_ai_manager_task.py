@@ -29,6 +29,7 @@ def mock_service():
     svc._repo.record_realized_loss = AsyncMock(return_value={"realized_loss_today": 10.0, "equity_at_day_start": 1000.0})
     svc._repo.record_realized_profit = AsyncMock(return_value={"realized_profit_today": 5.0, "equity_at_day_start": 1000.0})
     svc._repo.increment_actions_atomic = AsyncMock(return_value=True)
+    svc._repo.decrement_actions_atomic = AsyncMock()
     svc._repo.increment_token_budget_atomic = AsyncMock(return_value=True)
     svc._repo.is_kill_switch_active = AsyncMock(return_value=False)
     svc._repo.get_state = AsyncMock(return_value={"equity_at_day_start": 1000.0})
@@ -197,6 +198,7 @@ async def test_execution_exception_records_dead_letter(task, stub_graph, mock_se
     await task._evaluate()
     assert task.state == "monitoring"
     mock_service._repo.insert_failed_outcome.assert_called_once()
+    mock_service._repo.decrement_actions_atomic.assert_called_once()
     mock_service._lock_registry.release.assert_called_once()
 
 
@@ -662,7 +664,26 @@ async def test_enforce_daily_limits_exception_triggers_failsafe_pause(task, mock
 
 
 @pytest.mark.asyncio
-async def test_pause_wakes_sleep_cycle(task):
+async def test_daily_limits_not_called_on_failed_close(task, mock_service, stub_graph):
+    """_enforce_daily_limits is skipped when close execution fails."""
+    stub_graph.ainvoke = AsyncMock(return_value={"action": "FULL_CLOSE", "symbol": "BTCUSDT", "reason": "test", "confidence": 0.9})
+    mock_service._close_positions_service.close_all_for_rule = AsyncMock(return_value={"total": 1, "closed": 0, "failed": 1, "results": []})
+    task._state = "monitoring"
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT", "unrealisedPnl": "-50.0"}]}
+    task._config.confidence_threshold = 0.5
+
+    await task._evaluate()
+    mock_service._repo.record_realized_loss.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_persist_ref_equity_swallows_exception(task, mock_service):
+    """_persist_ref_equity logs but does not propagate DB exceptions."""
+    mock_service._repo.upsert_state = AsyncMock(side_effect=Exception("DB timeout"))
+    await task._persist_ref_equity(5000.0)
+    # Should not raise
+
+
     """Calling pause() wakes the sleep cycle immediately."""
     task._state = "sleeping"
     task._wake_event = MagicMock()
