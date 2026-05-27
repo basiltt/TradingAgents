@@ -129,10 +129,13 @@ class CorrelationAnalyzer:
                 sides = [pos_map[s].get("side", "Buy") for s in cluster_syms]
                 net_dir = "long" if sides.count("Buy") > sides.count("Sell") else "short"
 
-                combined_upnl = sum(
-                    float(pos_map[s].get("unrealisedPnl", pos_map[s].get("unrealized_pnl", 0)))
-                    for s in cluster_syms
-                )
+                combined_upnl = 0.0
+                for s in cluster_syms:
+                    raw = pos_map[s].get("unrealisedPnl", pos_map[s].get("unrealized_pnl", 0))
+                    try:
+                        combined_upnl += float(raw) if raw not in (None, "", "N/A") else 0.0
+                    except (ValueError, TypeError):
+                        pass
                 combined_pnl_pct = (combined_upnl / notional * 100) if notional > 0 else 0.0
 
                 clusters.append({

@@ -823,7 +823,7 @@ class AIManagerTask:
         velocity_emergency_symbols: list[str] = []
         if not triggered:
             market_data = self._get_market_data()
-            velocity_threshold = self._config.emergency_pnl_velocity_pct / 100
+            velocity_threshold = max(0.001, self._config.emergency_pnl_velocity_pct / 100)
             now_mono = time.monotonic()
             for pos in positions:
                 symbol = pos.get("symbol", "")
@@ -1346,7 +1346,10 @@ class AIManagerTask:
     async def _check_sweep_timeout(self, symbol: str) -> None:
         """Check if sweep defense has timed out."""
         started = self._sweep_defense_started_at.get(symbol, 0)
-        timeout_s = self._config.sweep_recovery_timeout_candles * 300
+        timeout_candles = self._config.sweep_recovery_timeout_candles
+        if timeout_candles <= 0:
+            return
+        timeout_s = timeout_candles * 300
         if time.time() - started > timeout_s:
             original_sl = self._sweep_original_sl.get(symbol)
             if original_sl:

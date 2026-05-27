@@ -295,7 +295,8 @@ def _parse_llm_response(raw: str) -> Optional[Dict[str, Any]]:
     if action not in _VALID_ACTIONS:
         return None
 
-    symbol = sanitize_for_injection(str(data.get("symbol", "")))
+    symbol_raw = data.get("symbol") or ""
+    symbol = sanitize_for_injection(str(symbol_raw), max_len=50) if symbol_raw else ""
     try:
         confidence = float(data.get("confidence", 0.0))
     except (ValueError, TypeError):
