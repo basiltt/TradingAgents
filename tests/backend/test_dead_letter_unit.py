@@ -28,22 +28,29 @@ class FakeConn:
         return "UPDATE 1"
 
 
+class _FakePool:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        return _FakeCM(self._conn)
+
+
+class _FakeCM:
+    def __init__(self, conn):
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *a):
+        pass
+
+
 class FakeDB:
     def __init__(self):
         self._conn = FakeConn()
-
-    class _CM:
-        def __init__(self, conn):
-            self._conn = conn
-
-        async def __aenter__(self):
-            return self._conn
-
-        async def __aexit__(self, *a):
-            pass
-
-    def pool_acquire(self):
-        return self._CM(self._conn)
+        self.pool = _FakePool(self._conn)
 
 
 @pytest.mark.asyncio
@@ -94,7 +101,7 @@ async def test_resolve():
 @pytest.mark.asyncio
 async def test_record_failure_handles_db_error():
     db = MagicMock()
-    db.pool_acquire.side_effect = RuntimeError("pool closed")
+    db.pool.acquire.side_effect = RuntimeError("pool closed")
     dlq = DeadLetterQueue(db)
 
     result = await dlq.record_failure("snapshot", {}, ValueError("err"))

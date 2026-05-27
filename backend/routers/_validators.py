@@ -1,0 +1,16 @@
+"""Shared input validators for router endpoints."""
+
+from __future__ import annotations
+
+import uuid as _uuid
+
+from fastapi import HTTPException
+
+
+def validate_account_id(account_id: str) -> str:
+    """Validate UUID format and return the ID, or raise HTTPException(400)."""
+    try:
+        _uuid.UUID(account_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(400, detail="Invalid account ID format")
+    return account_id

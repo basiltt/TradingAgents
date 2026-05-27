@@ -38,11 +38,26 @@ ERROR = "error"
 _HEARTBEAT_SLEEPING = 60.0
 _HEARTBEAT_MONITORING = 10.0
 _SYMBOL_COOLDOWN_S = 15.0
+_EMERGENCY_CLOSE_SYMBOL_TTL_S = 30.0
+_MAX_REASONING_CHARS = 2000
+_CHAIN_KEY_VERSION = 1
 _ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE"})
 
 
 class AIManagerTask:
-    """Manages one account's AI decision loop."""
+    """FSM-driven decision loop for a single account's AI-managed positions.
+
+    Lifecycle states: SLEEPING → MONITORING → ANALYZING → EXECUTING, plus PAUSED and ERROR.
+    Receives real-time WebSocket events (wallet/position updates), evaluates urgency via
+    AIManagerEvaluator, and invokes a LangGraph-compiled decision graph when action is needed.
+    Emergency fast-path bypasses the normal sleep/monitor cycle for rapid drawdown response.
+
+    Args:
+        account_id: UUID of the managed trading account.
+        service: Parent AIAccountManagerService providing repo, LLM scheduler, and event bus.
+        config: Validated AIManagerConfig with thresholds, limits, and feature flags.
+        compiled_graph: Pre-compiled LangGraph StateGraph for decision inference.
+    """
 
     def __init__(
         self,
@@ -57,6 +72,7 @@ class AIManagerTask:
         self._graph = compiled_graph
         self._state = SLEEPING
         self._task: Optional[asyncio.Task] = None
+        self._background_tasks: set[asyncio.Task] = set()
         self._cancel_event = asyncio.Event()
         self._pause_event = asyncio.Event()
         self._wake_event = asyncio.Event()
@@ -85,16 +101,22 @@ class AIManagerTask:
         return self._state
 
     def start(self) -> None:
+        """Spawn the async run loop as a background task."""
         self._task = asyncio.create_task(self._run(), name=f"ai-mgr-{self._account_id}")
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     def _log_async(self, level: str, category: str, message: str, details: dict | None = None) -> None:
         """Fire-and-forget log write to DB."""
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running() and self._service and self._service._repo:
-                loop.create_task(
+                t = loop.create_task(
                     self._service._repo.insert_log(self._account_id, level, category, message, details)
                 )
+                self._track_task(t)
         except RuntimeError:
             pass
 
@@ -108,7 +130,8 @@ class AIManagerTask:
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                loop.create_task(self._persist_and_emit_state())
+                t = loop.create_task(self._persist_and_emit_state())
+                self._track_task(t)
         except RuntimeError:
             pass
 
@@ -127,16 +150,19 @@ class AIManagerTask:
             pass
 
     def cancel(self) -> None:
+        """Signal cancellation and terminate the run loop task."""
         self._cancel_event.set()
         if self._task and not self._task.done():
             self._task.cancel()
 
     def pause(self) -> None:
+        """Transition to PAUSED state; the run loop blocks until resume()."""
         self.transition_to(PAUSED)
         self._pause_event.set()
         self._wake_event.set()
 
     def resume(self) -> None:
+        """Exit PAUSED state; resumes in MONITORING or SLEEPING depending on positions."""
         if self._has_open_positions(self._ws_buffer):
             self.transition_to(MONITORING)
         else:
@@ -145,20 +171,28 @@ class AIManagerTask:
         self._wake_event.set()
 
     def set_killed(self) -> None:
+        """Activate kill switch — transitions to ERROR and signals cancellation."""
         self._killed = True
         self.transition_to(ERROR)
         self._cancel_event.set()
 
     def reload_config(self, config: AIManagerConfig) -> None:
+        """Hot-reload configuration without restarting the task."""
         self._config = config
         self._correlation_analyzer = CorrelationAnalyzer(
             correlation_threshold=config.correlation_threshold,
         )
 
     def is_dead(self) -> bool:
+        """Return True if the run loop task has completed (normally or via exception)."""
         return self._task is not None and self._task.done()
 
     async def on_ws_event(self, event: dict) -> None:
+        """Handle incoming WebSocket event (wallet_update or position_update).
+
+        Updates the internal WS buffer and triggers emergency evaluation if positions
+        are present and the emergency fast-path conditions are met.
+        """
         event_type = event.get("type")
         data = event.get("data", {})
 
@@ -367,6 +401,7 @@ class AIManagerTask:
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
                 circuit_breaker.restart_cooldown(self._account_id)
+            await self._rollback_token_budget()
             await self._service._degradation.check_health("timeout")
             self._transition_post_eval()
             return
@@ -375,6 +410,7 @@ class AIManagerTask:
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
                 circuit_breaker.restart_cooldown(self._account_id)
+            await self._rollback_token_budget()
             await self._service._degradation.check_health("timeout")
             self._transition_post_eval()
             return
@@ -544,11 +580,11 @@ class AIManagerTask:
                 "urgency": self._get_urgency(),
                 "state_snapshot": copy.deepcopy(self._ws_buffer),
                 "action_taken": {"action": action_type, "symbol": symbol},
-                "reasoning": result.get("reason", "")[:2000],
+                "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
                 "confidence": result.get("confidence", 0.0),
                 "graph_path": result.get("graph_path"),
                 "strategy_version": self._config.strategy_version,
-                "chain_key_version": 1,
+                "chain_key_version": _CHAIN_KEY_VERSION,
             }
 
             decision_id, decision_ts = await self._service._repo.insert_decision(
@@ -585,8 +621,11 @@ class AIManagerTask:
                     )
                 except Exception:
                     logger.exception("Failed to record dead-letter for %s", self._account_id)
-            else:
-                logger.error("Budget consumed but no decision created for %s %s", self._account_id, symbol)
+            # Roll back budget since no exchange action was completed
+            try:
+                await self._service._repo.decrement_actions_atomic(self._account_id)
+            except Exception:
+                logger.exception("Failed to roll back budget for %s", self._account_id)
         finally:
             lock.release(self._account_id, symbol)
 
@@ -594,11 +633,11 @@ class AIManagerTask:
         if exec_result is not None and decision_id is not None:
             try:
                 await self._service._repo.update_decision_outcome(
-                    decision_id, decision_ts, exec_result or {}
+                    decision_id, decision_ts, exec_result
                 )
                 # Only feed circuit breaker and daily limits if exchange actually closed
                 if exec_result.get("status") == "closed":
-                    pnl = exec_result.get("realized_pnl", 0.0) if exec_result else 0.0
+                    pnl = exec_result.get("realized_pnl", 0.0)
                     await self._service._circuit_breaker.record_outcome(
                         self._account_id, pnl, action_type
                     )
@@ -615,11 +654,12 @@ class AIManagerTask:
             except Exception:
                 logger.exception("Post-execution bookkeeping failed for %s %s", self._account_id, symbol)
 
-        try:
-            await self._enforce_daily_limits(pnl)
-        except Exception:
-            logger.critical("Daily limit enforcement failed for %s — pausing as fail-safe", self._account_id)
-            self.pause()
+        if exec_result is not None and exec_result.get("status") == "closed":
+            try:
+                await self._enforce_daily_limits(pnl)
+            except Exception:
+                logger.critical("Daily limit enforcement failed for %s — pausing as fail-safe", self._account_id)
+                self.pause()
 
     async def _enforce_daily_limits(self, pnl: float) -> None:
         """Task 3.5: Daily loss enforcement after every AI-initiated close."""
@@ -830,7 +870,7 @@ class AIManagerTask:
                 if not symbol:
                     continue
                 # Per-symbol cooldown: don't re-trigger same symbol within 30s
-                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < 30.0:
+                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
                     continue
                 sym_indicators = market_data.get(symbol, {})
                 if self._evaluator.check_emergency_signals(pos, sym_indicators, velocity_threshold):
@@ -969,11 +1009,11 @@ class AIManagerTask:
                     "confidence": 1.0,
                     "graph_path": "emergency_fast_path",
                     "strategy_version": self._config.strategy_version,
-                    "chain_key_version": 1,
+                    "chain_key_version": _CHAIN_KEY_VERSION,
                 }
                 await self._service._repo.insert_decision(
                     self._account_id, decision_data,
-                    self._service._hmac_key or "emergency",
+                    self._service._hmac_key or "no-hmac-configured",
                 )
             return True
         except Exception:
@@ -1017,7 +1057,7 @@ class AIManagerTask:
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 age_s = (now_utc - ts).total_seconds()
-                if age_s < 30.0:
+                if age_s < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
                     self._emergency_closed_symbols[sym] = now_mono - age_s
 
     async def _persist_emergency_state(self) -> None:
@@ -1035,7 +1075,7 @@ class AIManagerTask:
         symbols_json: dict = {}
         for sym, mono_ts in self._emergency_closed_symbols.items():
             age = now_mono - mono_ts
-            if age < 30.0:
+            if age < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
                 symbols_json[sym] = (now_utc - timedelta(seconds=age)).isoformat()
 
         try:
@@ -1055,7 +1095,14 @@ class AIManagerTask:
                 self._account_id, emergency_ref_equity=value,
             )
         except Exception:
-            pass
+            logger.warning("Failed to persist ref equity for %s", self._account_id, exc_info=True)
+
+    async def _rollback_token_budget(self) -> None:
+        """Roll back the 1000-token budget increment on LLM call failure."""
+        try:
+            await self._service._repo.decrement_token_budget_atomic(self._account_id, 1000)
+        except Exception:
+            logger.warning("Failed to roll back token budget for %s", self._account_id, exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Sweep defense helpers

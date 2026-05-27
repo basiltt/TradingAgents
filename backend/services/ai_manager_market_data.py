@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
 from typing import Any, Dict, List, Optional, Set
 
 import httpx
@@ -44,6 +43,7 @@ class MarketDataCache:
         self._mtf_tasks: List[asyncio.Task] = []
 
     async def start(self) -> None:
+        """Start periodic market data refresh loops."""
         self._client = httpx.AsyncClient(timeout=10.0)
         self._task = asyncio.create_task(self._refresh_loop())
         self._kline_task = asyncio.create_task(self._kline_refresh_loop())
@@ -52,6 +52,7 @@ class MarketDataCache:
         logger.info("MarketDataCache started with MTF")
 
     async def stop(self) -> None:
+        """Stop refresh loops and close the HTTP client."""
         for t in [self._task, self._kline_task]:
             if t:
                 t.cancel()
@@ -72,9 +73,11 @@ class MarketDataCache:
         logger.info("MarketDataCache stopped")
 
     def track_symbols(self, symbols: Set[str]) -> None:
+        """Add symbols to the set of tracked instruments."""
         self._symbols |= symbols
 
     def untrack_symbols(self, symbols: Set[str]) -> None:
+        """Remove symbols from tracking and discard their cached data."""
         self._symbols -= symbols
         for s in symbols:
             self._data.pop(s, None)
@@ -82,9 +85,11 @@ class MarketDataCache:
             self._kline_data.pop(s, None)
 
     def get_indicators(self, symbol: str) -> Dict[str, Any]:
+        """Return cached indicator snapshot for a single symbol."""
         return self._data.get(symbol, {})
 
     def get_all_indicators(self) -> Dict[str, Dict[str, Any]]:
+        """Return indicator snapshots for all tracked symbols."""
         return dict(self._data)
 
     # --- Ticker refresh loop ---

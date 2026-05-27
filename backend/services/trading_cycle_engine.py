@@ -26,6 +26,8 @@ ALLOWED_STOP_REASONS = frozenset({
 
 
 class CycleError(Exception):
+    """Base exception for trading cycle operations. Subclasses set code and safe_message."""
+
     code: str = "UNKNOWN_ERROR"
     safe_message: str = "Operation failed."
 
@@ -81,6 +83,24 @@ class CycleNotRunningError(CycleError):
 
 
 class TradingCycleEngine:
+    """Orchestrates batch trading cycles from scan results to position entry.
+
+    Manages the full lifecycle: validate scan → filter symbols → open positions →
+    monitor duration/drawdown → finalize. Supports concurrent cycles per account
+    with circuit-breaker protection against repeated Bybit API failures.
+
+    Args:
+        cycle_repo: Repository for persisting cycle state and trade records.
+        accounts_svc: AccountsService for API key retrieval and account validation.
+        close_positions_svc: Service for position closure and close-rule activation.
+        db: Database connection (async_persistence) for direct queries.
+        ws_manager: Optional WebSocket manager for real-time position updates.
+        bybit_concurrency: Max parallel Bybit API calls per cycle.
+        circuit_breaker_threshold: Consecutive failures before halting a cycle.
+        max_duration_seconds: Hard timeout for any single cycle.
+        max_scan_age_seconds: Maximum age of scan results before rejection.
+    """
+
     def __init__(
         self,
         cycle_repo: CycleRepository,
@@ -108,6 +128,7 @@ class TradingCycleEngine:
         self._sweep_task: Optional[asyncio.Task] = None
 
     def register_lifecycle_callback(self, callback: Callable[..., Any]) -> None:
+        """Register a callback invoked on cycle events (started, completed, failed)."""
         self._lifecycle_callbacks.append(callback)
 
     async def _notify(self, event_type: str, payload: dict) -> None:
@@ -118,10 +139,12 @@ class TradingCycleEngine:
                 logger.exception("Lifecycle callback error")
 
     async def start(self) -> None:
+        """Recover incomplete cycles and start the background sweep loop."""
         await self._startup_recovery()
         self._sweep_task = asyncio.create_task(self._sweep_loop())
 
     async def shutdown(self) -> None:
+        """Cancel all active cycles and finalize them as server_shutdown."""
         if self._sweep_task:
             self._sweep_task.cancel()
         tasks = dict(self._active_tasks)
@@ -136,13 +159,16 @@ class TradingCycleEngine:
     async def list_cycles(
         self, offset: int = 0, limit: int = 20, *, status: Optional[str] = None
     ) -> tuple[list[dict], int]:
+        """Return paginated list of cycles with optional status filter."""
         return await self._repo.list_cycles(offset, limit, status=status)
 
     async def get_cycle(self, cycle_id: int) -> Optional[dict]:
+        """Retrieve a single cycle by ID, or None if not found."""
         return await self._repo.get_cycle(cycle_id)
 
     @staticmethod
     def filter_scan_results(scan_results: list[dict], config: dict) -> list[dict]:
+        """Filter scan results by score, confidence, direction, and max_trades config."""
         min_score = config.get("min_score", 3)
         min_conf = config.get("min_confidence", "moderate")
         sig_filter = config.get("signal_filter", "both")
@@ -166,6 +192,7 @@ class TradingCycleEngine:
         return filtered[:max_trades]
 
     async def start_cycle(self, config: Any) -> dict:
+        """Validate inputs and launch a new trading cycle from scan results."""
         cfg = config if isinstance(config, dict) else config.__dict__
         account_id = cfg["account_id"]
         scan_id = cfg["scan_id"]
@@ -208,10 +235,12 @@ class TradingCycleEngine:
         self._active_tasks[cycle_id] = task
 
         cycle = await self._repo.get_cycle(cycle_id)
-        assert cycle is not None
+        if cycle is None:
+            raise RuntimeError(f"Cycle {cycle_id} not found after operation")
         return cycle
 
     async def stop_cycle(self, cycle_id: int) -> dict:
+        """Request graceful stop of a running cycle."""
         ok = await self._repo.update_status(
             cycle_id, "stopping",
         )
@@ -233,10 +262,12 @@ class TradingCycleEngine:
 
         await self._finalize_cycle(cycle_id, "stopped", "user_stopped")
         cycle = await self._repo.get_cycle(cycle_id)
-        assert cycle is not None
+        if cycle is None:
+            raise RuntimeError(f"Cycle {cycle_id} not found after operation")
         return cycle
 
     async def dry_run(self, config: Any) -> dict:
+        """Simulate a cycle without opening positions — returns filtered symbols and sizing."""
         cfg = config if isinstance(config, dict) else config.__dict__
         account_id = cfg["account_id"]
         scan_id = cfg["scan_id"]
@@ -322,7 +353,7 @@ class TradingCycleEngine:
             self._active_tasks.pop(cycle_id, None)
             raise
         except Exception as e:
-            logger.warning("Cycle %d failed unexpectedly: %s", cycle_id, e)
+            logger.exception("Cycle %d failed unexpectedly", cycle_id)
             await self._finalize_cycle(cycle_id, "failed", "circuit_breaker")
         finally:
             self._active_tasks.pop(cycle_id, None)
@@ -527,6 +558,7 @@ class TradingCycleEngine:
         await self._repo.expire_cycle_rules(cycle_id)
 
     async def on_rule_triggered(self, rule: dict) -> None:
+        """Handle close-rule trigger event — may finalize the associated cycle."""
         cycle_id = rule.get("cycle_id")
         if not cycle_id:
             return

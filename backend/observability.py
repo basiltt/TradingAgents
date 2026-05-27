@@ -10,7 +10,9 @@ Provides ASGI middleware for:
 
 from __future__ import annotations
 
+import json as _json
 import logging
+import re as _re
 import time
 import uuid
 from collections import defaultdict
@@ -20,13 +22,14 @@ from typing import Any
 # Correlation ID propagated through the request lifecycle
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
+_CORRELATION_ID_LENGTH = 8
+_SLOW_REQUEST_THRESHOLD_S = 3.0
+
 
 class StructuredFormatter(logging.Formatter):
     """JSON log formatter with correlation ID and standard fields."""
 
     def format(self, record: logging.LogRecord) -> str:
-        import json as _json
-
         cid = correlation_id.get("")
         entry: dict[str, Any] = {
             "ts": self.formatTime(record),
@@ -104,11 +107,14 @@ class _Metrics:
 metrics = _Metrics()
 
 
+_UUID_RE = _re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_NUMERIC_SEGMENT_RE = _re.compile(r"/\d+")
+
+
 def _normalize_path(path: str) -> str:
     """Collapse path parameters to avoid cardinality explosion."""
-    import re
-    path = re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "/{id}", path)
-    path = re.sub(r"/\d+", "/{id}", path)
+    path = _UUID_RE.sub("/{id}", path)
+    path = _NUMERIC_SEGMENT_RE.sub("/{id}", path)
     return path
 
 
@@ -123,7 +129,7 @@ class ObservabilityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        cid = str(uuid.uuid4())[:8]
+        cid = str(uuid.uuid4())[:_CORRELATION_ID_LENGTH]
         token = correlation_id.set(cid)
         start = time.perf_counter()
         metrics.inc_active()
@@ -147,7 +153,7 @@ class ObservabilityMiddleware:
             path = scope.get("path", "/")
             metrics.record_request(method, path, status_code, duration)
 
-            if duration > 3.0:
+            if duration > _SLOW_REQUEST_THRESHOLD_S:
                 logger = logging.getLogger("backend.observability")
                 logger.warning(
                     "slow_request",

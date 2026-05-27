@@ -27,6 +27,11 @@ class DegradationTierManager:
             self._tier = await self._repo.get_degradation_tier()
 
     async def check_health(self, event: str) -> None:
+        """Process a health event and adjust the degradation tier.
+
+        Valid events: 'success', 'indeterminate', 'timeout', 'unavailable', 'exchange_down'.
+        Escalation is immediate; recovery requires HYSTERESIS_S seconds of sustained success.
+        """
         async with self._lock:
             now = time.monotonic()
             if event in ("success", "indeterminate"):
@@ -65,9 +70,11 @@ class DegradationTierManager:
                     if self._repo:
                         await self._repo.set_degradation_tier(self._tier)
 
+    _LLM_DISABLED_TIER = 2
+
     def get_tier(self) -> int:
         return self._tier
 
     def should_use_llm(self, tier: int = None) -> bool:
         t = tier if tier is not None else self._tier
-        return t < 2
+        return t < self._LLM_DISABLED_TIER

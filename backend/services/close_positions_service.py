@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -17,26 +18,37 @@ CLOSE_RATE_LIMIT = 10  # max concurrent close orders
 
 
 class ClosePositionsService:
+    """Handles position closure and conditional close-rule management.
+
+    Provides immediate position close (market orders via Bybit API) and
+    deferred close-rules (TP/SL/trailing) that are evaluated periodically
+    by CloseRuleEvaluator. Rate-limited to CLOSE_RATE_LIMIT concurrent orders.
+    """
+
     def __init__(self, db: Any, accounts_service: Any, ws_manager: Any = None, trade_service: Any = None):
         self._db = db
         self._accounts_service = accounts_service
         self._ws_manager = ws_manager
         self._trade_service = trade_service
         self._closing_accounts: dict[str, float] = {}
+        self._close_lock = asyncio.Lock()
 
     _CLOSE_LOCK_TTL = 300.0  # auto-expire stale close locks after 5 minutes
 
     def set_trade_service(self, trade_service: Any) -> None:
+        """Inject trade service dependency (breaks circular import)."""
         self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
-        if account_id in self._closing_accounts:
-            started = self._closing_accounts[account_id]
-            if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
-                raise ValueError("Close already in progress for this account")
-            logger.warning("Expired stale close lock for %s", account_id)
-        self._closing_accounts[account_id] = time.monotonic()
-        t0 = time.monotonic()
+        """Close all open positions for an account via market orders."""
+        async with self._close_lock:
+            if account_id in self._closing_accounts:
+                started = self._closing_accounts[account_id]
+                if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
+                    raise ValueError("Close already in progress for this account")
+                logger.warning("Expired stale close lock for %s", account_id)
+            self._closing_accounts[account_id] = time.monotonic()
+            t0 = self._closing_accounts[account_id]
         logger.info("close_all_positions_start", extra={"account_id": account_id})
 
         try:
@@ -101,18 +113,21 @@ class ClosePositionsService:
                 "execution_id": execution["id"],
             }
         finally:
-            self._closing_accounts.pop(account_id, None)
+            async with self._close_lock:
+                if self._closing_accounts.get(account_id) == t0:
+                    del self._closing_accounts[account_id]
 
     async def close_all_for_rule(self, account_id: str, rule_id: str | None, *, symbols: list[str] | None = None) -> dict[str, Any]:
         """Close positions triggered by a rule or cycle stop. If symbols is provided, only close those symbols."""
-        if account_id in self._closing_accounts:
-            started = self._closing_accounts[account_id]
-            if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
-                logger.info("Skipping rule close for %s — close already in progress", account_id)
-                return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
-            logger.warning("Expired stale close lock for %s", account_id)
-        self._closing_accounts[account_id] = time.monotonic()
-        t0 = time.monotonic()
+        async with self._close_lock:
+            if account_id in self._closing_accounts:
+                started = self._closing_accounts[account_id]
+                if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
+                    logger.info("Skipping rule close for %s — close already in progress", account_id)
+                    return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
+                logger.warning("Expired stale close lock for %s", account_id)
+            self._closing_accounts[account_id] = time.monotonic()
+            t0 = self._closing_accounts[account_id]
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -163,7 +178,9 @@ class ClosePositionsService:
 
             return {"total": len(positions), "closed": closed, "failed": failed, "results": results}
         finally:
-            self._closing_accounts.pop(account_id, None)
+            async with self._close_lock:
+                if self._closing_accounts.get(account_id) == t0:
+                    del self._closing_accounts[account_id]
 
     # ── Trade record integration ────────────────────────────────
 
@@ -253,6 +270,7 @@ class ClosePositionsService:
     # ── Rule CRUD ────────────────────────────────────────────────
 
     async def create_rule(self, account_id: str, rule_data: dict) -> dict:
+        """Create a conditional close rule (TP/SL/trailing) for an account."""
         account = await self._db.get_account(account_id)
         if not account:
             raise ValueError("Account not found")
@@ -268,7 +286,6 @@ class ClosePositionsService:
         # Time-based rules store ISO timestamp in reference_value, skip equity checks
         if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
             if not reference:
-                from datetime import datetime, timezone
                 reference = datetime.now(timezone.utc).isoformat()
         elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and not reference:
             wallet = await self._accounts_service.get_wallet(account_id)
@@ -292,9 +309,11 @@ class ClosePositionsService:
         return row
 
     async def list_rules(self, account_id: str) -> list:
+        """Return all close rules for the given account."""
         return await self._db.list_close_rules(account_id)
 
     async def update_rule(self, account_id: str, rule_id: str, data: dict) -> dict | None:
+        """Update an existing close rule's parameters."""
         rule = await self._db.get_close_rule(rule_id)
         if not rule or rule["account_id"] != account_id:
             return None
@@ -333,6 +352,7 @@ class ClosePositionsService:
         return await self._db.update_close_rule(rule_id, **fields)
 
     async def delete_rule(self, account_id: str, rule_id: str) -> bool:
+        """Delete a close rule by ID. Returns False if not found or not owned."""
         rule = await self._db.get_close_rule(rule_id)
         if not rule or rule["account_id"] != account_id:
             return False
@@ -351,4 +371,5 @@ class ClosePositionsService:
         return await self._db.delete_non_executed_rules_for_account(account_id)
 
     async def list_executions(self, account_id: str, page: int = 1, limit: int = 20) -> dict:
+        """Return paginated history of rule execution results."""
         return await self._db.list_close_executions(account_id, page, limit)

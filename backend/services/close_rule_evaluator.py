@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
 
@@ -14,9 +15,18 @@ EVALUATION_INTERVAL = 60  # seconds
 PER_ACCOUNT_TIMEOUT = 30  # seconds — must accommodate closing multiple positions
 MAX_CONCURRENT_ACCOUNTS = 5
 MAX_RULE_FAILURES = 3
+_STARTUP_DELAY_S = 15
+_STUCK_RULE_RECOVERY_AGE_S = 90
 
 
 class CloseRuleEvaluator:
+    """Evaluates active close rules against live prices and triggers closures.
+
+    Combines real-time WebSocket event evaluation (debounced 1.5s) with a 60s
+    polling fallback. Supports TP, SL, trailing stop, and time-based rules.
+    Processes accounts concurrently (up to MAX_CONCURRENT_ACCOUNTS).
+    """
+
     def __init__(self, close_service: Any, accounts_service: Any, db: Any):
         self._close_service = close_service
         self._cycle_callback: Optional[Any] = None
@@ -33,12 +43,15 @@ class CloseRuleEvaluator:
         self._rules_cache: dict[str, list] = {}
 
     def set_cycle_callback(self, callback: Any) -> None:
+        """Set the callback invoked when a cycle-bound rule triggers."""
         self._cycle_callback = callback
 
     def set_cycle_repo(self, repo: Any) -> None:
+        """Inject the cycle repository for cycle-rule linkage."""
         self._cycle_repo = repo
 
     async def start(self) -> None:
+        """Start the background evaluation loop."""
         if self._running:
             return
         self._running = True
@@ -46,6 +59,7 @@ class CloseRuleEvaluator:
         logger.info("CloseRuleEvaluator started (interval=%ds)", EVALUATION_INTERVAL)
 
     async def shutdown(self) -> None:
+        """Stop the evaluation loop and cancel the background task."""
         self._running = False
         self._shutting_down = True
         if self._task and not self._task.done():
@@ -58,7 +72,7 @@ class CloseRuleEvaluator:
 
     async def _evaluation_loop(self) -> None:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(_STARTUP_DELAY_S)
         except asyncio.CancelledError:
             return
 
@@ -76,7 +90,7 @@ class CloseRuleEvaluator:
 
     async def _evaluate_all_rules(self) -> None:
         try:
-            recovered = await self._db.recover_stuck_triggered_rules(90)
+            recovered = await self._db.recover_stuck_triggered_rules(_STUCK_RULE_RECOVERY_AGE_S)
             if recovered:
                 logger.warning("Recovered %d stuck triggered rules", recovered)
         except Exception:
@@ -113,7 +127,7 @@ class CloseRuleEvaluator:
         self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
         active_account_ids = set(accounts.keys())
         self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
-        self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids and not v.locked()}
+        self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids}
         self._rules_cache = {k: v for k, v in self._rules_cache.items() if k in active_account_ids}
 
     async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
@@ -303,7 +317,6 @@ class CloseRuleEvaluator:
 
     def _check_time_elapsed(self, rule: dict) -> bool:
         """Check if elapsed time since reference_value exceeds threshold_value hours."""
-        from datetime import datetime, timezone
         try:
             ref_str = rule.get("reference_value", "")
             threshold_hours = float(rule["threshold_value"])

@@ -15,6 +15,18 @@ async def get_config(request: Request):
 
 @router.patch("/config")
 async def update_config(request: Request, body: ConfigUpdateRequest):
+    if "llm_max_concurrent" in body.overrides:
+        try:
+            int(body.overrides["llm_max_concurrent"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="llm_max_concurrent must be an integer")
+
+    if "llm_min_spacing_ms" in body.overrides:
+        try:
+            int(body.overrides["llm_min_spacing_ms"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="llm_min_spacing_ms must be an integer")
+
     try:
         request.app.state.config_service.update_config(body.overrides)
     except ValueError as e:

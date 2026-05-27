@@ -25,6 +25,9 @@ _RECONNECT_MAX = 30.0
 _PING_INTERVAL = 20.0
 _PONG_TIMEOUT = 45.0  # force reconnect if no message received within this window
 _RECV_WINDOW = "5000"
+_AUTH_EXPIRY_S = 10
+_WS_CONNECT_TIMEOUT = 20
+_WS_AUTH_TIMEOUT = 10
 
 
 class BybitWSClient:
@@ -52,7 +55,7 @@ class BybitWSClient:
         self._last_msg_at: float = 0.0
 
     def _auth_payload(self) -> dict[str, Any]:
-        expires = int((time.time() + 10) * 1000)
+        expires = int((time.time() + _AUTH_EXPIRY_S) * 1000)
         sign_str = f"GET/realtime{expires}"
         signature = hmac.new(
             self._api_secret.encode(),
@@ -68,12 +71,22 @@ class BybitWSClient:
         }
 
     async def start(self) -> None:
+        """Connect to Bybit WebSocket and begin streaming events."""
         if self._running:
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
+        self._task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("BybitWSClient run loop crashed unexpectedly: %s", exc)
 
     async def stop(self) -> None:
+        """Disconnect from WebSocket and cancel the run loop."""
         self._running = False
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()
@@ -112,16 +125,19 @@ class BybitWSClient:
 
         self._ws = await asyncio.wait_for(
             self._session.ws_connect(self._url, heartbeat=None, timeout=aiohttp.ClientWSTimeout(ws_close=15)),
-            timeout=20,
+            timeout=_WS_CONNECT_TIMEOUT,
         )
         logger.info("Bybit WS connected to %s", self._url, extra={"account_id": self._account_id})
 
         assert self._ws is not None
         await self._ws.send_json(self._auth_payload())
-        auth_resp = await self._ws.receive_json(timeout=10)
+        auth_resp = await self._ws.receive_json(timeout=_WS_AUTH_TIMEOUT)
         if not auth_resp.get("success"):
             logger.error("Bybit WS auth failed: %s", auth_resp.get("ret_msg"))
             await self._ws.close()
+            self._ws = None
+            await self._session.close()
+            self._session = None
             return
 
         await self._ws.send_json(self._subscribe_payload())

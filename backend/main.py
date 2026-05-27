@@ -11,10 +11,12 @@ import json as _json
 import os
 import re as _re
 from contextlib import asynccontextmanager
+from typing import Any, Callable, Coroutine
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from backend.event_bus import EventBus
 from backend.async_persistence import AsyncAnalysisDB
@@ -39,7 +41,10 @@ def _validated_int(name: str, default: int, min_val: int, max_val: int) -> int:
     raw = os.environ.get(name)
     if raw is None:
         return default
-    val = int(raw)
+    try:
+        val = int(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw!r} is not a valid integer")
     if not (min_val <= val <= max_val):
         raise ValueError(f"{name}={val} out of range [{min_val}, {max_val}]")
     return val
@@ -67,10 +72,10 @@ _CSRF_BODY = b'{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED
 class CSPCSRFMiddleware:
     """Pure ASGI middleware combining CSP header injection and CSRF check."""
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -110,10 +115,10 @@ _MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
 class ContentSizeLimitMiddleware:
     """Reject HTTP requests with Content-Length exceeding the limit."""
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] == "http":
             headers = dict(scope.get("headers", []))
             cl = headers.get(b"content-length")
@@ -125,14 +130,40 @@ class ContentSizeLimitMiddleware:
                         return
                 except (ValueError, TypeError):
                     pass
+
+            # Guard against chunked encoding bypass (no Content-Length header)
+            accumulated = 0
+
+            async def size_limited_receive() -> dict:
+                nonlocal accumulated
+                msg = await receive()
+                if msg.get("type") == "http.request":
+                    body = msg.get("body", b"")
+                    accumulated += len(body)
+                    if accumulated > _MAX_BODY_BYTES:
+                        raise ValueError("Request body too large")
+                return msg
+
+            try:
+                await self.app(scope, size_limited_receive, send)
+            except ValueError as e:
+                if "too large" in str(e):
+                    await send({"type": "http.response.start", "status": 413, "headers": [[b"content-type", b"application/json"]]})
+                    await send({"type": "http.response.body", "body": b'{"detail":"Request body too large"}'})
+                else:
+                    raise
+            return
         await self.app(scope, receive, send)
 
 
 def create_app() -> FastAPI:
     dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("DATABASE_URL environment variable is required")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app.state._ready = False
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
         if os.environ.get("LOG_FORMAT", "").lower() == "json":
             configure_structured_logging(log_level)
@@ -337,6 +368,7 @@ def create_app() -> FastAPI:
             app.state.position_reconciler = None
 
         logger.info("app_ready: all services initialised")
+        app.state._ready = True
 
         yield
 
@@ -388,6 +420,9 @@ def create_app() -> FastAPI:
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177,http://localhost:5178,http://localhost:5179")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
+    if "*" in cors_origins:
+        logger.warning("CORS wildcard '*' with allow_credentials is invalid — removing wildcard")
+        cors_origins = [o for o in cors_origins if o != "*"]
     app.add_middleware(ObservabilityMiddleware)
     app.add_middleware(ContentSizeLimitMiddleware)
     app.add_middleware(CSPCSRFMiddleware)
@@ -449,6 +484,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health(request: Request):
+        if not getattr(request.app.state, "_ready", False):
+            return Response(
+                content=_json.dumps({"status": "starting"}),
+                status_code=503,
+                media_type="application/json",
+            )
         db_ok = request.app.state.db.is_healthy()
         svc = request.app.state.analysis_service
         active = sum(1 for r in svc._active_runs.values() if r.get("status") == "running")
@@ -463,7 +504,7 @@ def create_app() -> FastAPI:
             "analyses_max": cap,
             "coingecko": get_coingecko_status(),
         }
-        status_code = 503 if status == "degraded" else 200
+        status_code = 503 if not db_ok else 200
         return Response(
             content=_json.dumps(body),
             status_code=status_code,

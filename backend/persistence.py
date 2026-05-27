@@ -521,8 +521,8 @@ def _default_dsn() -> str:
 
 
 class AnalysisDB:
-    _POOL_MAX = int(os.environ.get("DB_POOL_MAX", "20"))
-    _POOL_TIMEOUT = int(os.environ.get("DB_POOL_TIMEOUT", "30"))
+    _POOL_MAX = max(2, min(200, int(os.environ.get("DB_POOL_MAX", "20") or "20")))
+    _POOL_TIMEOUT = max(5, min(300, int(os.environ.get("DB_POOL_TIMEOUT", "30") or "30")))
 
     def __init__(self, dsn: str | None = None):
         self._dsn = dsn or _default_dsn()
@@ -624,10 +624,16 @@ class AnalysisDB:
                             conn.rollback()
                             raise
                 finally:
-                    cur.execute("SELECT pg_advisory_unlock(8675309)")
-                    conn.commit()
+                    try:
+                        cur.execute("SELECT pg_advisory_unlock(8675309)")
+                        conn.commit()
+                    except Exception:
+                        pass
             except Exception:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
                 raise
 
     def insert_run(self, run: Dict[str, Any]) -> None:
@@ -712,7 +718,7 @@ class AnalysisDB:
         to_date: Optional[str] = None,
         asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        limit = min(max(limit, 1), 10000)
+        limit = min(max(limit, 1), 500)
         conditions: list[str] = []
         params: list[Any] = []
 

@@ -14,19 +14,32 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable, Coroutine, Optional
+from typing import TYPE_CHECKING, Callable, Coroutine, Optional
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
 LLMCallable = Callable[[str, str], Coroutine[None, None, str]]
 
-_active_clients: list = []
+_active_clients: list["httpx.AsyncClient"] = []
 
 _PROVIDER_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "azure": "AZURE_OPENAI_API_KEY",
 }
+
+
+async def _close_stale_clients() -> None:
+    """Close and discard all previously created clients before creating new ones."""
+    for client in _active_clients:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    _active_clients.clear()
 
 
 def create_llm_callable(
@@ -74,6 +87,7 @@ def _create_openai_callable(
     _active_clients.append(client)
 
     async def call_openai(system_prompt: str, context_prompt: str) -> str:
+        """Invoke OpenAI chat completion and return the response text."""
         payload = {
             "model": model,
             "messages": [
@@ -105,6 +119,7 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
     _active_clients.append(client)
 
     async def call_anthropic(system_prompt: str, context_prompt: str) -> str:
+        """Invoke Anthropic messages API and return the response text."""
         payload = {
             "model": model,
             "system": system_prompt,
@@ -122,6 +137,4 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
 
 async def close_llm_clients() -> None:
     """Close all httpx clients created by create_llm_callable."""
-    for client in _active_clients:
-        await client.aclose()
-    _active_clients.clear()
+    await _close_stale_clients()

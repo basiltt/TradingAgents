@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -24,7 +25,6 @@ def _check_origin(websocket: WebSocket) -> bool:
     # This lets browsers on other LAN devices connect through the Vite proxy
     # (which preserves the Origin header but rewrites Host).
     try:
-        from urllib.parse import urlparse
         origin_port = urlparse(origin).port
         if origin_port is not None:
             for a in allowed:

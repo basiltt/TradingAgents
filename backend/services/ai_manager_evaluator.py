@@ -17,6 +17,7 @@ _RSI_UPPER = 70
 _RSI_LOWER = 30
 _ATR_MULTIPLIER = 2.0
 _SYMBOL_URGENT_COOLDOWN_S = 15.0
+_PEAK_PNL_DRAWDOWN_URGENT_THRESHOLD = 0.4
 
 
 class AIManagerEvaluator:
@@ -72,7 +73,7 @@ class AIManagerEvaluator:
                 if peak > 0:
                     try:
                         current = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)))
-                        if current < peak and ((peak - current) / peak) > 0.4:
+                        if current < peak and ((peak - current) / peak) > _PEAK_PNL_DRAWDOWN_URGENT_THRESHOLD:
                             urgent = True
                     except (ValueError, TypeError):
                         pass

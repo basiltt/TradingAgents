@@ -152,7 +152,7 @@ class TestStartStop:
 class TestEmitWallet:
     @pytest.mark.asyncio(loop_scope="function")
     async def test_wallet_upl_sum(self, client, on_event):
-        data = [{"accountEquity": "5000", "coin": [
+        data = [{"totalEquity": "5000", "totalPerpUPL": "150.0", "totalWalletBalance": "4850", "coin": [
             {"unrealisedPnl": "100"}, {"unrealisedPnl": "50"},
         ]}]
         await client._emit_wallet(data)
@@ -161,7 +161,7 @@ class TestEmitWallet:
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_wallet_bad_upl_skipped(self, client, on_event):
-        data = [{"accountEquity": "5000", "coin": [
+        data = [{"totalEquity": "5000", "totalPerpUPL": "50.0", "totalWalletBalance": "4950", "coin": [
             {"unrealisedPnl": "bad"}, {"unrealisedPnl": "50"},
         ]}]
         await client._emit_wallet(data)

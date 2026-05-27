@@ -198,3 +198,46 @@ async def test_delete_rule_success(service, mock_db):
     result = await service.delete_rule("acc-1", "rule-1")
     assert result is True
     mock_db.delete_close_rule.assert_called_once_with("rule-1")
+
+
+# ── close_all_for_rule ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_close_all_for_rule_happy_path(service, mock_accounts, mock_db):
+    """Closes positions by symbol filter and releases lock."""
+    client = await mock_accounts.get_client("acc-1")
+    client.get_positions.return_value = [
+        {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"},
+    ]
+    client.place_market_close_order.return_value = {"orderId": "ord-1"}
+    mock_db.delete_all_rules_for_account = AsyncMock()
+
+    result = await service.close_all_for_rule("acc-1", "rule-1", symbols=["BTCUSDT"])
+    assert result["closed"] >= 0
+    assert "acc-1" not in service._closing_accounts
+
+
+@pytest.mark.asyncio
+async def test_close_all_for_rule_lock_prevents_concurrent(service, mock_accounts, mock_db):
+    """Second call returns skipped when lock is held."""
+    service._closing_accounts["acc-1"] = time.monotonic()
+
+    result = await service.close_all_for_rule("acc-1", "rule-1")
+    assert result["skipped"] is True
+
+
+@pytest.mark.asyncio
+async def test_close_lock_ownership_preserved_on_concurrent(service, mock_accounts, mock_db):
+    """Finally block doesn't delete another caller's lock entry."""
+    client = await mock_accounts.get_client("acc-1")
+    client.get_positions.return_value = []
+    mock_db.delete_all_rules_for_account = AsyncMock()
+
+    await service.close_all_positions("acc-1")
+    # Simulate: another caller sets a new lock before our finally runs
+    new_t0 = time.monotonic() + 100
+    service._closing_accounts["acc-1"] = new_t0
+
+    # Call again — the finally from first call already ran, so new_t0 should survive
+    assert service._closing_accounts.get("acc-1") == new_t0

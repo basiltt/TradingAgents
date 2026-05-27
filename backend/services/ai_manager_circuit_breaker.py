@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Dict
@@ -11,6 +10,13 @@ logger = logging.getLogger(__name__)
 
 
 class AIManagerCircuitBreaker:
+    """Per-account circuit breaker that trips after consecutive losing trades.
+
+    Tracks consecutive negative-PnL close actions per account. When threshold is
+    reached, the breaker trips and blocks further AI actions for cooldown_s seconds.
+    Half-open probes (1 trade allowed) test recovery before fully resetting.
+    """
+
     def __init__(self, threshold: int = 3, cooldown_s: int = 3600, repo=None):
         self._threshold = threshold
         self._cooldown_s = cooldown_s

@@ -20,6 +20,8 @@ _INBOUND_RATE_LIMIT = 10  # per second
 
 
 class WSConnection:
+    """Wraps a single WebSocket connection with send buffering and heartbeat monitoring."""
+
     def __init__(self, ws: WebSocket, run_id: str):
         self.ws = ws
         self.run_id = run_id
@@ -37,6 +39,12 @@ class WSConnection:
 
 
 class WSManager:
+    """Manages all active WebSocket connections, routing events by run_id.
+
+    Consumes from EventBus per-run queues and fans out to all connected clients.
+    Handles slow consumers via bounded outbound queues and heartbeat-based pruning.
+    """
+
     def __init__(self, event_bus: Any = None):
         self._connections: Dict[str, Set[WSConnection]] = {}
         self._event_bus = event_bus

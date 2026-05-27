@@ -308,10 +308,18 @@ def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
 
 
 class ScannerBusyError(Exception):
+    """Raised when a scan is already in progress for the target account."""
     pass
 
 
 class ScannerService:
+    """Orchestrates multi-symbol analysis scans using the analysis service.
+
+    Manages scan lifecycle (start → progress → complete/cancel), persists results
+    to DB, and broadcasts progress via WebSocket. Supports concurrent scans across
+    different accounts with per-account locking.
+    """
+
     SCAN_LIST_TOPIC = "__scan_list__"
 
     def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None):
@@ -378,7 +386,6 @@ class ScannerService:
             self._scans[scan_id] = scan
 
         if self._db:
-            import json as _json
             await self._db.insert_scan(
                 {"scan_id": scan_id, "status": "running", "config": _json.dumps(config), "started_at": now,
                  "schedule_id": schedule_id, "triggered_by": triggered_by},
@@ -477,7 +484,6 @@ class ScannerService:
                 continue
             scan_id = db_scan["scan_id"]
             try:
-                import json as _json
                 config = _json.loads(db_scan.get("config", "{}"))
             except Exception:
                 config = {}
@@ -588,7 +594,6 @@ class ScannerService:
         }
 
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
-        import json as _json
         config = scan.get("config", {})
         if isinstance(config, str):
             try:
@@ -646,7 +651,7 @@ class ScannerService:
             if not scan:
                 return
             batch_size = min(int(scan["config"].get("max_parallel", _BATCH_SIZE) or _BATCH_SIZE), _MAX_PARALLEL_CAP)
-            print(f"[SCAN] Resolved batch_size={batch_size} (config max_parallel={scan['config'].get('max_parallel')}, cap={_MAX_PARALLEL_CAP})")
+            logger.debug("Resolved batch_size=%d (config max_parallel=%s, cap=%d)", batch_size, scan["config"].get("max_parallel"), _MAX_PARALLEL_CAP)
             if symbols_override is None:
                 scan["total"] = len(symbols)
             scan["total_batches"] = (len(symbols) + batch_size - 1) // batch_size
@@ -806,7 +811,6 @@ class ScannerService:
                     scan["auto_trade_summaries"] = executor.get_summaries()
 
         if self._db:
-            import json as _json
             async with self._lock:
                 scan_data = self._scans.get(scan_id, {})
                 auto_results = list(scan_data.get("auto_trade_results", []))

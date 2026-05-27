@@ -24,7 +24,18 @@ from backend.ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
 
-_GRAPH_EXECUTOR_WORKERS = int(os.environ.get("GRAPH_EXECUTOR_WORKERS", "8"))
+def _safe_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer for env %s=%r, using default %d", name, raw, default)
+        return default
+
+
+_GRAPH_EXECUTOR_WORKERS = _safe_int_env("GRAPH_EXECUTOR_WORKERS", 8)
 _graph_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _graph_executor_lock = threading.Lock()
 _graph_executor_dead = False
@@ -41,7 +52,7 @@ def _get_graph_executor() -> concurrent.futures.ThreadPoolExecutor:
             _graph_executor_dead = False
     return _graph_executor
 
-DEFAULT_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
+DEFAULT_MAX_CONCURRENT = _safe_int_env("MAX_CONCURRENT_ANALYSES", 6)
 _HARD_MAX_CONCURRENT = 15
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes
@@ -545,10 +556,9 @@ class AnalysisService:
                 ))
                 if not pf_result.should_proceed:
                     # Save prefilter result and skip LLM analysis
-                    import json as _json
                     self._db.sync_save_report_section(
                         run_id, "_ta_prefilter",
-                        _json.dumps(pf_result.to_dict()),
+                        json.dumps(pf_result.to_dict()),
                     )
                     return {"final_trade_decision": f"SKIPPED by TA Pre-Filter: {pf_result.reason}",
                             "ta_prefilter": pf_result.to_dict()}
@@ -651,7 +661,6 @@ class ConcurrencyLimitError(Exception):
 
 
 def _safe_json(obj: Any) -> str:
-    import json
     try:
         return json.dumps(obj, default=str)
     except Exception:

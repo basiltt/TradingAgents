@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from backend.rate_limit import check_rate_limit as _check_rate_limit
+from backend.routers._validators import validate_account_id as _validate_account_id
 from backend.schemas import (
     CreateAccountRequest,
     PlaceTradeRequest,
@@ -56,13 +57,7 @@ def _get_service(request: Request):
     return svc
 
 
-def _validate_account_id(account_id: str) -> str:
-    """Validate UUID format and return the ID, or raise HTTPException(400)."""
-    try:
-        _uuid.UUID(account_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid account ID format")
-    return account_id
+
 
 
 @router.post("/accounts")
@@ -120,7 +115,10 @@ async def get_account(request: Request, account_id: str):
 async def update_account(request: Request, account_id: str):
     """Update account label or active status."""
     _validate_account_id(account_id)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
     try:
         req = UpdateAccountRequest(**body)
     except ValidationError as e:

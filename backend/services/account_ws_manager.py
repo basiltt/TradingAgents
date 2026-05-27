@@ -22,8 +22,10 @@ class AccountWSManager:
         self._frontend_queues: Set[asyncio.Queue] = set()
         self._wallet_listeners: list = []
         self._lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
+        """Initialize WebSocket connections for all active accounts."""
         async with self._lock:
             accounts = await self._db.list_accounts()
             for acc in accounts:
@@ -32,6 +34,7 @@ class AccountWSManager:
         logger.info("AccountWSManager started for %d accounts", len(self._clients))
 
     async def shutdown(self) -> None:
+        """Disconnect all WebSocket clients and clean up."""
         async with self._lock:
             if self._clients:
                 await asyncio.gather(
@@ -42,10 +45,12 @@ class AccountWSManager:
         logger.info("AccountWSManager shut down")
 
     async def start_account(self, account_id: str) -> None:
+        """Start WebSocket connection for a single account."""
         async with self._lock:
             await self._start_account(account_id)
 
     async def stop_account(self, account_id: str) -> None:
+        """Stop and remove WebSocket connection for a single account."""
         async with self._lock:
             client = self._clients.pop(account_id, None)
             if client:
@@ -74,8 +79,12 @@ class AccountWSManager:
                 await self._notify_wallet_listeners(account_id, event)
 
         client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
+        try:
+            await client.start()
+        except Exception:
+            logger.exception("Failed to start WS for account %s", account_id)
+            return
         self._clients[account_id] = client
-        await client.start()
         logger.info("Started WS for account %s", account_id)
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
@@ -91,17 +100,21 @@ class AccountWSManager:
                 pass
 
     def subscribe(self) -> asyncio.Queue:
+        """Subscribe to real-time account events; returns a queue to consume from."""
         q: asyncio.Queue = asyncio.Queue(maxsize=512)
         self._frontend_queues.add(q)
         return q
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
+        """Unsubscribe a previously subscribed queue."""
         self._frontend_queues.discard(q)
 
     def register_wallet_listener(self, callback: Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]) -> None:
+        """Register a coroutine callback for wallet/position events."""
         self._wallet_listeners.append(callback)
 
     def deregister_wallet_listener(self, callback: Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]) -> None:
+        """Remove a previously registered wallet listener."""
         try:
             self._wallet_listeners.remove(callback)
         except ValueError:
@@ -110,7 +123,9 @@ class AccountWSManager:
     async def _notify_wallet_listeners(self, account_id: str, wallet_data: dict[str, Any]) -> None:
         for listener in self._wallet_listeners:
             try:
-                asyncio.create_task(self._run_wallet_listener(listener, account_id, wallet_data))
+                task = asyncio.create_task(self._run_wallet_listener(listener, account_id, wallet_data))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             except Exception:
                 logger.exception("Failed to schedule wallet listener for account %s", account_id)
 

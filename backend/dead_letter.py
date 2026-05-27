@@ -32,7 +32,7 @@ class DeadLetterQueue:
             tb = traceback.format_exception(type(error), error, error.__traceback__)
             stack = "".join(tb)[:10000]
 
-            async with self._db.pool_acquire() as conn:
+            async with self._db.pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
                     INSERT INTO dead_letter (operation, payload, error_type, error_message, stack_trace, max_retries)
@@ -58,7 +58,7 @@ class DeadLetterQueue:
 
     async def get_pending(self, operation: Optional[str] = None, limit: int = 50) -> list[dict]:
         """Retrieve pending DLQ entries for review or retry."""
-        async with self._db.pool_acquire() as conn:
+        async with self._db.pool.acquire() as conn:
             if operation:
                 rows = await conn.fetch(
                     "SELECT * FROM dead_letter WHERE status = 'pending' AND operation = $1 ORDER BY created_at LIMIT $2",
@@ -73,7 +73,7 @@ class DeadLetterQueue:
 
     async def resolve(self, dlq_id: str, resolved_by: str = "system") -> bool:
         """Mark a DLQ entry as resolved."""
-        async with self._db.pool_acquire() as conn:
+        async with self._db.pool.acquire() as conn:
             result = await conn.execute(
                 "UPDATE dead_letter SET status = 'resolved', resolved_at = NOW(), resolved_by = $1 WHERE id = $2::uuid",
                 resolved_by, dlq_id,
@@ -82,7 +82,7 @@ class DeadLetterQueue:
 
     async def mark_exhausted(self, dlq_id: str) -> None:
         """Mark a DLQ entry as exhausted (max retries reached)."""
-        async with self._db.pool_acquire() as conn:
+        async with self._db.pool.acquire() as conn:
             await conn.execute(
                 "UPDATE dead_letter SET status = 'exhausted' WHERE id = $1::uuid",
                 dlq_id,

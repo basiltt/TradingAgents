@@ -47,7 +47,7 @@ def client(mock_service):
 def test_enable(client, mock_service):
     mock_service.get_status = AsyncMock(return_value=None)
     mock_service.get_config = AsyncMock(return_value={})
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/enable")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/enable")
     assert resp.status_code == 200
     assert resp.json()["status"] == "enabled"
     mock_service.enable.assert_called_once()
@@ -56,7 +56,7 @@ def test_enable(client, mock_service):
 def test_enable_already_enabled(client, mock_service):
     mock_service.get_status = AsyncMock(return_value=MagicMock(enabled=True))
     mock_service.get_config = AsyncMock(return_value={"auto_enabled": True})
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/enable")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/enable")
     assert resp.status_code == 200
     mock_service.enable.assert_called_once()
     args, _ = mock_service.enable.call_args
@@ -64,80 +64,80 @@ def test_enable_already_enabled(client, mock_service):
 
 
 def test_disable(client, mock_service):
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/disable")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/disable")
     assert resp.status_code == 200
-    mock_service.disable.assert_called_once_with("acc-1")
+    mock_service.disable.assert_called_once_with("00000000-0000-4000-8000-000000000001")
 
 
 def test_get_status(client, mock_service):
-    resp = client.get("/api/v1/accounts/acc-1/ai-manager/status")
+    resp = client.get("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/status")
     assert resp.status_code == 200
 
 
 def test_get_status_not_found(client, mock_service):
     mock_service.get_status = AsyncMock(return_value=None)
-    resp = client.get("/api/v1/accounts/acc-1/ai-manager/status")
+    resp = client.get("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/status")
     assert resp.status_code == 404
 
 
 def test_patch_config(client, mock_service):
     resp = client.patch(
-        "/api/v1/accounts/acc-1/ai-manager/config",
+        "/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/config",
         json={"confidence_threshold": 0.8},
     )
     assert resp.status_code == 200
-    mock_service.patch_config.assert_called_once_with("acc-1", {"confidence_threshold": 0.8})
+    mock_service.patch_config.assert_called_once_with("00000000-0000-4000-8000-000000000001", {"confidence_threshold": 0.8})
 
 
 def test_patch_config_empty_body(client, mock_service):
-    resp = client.patch("/api/v1/accounts/acc-1/ai-manager/config", json={})
+    resp = client.patch("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/config", json={})
     assert resp.status_code == 400
 
 
 def test_pause(client, mock_service):
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/pause")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/pause")
     assert resp.status_code == 200
-    mock_service.pause.assert_called_once_with("acc-1")
+    mock_service.pause.assert_called_once_with("00000000-0000-4000-8000-000000000001")
 
 
 def test_resume(client, mock_service):
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/resume")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/resume")
     assert resp.status_code == 200
-    mock_service.resume.assert_called_once_with("acc-1")
+    mock_service.resume.assert_called_once_with("00000000-0000-4000-8000-000000000001")
 
 
 def test_kill(client, mock_service):
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/kill")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/kill")
     assert resp.status_code == 200
-    mock_service.kill.assert_called_once_with("acc-1")
+    mock_service.kill.assert_called_once_with("00000000-0000-4000-8000-000000000001")
 
 
 def test_reset_kill_switch(client, mock_service):
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/kill/reset")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/kill/reset")
     assert resp.status_code == 200
-    mock_service.reset_kill_switch.assert_called_once_with("acc-1")
+    mock_service.reset_kill_switch.assert_called_once_with("00000000-0000-4000-8000-000000000001")
 
 
 def test_lock_position(client, mock_service):
-    resp = client.post("/api/v1/accounts/acc-1/ai-manager/positions/BTCUSDT/lock")
+    resp = client.post("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/positions/BTCUSDT/lock")
     assert resp.status_code == 200
-    mock_service.lock_position.assert_called_once_with("acc-1", "BTCUSDT")
+    mock_service.lock_position.assert_called_once_with("00000000-0000-4000-8000-000000000001", "BTCUSDT")
 
 
 def test_unlock_position(client, mock_service):
-    resp = client.delete("/api/v1/accounts/acc-1/ai-manager/positions/BTCUSDT/lock")
+    resp = client.delete("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/positions/BTCUSDT/lock")
     assert resp.status_code == 200
-    mock_service.unlock_position.assert_called_once_with("acc-1", "BTCUSDT")
+    mock_service.unlock_position.assert_called_once_with("00000000-0000-4000-8000-000000000001", "BTCUSDT")
 
 
 def test_get_decisions(client, mock_service):
-    resp = client.get("/api/v1/accounts/acc-1/ai-manager/decisions?limit=10")
+    resp = client.get("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/decisions?limit=10")
     assert resp.status_code == 200
     assert "decisions" in resp.json()
 
 
 def test_get_performance(client, mock_service):
-    resp = client.get("/api/v1/accounts/acc-1/ai-manager/performance?period=7d")
+    resp = client.get("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/performance?period=7d")
     assert resp.status_code == 200
 
 
@@ -149,5 +149,5 @@ def test_global_kill(client, mock_service):
 
 def test_service_unavailable(client, mock_service):
     client.app.state.ai_manager_service = None
-    resp = client.get("/api/v1/accounts/acc-1/ai-manager/status")
+    resp = client.get("/api/v1/accounts/00000000-0000-4000-8000-000000000001/ai-manager/status")
     assert resp.status_code == 503

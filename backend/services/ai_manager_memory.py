@@ -6,6 +6,7 @@ Provides episodic context (recent decisions) and semantic patterns for LLM promp
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -18,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class AIManagerMemory:
+    """Provides episodic and semantic memory context for AI decision prompts.
+
+    Episodic memory: recent decisions (action, outcome) for short-term context.
+    Semantic memory: extracted trading patterns (up to 50) for long-term learning.
+    Pattern extraction is performed via LLM when sufficient new decisions accumulate.
+    """
+
     def __init__(self, repo: "AIManagerRepository"):
         self._repo = repo
 
@@ -94,7 +102,6 @@ class AIManagerMemory:
                 return 0
 
             # Parse LLM JSON response
-            import json as _json
             try:
                 text = raw_response.strip()
                 if text.startswith("```"):
