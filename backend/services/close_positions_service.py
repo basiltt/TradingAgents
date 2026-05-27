@@ -36,9 +36,11 @@ class ClosePositionsService:
     _CLOSE_LOCK_TTL = 300.0  # auto-expire stale close locks after 5 minutes
 
     def set_trade_service(self, trade_service: Any) -> None:
+        """Inject trade service dependency (breaks circular import)."""
         self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
+        """Close all open positions for an account via market orders."""
         async with self._close_lock:
             if account_id in self._closing_accounts:
                 started = self._closing_accounts[account_id]
@@ -264,6 +266,7 @@ class ClosePositionsService:
     # ── Rule CRUD ────────────────────────────────────────────────
 
     async def create_rule(self, account_id: str, rule_data: dict) -> dict:
+        """Create a conditional close rule (TP/SL/trailing) for an account."""
         account = await self._db.get_account(account_id)
         if not account:
             raise ValueError("Account not found")
@@ -302,9 +305,11 @@ class ClosePositionsService:
         return row
 
     async def list_rules(self, account_id: str) -> list:
+        """Return all close rules for the given account."""
         return await self._db.list_close_rules(account_id)
 
     async def update_rule(self, account_id: str, rule_id: str, data: dict) -> dict | None:
+        """Update an existing close rule's parameters."""
         rule = await self._db.get_close_rule(rule_id)
         if not rule or rule["account_id"] != account_id:
             return None
@@ -343,6 +348,7 @@ class ClosePositionsService:
         return await self._db.update_close_rule(rule_id, **fields)
 
     async def delete_rule(self, account_id: str, rule_id: str) -> bool:
+        """Delete a close rule by ID. Returns False if not found or not owned."""
         rule = await self._db.get_close_rule(rule_id)
         if not rule or rule["account_id"] != account_id:
             return False
@@ -361,4 +367,5 @@ class ClosePositionsService:
         return await self._db.delete_non_executed_rules_for_account(account_id)
 
     async def list_executions(self, account_id: str, page: int = 1, limit: int = 20) -> dict:
+        """Return paginated history of rule execution results."""
         return await self._db.list_close_executions(account_id, page, limit)

@@ -68,6 +68,7 @@ class BybitWSClient:
         }
 
     async def start(self) -> None:
+        """Connect to Bybit WebSocket and begin streaming events."""
         if self._running:
             return
         self._running = True
@@ -82,6 +83,7 @@ class BybitWSClient:
             logger.error("BybitWSClient run loop crashed unexpectedly: %s", exc)
 
     async def stop(self) -> None:
+        """Disconnect from WebSocket and cancel the run loop."""
         self._running = False
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()

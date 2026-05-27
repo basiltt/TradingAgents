@@ -308,10 +308,18 @@ def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
 
 
 class ScannerBusyError(Exception):
+    """Raised when a scan is already in progress for the target account."""
     pass
 
 
 class ScannerService:
+    """Orchestrates multi-symbol analysis scans using the analysis service.
+
+    Manages scan lifecycle (start → progress → complete/cancel), persists results
+    to DB, and broadcasts progress via WebSocket. Supports concurrent scans across
+    different accounts with per-account locking.
+    """
+
     SCAN_LIST_TOPIC = "__scan_list__"
 
     def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None):

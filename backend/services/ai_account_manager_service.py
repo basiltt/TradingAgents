@@ -137,6 +137,7 @@ class AIAccountManagerService:
             logger.exception("AI Manager: failed to reconcile active schedules on startup")
 
     async def shutdown(self) -> None:
+        """Gracefully stop all tasks, background loops, and release the advisory lock."""
         self._shutdown_event.set()
 
         # Deregister WS listener
@@ -221,6 +222,7 @@ class AIAccountManagerService:
         return self._account_locks[account_id]
 
     async def enable(self, account_id: str, config: AIManagerConfig) -> None:
+        """Enable AI Manager for an account — spawns the decision loop task."""
         lock = self._get_account_lock(account_id)
         async with lock:
             existing_task = self._tasks.get(account_id)
@@ -241,6 +243,7 @@ class AIAccountManagerService:
             await self._repo.insert_log(account_id, "info", "lifecycle", f"AI Manager enabled ({source})")
 
     async def disable(self, account_id: str) -> None:
+        """Disable AI Manager — cancels the task and clears state."""
         lock = self._get_account_lock(account_id)
         async with lock:
             task = self._tasks.pop(account_id, None)
@@ -256,6 +259,7 @@ class AIAccountManagerService:
         self._account_locks.pop(account_id, None)
 
     async def pause(self, account_id: str, duration_hours: Optional[float] = None) -> None:
+        """Pause the decision loop; positions remain open but unmanaged."""
         lock = self._get_account_lock(account_id)
         async with lock:
             task = self._tasks.get(account_id)
@@ -266,6 +270,7 @@ class AIAccountManagerService:
                 await self._repo.upsert_state(account_id, fsm_state="paused")
 
     async def resume(self, account_id: str) -> None:
+        """Resume a paused decision loop."""
         lock = self._get_account_lock(account_id)
         async with lock:
             task = self._tasks.get(account_id)
@@ -275,17 +280,20 @@ class AIAccountManagerService:
                 await self._repo.upsert_state(account_id, fsm_state="sleeping")
 
     async def kill(self, account_id: str) -> None:
+        """Activate per-account kill switch — halts all AI decisions."""
         await self._repo.set_kill_switch(account_id, True)
         task = self._tasks.get(account_id)
         if task:
             task.set_killed()
 
     async def global_kill(self) -> None:
+        """Activate global kill switch — halts ALL AI decisions across all accounts."""
         await self._repo.set_global_kill(True)
         for task in self._tasks.values():
             task.set_killed()
 
     async def update_config(self, account_id: str, config: AIManagerConfig) -> None:
+        """Persist new config and hot-reload into the running task."""
         lock = self._get_account_lock(account_id)
         async with lock:
             await self._repo.sync_config_columns(account_id, config.model_dump())
@@ -298,6 +306,7 @@ class AIAccountManagerService:
         return {aid: t.state for aid, t in self._tasks.items() if not t.is_dead()}
 
     async def get_status(self, account_id: str) -> Optional[AIManagerStatus]:
+        """Build full status object including real-time FSM state from in-memory task."""
         state = await self._repo.get_state(account_id)
         if not state:
             return None
@@ -464,6 +473,7 @@ class AIAccountManagerService:
         )
 
     async def reset_kill_switch(self, account_id: str) -> None:
+        """Clear kill switch and respawn the task if it was terminated."""
         await self._repo.set_kill_switch(account_id, False)
         lock = self._get_account_lock(account_id)
         async with lock:
@@ -480,6 +490,7 @@ class AIAccountManagerService:
                 await self._spawn_task(account_id)
 
     async def get_config(self, account_id: str) -> dict:
+        """Return the persisted AI Manager configuration as a dict."""
         state = await self._repo.get_state(account_id)
         if not state:
             raise ValueError(f"Account {account_id} not configured")
@@ -491,6 +502,7 @@ class AIAccountManagerService:
         return config.model_dump()
 
     async def patch_config(self, account_id: str, updates: dict) -> None:
+        """Merge partial config updates and hot-reload into the running task."""
         lock = self._get_account_lock(account_id)
         async with lock:
             state = await self._repo.get_state(account_id)
@@ -513,6 +525,7 @@ class AIAccountManagerService:
                 task.reload_config(config)
 
     async def lock_position(self, account_id: str, symbol: str) -> None:
+        """Add symbol to locked_positions — prevents AI from closing it."""
         lock = self._get_account_lock(account_id)
         async with lock:
             state = await self._repo.get_state(account_id)
@@ -532,6 +545,7 @@ class AIAccountManagerService:
                 task.reload_config(config)
 
     async def unlock_position(self, account_id: str, symbol: str) -> None:
+        """Remove symbol from locked_positions — allows AI to manage it again."""
         lock = self._get_account_lock(account_id)
         async with lock:
             state = await self._repo.get_state(account_id)
@@ -553,6 +567,7 @@ class AIAccountManagerService:
     async def get_decisions(
         self, account_id: str, limit: int = 50, cursor: Optional[str] = None, outcome_filter: Optional[str] = None
     ) -> dict:
+        """Return paginated AI decisions with optional outcome filtering."""
         from datetime import datetime
         cursor_ts = None
         cursor_id = None
@@ -571,6 +586,7 @@ class AIAccountManagerService:
         return {"decisions": items, "next_cursor": next_cursor}
 
     async def get_performance(self, account_id: str, period: str = "7d") -> dict:
+        """Return aggregated performance metrics for the given time period."""
         return await self._repo.get_performance_metrics(account_id, period=period)
 
     async def get_logs(
@@ -578,6 +594,7 @@ class AIAccountManagerService:
         level: str | None = None, category: str | None = None,
         cursor_id: int | None = None,
     ) -> dict:
+        """Return paginated AI Manager operational logs."""
         return await self._repo.get_logs(
             account_id, limit=limit,
             level_filter=level, category_filter=category,
@@ -588,6 +605,7 @@ class AIAccountManagerService:
         self, account_id: str, level: str, category: str, message: str,
         details: dict | None = None,
     ) -> None:
+        """Persist an operational log entry for the given account."""
         await self._repo.insert_log(account_id, level, category, message, details)
 
     async def reconcile_active_schedules(self) -> None:
@@ -701,6 +719,7 @@ class AIAccountManagerService:
             await task.on_ws_event(event)
 
     async def emit_event(self, account_id: str, event_type: str, payload: dict) -> None:
+        """Broadcast an AI Manager event to connected frontend WebSocket clients."""
         if self._ws_manager:
             try:
                 await self._ws_manager.broadcast_to_account(

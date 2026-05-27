@@ -41,12 +41,15 @@ class CloseRuleEvaluator:
         self._rules_cache: dict[str, list] = {}
 
     def set_cycle_callback(self, callback: Any) -> None:
+        """Set the callback invoked when a cycle-bound rule triggers."""
         self._cycle_callback = callback
 
     def set_cycle_repo(self, repo: Any) -> None:
+        """Inject the cycle repository for cycle-rule linkage."""
         self._cycle_repo = repo
 
     async def start(self) -> None:
+        """Start the background evaluation loop."""
         if self._running:
             return
         self._running = True
@@ -54,6 +57,7 @@ class CloseRuleEvaluator:
         logger.info("CloseRuleEvaluator started (interval=%ds)", EVALUATION_INTERVAL)
 
     async def shutdown(self) -> None:
+        """Stop the evaluation loop and cancel the background task."""
         self._running = False
         self._shutting_down = True
         if self._task and not self._task.done():

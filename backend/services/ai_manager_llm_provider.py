@@ -87,6 +87,7 @@ def _create_openai_callable(
     _active_clients.append(client)
 
     async def call_openai(system_prompt: str, context_prompt: str) -> str:
+        """Invoke OpenAI chat completion and return the response text."""
         payload = {
             "model": model,
             "messages": [
@@ -118,6 +119,7 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
     _active_clients.append(client)
 
     async def call_anthropic(system_prompt: str, context_prompt: str) -> str:
+        """Invoke Anthropic messages API and return the response text."""
         payload = {
             "model": model,
             "system": system_prompt,
