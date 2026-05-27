@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MoreVertical, XCircle, SlidersHorizontal, History } from "lucide-react";
 import type { DashboardCard } from "@/api/client";
@@ -154,7 +154,7 @@ interface AccountCardProps {
  * @param card - Dashboard card data from the accounts API.
  * @param onRefresh - Callback to trigger dashboard re-fetch after mutations.
  */
-export function AccountCard({ card, onRefresh }: AccountCardProps) {
+export const AccountCard = memo(function AccountCard({ card, onRefresh }: AccountCardProps) {
   const navigate = useNavigate();
   const directions = useAppSelector((s) => s.accounts.directions[card.id]);
 
@@ -396,4 +396,4 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
       />
     </>
   );
-}
+});
