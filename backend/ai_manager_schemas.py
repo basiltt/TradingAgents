@@ -36,6 +36,17 @@ class AIManagerConfig(BaseModel):
     emergency_equity_drop_pct: float = Field(default=10.0, ge=3.0, le=50.0)
     emergency_pnl_velocity_pct: float = Field(default=5.0, ge=2.0, le=20.0)
     auto_enabled: bool = False
+    # === Enhanced Capabilities ===
+    regime_enhanced: bool = True
+    mtf_enabled: bool = True
+    mtf_timeframes: str = Field(default="5m,15m,1h,4h", pattern=r"^[0-9a-z,]+$")
+    orderbook_enabled: bool = True
+    sweep_defense_enabled: bool = True
+    sweep_recovery_timeout_candles: int = Field(default=3, ge=1, le=10)
+    sweep_confidence_threshold: float = Field(default=0.5, ge=0.3, le=0.95)
+    correlation_enabled: bool = True
+    correlation_threshold: float = Field(default=0.7, ge=0.3, le=0.95)
+    portfolio_heat_warning: float = Field(default=0.8, ge=0.5, le=1.0)
 
 
 class PositionAction(BaseModel):
@@ -109,3 +120,14 @@ class AIManagerConfigPatch(BaseModel):
     emergency_equity_drop_pct: Optional[float] = Field(default=None, ge=3.0, le=50.0)
     emergency_pnl_velocity_pct: Optional[float] = Field(default=None, ge=2.0, le=20.0)
     auto_enabled: Optional[bool] = None
+    # === Enhanced Capabilities ===
+    regime_enhanced: Optional[bool] = None
+    mtf_enabled: Optional[bool] = None
+    mtf_timeframes: Optional[str] = Field(default=None, pattern=r"^[0-9a-z,]+$")
+    orderbook_enabled: Optional[bool] = None
+    sweep_defense_enabled: Optional[bool] = None
+    sweep_recovery_timeout_candles: Optional[int] = Field(default=None, ge=1, le=10)
+    sweep_confidence_threshold: Optional[float] = Field(default=None, ge=0.3, le=0.95)
+    correlation_enabled: Optional[bool] = None
+    correlation_threshold: Optional[float] = Field(default=None, ge=0.3, le=0.95)
+    portfolio_heat_warning: Optional[float] = Field(default=None, ge=0.5, le=1.0)
