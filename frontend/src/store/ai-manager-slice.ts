@@ -95,10 +95,16 @@ interface AIManagerState {
   error: string | null;
 }
 
+const AI_MGR_STATE = { SLEEPING: "sleeping", PAUSED: "paused", MONITORING: "monitoring" } as const;
+
 // AI-CONTEXT: Cap collections to prevent unbounded memory growth in long-running sessions.
 // Decisions arrive via polling; logs via polling with cursor. Both append-only.
 const MAX_DECISIONS = 500;
 const MAX_LOGS = 1000;
+
+function isHttpError(e: unknown, status: number): boolean {
+  return !!e && typeof e === "object" && "status" in e && (e as { status: number }).status === status;
+}
 
 /**
  * Creates a default AIManagerStatus with sensible zero-state values.
@@ -107,7 +113,7 @@ const MAX_LOGS = 1000;
 function createDefaultStatus(overrides?: Partial<AIManagerStatus>): AIManagerStatus {
   return {
     enabled: true,
-    state: "sleeping",
+    state: AI_MGR_STATE.SLEEPING,
     last_analysis_at: null,
     circuit_breaker: { count: 0, active: false },
     actions_today: 0,
@@ -156,7 +162,7 @@ export const fetchAIManagerStatus = createAsyncThunk(
       const data = await aiManagerApi.getStatus(accountId);
       return { accountId, data: data as unknown as AIManagerStatus };
     } catch (e: unknown) {
-      if (e && typeof e === "object" && "status" in e && (e as { status: number }).status === 404) {
+      if (isHttpError(e, 404)) {
         return { accountId, data: null };
       }
       throw e;
@@ -181,7 +187,7 @@ export const fetchConfig = createAsyncThunk(
       const data = await aiManagerApi.getConfig(accountId);
       return { accountId, data };
     } catch (e: unknown) {
-      if (e && typeof e === "object" && "status" in e && (e as { status: number }).status === 404) {
+      if (isHttpError(e, 404)) {
         return { accountId, data: null };
       }
       throw e;
@@ -271,7 +277,7 @@ const aiManagerSlice = createSlice({
       const { account_id, state: fsmState, enabled } = action.payload;
       const existing = state.statusByAccount[account_id];
       if (existing) {
-        existing.state = enabled ? fsmState : "sleeping";
+        existing.state = enabled ? fsmState : AI_MGR_STATE.SLEEPING;
         existing.enabled = enabled;
       }
       // If not yet in store, create a stub so the UI reflects the state immediately
@@ -339,7 +345,7 @@ const aiManagerSlice = createSlice({
       .addCase(pauseAIManager.fulfilled, (state, action) => {
         state.loading["pause"] = false;
         const s = state.statusByAccount[action.payload.accountId];
-        if (s) s.state = "paused";
+        if (s) s.state = AI_MGR_STATE.PAUSED;
       })
       .addCase(pauseAIManager.rejected, setError("pause"))
 
@@ -347,7 +353,7 @@ const aiManagerSlice = createSlice({
       .addCase(resumeAIManager.fulfilled, (state, action) => {
         state.loading["resume"] = false;
         const s = state.statusByAccount[action.payload.accountId];
-        if (s) s.state = "monitoring";
+        if (s) s.state = AI_MGR_STATE.MONITORING;
       })
       .addCase(resumeAIManager.rejected, setError("resume"))
 

@@ -54,6 +54,23 @@ function getWsUrl(runId: string): string {
  */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
+const WS_MSG = {
+  HEARTBEAT: "heartbeat",
+  PROGRESS: "progress",
+  STATS: "stats",
+  MESSAGE: "message",
+  AGENT_STATUS: "agent_status",
+  REPORT_CHUNK: "report_chunk",
+} as const;
+
+const AGENT_STATUS = {
+  IN_PROGRESS: "in_progress",
+  IN_PROGRESS_LEGACY: "in progress",
+  COMPLETED: "completed",
+} as const;
+
+const TERMINAL_PHASES = new Set(["completed", "failed", "cancelled"] as const);
+
 // AI-CONTEXT: Minimum display time prevents agent status flickering when
 // "in_progress" and "completed" arrive within the same frame.
 const MIN_IN_PROGRESS_MS = 1500;
@@ -125,20 +142,19 @@ export function useAnalysisWebSocket(runId: string) {
 
       const type = data.type as string;
 
-      if (type === "heartbeat") {
+      if (type === WS_MSG.HEARTBEAT) {
         ws.send(JSON.stringify({ type: "pong" }));
         return;
       }
 
-      if (type === "progress") {
+      if (type === WS_MSG.PROGRESS) {
         const phase = data.phase as string;
-        const terminal = ["completed", "failed", "cancelled"];
 
-        if (terminal.includes(phase)) {
+        if (TERMINAL_PHASES.has(phase as typeof phase & string)) {
           dispatch(
             updateRunStatus({
               runId,
-              status: phase === "completed" ? "completed" : phase === "cancelled" ? "cancelled" : "failed",
+              status: phase as "completed" | "cancelled" | "failed",
               currentAgent: undefined,
             }),
           );
@@ -146,8 +162,8 @@ export function useAnalysisWebSocket(runId: string) {
           updateCacheRef.current((prev) => {
             const updatedAgents = { ...prev.agents };
             for (const [agent, agentStatus] of Object.entries(updatedAgents)) {
-              if (agentStatus === "in_progress" || agentStatus === "in progress") {
-                updatedAgents[agent] = "completed";
+              if (agentStatus === AGENT_STATUS.IN_PROGRESS || agentStatus === AGENT_STATUS.IN_PROGRESS_LEGACY) {
+                updatedAgents[agent] = AGENT_STATUS.COMPLETED;
               }
             }
             return {
@@ -178,7 +194,7 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "stats") {
+      if (type === WS_MSG.STATS) {
         updateCacheRef.current((prev) => ({
           ...prev,
           stats: {
@@ -191,7 +207,7 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "message") {
+      if (type === WS_MSG.MESSAGE) {
         updateCacheRef.current((prev) => {
           const next = [
             ...prev.messages,
@@ -209,22 +225,22 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "agent_status") {
+      if (type === WS_MSG.AGENT_STATUS) {
         const agent = data.agent as string;
         const newStatus = data.status as string;
 
-        if (newStatus === "in_progress") {
+        if (newStatus === AGENT_STATUS.IN_PROGRESS) {
           if (!agentInProgressAt.current[agent]) {
             agentInProgressAt.current[agent] = Date.now();
           }
           updateCacheRef.current((prev) => ({
             ...prev,
-            agents: { ...prev.agents, [agent]: "in_progress" },
+            agents: { ...prev.agents, [agent]: AGENT_STATUS.IN_PROGRESS },
           }));
           return;
         }
 
-        if (newStatus === "completed") {
+        if (newStatus === AGENT_STATUS.COMPLETED) {
           const startedAt = agentInProgressAt.current[agent];
           const elapsed = startedAt ? Date.now() - startedAt : 0;
           const remaining = MIN_IN_PROGRESS_MS - elapsed;
@@ -234,7 +250,7 @@ export function useAnalysisWebSocket(runId: string) {
             if (!mountedRef.current) return;
             updateCacheRef.current((p) => ({
               ...p,
-              agents: { ...p.agents, [agent]: "completed" },
+              agents: { ...p.agents, [agent]: AGENT_STATUS.COMPLETED },
             }));
           };
 
@@ -244,7 +260,7 @@ export function useAnalysisWebSocket(runId: string) {
             agentInProgressAt.current[agent] = Date.now();
             updateCacheRef.current((prev) => ({
               ...prev,
-              agents: { ...prev.agents, [agent]: "in_progress" },
+              agents: { ...prev.agents, [agent]: AGENT_STATUS.IN_PROGRESS },
             }));
             timerId = setTimeout(applyCompleted, MIN_IN_PROGRESS_MS);
             pendingTimersRef.current.add(timerId);
@@ -266,7 +282,7 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "report_chunk") {
+      if (type === WS_MSG.REPORT_CHUNK) {
         updateCacheRef.current((prev) => ({
           ...prev,
           reports: {

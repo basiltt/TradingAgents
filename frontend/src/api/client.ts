@@ -74,8 +74,9 @@ async function request<T>(
   const method = init?.method?.toUpperCase() ?? "GET";
   const isIdempotent = method === "GET" || method === "HEAD";
   let lastError: unknown;
+  const maxAttempts = isIdempotent ? MAX_RETRIES : 0;
 
-  for (let attempt = 0; attempt <= (isIdempotent ? MAX_RETRIES : 0); attempt++) {
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     if (attempt > 0) {
       await sleep(RETRY_DELAY_MS * attempt);
     }
