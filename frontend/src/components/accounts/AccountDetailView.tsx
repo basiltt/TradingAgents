@@ -219,9 +219,10 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
                   await accountsApi.delete(accountId);
                   dispatch(removeAccount(accountId));
                   navigate({ to: "/accounts" });
-                } catch {
+                } catch (e: unknown) {
                   setDeleting(false);
                   setDeleteConfirm(false);
+                  setError((e as { detail?: string; message?: string }).detail || (e as { message?: string }).message || "Failed to delete account");
                 }
               }}
               disabled={deleting}

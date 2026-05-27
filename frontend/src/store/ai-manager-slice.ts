@@ -317,6 +317,10 @@ const aiManagerSlice = createSlice({
       .addCase(fetchAIManagerStatus.pending, setLoading("status"))
       .addCase(fetchAIManagerStatus.fulfilled, (state, action) => {
         state.loading["status"] = false;
+        // Don't overwrite a WS-created stub with null (404 race condition)
+        if (action.payload.data === null && state.statusByAccount[action.payload.accountId] != null) {
+          return;
+        }
         state.statusByAccount[action.payload.accountId] = action.payload.data;
       })
       .addCase(fetchAIManagerStatus.rejected, setError("status"))
