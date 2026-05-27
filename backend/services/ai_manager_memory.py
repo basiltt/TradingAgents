@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class AIManagerMemory:
+    """Provides episodic and semantic memory context for AI decision prompts.
+
+    Episodic memory: recent decisions (action, outcome) for short-term context.
+    Semantic memory: extracted trading patterns (up to 50) for long-term learning.
+    Pattern extraction is performed via LLM when sufficient new decisions accumulate.
+    """
+
     def __init__(self, repo: "AIManagerRepository"):
         self._repo = repo
 

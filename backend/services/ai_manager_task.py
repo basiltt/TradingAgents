@@ -39,7 +39,19 @@ _ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CL
 
 
 class AIManagerTask:
-    """Manages one account's AI decision loop."""
+    """FSM-driven decision loop for a single account's AI-managed positions.
+
+    Lifecycle states: SLEEPING → MONITORING → ANALYZING → EXECUTING, plus PAUSED and ERROR.
+    Receives real-time WebSocket events (wallet/position updates), evaluates urgency via
+    AIManagerEvaluator, and invokes a LangGraph-compiled decision graph when action is needed.
+    Emergency fast-path bypasses the normal sleep/monitor cycle for rapid drawdown response.
+
+    Args:
+        account_id: UUID of the managed trading account.
+        service: Parent AIAccountManagerService providing repo, LLM scheduler, and event bus.
+        config: Validated AIManagerConfig with thresholds, limits, and feature flags.
+        compiled_graph: Pre-compiled LangGraph StateGraph for decision inference.
+    """
 
     def __init__(
         self,
@@ -72,6 +84,7 @@ class AIManagerTask:
         return self._state
 
     def start(self) -> None:
+        """Spawn the async run loop as a background task."""
         self._task = asyncio.create_task(self._run(), name=f"ai-mgr-{self._account_id}")
 
     def _track_task(self, task: asyncio.Task) -> None:
@@ -120,16 +133,19 @@ class AIManagerTask:
             pass
 
     def cancel(self) -> None:
+        """Signal cancellation and terminate the run loop task."""
         self._cancel_event.set()
         if self._task and not self._task.done():
             self._task.cancel()
 
     def pause(self) -> None:
+        """Transition to PAUSED state; the run loop blocks until resume()."""
         self.transition_to(PAUSED)
         self._pause_event.set()
         self._wake_event.set()
 
     def resume(self) -> None:
+        """Exit PAUSED state; resumes in MONITORING or SLEEPING depending on positions."""
         if self._has_open_positions(self._ws_buffer):
             self.transition_to(MONITORING)
         else:
@@ -138,17 +154,25 @@ class AIManagerTask:
         self._wake_event.set()
 
     def set_killed(self) -> None:
+        """Activate kill switch — transitions to ERROR and signals cancellation."""
         self._killed = True
         self.transition_to(ERROR)
         self._cancel_event.set()
 
     def reload_config(self, config: AIManagerConfig) -> None:
+        """Hot-reload configuration without restarting the task."""
         self._config = config
 
     def is_dead(self) -> bool:
+        """Return True if the run loop task has completed (normally or via exception)."""
         return self._task is not None and self._task.done()
 
     async def on_ws_event(self, event: dict) -> None:
+        """Handle incoming WebSocket event (wallet_update or position_update).
+
+        Updates the internal WS buffer and triggers emergency evaluation if positions
+        are present and the emergency fast-path conditions are met.
+        """
         event_type = event.get("type")
         data = event.get("data", {})
 

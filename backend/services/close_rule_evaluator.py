@@ -18,6 +18,13 @@ MAX_RULE_FAILURES = 3
 
 
 class CloseRuleEvaluator:
+    """Evaluates active close rules against live prices and triggers closures.
+
+    Combines real-time WebSocket event evaluation (debounced 1.5s) with a 60s
+    polling fallback. Supports TP, SL, trailing stop, and time-based rules.
+    Processes accounts concurrently (up to MAX_CONCURRENT_ACCOUNTS).
+    """
+
     def __init__(self, close_service: Any, accounts_service: Any, db: Any):
         self._close_service = close_service
         self._cycle_callback: Optional[Any] = None

@@ -28,6 +28,16 @@ MAX_DAILY_TOKEN_BUDGET = 20_000_000
 
 
 class AIAccountManagerService:
+    """Top-level orchestrator for AI-managed trading accounts.
+
+    Manages per-account AIManagerTask instances, enforces singleton operation via
+    PostgreSQL advisory lock, runs background health sweeps (detect dead tasks),
+    dead-letter retry loops, and periodic pattern generation via LLM.
+
+    Dependencies injected at construction; _llm_callable and _pattern_llm_callable
+    must be assigned externally before start() for LLM features to function.
+    """
+
     def __init__(
         self,
         accounts_service,

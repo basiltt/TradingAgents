@@ -26,6 +26,8 @@ ALLOWED_STOP_REASONS = frozenset({
 
 
 class CycleError(Exception):
+    """Base exception for trading cycle operations. Subclasses set code and safe_message."""
+
     code: str = "UNKNOWN_ERROR"
     safe_message: str = "Operation failed."
 
@@ -81,6 +83,24 @@ class CycleNotRunningError(CycleError):
 
 
 class TradingCycleEngine:
+    """Orchestrates batch trading cycles from scan results to position entry.
+
+    Manages the full lifecycle: validate scan → filter symbols → open positions →
+    monitor duration/drawdown → finalize. Supports concurrent cycles per account
+    with circuit-breaker protection against repeated Bybit API failures.
+
+    Args:
+        cycle_repo: Repository for persisting cycle state and trade records.
+        accounts_svc: AccountsService for API key retrieval and account validation.
+        close_positions_svc: Service for position closure and close-rule activation.
+        db: Database connection (async_persistence) for direct queries.
+        ws_manager: Optional WebSocket manager for real-time position updates.
+        bybit_concurrency: Max parallel Bybit API calls per cycle.
+        circuit_breaker_threshold: Consecutive failures before halting a cycle.
+        max_duration_seconds: Hard timeout for any single cycle.
+        max_scan_age_seconds: Maximum age of scan results before rejection.
+    """
+
     def __init__(
         self,
         cycle_repo: CycleRepository,
@@ -108,6 +128,7 @@ class TradingCycleEngine:
         self._sweep_task: Optional[asyncio.Task] = None
 
     def register_lifecycle_callback(self, callback: Callable[..., Any]) -> None:
+        """Register a callback invoked on cycle events (started, completed, failed)."""
         self._lifecycle_callbacks.append(callback)
 
     async def _notify(self, event_type: str, payload: dict) -> None:

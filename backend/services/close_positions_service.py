@@ -18,6 +18,13 @@ CLOSE_RATE_LIMIT = 10  # max concurrent close orders
 
 
 class ClosePositionsService:
+    """Handles position closure and conditional close-rule management.
+
+    Provides immediate position close (market orders via Bybit API) and
+    deferred close-rules (TP/SL/trailing) that are evaluated periodically
+    by CloseRuleEvaluator. Rate-limited to CLOSE_RATE_LIMIT concurrent orders.
+    """
+
     def __init__(self, db: Any, accounts_service: Any, ws_manager: Any = None, trade_service: Any = None):
         self._db = db
         self._accounts_service = accounts_service

@@ -20,6 +20,13 @@ _POISON = {"type": "_poison"}
 
 
 class EventBus:
+    """In-process pub/sub with per-run ring buffers for event replay.
+
+    Bridges sync callbacks (LangGraph tool calls) to async WebSocket consumers.
+    Each run_id gets a bounded queue for live streaming and a ring buffer (capped
+    by count and bytes) for late-joining clients to replay recent events.
+    """
+
     def __init__(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
         self._queues: Dict[str, asyncio.Queue] = {}

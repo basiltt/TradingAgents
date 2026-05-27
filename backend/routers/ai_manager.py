@@ -39,6 +39,7 @@ def _get_service(request: Request):
 
 @router.post("/accounts/{account_id}/ai-manager/enable")
 async def enable_ai_manager(request: Request, account_id: str):
+    """Enable AI Manager for the specified account."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -62,6 +63,7 @@ async def enable_ai_manager(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/ai-manager/disable")
 async def disable_ai_manager(request: Request, account_id: str):
+    """Disable AI Manager and stop the decision loop for this account."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -74,6 +76,7 @@ async def disable_ai_manager(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/ai-manager/status")
 async def get_ai_manager_status(request: Request, account_id: str):
+    """Return current AI Manager status including FSM state and telemetry."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -88,6 +91,7 @@ async def get_ai_manager_status(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/ai-manager/config")
 async def get_config(request: Request, account_id: str):
+    """Retrieve the current AI Manager configuration for this account."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -100,6 +104,7 @@ async def get_config(request: Request, account_id: str):
 
 @router.patch("/accounts/{account_id}/ai-manager/config")
 async def patch_config(request: Request, account_id: str, body: AIManagerConfigPatch):
+    """Partially update AI Manager configuration fields."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -118,6 +123,7 @@ async def patch_config(request: Request, account_id: str, body: AIManagerConfigP
 
 @router.post("/accounts/{account_id}/ai-manager/pause")
 async def pause_ai_manager(request: Request, account_id: str):
+    """Pause the AI decision loop; positions remain open but unmanaged."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -127,6 +133,7 @@ async def pause_ai_manager(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/ai-manager/resume")
 async def resume_ai_manager(request: Request, account_id: str):
+    """Resume a paused AI Manager decision loop."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -139,6 +146,7 @@ async def resume_ai_manager(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/ai-manager/kill")
 async def kill_ai_manager(request: Request, account_id: str):
+    """Activate kill switch — halts all AI decisions until manually reset."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -148,6 +156,7 @@ async def kill_ai_manager(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/ai-manager/kill/reset")
 async def reset_kill_switch(request: Request, account_id: str):
+    """Reset a previously activated kill switch, allowing AI decisions to resume."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -160,6 +169,7 @@ async def reset_kill_switch(request: Request, account_id: str):
 
 @router.post("/accounts/{account_id}/ai-manager/positions/{symbol}/lock")
 async def lock_position(request: Request, account_id: str, symbol: str):
+    """Lock a position to prevent AI from closing it."""
     _validate_account_id(account_id)
     _validate_symbol(symbol)
     await _check_rate_limit(account_id)
@@ -173,6 +183,7 @@ async def lock_position(request: Request, account_id: str, symbol: str):
 
 @router.delete("/accounts/{account_id}/ai-manager/positions/{symbol}/lock")
 async def unlock_position(request: Request, account_id: str, symbol: str):
+    """Remove position lock, allowing AI to manage it again."""
     _validate_account_id(account_id)
     _validate_symbol(symbol)
     await _check_rate_limit(account_id)
@@ -195,6 +206,7 @@ async def get_decisions(
     cursor: Optional[str] = Query(default=None),
     outcome: Optional[str] = Query(default=None),
 ):
+    """List AI Manager decisions with cursor-based pagination."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -214,6 +226,7 @@ async def get_logs(
     category: Optional[str] = Query(default=None),
     cursor: Optional[int] = Query(default=None),
 ):
+    """Retrieve AI Manager operational logs with optional level/category filtering."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -232,6 +245,7 @@ async def get_performance(
     account_id: str,
     period: str = Query(default="7d", pattern="^(1d|7d|30d)$"),
 ):
+    """Return AI Manager performance metrics for the given time period."""
     _validate_account_id(account_id)
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -244,6 +258,7 @@ async def get_performance(
 
 @router.post("/ai-manager/global-kill")
 async def global_kill(request: Request):
+    """Activate global kill switch — halts ALL AI Manager instances across all accounts."""
     await _check_rate_limit("global-kill")
     svc = _get_service(request)
     await svc.global_kill()

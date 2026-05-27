@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 class PositionLockRegistry:
+    """Per-position mutex registry preventing concurrent modifications.
+
+    Ensures that AI Manager and CloseRuleEvaluator never simultaneously close
+    the same position. Locks are keyed by (account_id, symbol) and auto-cleaned
+    after inactivity.
+    """
+
     def __init__(self):
         self._locks: Dict[Tuple[str, str], asyncio.Lock] = {}
         self._last_used: Dict[Tuple[str, str], float] = {}
