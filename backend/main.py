@@ -397,6 +397,9 @@ def create_app() -> FastAPI:
 
     cors_origin = os.environ.get("WEB_CORS_ORIGIN", "http://localhost:5177,http://localhost:5178,http://localhost:5179")
     cors_origins = [o.strip() for o in cors_origin.split(",") if o.strip()]
+    if "*" in cors_origins:
+        logger.warning("CORS wildcard '*' with allow_credentials is invalid — removing wildcard")
+        cors_origins = [o for o in cors_origins if o != "*"]
     app.add_middleware(ObservabilityMiddleware)
     app.add_middleware(ContentSizeLimitMiddleware)
     app.add_middleware(CSPCSRFMiddleware)
