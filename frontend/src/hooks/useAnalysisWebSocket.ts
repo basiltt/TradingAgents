@@ -1,34 +1,85 @@
+/**
+ * WebSocket hook for real-time analysis run updates.
+ *
+ * Connects to `/ws/v1/analysis/:runId`, handles heartbeats, reconnection
+ * with exponential backoff, and visibility-change recovery. Streams progress,
+ * agent status, messages, stats, and report chunks into React Query cache.
+ *
+ * @module hooks/useAnalysisWebSocket
+ */
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch } from "@/store";
 import { updateRunStatus } from "@/store/analysis-slice";
 
+// AI-CONTEXT: Reconnection caps prevent infinite retry loops on permanent failures.
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY = 1000;
 const MAX_DELAY = 30000;
+// AI-CONTEXT: Ring-buffer cap — prevents memory growth on long-running analyses.
 const MAX_MESSAGES = 500;
 
+/** Accumulated real-time state from the WebSocket stream, stored in React Query cache. */
 export interface WsState {
+  /** Map of agent name → status string ("in_progress", "completed", "failed"). */
   agents: Record<string, string>;
+  /** Map of report section ID → accumulated markdown content. */
   reports: Record<string, string>;
+  /** Ordered message log. `sender` is agent name, `seq` is server-assigned sequence number. */
   messages: Array<{ sender: string; content: string; seq: number }>;
+  /** Cumulative token/call usage stats, null until first stats event. */
   stats: { tokens_in: number; tokens_out: number; llm_calls: number; tool_calls: number } | null;
+  /** Current phase and detail string, null until first progress event. */
   progress: { phase: string; detail: string } | null;
 }
 
+/** Returns a fresh empty WsState — factory function ensures each query cache entry gets an independent object. */
 export function emptyWsState(): WsState {
   return { agents: {}, reports: {}, messages: [], stats: null, progress: null };
 }
 
+// AI-CONTEXT: Derives WS URL from page origin so it works behind any reverse proxy
+// without explicit hostname config. Protocol mirrors HTTP→WS (https→wss, http→ws).
 function getWsUrl(runId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws/v1/analysis/${encodeURIComponent(runId)}`;
 }
 
+/**
+ * WebSocket connection lifecycle state.
+ * - "connecting": initial connection attempt in flight
+ * - "connected": socket open, receiving messages
+ * - "reconnecting": temporarily lost, will retry with exponential backoff
+ * - "disconnected": permanently closed (terminal run state or max retries exceeded)
+ */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
+const WS_MSG = {
+  HEARTBEAT: "heartbeat",
+  PROGRESS: "progress",
+  STATS: "stats",
+  MESSAGE: "message",
+  AGENT_STATUS: "agent_status",
+  REPORT_CHUNK: "report_chunk",
+} as const;
+
+const AGENT_STATUS = {
+  IN_PROGRESS: "in_progress",
+  IN_PROGRESS_LEGACY: "in progress",
+  COMPLETED: "completed",
+} as const;
+
+const TERMINAL_PHASES = new Set(["completed", "failed", "cancelled"] as const);
+
+// AI-CONTEXT: Minimum display time prevents agent status flickering when
+// "in_progress" and "completed" arrive within the same frame.
 const MIN_IN_PROGRESS_MS = 1500;
 
+/**
+ * Manages a WebSocket connection to the analysis run stream.
+ * @param runId - The analysis run ID to subscribe to.
+ * @returns Connection status and reconnection attempt count.
+ */
 export function useAnalysisWebSocket(runId: string) {
   const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
@@ -36,6 +87,7 @@ export function useAnalysisWebSocket(runId: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const attemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const mountedRef = useRef(true);
   const agentInProgressAt = useRef<Record<string, number>>({});
 
@@ -90,20 +142,19 @@ export function useAnalysisWebSocket(runId: string) {
 
       const type = data.type as string;
 
-      if (type === "heartbeat") {
+      if (type === WS_MSG.HEARTBEAT) {
         ws.send(JSON.stringify({ type: "pong" }));
         return;
       }
 
-      if (type === "progress") {
+      if (type === WS_MSG.PROGRESS) {
         const phase = data.phase as string;
-        const terminal = ["completed", "failed", "cancelled"];
 
-        if (terminal.includes(phase)) {
+        if (TERMINAL_PHASES.has(phase as "completed" | "failed" | "cancelled")) {
           dispatch(
             updateRunStatus({
               runId,
-              status: phase === "completed" ? "completed" : phase === "cancelled" ? "cancelled" : "failed",
+              status: phase as "completed" | "cancelled" | "failed",
               currentAgent: undefined,
             }),
           );
@@ -111,8 +162,8 @@ export function useAnalysisWebSocket(runId: string) {
           updateCacheRef.current((prev) => {
             const updatedAgents = { ...prev.agents };
             for (const [agent, agentStatus] of Object.entries(updatedAgents)) {
-              if (agentStatus === "in_progress" || agentStatus === "in progress") {
-                updatedAgents[agent] = "completed";
+              if (agentStatus === AGENT_STATUS.IN_PROGRESS || agentStatus === AGENT_STATUS.IN_PROGRESS_LEGACY) {
+                updatedAgents[agent] = AGENT_STATUS.COMPLETED;
               }
             }
             return {
@@ -143,7 +194,7 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "stats") {
+      if (type === WS_MSG.STATS) {
         updateCacheRef.current((prev) => ({
           ...prev,
           stats: {
@@ -156,7 +207,7 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "message") {
+      if (type === WS_MSG.MESSAGE) {
         updateCacheRef.current((prev) => {
           const next = [
             ...prev.messages,
@@ -174,45 +225,49 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "agent_status") {
+      if (type === WS_MSG.AGENT_STATUS) {
         const agent = data.agent as string;
         const newStatus = data.status as string;
 
-        if (newStatus === "in_progress") {
+        if (newStatus === AGENT_STATUS.IN_PROGRESS) {
           if (!agentInProgressAt.current[agent]) {
             agentInProgressAt.current[agent] = Date.now();
           }
           updateCacheRef.current((prev) => ({
             ...prev,
-            agents: { ...prev.agents, [agent]: "in_progress" },
+            agents: { ...prev.agents, [agent]: AGENT_STATUS.IN_PROGRESS },
           }));
           return;
         }
 
-        if (newStatus === "completed") {
+        if (newStatus === AGENT_STATUS.COMPLETED) {
           const startedAt = agentInProgressAt.current[agent];
           const elapsed = startedAt ? Date.now() - startedAt : 0;
           const remaining = MIN_IN_PROGRESS_MS - elapsed;
 
           const applyCompleted = () => {
+            pendingTimersRef.current.delete(timerId);
             if (!mountedRef.current) return;
             updateCacheRef.current((p) => ({
               ...p,
-              agents: { ...p.agents, [agent]: "completed" },
+              agents: { ...p.agents, [agent]: AGENT_STATUS.COMPLETED },
             }));
           };
 
+          let timerId: ReturnType<typeof setTimeout>;
           if (!startedAt) {
             // Never saw in_progress — show it briefly first
             agentInProgressAt.current[agent] = Date.now();
             updateCacheRef.current((prev) => ({
               ...prev,
-              agents: { ...prev.agents, [agent]: "in_progress" },
+              agents: { ...prev.agents, [agent]: AGENT_STATUS.IN_PROGRESS },
             }));
-            setTimeout(applyCompleted, MIN_IN_PROGRESS_MS);
+            timerId = setTimeout(applyCompleted, MIN_IN_PROGRESS_MS);
+            pendingTimersRef.current.add(timerId);
           } else if (remaining > 0) {
             // in_progress hasn't been visible long enough — delay completed
-            setTimeout(applyCompleted, remaining);
+            timerId = setTimeout(applyCompleted, remaining);
+            pendingTimersRef.current.add(timerId);
           } else {
             applyCompleted();
           }
@@ -227,7 +282,7 @@ export function useAnalysisWebSocket(runId: string) {
         return;
       }
 
-      if (type === "report_chunk") {
+      if (type === WS_MSG.REPORT_CHUNK) {
         updateCacheRef.current((prev) => ({
           ...prev,
           reports: {
@@ -246,6 +301,8 @@ export function useAnalysisWebSocket(runId: string) {
       if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
+      // AI-CONTEXT: Non-retriable close codes — 1000=normal, 4400=bad request,
+      // 4403=forbidden, 4404=run not found, 1008=policy violation, 1009=too large.
       const NON_RETRIABLE = [1000, 4400, 4403, 4404, 1008, 1009];
       if (NON_RETRIABLE.includes(ev.code)) {
         setStatus("disconnected");
@@ -265,7 +322,8 @@ export function useAnalysisWebSocket(runId: string) {
     };
 
     ws.onerror = () => {};
-  }, [runId, dispatch, queryClient]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, dispatch]); // queryClient accessed via stable updateCacheRef
 
   useEffect(() => {
     connectRef.current = connect;
@@ -273,6 +331,7 @@ export function useAnalysisWebSocket(runId: string) {
 
   useEffect(() => {
     mountedRef.current = true;
+    const timersRef = pendingTimersRef.current;
     connect();
 
     // Android Chrome kills the WS when the app is backgrounded.
@@ -295,6 +354,11 @@ export function useAnalysisWebSocket(runId: string) {
     return () => {
       mountedRef.current = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      const timers = timersRef;
+      for (const id of timers) {
+        clearTimeout(id);
+      }
+      timers.clear();
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;

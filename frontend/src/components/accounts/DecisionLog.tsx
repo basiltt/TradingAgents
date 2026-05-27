@@ -10,7 +10,7 @@ interface DecisionLogProps {
 
 export function DecisionLog({ accountId }: DecisionLogProps) {
   const dispatch = useAppDispatch();
-  const decisions = useAppSelector((s: RootState) => s.aiManager.decisionsbyAccount[accountId] || []);
+  const decisions = useAppSelector((s: RootState) => s.aiManager.decisionsByAccount[accountId] || []);
   const cursor = useAppSelector((s: RootState) => s.aiManager.decisionCursors[accountId]);
   const loading = useAppSelector((s: RootState) => s.aiManager.loading["decisions"]);
 

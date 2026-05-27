@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRelativeTime, formatPrice, formatQty, formatPnl } from "../utils";
+import { formatRelativeTime, formatPrice, formatQty, formatPnl, formatAbsoluteTime } from "../utils";
 
 describe("formatRelativeTime", () => {
   it("returns '--' for empty string", () => {
@@ -67,5 +67,21 @@ describe("formatPnl", () => {
 
   it("no prefix for zero", () => {
     expect(formatPnl(0)).toBe("0.00");
+  });
+});
+
+describe("formatAbsoluteTime", () => {
+  it("returns '--' for empty string", () => {
+    expect(formatAbsoluteTime("")).toBe("--");
+  });
+
+  it("returns '--' for invalid date", () => {
+    expect(formatAbsoluteTime("nope")).toBe("--");
+  });
+
+  it("returns local and UTC time for valid date", () => {
+    const result = formatAbsoluteTime("2025-01-15T12:00:00Z");
+    expect(result).toContain("(");
+    expect(result).toContain("GMT");
   });
 });

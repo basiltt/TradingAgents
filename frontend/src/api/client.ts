@@ -19,10 +19,11 @@ export class ApiError extends Error {
   detail: string;
 
   constructor(status: number, detail: string) {
-    super(`API error ${status}: ${detail}`);
+    const safeDetail = detail.length > 200 ? detail.slice(0, 200) + "…" : detail;
+    super(`API error ${status}: ${safeDetail}`);
     this.name = "ApiError";
     this.status = status;
-    this.detail = detail;
+    this.detail = safeDetail;
   }
 }
 
@@ -53,21 +54,60 @@ async function throwApiError(res: Response): Promise<never> {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1000;
 
-/** Fetch JSON from a path. Applies 30s default timeout and throws ApiError on non-2xx. */
+function isRetriable(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Fetch JSON from a path. Applies 30s default timeout, retries transient errors, and throws ApiError on non-2xx. */
 async function request<T>(
   path: string,
   init?: RequestInit,
   signal?: AbortSignal,
 ): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    signal: signal ?? init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-    headers: { ...DEFAULT_HEADERS, ...init?.headers },
-  });
-  if (!res.ok) return throwApiError(res);
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const effectiveSignal = signal ?? init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const isIdempotent = method === "GET" || method === "HEAD";
+  let lastError: unknown;
+  const maxAttempts = isIdempotent ? MAX_RETRIES : 0;
+
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
+    if (attempt > 0) {
+      await sleep(RETRY_DELAY_MS * attempt);
+    }
+    try {
+      const res = await fetch(`${BASE_URL}${path}`, {
+        ...init,
+        signal: effectiveSignal,
+        headers: { ...DEFAULT_HEADERS, ...init?.headers },
+      });
+      if (!res.ok) {
+        if (isIdempotent && isRetriable(res.status) && attempt < MAX_RETRIES) {
+          lastError = new ApiError(res.status, res.statusText);
+          continue;
+        }
+        return throwApiError(res);
+      }
+      if (res.status === 204) return undefined as T;
+      return res.json() as Promise<T>;
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      if (isIdempotent && attempt < MAX_RETRIES) {
+        lastError = e;
+        continue;
+      }
+      throw new ApiError(0, `Network error: ${e instanceof Error ? e.message : "unable to reach server"}`);
+    }
+  }
+  if (lastError instanceof ApiError) throw lastError;
+  throw new ApiError(0, `Network error: ${lastError instanceof Error ? lastError.message : "unable to reach server"}`);
 }
 
 /** Fetch plain text from a path. Throws ApiError on non-2xx. */
@@ -1310,34 +1350,45 @@ export const tradesApi = {
     ),
 };
 
+/** API methods for the AI autonomous trading manager (per-account lifecycle + global kill). */
 export const aiManagerApi = {
+  /** Enables autonomous trading for the given account. */
   enable: (accountId: string) =>
     mutate<{ status: string; account_id: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/enable`),
 
+  /** Disables autonomous trading, preserving config for later re-enable. */
   disable: (accountId: string) =>
     mutate<{ status: string; account_id: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/disable`),
 
+  /** Fetches current runtime status (state machine, budget, circuit breaker, positions). */
   getStatus: (accountId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/status`, undefined, signal),
 
+  /** Fetches the full configuration (risk params, schedule, symbol filters). */
   getConfig: (accountId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, undefined, signal),
 
+  /** Partially updates configuration — only provided keys are changed. */
   patchConfig: (accountId: string, updates: Record<string, unknown>) =>
     mutate<{ status: string }>("PATCH", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, updates),
 
+  /** Pauses the AI manager without disabling — retains state for fast resume. */
   pause: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/pause`),
 
+  /** Resumes a paused AI manager back to monitoring. */
   resume: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/resume`),
 
+  /** Activates the kill switch — immediately halts all trading for this account. */
   kill: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/kill`),
 
+  /** Resets the kill switch, allowing the AI manager to trade again. */
   resetKill: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/kill/reset`),
 
+  /** Fetches paginated trading decisions with cursor-based pagination. */
   getDecisions: (accountId: string, params?: { limit?: number; cursor?: string }) => {
     const sp = new URLSearchParams();
     if (params?.limit) sp.set("limit", String(params.limit));
@@ -1348,9 +1399,11 @@ export const aiManagerApi = {
     );
   },
 
+  /** Fetches aggregated performance metrics for a given time period. */
   getPerformance: (accountId: string, period = "7d") =>
-    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${period}`),
+    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${encodeURIComponent(period)}`),
 
+  /** Fetches paginated structured logs with optional level/category filters. */
   getLogs: (accountId: string, params?: { limit?: number; level?: string; category?: string; cursor?: number }) => {
     const sp = new URLSearchParams();
     if (params?.limit) sp.set("limit", String(params.limit));
@@ -1363,6 +1416,7 @@ export const aiManagerApi = {
     );
   },
 
+  /** Activates the global kill switch across ALL accounts — emergency stop. */
   globalKill: () =>
     mutate<{ status: string }>("POST", "/api/v1/ai-manager/global-kill"),
 };

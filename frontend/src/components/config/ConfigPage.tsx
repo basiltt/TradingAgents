@@ -1,3 +1,15 @@
+/**
+ * @module ConfigPage
+ *
+ * Runtime configuration viewer for the TradingAgents frontend.
+ * Fetches the backend's resolved environment values and active overrides via
+ * {@link apiClient.getConfig} and renders them in a read-only dashboard.
+ * Sensitive values masked by the backend (`"***"`) are highlighted as secrets.
+ *
+ * @remarks
+ * This page is intentionally read-only — configuration changes must be made
+ * through environment variables or backend config files, not through the UI.
+ */
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -19,6 +31,23 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+/**
+ * Page component that displays the backend runtime configuration.
+ *
+ * Queries `/api/config` and renders three sections:
+ * - **Resolved environment** — all injected key/value pairs with secret masking.
+ * - **Exchange connectivity** — guidance on optional Bybit credentials.
+ * - **Active overrides** — keys whose values deviate from repository defaults.
+ *
+ * Also renders {@link AppearanceControls} so users can adjust theme settings
+ * from the same settings area.
+ *
+ * @returns A settings dashboard JSX element.
+ *
+ * @example
+ * // Rendered by the router at the /config route
+ * <ConfigPage />
+ */
 export function ConfigPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["config"],
@@ -206,6 +235,14 @@ export function ConfigPage() {
   );
 }
 
+/**
+ * Renders a scrollable table of all resolved environment key/value pairs.
+ * Values equal to `"***"` are rendered as a styled "Masked secret" pill
+ * instead of the raw string.
+ *
+ * @param props.values - Map of environment variable names to their resolved values.
+ * @returns A Card containing the resolved environment table.
+ */
 function ResolvedConfigCard({ values }: { values: Record<string, unknown> }) {
   return (
     <Card>

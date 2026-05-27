@@ -97,7 +97,7 @@ export function CleanupDialog({ accountId, onComplete, onClose }: Props) {
   const canProceed = mode === "preset" ? !!preset : !!(beforeDate || afterDate);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={safeClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-label="Cleanup history" onClick={safeClose}>
       <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold">Cleanup History</h3>

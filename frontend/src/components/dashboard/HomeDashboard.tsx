@@ -17,8 +17,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { motion } from "@/lib/motion";
-import { springs, staggerContainer, listItem, fadeInUp } from "@/lib/motion";
+import { motion } from "framer-motion";
+import { springs, staggerContainer, listItem, fadeInUp } from "@/lib/motion-constants";
 
 const quickActions = [
   {

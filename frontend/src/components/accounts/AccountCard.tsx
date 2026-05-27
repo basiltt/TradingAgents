@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MoreVertical, XCircle, SlidersHorizontal, History } from "lucide-react";
 import type { DashboardCard } from "@/api/client";
@@ -154,7 +154,7 @@ interface AccountCardProps {
  * @param card - Dashboard card data from the accounts API.
  * @param onRefresh - Callback to trigger dashboard re-fetch after mutations.
  */
-export function AccountCard({ card, onRefresh }: AccountCardProps) {
+export const AccountCard = memo(function AccountCard({ card, onRefresh }: AccountCardProps) {
   const navigate = useNavigate();
   const directions = useAppSelector((s) => s.accounts.directions[card.id]);
 
@@ -205,7 +205,11 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
     <>
       <div
         className="group relative rounded-[calc(var(--radius)*1.7)] border border-border/60 bg-card/72 shadow-[var(--shadow-soft)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-[var(--shadow-card-hover)] cursor-pointer"
+        role="link"
+        tabIndex={0}
+        aria-label={`View account ${card.label}`}
         onClick={() => navigate({ to: "/accounts/$accountId", params: { accountId: card.id } })}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ to: "/accounts/$accountId", params: { accountId: card.id } }); } }}
       >
         <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent opacity-75" />
@@ -396,4 +400,4 @@ export function AccountCard({ card, onRefresh }: AccountCardProps) {
       />
     </>
   );
-}
+});

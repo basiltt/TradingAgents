@@ -1,3 +1,13 @@
+/**
+ * @module MemoryPage
+ *
+ * Paginated viewer for the AI agent's long-term memory log.
+ * Each memory entry captures the agent's ticker, decision (buy/sell/hold),
+ * reasoning summary, confidence score, and outcome status for a given date.
+ *
+ * Data is fetched from the backend via {@link apiClient.getMemory} with
+ * server-side pagination at {@link PAGE_SIZE} records per page.
+ */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BrainCircuit, Database, RefreshCw, TriangleAlert } from "lucide-react";
@@ -14,6 +24,24 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
 
+/**
+ * Page component that browses the AI agent's persisted memory entries.
+ *
+ * Renders a paginated list of memory records. Each card shows:
+ * - Ticker symbol and analysis date.
+ * - Decision badge color-coded by direction (buy = green, sell = red, hold = amber).
+ * - Reasoning summary from the agent's context window at decision time.
+ * - Confidence score and current outcome status via {@link StatPill}.
+ *
+ * Empty and error states are handled with appropriate feedback cards.
+ * Pagination controls appear only when `total > PAGE_SIZE`.
+ *
+ * @returns The agent memory page JSX element.
+ *
+ * @example
+ * // Rendered by the router at the /memory route
+ * <MemoryPage />
+ */
 export function MemoryPage() {
   const [page, setPage] = useState(1);
   const { data, isLoading, isError } = useQuery({
@@ -166,6 +194,13 @@ export function MemoryPage() {
   );
 }
 
+/**
+ * Small labeled metric pill used inside each memory entry card.
+ *
+ * @param props.label - Metric name displayed as an eyebrow label.
+ * @param props.value - Metric value rendered in bold below the label.
+ * @returns A styled pill card JSX element.
+ */
 function StatPill({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[calc(var(--radius)*1.2)] border border-border/60 bg-card/58 px-4 py-3 shadow-[var(--shadow-soft)]">

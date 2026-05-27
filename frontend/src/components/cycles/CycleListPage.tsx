@@ -1,3 +1,13 @@
+/**
+ * @module CycleListPage
+ *
+ * Paginated list view for all trading cycles managed by the execution engine.
+ * Cycles are fetched from `GET /cycles` via {@link cyclesApi.list} and displayed
+ * in a responsive layout: a full table on desktop and individual cards on mobile.
+ *
+ * The query refresh interval adapts to activity: 5 s when any cycle is active,
+ * 30 s during idle periods to reduce unnecessary network traffic.
+ */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -40,6 +50,14 @@ function cycleStatusCopy(cycle: CycleResponse) {
   return `Opened ${formatDate(cycle.created_at)}`;
 }
 
+/**
+ * Small toned metric pill used in cycle row and sidebar summary cells.
+ *
+ * @param props.label - Metric name shown as an uppercase eyebrow label.
+ * @param props.value - Metric value rendered below the label.
+ * @param props.tone - Color scheme variant controlling border/background. Defaults to `"neutral"`.
+ * @returns A compact bordered pill JSX element.
+ */
 function MetricPill({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "accent" | "success" | "warning" | "danger" | "neutral" }) {
   const toneClass = {
     accent: "border-primary/20 bg-primary/10 text-primary",
@@ -57,6 +75,23 @@ function MetricPill({ label, value, tone = "neutral" }: { label: string; value: 
   );
 }
 
+/**
+ * Page component that lists all trading cycles with summary metrics.
+ *
+ * Responsibilities:
+ * - Loads cycles from `GET /cycles` with offset-based pagination (20 per page).
+ * - Auto-refreshes at 5 s when active cycles exist, 30 s otherwise.
+ * - Displays a PageHeader with counts for active, completed, and failed cycles.
+ * - Renders a desktop table (`hidden sm:flex`) and mobile card grid side by side.
+ * - Shows an empty state CTA linking to scan history when no cycles exist.
+ * - Provides offset pagination controls when `total > limit`.
+ *
+ * @returns The cycles list page JSX element, or loading/error states.
+ *
+ * @example
+ * // Rendered by the router at the /cycles route
+ * <CycleListPage />
+ */
 export function CycleListPage() {
   const [offset, setOffset] = useState(0);
   const limit = 20;

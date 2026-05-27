@@ -1,7 +1,17 @@
+/**
+ * Redux slice managing AI trading manager state per brokerage account.
+ *
+ * Stores status, config, decisions, performance metrics, and logs for each
+ * account's autonomous trading agent. Real-time WebSocket events update
+ * state via `onStateChange` and `onExecution` reducers.
+ *
+ * @module store/ai-manager-slice
+ */
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import type { PayloadAction } from "@reduxjs/toolkit";
 import { aiManagerApi } from "@/api/client";
 
+/** Runtime status snapshot of an AI manager instance for one account. */
 export interface AIManagerStatus {
   enabled: boolean;
   state: string;
@@ -37,6 +47,7 @@ export interface AIManagerStatus {
   current_equity?: number | null;
 }
 
+/** A single trading decision made by the AI manager, including outcome tracking. */
 export interface AIManagerDecision {
   id: number;
   timestamp: string;
@@ -49,6 +60,7 @@ export interface AIManagerDecision {
   outcome_label: string | null;
 }
 
+/** Aggregated win/loss performance metrics over a configurable time period. */
 export interface AIManagerPerformance {
   period: string;
   total_decisions: number;
@@ -61,6 +73,7 @@ export interface AIManagerPerformance {
   profit_factor: number;
 }
 
+/** Structured log entry from the AI manager's runtime logging system. */
 export interface AIManagerLog {
   id: number;
   timestamp: string;
@@ -73,7 +86,7 @@ export interface AIManagerLog {
 interface AIManagerState {
   statusByAccount: Record<string, AIManagerStatus | null>;
   configByAccount: Record<string, Record<string, unknown> | null>;
-  decisionsbyAccount: Record<string, AIManagerDecision[]>;
+  decisionsByAccount: Record<string, AIManagerDecision[]>;
   decisionCursors: Record<string, string | null>;
   performanceByAccount: Record<string, AIManagerPerformance | null>;
   logsByAccount: Record<string, AIManagerLog[]>;
@@ -82,10 +95,39 @@ interface AIManagerState {
   error: string | null;
 }
 
+const AI_MGR_STATE = { SLEEPING: "sleeping", PAUSED: "paused", MONITORING: "monitoring" } as const;
+
+// AI-CONTEXT: Cap collections to prevent unbounded memory growth in long-running sessions.
+// Decisions arrive via polling; logs via polling with cursor. Both append-only.
+const MAX_DECISIONS = 500;
+const MAX_LOGS = 1000;
+
+function isHttpError(e: unknown, status: number): boolean {
+  return !!e && typeof e === "object" && "status" in e && (e as { status: number }).status === status;
+}
+
+/**
+ * Creates a default AIManagerStatus with sensible zero-state values.
+ * Used when a WebSocket event references an account before the full status fetch completes.
+ */
+function createDefaultStatus(overrides?: Partial<AIManagerStatus>): AIManagerStatus {
+  return {
+    enabled: true,
+    state: AI_MGR_STATE.SLEEPING,
+    last_analysis_at: null,
+    circuit_breaker: { count: 0, active: false },
+    actions_today: 0,
+    budget_remaining: { actions: 30, tokens: 100000 },
+    degradation_tier: 0,
+    kill_switch: false,
+    ...overrides,
+  } as AIManagerStatus;
+}
+
 const initialState: AIManagerState = {
   statusByAccount: {},
   configByAccount: {},
-  decisionsbyAccount: {},
+  decisionsByAccount: {},
   decisionCursors: {},
   performanceByAccount: {},
   logsByAccount: {},
@@ -94,6 +136,7 @@ const initialState: AIManagerState = {
   error: null,
 };
 
+/** Enables the AI manager for the given account via the backend API. */
 export const enableAIManager = createAsyncThunk(
   "aiManager/enable",
   async (accountId: string) => {
@@ -102,6 +145,7 @@ export const enableAIManager = createAsyncThunk(
   },
 );
 
+/** Disables the AI manager, halting all autonomous trading for the account. */
 export const disableAIManager = createAsyncThunk(
   "aiManager/disable",
   async (accountId: string) => {
@@ -110,6 +154,7 @@ export const disableAIManager = createAsyncThunk(
   },
 );
 
+/** Fetches the current AI manager status for an account. Returns null on 404 (not configured). */
 export const fetchAIManagerStatus = createAsyncThunk(
   "aiManager/fetchStatus",
   async (accountId: string) => {
@@ -117,7 +162,7 @@ export const fetchAIManagerStatus = createAsyncThunk(
       const data = await aiManagerApi.getStatus(accountId);
       return { accountId, data: data as unknown as AIManagerStatus };
     } catch (e: unknown) {
-      if (e && typeof e === "object" && "status" in e && (e as { status: number }).status === 404) {
+      if (isHttpError(e, 404)) {
         return { accountId, data: null };
       }
       throw e;
@@ -125,6 +170,7 @@ export const fetchAIManagerStatus = createAsyncThunk(
   },
 );
 
+/** Patches AI manager configuration (risk params, schedule, etc.) for an account. */
 export const patchAIManagerConfig = createAsyncThunk(
   "aiManager/patchConfig",
   async ({ accountId, updates }: { accountId: string; updates: Record<string, unknown> }) => {
@@ -133,6 +179,7 @@ export const patchAIManagerConfig = createAsyncThunk(
   },
 );
 
+/** Fetches the full AI manager configuration for an account. Returns null on 404. */
 export const fetchConfig = createAsyncThunk(
   "aiManager/fetchConfig",
   async (accountId: string) => {
@@ -140,7 +187,7 @@ export const fetchConfig = createAsyncThunk(
       const data = await aiManagerApi.getConfig(accountId);
       return { accountId, data };
     } catch (e: unknown) {
-      if (e && typeof e === "object" && "status" in e && (e as { status: number }).status === 404) {
+      if (isHttpError(e, 404)) {
         return { accountId, data: null };
       }
       throw e;
@@ -148,6 +195,7 @@ export const fetchConfig = createAsyncThunk(
   },
 );
 
+/** Pauses the AI manager — it stops analyzing but retains state for resume. */
 export const pauseAIManager = createAsyncThunk(
   "aiManager/pause",
   async (accountId: string) => {
@@ -156,6 +204,7 @@ export const pauseAIManager = createAsyncThunk(
   },
 );
 
+/** Resumes a paused AI manager, transitioning back to monitoring state. */
 export const resumeAIManager = createAsyncThunk(
   "aiManager/resume",
   async (accountId: string) => {
@@ -164,6 +213,7 @@ export const resumeAIManager = createAsyncThunk(
   },
 );
 
+/** Activates the kill switch for a single account — immediately halts all trading. */
 export const killAIManager = createAsyncThunk(
   "aiManager/kill",
   async (accountId: string) => {
@@ -172,6 +222,7 @@ export const killAIManager = createAsyncThunk(
   },
 );
 
+/** Resets the kill switch, allowing the AI manager to resume normal operations. */
 export const resetKillSwitch = createAsyncThunk(
   "aiManager/resetKill",
   async (accountId: string) => {
@@ -180,6 +231,7 @@ export const resetKillSwitch = createAsyncThunk(
   },
 );
 
+/** Fetches paginated trading decisions. Supports cursor-based pagination and append mode. */
 export const fetchDecisions = createAsyncThunk(
   "aiManager/fetchDecisions",
   async ({ accountId, limit = 50, cursor, append = false }: { accountId: string; limit?: number; cursor?: string | null; append?: boolean }) => {
@@ -188,6 +240,7 @@ export const fetchDecisions = createAsyncThunk(
   },
 );
 
+/** Fetches aggregated performance stats for the given time period (default "7d"). */
 export const fetchPerformance = createAsyncThunk(
   "aiManager/fetchPerformance",
   async ({ accountId, period = "7d" }: { accountId: string; period?: string }) => {
@@ -196,6 +249,7 @@ export const fetchPerformance = createAsyncThunk(
   },
 );
 
+/** Activates the global kill switch across ALL accounts. */
 export const globalKill = createAsyncThunk(
   "aiManager/globalKill",
   async () => {
@@ -203,6 +257,7 @@ export const globalKill = createAsyncThunk(
   },
 );
 
+/** Fetches paginated runtime logs with optional level/category filters. */
 export const fetchLogs = createAsyncThunk(
   "aiManager/fetchLogs",
   async ({ accountId, limit = 100, level, category, cursor, append = false }: {
@@ -217,28 +272,21 @@ const aiManagerSlice = createSlice({
   name: "aiManager",
   initialState,
   reducers: {
+    /** Handles FSM state-change events from WebSocket. Creates a stub entry for unknown-but-enabled accounts so UI reflects state before fetchStatus completes. Forces state to "sleeping" when enabled=false. */
     onStateChange(state, action: PayloadAction<{ account_id: string; state: string; enabled: boolean }>) {
       const { account_id, state: fsmState, enabled } = action.payload;
       const existing = state.statusByAccount[account_id];
       if (existing) {
-        existing.state = enabled ? fsmState : "sleeping";
+        existing.state = enabled ? fsmState : AI_MGR_STATE.SLEEPING;
         existing.enabled = enabled;
       }
       // If not yet in store, create a stub so the UI reflects the state immediately
       // before the fetchAIManagerStatus call completes
       if (!existing && enabled) {
-        state.statusByAccount[account_id] = {
-          enabled: true,
-          state: fsmState,
-          last_analysis_at: null,
-          circuit_breaker: { count: 0, active: false },
-          actions_today: 0,
-          budget_remaining: { actions: 30, tokens: 100000 },
-          degradation_tier: 0,
-          kill_switch: false,
-        };
+        state.statusByAccount[account_id] = createDefaultStatus({ state: fsmState });
       }
     },
+    /** Increments actions_today and decrements budget on trade execution. No-ops for unknown accounts. Budget clamped to 0 minimum. */
     onExecution(state, action: PayloadAction<{ account_id: string; action: string; symbol: string; pnl: number }>) {
       const { account_id } = action.payload;
       const existing = state.statusByAccount[account_id];
@@ -247,6 +295,7 @@ const aiManagerSlice = createSlice({
         existing.budget_remaining.actions = Math.max(0, existing.budget_remaining.actions - 1);
       }
     },
+    /** Clears the slice-level error field after it has been displayed or handled. */
     clearError(state) {
       state.error = null;
     },
@@ -268,6 +317,10 @@ const aiManagerSlice = createSlice({
       .addCase(fetchAIManagerStatus.pending, setLoading("status"))
       .addCase(fetchAIManagerStatus.fulfilled, (state, action) => {
         state.loading["status"] = false;
+        // Don't overwrite a WS-created stub with null (404 race condition)
+        if (action.payload.data === null && state.statusByAccount[action.payload.accountId] != null) {
+          return;
+        }
         state.statusByAccount[action.payload.accountId] = action.payload.data;
       })
       .addCase(fetchAIManagerStatus.rejected, setError("status"))
@@ -279,16 +332,7 @@ const aiManagerSlice = createSlice({
         if (s) {
           s.enabled = true;
         } else {
-          state.statusByAccount[action.payload.accountId] = {
-            enabled: true,
-            state: "sleeping",
-            last_analysis_at: null,
-            circuit_breaker: { count: 0, active: false },
-            actions_today: 0,
-            budget_remaining: { actions: 30, tokens: 100000 },
-            degradation_tier: 0,
-            kill_switch: false,
-          } as AIManagerStatus;
+          state.statusByAccount[action.payload.accountId] = createDefaultStatus();
         }
       })
       .addCase(enableAIManager.rejected, setError("enable"))
@@ -305,7 +349,7 @@ const aiManagerSlice = createSlice({
       .addCase(pauseAIManager.fulfilled, (state, action) => {
         state.loading["pause"] = false;
         const s = state.statusByAccount[action.payload.accountId];
-        if (s) s.state = "paused";
+        if (s) s.state = AI_MGR_STATE.PAUSED;
       })
       .addCase(pauseAIManager.rejected, setError("pause"))
 
@@ -313,7 +357,7 @@ const aiManagerSlice = createSlice({
       .addCase(resumeAIManager.fulfilled, (state, action) => {
         state.loading["resume"] = false;
         const s = state.statusByAccount[action.payload.accountId];
-        if (s) s.state = "monitoring";
+        if (s) s.state = AI_MGR_STATE.MONITORING;
       })
       .addCase(resumeAIManager.rejected, setError("resume"))
 
@@ -349,9 +393,10 @@ const aiManagerSlice = createSlice({
         state.loading["decisions"] = false;
         const { accountId, decisions, nextCursor, append } = action.payload;
         if (append) {
-          state.decisionsbyAccount[accountId] = [...(state.decisionsbyAccount[accountId] || []), ...decisions];
+          const combined = [...(state.decisionsByAccount[accountId] || []), ...decisions];
+          state.decisionsByAccount[accountId] = combined.slice(-MAX_DECISIONS);
         } else {
-          state.decisionsbyAccount[accountId] = decisions;
+          state.decisionsByAccount[accountId] = decisions.slice(-MAX_DECISIONS);
         }
         state.decisionCursors[accountId] = nextCursor;
       })
@@ -378,9 +423,10 @@ const aiManagerSlice = createSlice({
         state.loading["logs"] = false;
         const { accountId, logs, nextCursor, append } = action.payload;
         if (append) {
-          state.logsByAccount[accountId] = [...(state.logsByAccount[accountId] || []), ...logs];
+          const combined = [...(state.logsByAccount[accountId] || []), ...logs];
+          state.logsByAccount[accountId] = combined.slice(-MAX_LOGS);
         } else {
-          state.logsByAccount[accountId] = logs;
+          state.logsByAccount[accountId] = logs.slice(-MAX_LOGS);
         }
         state.logCursors[accountId] = nextCursor;
       })

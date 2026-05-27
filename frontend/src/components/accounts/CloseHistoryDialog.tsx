@@ -68,7 +68,7 @@ export function CloseHistoryDialog({ open, onOpenChange, accountId, accountLabel
   const partial = executions.filter((execution) => execution.failed_count > 0 && execution.closed_count > 0).length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4" onClick={() => handleOpenChange(false)}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true" aria-label="Close history" onClick={() => handleOpenChange(false)}>
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,oklch(0.64_0.12_206_/_0.18),transparent_36%),rgba(2,6,23,0.78)] backdrop-blur-md" />
       <div
         className="glass-card relative flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[calc(var(--radius)*2)] border border-border/70 bg-card/90 shadow-[0_44px_140px_-56px_rgba(0,0,0,0.82)]"

@@ -7,10 +7,22 @@ import path from "path";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
+    chunkSizeWarningLimit: 250,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),
         neumorphismPreview: path.resolve(__dirname, "neumorphism-preview.html"),
+      },
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules/react-dom")) return "vendor-react";
+          if (id.includes("node_modules/react/")) return "vendor-react";
+          if (id.includes("node_modules/@tanstack/react-router")) return "vendor-router";
+          if (id.includes("node_modules/@tanstack/react-query") || id.includes("node_modules/@tanstack/query-sync-storage-persister")) return "vendor-query";
+          if (id.includes("node_modules/@reduxjs/toolkit") || id.includes("node_modules/react-redux")) return "vendor-redux";
+          if (id.includes("node_modules/framer-motion")) return "vendor-motion";
+          if (id.includes("node_modules/recharts") || id.includes("node_modules/d3-")) return "vendor-charts";
+        },
       },
     },
   },
@@ -38,6 +50,22 @@ export default defineConfig({
     globals: true,
     environment: "happy-dom",
     setupFiles: ["./src/test/setup.ts"],
+    exclude: ["e2e/**", "node_modules/**"],
     css: false,
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/test/**",
+        "src/**/__tests__/**",
+        "src/routes/**",
+        "src/main.tsx",
+        "src/App.tsx",
+        "src/design-system/**",
+        "src/lib/motion.tsx",
+        "src/lib/motion-constants.ts",
+        "src/lib/use-animations.ts",
+      ],
+    },
   },
 });

@@ -1,87 +1,73 @@
+/**
+ * @module motion
+ *
+ * Reusable Framer Motion wrapper components for the TradingAgents frontend.
+ *
+ * Every component in this module is a thin, opinionated wrapper around a
+ * Framer Motion `motion.*` primitive.  They apply pre-configured variants and
+ * transitions from `motion-constants` so that callers can add polished
+ * animation with a single JSX element and zero inline motion config.
+ *
+ * All components are marked `"use client"` because Framer Motion requires a
+ * browser environment.
+ *
+ * ### Component overview
+ *
+ * | Component        | Purpose                                              |
+ * |------------------|------------------------------------------------------|
+ * | `MotionSection`  | Fade-and-rise entrance for page sections             |
+ * | `MotionList`     | Staggered list container                             |
+ * | `MotionItem`     | Individual list-item child for `MotionList`          |
+ * | `MotionPopup`    | Scale-and-blur entrance for modals / cards           |
+ * | `MotionHover`    | Lift-and-scale on hover / tap                        |
+ * | `MotionNumber`   | Animated numeric counter with eased interpolation    |
+ * | `MotionPresence` | `AnimatePresence` wrapper with a sensible default    |
+ * | `MotionSkeleton` | Pulsing skeleton placeholder                         |
+ *
+ * @example
+ * ```tsx
+ * import { MotionSection, MotionList, MotionItem } from "@/lib/motion";
+ *
+ * <MotionSection>
+ *   <MotionList>
+ *     {items.map(i => <MotionItem key={i.id}>{i.label}</MotionItem>)}
+ *   </MotionList>
+ * </MotionSection>
+ * ```
+ */
 "use client";
 
-import { motion, AnimatePresence, type Variants, type Transition } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import * as React from "react";
 
-// ═══ Spring Presets ═══
-export const springs = {
-  snappy: { type: "spring", stiffness: 500, damping: 30, mass: 0.8 } as Transition,
-  bouncy: { type: "spring", stiffness: 400, damping: 25, mass: 1 } as Transition,
-  gentle: { type: "spring", stiffness: 200, damping: 20, mass: 1 } as Transition,
-  stiff: { type: "spring", stiffness: 700, damping: 35, mass: 0.6 } as Transition,
-  slow: { type: "spring", stiffness: 100, damping: 20, mass: 1.2 } as Transition,
-} as const;
+import {
+  springs,
+  easings,
+  fadeInUp,
+  scaleIn,
+  listItem,
+  staggerContainer,
+  staggerContainerFast,
+} from "./motion-constants";
 
-// ═══ Easing Presets ═══
-export const easings = {
-  easeOut: [0.22, 1, 0.36, 1] as [number, number, number, number],
-  easeInOut: [0.65, 0, 0.35, 1] as [number, number, number, number],
-  elastic: [0.68, -0.55, 0.265, 1.55] as [number, number, number, number],
-};
-
-// ═══ Variant Presets ═══
-export const fadeInUp: Variants = {
-  hidden: { opacity: 0, y: 16, filter: "blur(4px)" },
-  visible: { opacity: 1, y: 0, filter: "blur(0px)" },
-  exit: { opacity: 0, y: -8, filter: "blur(2px)" },
-};
-
-export const fadeIn: Variants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 },
-  exit: { opacity: 0 },
-};
-
-export const scaleIn: Variants = {
-  hidden: { opacity: 0, scale: 0.92, filter: "blur(4px)" },
-  visible: { opacity: 1, scale: 1, filter: "blur(0px)" },
-  exit: { opacity: 0, scale: 0.95, filter: "blur(2px)" },
-};
-
-export const slideInRight: Variants = {
-  hidden: { opacity: 0, x: 20, filter: "blur(3px)" },
-  visible: { opacity: 1, x: 0, filter: "blur(0px)" },
-  exit: { opacity: 0, x: -10, filter: "blur(2px)" },
-};
-
-export const slideInLeft: Variants = {
-  hidden: { opacity: 0, x: -20, filter: "blur(3px)" },
-  visible: { opacity: 1, x: 0, filter: "blur(0px)" },
-  exit: { opacity: 0, x: 10, filter: "blur(2px)" },
-};
-
-export const popIn: Variants = {
-  hidden: { opacity: 0, scale: 0.8 },
-  visible: { opacity: 1, scale: 1, transition: springs.bouncy },
-  exit: { opacity: 0, scale: 0.9 },
-};
-
-export const listItem: Variants = {
-  hidden: { opacity: 0, y: 12, scale: 0.97 },
-  visible: { opacity: 1, y: 0, scale: 1 },
-  exit: { opacity: 0, y: -8, scale: 0.97 },
-};
-
-// ═══ Stagger container ═══
-export const staggerContainer: Variants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { staggerChildren: 0.06, delayChildren: 0.04 },
-  },
-};
-
-export const staggerContainerFast: Variants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { staggerChildren: 0.035, delayChildren: 0.02 },
-  },
-};
-
-// ═══ Animated Components ═══
-
-/** Fade-in wrapper for page/section content */
+/**
+ * Animated page-section wrapper that fades upward on mount.
+ *
+ * Applies the `fadeInUp` variant with a `springs.gentle` transition so the
+ * section eases into view without feeling abrupt.  An optional `delay`
+ * parameter lets you stagger multiple sections on the same page.
+ *
+ * @param children - Section content.
+ * @param className - Optional CSS class forwarded to the wrapping `div`.
+ * @param delay - Extra delay in seconds before the animation starts (default `0`).
+ *
+ * @example
+ * ```tsx
+ * <MotionSection delay={0.1} className="mt-8">
+ *   <h2>Portfolio Overview</h2>
+ * </MotionSection>
+ * ```
+ */
 export function MotionSection({
   children,
   className,
@@ -105,7 +91,25 @@ export function MotionSection({
   );
 }
 
-/** Staggered list animation container */
+/**
+ * Stagger container that animates its direct children sequentially.
+ *
+ * Uses either `staggerContainer` (default, 60 ms cadence) or
+ * `staggerContainerFast` (35 ms cadence when `fast` is `true`).  Pair with
+ * `MotionItem` children so each item enters with the `listItem` variant.
+ *
+ * @param children - List items, typically `MotionItem` elements.
+ * @param className - Optional CSS class forwarded to the wrapping `div`.
+ * @param fast - When `true`, uses the fast-cadence stagger container
+ *               (`staggerContainerFast`). Default `false`.
+ *
+ * @example
+ * ```tsx
+ * <MotionList fast>
+ *   {trades.map(t => <MotionItem key={t.id}>{t.symbol}</MotionItem>)}
+ * </MotionList>
+ * ```
+ */
 export function MotionList({
   children,
   className,
@@ -128,7 +132,26 @@ export function MotionList({
   );
 }
 
-/** Individual list item with stagger animation */
+/**
+ * Individual animated list item for use inside `MotionList`.
+ *
+ * Applies the `listItem` variant and a `springs.snappy` transition so each
+ * item slides up and sharpens into view as its parent stagger timer fires.
+ *
+ * @param children - Item content.
+ * @param className - Optional CSS class forwarded to the wrapping `div`.
+ *
+ * @example
+ * ```tsx
+ * <MotionList>
+ *   {rows.map(r => (
+ *     <MotionItem key={r.id} className="py-2">
+ *       {r.name}
+ *     </MotionItem>
+ *   ))}
+ * </MotionList>
+ * ```
+ */
 export function MotionItem({
   children,
   className,
@@ -147,7 +170,26 @@ export function MotionItem({
   );
 }
 
-/** Scale-in popup effect */
+/**
+ * Scale-and-blur entrance wrapper for modal dialogs and floating cards.
+ *
+ * Uses the `scaleIn` variant with a `springs.bouncy` transition, giving the
+ * panel a subtle overshoot that conveys depth without being distracting.
+ *
+ * @param children - Modal or card content.
+ * @param className - Optional CSS class forwarded to the wrapping `div`.
+ *
+ * @example
+ * ```tsx
+ * <MotionPresence>
+ *   {open && (
+ *     <MotionPopup key="panel" className="rounded-xl shadow-xl p-6">
+ *       <TradeDetails trade={selected} />
+ *     </MotionPopup>
+ *   )}
+ * </MotionPresence>
+ * ```
+ */
 export function MotionPopup({
   children,
   className,
@@ -169,7 +211,25 @@ export function MotionPopup({
   );
 }
 
-/** Hover interaction wrapper — lifts and scales on hover, presses on tap */
+/**
+ * Interactive hover-lift and tap-press wrapper.
+ *
+ * Translates the element upward and scales it slightly on hover, then
+ * presses it slightly on tap, providing tactile feedback for clickable cards
+ * and buttons.  Both magnitudes are configurable.
+ *
+ * @param children - Clickable content.
+ * @param className - Optional CSS class forwarded to the wrapping `div`.
+ * @param lift - Upward translation in pixels on hover (default `3`).
+ * @param scale - Scale multiplier on hover (default `1.02`).
+ *
+ * @example
+ * ```tsx
+ * <MotionHover lift={4} scale={1.03}>
+ *   <AssetCard symbol="AAPL" />
+ * </MotionHover>
+ * ```
+ */
 export function MotionHover({
   children,
   className,
@@ -192,7 +252,36 @@ export function MotionHover({
   );
 }
 
-/** Number counter animation */
+/**
+ * Animated numeric counter that smoothly interpolates between values.
+ *
+ * When the `value` prop changes, the displayed number eases from the previous
+ * value to the new one using a cubic `easeOut` curve.  Duration is clamped
+ * between 200 ms and 600 ms and scales with the magnitude of the change so
+ * large jumps feel proportionally weighty.  A brief scale pulse on each new
+ * `value` draws the eye to the update.
+ *
+ * An optional `format` callback lets you display the interpolated value as
+ * currency, percentage, or any other string representation.
+ *
+ * @param value - Target numeric value.  Changing this prop triggers the animation.
+ * @param className - Optional CSS class forwarded to the wrapping `span`.
+ * @param format - Optional formatter called with the current interpolated
+ *                 number on every animation frame.  Defaults to
+ *                 `Math.round(n).toString()`.
+ *
+ * @example
+ * ```tsx
+ * // Plain integer
+ * <MotionNumber value={totalTrades} />
+ *
+ * // Currency
+ * <MotionNumber
+ *   value={portfolioValue}
+ *   format={n => `$${n.toFixed(2)}`}
+ * />
+ * ```
+ */
 export function MotionNumber({
   value,
   className,
@@ -222,6 +311,7 @@ export function MotionNumber({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   return (
@@ -238,7 +328,31 @@ export function MotionNumber({
   );
 }
 
-/** Presence wrapper for conditional mount/unmount animations */
+/**
+ * Thin wrapper around Framer Motion's `AnimatePresence`.
+ *
+ * Provides a consistent default `mode` of `"wait"` (the most common choice
+ * for conditional rendering, where the exiting element fully leaves before
+ * the entering one appears) while still exposing all three modes via the
+ * `mode` prop.
+ *
+ * Wrap any conditionally-rendered `motion.*` element or Motion component
+ * inside `MotionPresence` so that exit animations play correctly.
+ *
+ * @param children - One or more conditionally-rendered Motion elements.
+ * @param mode - AnimatePresence mode.
+ *   - `"wait"` (default) — exit then enter
+ *   - `"sync"` — exit and enter simultaneously
+ *   - `"popLayout"` — exit with layout animation
+ *
+ * @example
+ * ```tsx
+ * <MotionPresence>
+ *   {selectedTab === "overview" && <OverviewPanel key="overview" />}
+ *   {selectedTab === "trades"   && <TradesPanel   key="trades"   />}
+ * </MotionPresence>
+ * ```
+ */
 export function MotionPresence({
   children,
   mode = "wait",
@@ -249,7 +363,26 @@ export function MotionPresence({
   return <AnimatePresence mode={mode}>{children}</AnimatePresence>;
 }
 
-/** Skeleton pulse that feels alive */
+/**
+ * Pulsing skeleton placeholder for loading states.
+ *
+ * Continuously animates opacity (0.4 → 0.7 → 0.4) and a barely-perceptible
+ * scale (1 → 1.005 → 1) on an infinite loop to indicate that content is
+ * loading.  Apply a background colour and border-radius via `className` to
+ * match the shape of the content it replaces.
+ *
+ * @param className - CSS class that sets the skeleton's size, background,
+ *                    and border-radius (e.g. `"h-4 w-32 rounded bg-muted"`).
+ *
+ * @example
+ * ```tsx
+ * {isLoading ? (
+ *   <MotionSkeleton className="h-6 w-48 rounded-md bg-muted" />
+ * ) : (
+ *   <span>{portfolioName}</span>
+ * )}
+ * ```
+ */
 export function MotionSkeleton({ className }: { className?: string }) {
   return (
     <motion.div
@@ -267,5 +400,3 @@ export function MotionSkeleton({ className }: { className?: string }) {
   );
 }
 
-// Re-export motion and AnimatePresence for direct use
-export { motion, AnimatePresence };

@@ -1,3 +1,12 @@
+/**
+ * @module AnalyticsDashboard
+ * @description Full-page analytics dashboard showing equity curve, drawdown profile,
+ * daily PnL bar chart, monthly PnL heat-grid, and performance KPI cards. Supports
+ * portfolio-level aggregation or single-account drill-down, with configurable
+ * timeframe periods and account-type filters. Filter state is persisted to
+ * localStorage. Can be rendered standalone or embedded inside AccountDetailView.
+ */
+
 import { useEffect, useState, useCallback, useRef } from "react";
 import { accountsApi, type DailySnapshot, type PerformanceAnalytics, type DashboardCard } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,19 +47,50 @@ function saveFilters(filters: { accountType: AccountType; period: Period; select
   localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
 }
 
+/** Props for {@link AnalyticsDashboard}. */
 interface Props {
+  /** When provided, locks the dashboard to this account; hides the account selector. */
   accountId?: string;
+  /** When `true`, renders without the standalone page header (for embedding inside another view). */
   embedded?: boolean;
 }
 
+/**
+ * Renders the analytics dashboard for either a single account or the full portfolio.
+ *
+ * In standalone mode the component shows a `PageHeader`, an account/type selector, and
+ * a period picker whose state is persisted to `localStorage`. In embedded mode (inside
+ * `AccountDetailView`) the header and account selector are hidden and the `accountId`
+ * prop pins the data scope.
+ *
+ * Data is fetched via `accountsApi.getSnapshots` / `getPortfolioSnapshots` and
+ * `getAnalytics` / `getPortfolioAnalytics`. All in-flight requests are cancelled on
+ * re-fetch or unmount via `AbortController`.
+ *
+ * @param props - See {@link Props}.
+ * @returns Chart widgets, KPI cards, and optional tooling dialogs, or loading/error states.
+ *
+ * @example
+ * // Full-page standalone usage
+ * <AnalyticsDashboard />
+ *
+ * // Embedded inside a detail view
+ * <AnalyticsDashboard accountId="acc_abc123" embedded />
+ */
 export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
   const [analytics, setAnalytics] = useState<PerformanceAnalytics | null>(null);
   const [accounts, setAccounts] = useState<DashboardCard[]>([]);
-  const saved = accountId ? null : loadFilters();
-  const [selectedAccount, setSelectedAccount] = useState<string>(accountId || saved?.selectedAccount || "portfolio");
-  const [period, setPeriod] = useState<Period>(saved?.period || "1M");
-  const [accountType, setAccountType] = useState<AccountType>(saved?.accountType || "live");
+  const savedFilters = accountId ? null : loadFilters();
+  const [selectedAccount, setSelectedAccount] = useState<string>(
+    accountId || savedFilters?.selectedAccount || "portfolio",
+  );
+  const [period, setPeriod] = useState<Period>(
+    accountId ? "1M" : (savedFilters?.period || "1M"),
+  );
+  const [accountType, setAccountType] = useState<AccountType>(
+    accountId ? "live" : (savedFilters?.accountType || "live"),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snapshotting, setSnapshotting] = useState(false);
@@ -99,7 +139,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   useEffect(() => {
     if (!accountId) {
       const controller = new AbortController();
-      accountsApi.getDashboard({ account_type: accountType }, controller.signal).then(setAccounts).catch(() => {});
+      accountsApi.getDashboard({ account_type: accountType }, controller.signal).then(setAccounts).catch((e) => {
+        if (e?.name !== "AbortError") setError("Failed to load accounts");
+      });
       return () => controller.abort();
     }
   }, [accountId, accountType]);
@@ -172,7 +214,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
     const controller = new AbortController();
     manualAbortRef.current = controller;
     setLoading(true);
-    fetchDataRef.current(controller.signal);
+    fetchDataRef.current(controller.signal).catch((e) => {
+      if (e?.name !== "AbortError") setError("Failed to refresh data");
+    });
   };
 
   const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
@@ -394,7 +438,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
                 manualAbortRef.current?.abort();
                 const controller = new AbortController();
                 manualAbortRef.current = controller;
-                fetchDataRef.current(controller.signal);
+                fetchDataRef.current(controller.signal).catch((e) => {
+                  if (e?.name !== "AbortError") setError("Failed to refresh data");
+                });
               }}
               className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.1)] border border-primary/20 bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)] hover:brightness-110"
             >
