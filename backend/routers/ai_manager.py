@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid as _uuid
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.ai_manager_schemas import AIManagerConfigPatch
 from backend.rate_limit import check_rate_limit as _check_rate_limit
+from backend.routers._validators import validate_account_id as _validate_account_id
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +18,6 @@ router = APIRouter(tags=["ai-manager"])
 
 _SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{1,20}$")
 
-
-def _validate_account_id(account_id: str) -> str:
-    """Validate UUID format and return the ID, or raise HTTPException(400)."""
-    try:
-        _uuid.UUID(account_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid account ID format")
-    return account_id
 
 
 def _validate_symbol(symbol: str) -> str:

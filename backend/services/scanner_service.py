@@ -643,7 +643,7 @@ class ScannerService:
             if not scan:
                 return
             batch_size = min(int(scan["config"].get("max_parallel", _BATCH_SIZE) or _BATCH_SIZE), _MAX_PARALLEL_CAP)
-            print(f"[SCAN] Resolved batch_size={batch_size} (config max_parallel={scan['config'].get('max_parallel')}, cap={_MAX_PARALLEL_CAP})")
+            logger.debug("Resolved batch_size=%d (config max_parallel=%s, cap=%d)", batch_size, scan["config"].get("max_parallel"), _MAX_PARALLEL_CAP)
             if symbols_override is None:
                 scan["total"] = len(symbols)
             scan["total_batches"] = (len(symbols) + batch_size - 1) // batch_size
