@@ -1,6 +1,8 @@
 """Models and providers router — TASK-007."""
 
+import ipaddress
 import time
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -24,6 +26,30 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "ollama": "http://localhost:11434",
 }
 
+_ALLOWED_LOCALHOST = {"localhost", "127.0.0.1", "::1"}
+
+
+def _validate_url_ssrf(url: str) -> None:
+    """Reject URLs targeting private/internal networks (SSRF protection).
+
+    Allows localhost only for ollama-like local services.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(400, detail="Only http/https URLs are allowed")
+    host = parsed.hostname or ""
+    if not host:
+        raise HTTPException(400, detail="Invalid URL: missing host")
+    if host in _ALLOWED_LOCALHOST:
+        return
+    try:
+        addr = ipaddress.ip_address(host)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            raise HTTPException(400, detail="URLs targeting private networks are not allowed")
+    except ValueError:
+        if host.endswith(".internal") or host.endswith(".local"):
+            raise HTTPException(400, detail="URLs targeting internal domains are not allowed")
+
 
 class ConnectivityRequest(BaseModel):
     provider: str
@@ -33,9 +59,13 @@ class ConnectivityRequest(BaseModel):
 
 @router.post("/connectivity-check")
 async def connectivity_check(req: ConnectivityRequest):
+    if req.provider not in VALID_PROVIDERS:
+        raise HTTPException(400, detail=f"Unknown provider: {req.provider}")
     base = (req.custom_url or "").strip().rstrip("/") or PROVIDER_BASE_URLS.get(req.provider, "")
     if not base:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
+        raise HTTPException(status_code=400, detail=f"No base URL for provider: {req.provider}")
+    if req.custom_url:
+        _validate_url_ssrf(base)
 
     url = f"{base}/v1/models"
     headers = {}
@@ -73,6 +103,7 @@ async def fetch_models(req: FetchModelsRequest):
     base = req.url.strip().rstrip("/")
     if not base:
         raise HTTPException(status_code=400, detail="URL is required")
+    _validate_url_ssrf(base)
     endpoint = base if base.endswith("/v1/models") else f"{base}/v1/models"
 
     headers = {}

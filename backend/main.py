@@ -133,9 +133,12 @@ class ContentSizeLimitMiddleware:
 
 def create_app() -> FastAPI:
     dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("DATABASE_URL environment variable is required")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app.state._ready = False
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
         if os.environ.get("LOG_FORMAT", "").lower() == "json":
             configure_structured_logging(log_level)
@@ -340,6 +343,7 @@ def create_app() -> FastAPI:
             app.state.position_reconciler = None
 
         logger.info("app_ready: all services initialised")
+        app.state._ready = True
 
         yield
 
@@ -452,6 +456,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health(request: Request):
+        if not getattr(request.app.state, "_ready", False):
+            return Response(
+                content=_json.dumps({"status": "starting"}),
+                status_code=503,
+                media_type="application/json",
+            )
         db_ok = request.app.state.db.is_healthy()
         svc = request.app.state.analysis_service
         active = sum(1 for r in svc._active_runs.values() if r.get("status") == "running")
@@ -466,7 +476,7 @@ def create_app() -> FastAPI:
             "analyses_max": cap,
             "coingecko": get_coingecko_status(),
         }
-        status_code = 503 if status == "degraded" else 200
+        status_code = 503 if not db_ok else 200
         return Response(
             content=_json.dumps(body),
             status_code=status_code,
