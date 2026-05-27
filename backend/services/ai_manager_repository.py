@@ -367,6 +367,18 @@ class AIManagerRepository:
             )
             return row is not None
 
+    async def decrement_token_budget_atomic(self, account_id: str, tokens: int) -> None:
+        """Roll back a token budget increment when the LLM call fails."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ai_manager_state "
+                "SET token_budget_used_today = GREATEST(token_budget_used_today - $2, 0), "
+                "    updated_at = NOW() "
+                "WHERE account_id = $1",
+                account_id,
+                tokens,
+            )
+
     async def is_kill_switch_active(self, account_id: str) -> bool:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(

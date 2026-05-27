@@ -370,6 +370,7 @@ class AIManagerTask:
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
                 circuit_breaker.restart_cooldown(self._account_id)
+            await self._rollback_token_budget()
             await self._service._degradation.check_health("timeout")
             self._transition_post_eval()
             return
@@ -378,6 +379,7 @@ class AIManagerTask:
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
                 circuit_breaker.restart_cooldown(self._account_id)
+            await self._rollback_token_budget()
             await self._service._degradation.check_health("timeout")
             self._transition_post_eval()
             return
@@ -1048,3 +1050,10 @@ class AIManagerTask:
             )
         except Exception:
             logger.warning("Failed to persist ref equity for %s", self._account_id, exc_info=True)
+
+    async def _rollback_token_budget(self) -> None:
+        """Roll back the 1000-token budget increment on LLM call failure."""
+        try:
+            await self._service._repo.decrement_token_budget_atomic(self._account_id, 1000)
+        except Exception:
+            logger.warning("Failed to roll back token budget for %s", self._account_id, exc_info=True)

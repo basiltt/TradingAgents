@@ -31,6 +31,7 @@ def mock_service():
     svc._repo.increment_actions_atomic = AsyncMock(return_value=True)
     svc._repo.decrement_actions_atomic = AsyncMock()
     svc._repo.increment_token_budget_atomic = AsyncMock(return_value=True)
+    svc._repo.decrement_token_budget_atomic = AsyncMock()
     svc._repo.is_kill_switch_active = AsyncMock(return_value=False)
     svc._repo.get_state = AsyncMock(return_value={"equity_at_day_start": 1000.0})
     svc._repo.init_equity_at_day_start = AsyncMock()

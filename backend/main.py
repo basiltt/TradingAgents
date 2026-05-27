@@ -130,6 +130,29 @@ class ContentSizeLimitMiddleware:
                         return
                 except (ValueError, TypeError):
                     pass
+
+            # Guard against chunked encoding bypass (no Content-Length header)
+            accumulated = 0
+
+            async def size_limited_receive() -> dict:
+                nonlocal accumulated
+                msg = await receive()
+                if msg.get("type") == "http.request":
+                    body = msg.get("body", b"")
+                    accumulated += len(body)
+                    if accumulated > _MAX_BODY_BYTES:
+                        raise ValueError("Request body too large")
+                return msg
+
+            try:
+                await self.app(scope, size_limited_receive, send)
+            except ValueError as e:
+                if "too large" in str(e):
+                    await send({"type": "http.response.start", "status": 413, "headers": [[b"content-type", b"application/json"]]})
+                    await send({"type": "http.response.body", "body": b'{"detail":"Request body too large"}'})
+                else:
+                    raise
+            return
         await self.app(scope, receive, send)
 
 
