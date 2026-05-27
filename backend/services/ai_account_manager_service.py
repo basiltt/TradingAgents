@@ -543,7 +543,7 @@ class AIAccountManagerService:
     async def get_decisions(
         self, account_id: str, limit: int = 50, cursor: Optional[str] = None, outcome_filter: Optional[str] = None
     ) -> dict:
-        from datetime import datetime, timezone
+        from datetime import datetime
         cursor_ts = None
         cursor_id = None
         if cursor:

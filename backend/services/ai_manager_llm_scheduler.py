@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import Dict, Tuple
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 

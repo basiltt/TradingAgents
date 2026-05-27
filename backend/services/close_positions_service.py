@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -23,6 +24,7 @@ class ClosePositionsService:
         self._ws_manager = ws_manager
         self._trade_service = trade_service
         self._closing_accounts: dict[str, float] = {}
+        self._close_lock = asyncio.Lock()
 
     _CLOSE_LOCK_TTL = 300.0  # auto-expire stale close locks after 5 minutes
 
@@ -30,12 +32,13 @@ class ClosePositionsService:
         self._trade_service = trade_service
 
     async def close_all_positions(self, account_id: str) -> dict[str, Any]:
-        if account_id in self._closing_accounts:
-            started = self._closing_accounts[account_id]
-            if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
-                raise ValueError("Close already in progress for this account")
-            logger.warning("Expired stale close lock for %s", account_id)
-        self._closing_accounts[account_id] = time.monotonic()
+        async with self._close_lock:
+            if account_id in self._closing_accounts:
+                started = self._closing_accounts[account_id]
+                if (time.monotonic() - started) < self._CLOSE_LOCK_TTL:
+                    raise ValueError("Close already in progress for this account")
+                logger.warning("Expired stale close lock for %s", account_id)
+            self._closing_accounts[account_id] = time.monotonic()
         t0 = time.monotonic()
         logger.info("close_all_positions_start", extra={"account_id": account_id})
 
@@ -268,7 +271,6 @@ class ClosePositionsService:
         # Time-based rules store ISO timestamp in reference_value, skip equity checks
         if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
             if not reference:
-                from datetime import datetime, timezone
                 reference = datetime.now(timezone.utc).isoformat()
         elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and not reference:
             wallet = await self._accounts_service.get_wallet(account_id)

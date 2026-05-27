@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
 from typing import Any, Dict, List, Optional, Set
 
 import httpx

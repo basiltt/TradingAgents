@@ -156,7 +156,8 @@ class TradeService:
         is_partial = qty is not None and qty < remaining
 
         if is_partial:
-            assert qty is not None
+            if qty is None:
+                raise ValueError("qty is required for partial close")
             result = await self._close_partial(client, trade, qty, close_reason, close_rule_id)
         else:
             result = await self._close_full(client, trade, close_reason, close_rule_id)
@@ -217,7 +218,8 @@ class TradeService:
                 )
 
         self.invalidate_stats_cache(account_id)
-        assert closed is not None
+        if closed is None:
+            raise RuntimeError("close_trade returned None unexpectedly")
         await self._broadcast_trade_event("trade.closed", closed)
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.info("close_trade_record_only_done", extra={
@@ -275,7 +277,8 @@ class TradeService:
                 )
 
         self.invalidate_stats_cache(account_id)
-        assert closed is not None
+        if closed is None:
+            raise RuntimeError("close_trade returned None unexpectedly")
         await self._broadcast_trade_event("trade.closed", closed)
         logger.info("close_full_done", extra={
             "trade_id": trade_id, "account_id": account_id,
@@ -465,7 +468,8 @@ class TradeService:
                     )
 
         self.invalidate_stats_cache(account_id)
-        assert updated is not None
+        if updated is None:
+            raise RuntimeError("update_trade_status returned None unexpectedly")
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.info("cancel_trade_done", extra={
             "account_id": account_id, "trade_id": trade_id,

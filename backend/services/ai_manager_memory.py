@@ -6,6 +6,7 @@ Provides episodic context (recent decisions) and semantic patterns for LLM promp
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -94,7 +95,6 @@ class AIManagerMemory:
                 return 0
 
             # Parse LLM JSON response
-            import json as _json
             try:
                 text = raw_response.strip()
                 if text.startswith("```"):

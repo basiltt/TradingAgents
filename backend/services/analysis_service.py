@@ -24,7 +24,18 @@ from backend.ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
 
-_GRAPH_EXECUTOR_WORKERS = int(os.environ.get("GRAPH_EXECUTOR_WORKERS", "8"))
+def _safe_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer for env %s=%r, using default %d", name, raw, default)
+        return default
+
+
+_GRAPH_EXECUTOR_WORKERS = _safe_int_env("GRAPH_EXECUTOR_WORKERS", 8)
 _graph_executor: concurrent.futures.ThreadPoolExecutor | None = None
 _graph_executor_lock = threading.Lock()
 _graph_executor_dead = False
@@ -41,7 +52,7 @@ def _get_graph_executor() -> concurrent.futures.ThreadPoolExecutor:
             _graph_executor_dead = False
     return _graph_executor
 
-DEFAULT_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
+DEFAULT_MAX_CONCURRENT = _safe_int_env("MAX_CONCURRENT_ANALYSES", 6)
 _HARD_MAX_CONCURRENT = 15
 _MAX_ZOMBIES = 3
 _WALL_TIMEOUT = 30 * 60  # 30 minutes

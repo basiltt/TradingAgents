@@ -7,6 +7,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -872,7 +875,6 @@ class AutoTradeExecutor:
                 self._ai_manager_enabled_accounts.add(account_id)
                 if self._ai_manager_service:
                     try:
-                        from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
                         # Preserve any existing config — only use defaults if no config exists yet
                         existing_config = None
                         try:

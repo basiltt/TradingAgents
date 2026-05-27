@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
 
@@ -303,7 +304,6 @@ class CloseRuleEvaluator:
 
     def _check_time_elapsed(self, rule: dict) -> bool:
         """Check if elapsed time since reference_value exceeds threshold_value hours."""
-        from datetime import datetime, timezone
         try:
             ref_str = rule.get("reference_value", "")
             threshold_hours = float(rule["threshold_value"])
