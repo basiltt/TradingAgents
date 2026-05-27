@@ -135,6 +135,4 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
 
 async def close_llm_clients() -> None:
     """Close all httpx clients created by create_llm_callable."""
-    for client in _active_clients:
-        await client.aclose()
-    _active_clients.clear()
+    await _close_stale_clients()

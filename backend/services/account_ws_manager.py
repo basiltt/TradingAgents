@@ -75,8 +75,12 @@ class AccountWSManager:
                 await self._notify_wallet_listeners(account_id, event)
 
         client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
+        try:
+            await client.start()
+        except Exception:
+            logger.exception("Failed to start WS for account %s", account_id)
+            return
         self._clients[account_id] = client
-        await client.start()
         logger.info("Started WS for account %s", account_id)
 
     async def _broadcast(self, event: dict[str, Any]) -> None:
