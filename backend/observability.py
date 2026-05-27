@@ -22,6 +22,9 @@ from typing import Any
 # Correlation ID propagated through the request lifecycle
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 
+_CORRELATION_ID_LENGTH = 8
+_SLOW_REQUEST_THRESHOLD_S = 3.0
+
 
 class StructuredFormatter(logging.Formatter):
     """JSON log formatter with correlation ID and standard fields."""
@@ -126,7 +129,7 @@ class ObservabilityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        cid = str(uuid.uuid4())[:8]
+        cid = str(uuid.uuid4())[:_CORRELATION_ID_LENGTH]
         token = correlation_id.set(cid)
         start = time.perf_counter()
         metrics.inc_active()
@@ -150,7 +153,7 @@ class ObservabilityMiddleware:
             path = scope.get("path", "/")
             metrics.record_request(method, path, status_code, duration)
 
-            if duration > 3.0:
+            if duration > _SLOW_REQUEST_THRESHOLD_S:
                 logger = logging.getLogger("backend.observability")
                 logger.warning(
                     "slow_request",

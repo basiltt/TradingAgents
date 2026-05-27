@@ -15,6 +15,8 @@ EVALUATION_INTERVAL = 60  # seconds
 PER_ACCOUNT_TIMEOUT = 30  # seconds — must accommodate closing multiple positions
 MAX_CONCURRENT_ACCOUNTS = 5
 MAX_RULE_FAILURES = 3
+_STARTUP_DELAY_S = 15
+_STUCK_RULE_RECOVERY_AGE_S = 90
 
 
 class CloseRuleEvaluator:
@@ -70,7 +72,7 @@ class CloseRuleEvaluator:
 
     async def _evaluation_loop(self) -> None:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(_STARTUP_DELAY_S)
         except asyncio.CancelledError:
             return
 
@@ -88,7 +90,7 @@ class CloseRuleEvaluator:
 
     async def _evaluate_all_rules(self) -> None:
         try:
-            recovered = await self._db.recover_stuck_triggered_rules(90)
+            recovered = await self._db.recover_stuck_triggered_rules(_STUCK_RULE_RECOVERY_AGE_S)
             if recovered:
                 logger.warning("Recovered %d stuck triggered rules", recovered)
         except Exception:

@@ -35,6 +35,9 @@ ERROR = "error"
 _HEARTBEAT_SLEEPING = 60.0
 _HEARTBEAT_MONITORING = 10.0
 _SYMBOL_COOLDOWN_S = 15.0
+_EMERGENCY_CLOSE_SYMBOL_TTL_S = 30.0
+_MAX_REASONING_CHARS = 2000
+_CHAIN_KEY_VERSION = 1
 _ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE"})
 
 
@@ -541,11 +544,11 @@ class AIManagerTask:
                 "urgency": self._get_urgency(),
                 "state_snapshot": copy.deepcopy(self._ws_buffer),
                 "action_taken": {"action": action_type, "symbol": symbol},
-                "reasoning": result.get("reason", "")[:2000],
+                "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
                 "confidence": result.get("confidence", 0.0),
                 "graph_path": result.get("graph_path"),
                 "strategy_version": self._config.strategy_version,
-                "chain_key_version": 1,
+                "chain_key_version": _CHAIN_KEY_VERSION,
             }
 
             decision_id, decision_ts = await self._service._repo.insert_decision(
@@ -817,7 +820,7 @@ class AIManagerTask:
                 if not symbol:
                     continue
                 # Per-symbol cooldown: don't re-trigger same symbol within 30s
-                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < 30.0:
+                if now_mono - self._emergency_closed_symbols.get(symbol, 0.0) < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
                     continue
                 sym_indicators = market_data.get(symbol, {})
                 if self._evaluator.check_emergency_signals(pos, sym_indicators, velocity_threshold):
@@ -954,7 +957,7 @@ class AIManagerTask:
                     "confidence": 1.0,
                     "graph_path": "emergency_fast_path",
                     "strategy_version": self._config.strategy_version,
-                    "chain_key_version": 1,
+                    "chain_key_version": _CHAIN_KEY_VERSION,
                 }
                 await self._service._repo.insert_decision(
                     self._account_id, decision_data,
@@ -1002,7 +1005,7 @@ class AIManagerTask:
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 age_s = (now_utc - ts).total_seconds()
-                if age_s < 30.0:
+                if age_s < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
                     self._emergency_closed_symbols[sym] = now_mono - age_s
 
     async def _persist_emergency_state(self) -> None:
@@ -1020,7 +1023,7 @@ class AIManagerTask:
         symbols_json: dict = {}
         for sym, mono_ts in self._emergency_closed_symbols.items():
             age = now_mono - mono_ts
-            if age < 30.0:
+            if age < _EMERGENCY_CLOSE_SYMBOL_TTL_S:
                 symbols_json[sym] = (now_utc - timedelta(seconds=age)).isoformat()
 
         try:

@@ -15,6 +15,8 @@ _MAX_RING_EVENTS = 500
 _MAX_RING_BYTES = 2 * 1024 * 1024  # 2MB
 _MAX_CLEANED_IDS = 1000
 _MAX_QUEUE_SIZE = 1000
+_RING_BYTES_OVERHEAD = 64
+_RING_BYTES_PER_FIELD = 32
 
 _POISON = {"type": "_poison"}
 
@@ -114,7 +116,7 @@ class EventBus:
 
     def _add_to_ring(self, run_id: str, event_dict: Dict[str, Any]) -> None:
         # Rough byte estimate: 64 bytes overhead + 32 per key-value pair avoids str() cost
-        event_bytes = 64 + 32 * len(event_dict)
+        event_bytes = _RING_BYTES_OVERHEAD + _RING_BYTES_PER_FIELD * len(event_dict)
 
         if run_id not in self._ring_buffers:
             self._ring_buffers[run_id] = deque()
