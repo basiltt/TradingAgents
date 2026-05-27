@@ -19,10 +19,11 @@ export class ApiError extends Error {
   detail: string;
 
   constructor(status: number, detail: string) {
-    super(`API error ${status}: ${detail}`);
+    const safeDetail = detail.length > 200 ? detail.slice(0, 200) + "…" : detail;
+    super(`API error ${status}: ${safeDetail}`);
     this.name = "ApiError";
     this.status = status;
-    this.detail = detail;
+    this.detail = safeDetail;
   }
 }
 

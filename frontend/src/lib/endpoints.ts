@@ -1,3 +1,7 @@
+// AI-CONTEXT: SECURITY — API keys are stored in plaintext in localStorage.
+// This is intentional: the key is user-provided, user-owned, and only accessible
+// to same-origin scripts. The alternative (prompting each session) was rejected
+// for UX reasons. Any XSS vulnerability would expose these keys.
 const ENDPOINTS_KEY = "tradingagents_endpoints";
 
 export interface EndpointProfile {
