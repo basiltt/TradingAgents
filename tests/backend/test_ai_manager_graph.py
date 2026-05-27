@@ -309,3 +309,51 @@ async def test_context_enrichment_timeout_defaults():
             result = await context_enrichment_node(state)
     assert result["regime"] == "unavailable"
     assert result["session"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_risk_validation_blocks_sweep():
+    from backend.services.ai_manager_graph import risk_validation_node
+    state = {
+        "config": {},
+        "symbol": "BTCUSDT",
+        "action": "FULL_CLOSE",
+        "positions": [{"symbol": "BTCUSDT"}],
+        "_sweep_blocked_symbols": ["BTCUSDT"],
+        "urgency": "STANDARD",
+        "confidence": 0.9,
+    }
+    result = await risk_validation_node(state)
+    assert result["_risk_rejected"] is True
+    assert result["action"] == "HOLD"
+    assert "sweep" in result["reason"]
+
+@pytest.mark.asyncio
+async def test_risk_validation_emergency_overrides_sweep():
+    from backend.services.ai_manager_graph import risk_validation_node
+    state = {
+        "config": {},
+        "symbol": "BTCUSDT",
+        "action": "FULL_CLOSE",
+        "positions": [{"symbol": "BTCUSDT"}],
+        "_sweep_blocked_symbols": ["BTCUSDT"],
+        "urgency": "EMERGENCY",
+        "confidence": 0.9,
+    }
+    result = await risk_validation_node(state)
+    assert result["_risk_rejected"] is False
+
+@pytest.mark.asyncio
+async def test_data_aggregation_passes_enhanced_data():
+    from backend.services.ai_manager_graph import data_aggregation_node
+    state = {
+        "ws_snapshot": {"positions": [{"symbol": "BTCUSDT"}]},
+        "market_data": {"BTCUSDT": {"rsi_14": 55}},
+        "mtf": {"trend_alignment": 0.7},
+        "orderbook": {"imbalance_ratio": 1.3},
+        "correlation": {"portfolio_heat": 0.5},
+        "sweep": None,
+    }
+    result = await data_aggregation_node(state)
+    assert result["mtf"] == {"trend_alignment": 0.7}
+    assert result["orderbook"] == {"imbalance_ratio": 1.3}
