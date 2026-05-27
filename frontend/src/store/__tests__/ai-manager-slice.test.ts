@@ -3,6 +3,9 @@ import reducer, {
   onStateChange,
   onExecution,
   clearError,
+  fetchDecisions,
+  fetchLogs,
+  globalKill,
 } from "@/store/ai-manager-slice";
 
 describe("aiManagerSlice reducer", () => {
@@ -70,5 +73,42 @@ describe("aiManagerSlice reducer", () => {
   it("onStateChange does nothing for unknown disabled account", () => {
     const next = reducer(initialState, onStateChange({ account_id: "nope", state: "paused", enabled: false }));
     expect(next.statusByAccount["nope"]).toBeUndefined();
+  });
+});
+
+describe("aiManagerSlice truncation", () => {
+  const initialState = reducer(undefined, { type: "@@INIT" });
+
+  it("fetchDecisions.fulfilled truncates to MAX_DECISIONS (500) on append", () => {
+    const existing = Array.from({ length: 490 }, (_, i) => ({ id: `old-${i}`, action: "HOLD", symbol: "BTC", confidence: 0.5, timestamp: "", details: null }));
+    const state = { ...initialState, decisionsByAccount: { "acc-1": existing } };
+    const newDecisions = Array.from({ length: 20 }, (_, i) => ({ id: `new-${i}`, action: "BUY", symbol: "ETH", confidence: 0.8, timestamp: "", details: null }));
+
+    const next = reducer(state, fetchDecisions.fulfilled({ accountId: "acc-1", decisions: newDecisions, nextCursor: null, append: true }, "", { accountId: "acc-1" }));
+    expect(next.decisionsByAccount["acc-1"]).toHaveLength(500);
+    expect(next.decisionsByAccount["acc-1"][499].id).toBe("new-19");
+  });
+
+  it("fetchLogs.fulfilled truncates to MAX_LOGS (1000) on append", () => {
+    const existing = Array.from({ length: 990 }, (_, i) => ({ id: i, level: "info", message: `msg-${i}`, timestamp: "" }));
+    const state = { ...initialState, logsByAccount: { "acc-1": existing } };
+    const newLogs = Array.from({ length: 20 }, (_, i) => ({ id: 1000 + i, level: "warn", message: `new-${i}`, timestamp: "" }));
+
+    const next = reducer(state, fetchLogs.fulfilled({ accountId: "acc-1", logs: newLogs, nextCursor: null, append: true }, "", { accountId: "acc-1", cursor: null }));
+    expect(next.logsByAccount["acc-1"]).toHaveLength(1000);
+    expect(next.logsByAccount["acc-1"][999].id).toBe(1019);
+  });
+
+  it("globalKill.fulfilled sets kill_switch on all accounts", () => {
+    const state = {
+      ...initialState,
+      statusByAccount: {
+        "a": { enabled: true, state: "monitoring", last_analysis_at: null, circuit_breaker: { count: 0, active: false }, actions_today: 0, budget_remaining: { actions: 30, tokens: 100000 }, degradation_tier: 0, kill_switch: false },
+        "b": { enabled: true, state: "paused", last_analysis_at: null, circuit_breaker: { count: 0, active: false }, actions_today: 0, budget_remaining: { actions: 30, tokens: 100000 }, degradation_tier: 0, kill_switch: false },
+      },
+    };
+    const next = reducer(state, globalKill.fulfilled(undefined, ""));
+    expect(next.statusByAccount["a"]!.kill_switch).toBe(true);
+    expect(next.statusByAccount["b"]!.kill_switch).toBe(true);
   });
 });

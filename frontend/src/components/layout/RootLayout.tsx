@@ -112,6 +112,7 @@ export function RootLayout() {
               size="sm"
               className="lg:hidden"
               onClick={() => dispatch(setMobileNavOpen(true))}
+              aria-label="Open navigation menu"
             >
               <Menu className="size-4" />
             </NeuButton>

@@ -36,6 +36,7 @@ export function useAnalysisWebSocket(runId: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const attemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const mountedRef = useRef(true);
   const agentInProgressAt = useRef<Record<string, number>>({});
 
@@ -195,6 +196,7 @@ export function useAnalysisWebSocket(runId: string) {
           const remaining = MIN_IN_PROGRESS_MS - elapsed;
 
           const applyCompleted = () => {
+            pendingTimersRef.current.delete(timerId);
             if (!mountedRef.current) return;
             updateCacheRef.current((p) => ({
               ...p,
@@ -202,6 +204,7 @@ export function useAnalysisWebSocket(runId: string) {
             }));
           };
 
+          let timerId: ReturnType<typeof setTimeout>;
           if (!startedAt) {
             // Never saw in_progress — show it briefly first
             agentInProgressAt.current[agent] = Date.now();
@@ -209,10 +212,12 @@ export function useAnalysisWebSocket(runId: string) {
               ...prev,
               agents: { ...prev.agents, [agent]: "in_progress" },
             }));
-            setTimeout(applyCompleted, MIN_IN_PROGRESS_MS);
+            timerId = setTimeout(applyCompleted, MIN_IN_PROGRESS_MS);
+            pendingTimersRef.current.add(timerId);
           } else if (remaining > 0) {
             // in_progress hasn't been visible long enough — delay completed
-            setTimeout(applyCompleted, remaining);
+            timerId = setTimeout(applyCompleted, remaining);
+            pendingTimersRef.current.add(timerId);
           } else {
             applyCompleted();
           }
@@ -265,7 +270,8 @@ export function useAnalysisWebSocket(runId: string) {
     };
 
     ws.onerror = () => {};
-  }, [runId, dispatch, queryClient]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, dispatch]); // queryClient accessed via stable updateCacheRef
 
   useEffect(() => {
     connectRef.current = connect;
@@ -273,6 +279,7 @@ export function useAnalysisWebSocket(runId: string) {
 
   useEffect(() => {
     mountedRef.current = true;
+    const timersRef = pendingTimersRef.current;
     connect();
 
     // Android Chrome kills the WS when the app is backgrounded.
@@ -295,6 +302,11 @@ export function useAnalysisWebSocket(runId: string) {
     return () => {
       mountedRef.current = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      const timers = timersRef;
+      for (const id of timers) {
+        clearTimeout(id);
+      }
+      timers.clear();
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
