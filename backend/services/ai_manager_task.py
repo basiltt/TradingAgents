@@ -585,12 +585,11 @@ class AIManagerTask:
                     )
                 except Exception:
                     logger.exception("Failed to record dead-letter for %s", self._account_id)
-            else:
-                logger.error("Budget consumed but no decision created for %s %s — rolling back budget", self._account_id, symbol)
-                try:
-                    await self._service._repo.decrement_actions_atomic(self._account_id)
-                except Exception:
-                    logger.exception("Failed to roll back budget for %s", self._account_id)
+            # Roll back budget since no exchange action was completed
+            try:
+                await self._service._repo.decrement_actions_atomic(self._account_id)
+            except Exception:
+                logger.exception("Failed to roll back budget for %s", self._account_id)
         finally:
             lock.release(self._account_id, symbol)
 
@@ -598,11 +597,11 @@ class AIManagerTask:
         if exec_result is not None and decision_id is not None:
             try:
                 await self._service._repo.update_decision_outcome(
-                    decision_id, decision_ts, exec_result or {}
+                    decision_id, decision_ts, exec_result
                 )
                 # Only feed circuit breaker and daily limits if exchange actually closed
                 if exec_result.get("status") == "closed":
-                    pnl = exec_result.get("realized_pnl", 0.0) if exec_result else 0.0
+                    pnl = exec_result.get("realized_pnl", 0.0)
                     await self._service._circuit_breaker.record_outcome(
                         self._account_id, pnl, action_type
                     )
@@ -966,7 +965,7 @@ class AIManagerTask:
                 }
                 await self._service._repo.insert_decision(
                     self._account_id, decision_data,
-                    self._service._hmac_key or "emergency",
+                    self._service._hmac_key or "no-hmac-configured",
                 )
             return True
         except Exception:

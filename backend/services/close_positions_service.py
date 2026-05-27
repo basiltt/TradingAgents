@@ -48,7 +48,7 @@ class ClosePositionsService:
                     raise ValueError("Close already in progress for this account")
                 logger.warning("Expired stale close lock for %s", account_id)
             self._closing_accounts[account_id] = time.monotonic()
-        t0 = self._closing_accounts[account_id]
+            t0 = self._closing_accounts[account_id]
         logger.info("close_all_positions_start", extra={"account_id": account_id})
 
         try:
@@ -127,7 +127,7 @@ class ClosePositionsService:
                     return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
                 logger.warning("Expired stale close lock for %s", account_id)
             self._closing_accounts[account_id] = time.monotonic()
-        t0 = self._closing_accounts[account_id]
+            t0 = self._closing_accounts[account_id]
 
         try:
             client = await self._accounts_service.get_client(account_id)
