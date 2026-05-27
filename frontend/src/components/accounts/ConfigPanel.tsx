@@ -60,7 +60,10 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
     if (!isNaN(l) && l >= 1.0 && l <= 25) updates.max_daily_loss_pct = l;
     const i = parseFloat(interval);
     if (!isNaN(i) && i >= 30 && i <= 300) updates.evaluation_interval_s = i;
-    if (risk) updates.risk_tolerance = risk;
+    const VALID_RISK_LEVELS = ["conservative", "moderate", "aggressive"] as const;
+    if (risk && VALID_RISK_LEVELS.includes(risk as typeof VALID_RISK_LEVELS[number])) {
+      updates.risk_tolerance = risk;
+    }
     updates.dry_run = dryRun;
 
     const da = parseInt(maxDailyActions);
@@ -81,9 +84,10 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
       updates.daily_profit_target_pct = null;
     }
 
-    const excluded = excludedSymbols.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+    const SYMBOL_PATTERN = /^[A-Z0-9]{1,20}$/;
+    const excluded = excludedSymbols.split(",").map(s => s.trim().toUpperCase()).filter(s => SYMBOL_PATTERN.test(s));
     updates.excluded_symbols = excluded;
-    const locked = lockedPositions.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+    const locked = lockedPositions.split(",").map(s => s.trim().toUpperCase()).filter(s => SYMBOL_PATTERN.test(s));
     updates.locked_positions = locked;
 
     if (Object.keys(updates).length > 0) {

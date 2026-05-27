@@ -1349,7 +1349,7 @@ export const aiManagerApi = {
   },
 
   getPerformance: (accountId: string, period = "7d") =>
-    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${period}`),
+    request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${encodeURIComponent(period)}`),
 
   getLogs: (accountId: string, params?: { limit?: number; level?: string; category?: string; cursor?: number }) => {
     const sp = new URLSearchParams();

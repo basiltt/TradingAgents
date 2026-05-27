@@ -47,10 +47,21 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
   const [analytics, setAnalytics] = useState<PerformanceAnalytics | null>(null);
   const [accounts, setAccounts] = useState<DashboardCard[]>([]);
-  const saved = accountId ? null : loadFilters();
-  const [selectedAccount, setSelectedAccount] = useState<string>(accountId || saved?.selectedAccount || "portfolio");
-  const [period, setPeriod] = useState<Period>(saved?.period || "1M");
-  const [accountType, setAccountType] = useState<AccountType>(saved?.accountType || "live");
+  const [selectedAccount, setSelectedAccount] = useState<string>(() => {
+    if (accountId) return accountId;
+    const saved = loadFilters();
+    return saved?.selectedAccount || "portfolio";
+  });
+  const [period, setPeriod] = useState<Period>(() => {
+    if (accountId) return "1M";
+    const saved = loadFilters();
+    return saved?.period || "1M";
+  });
+  const [accountType, setAccountType] = useState<AccountType>(() => {
+    if (accountId) return "live";
+    const saved = loadFilters();
+    return saved?.accountType || "live";
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snapshotting, setSnapshotting] = useState(false);

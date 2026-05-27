@@ -35,7 +35,7 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
   const dispatch = useAppDispatch();
   const status = useAppSelector((s: RootState) => s.aiManager.statusByAccount[accountId]);
   const config = useAppSelector((s: RootState) => s.aiManager.configByAccount[accountId]);
-  const decisions = useAppSelector((s: RootState) => s.aiManager.decisionsbyAccount[accountId] || []);
+  const decisions = useAppSelector((s: RootState) => s.aiManager.decisionsByAccount[accountId] || []);
   const cursor = useAppSelector((s: RootState) => s.aiManager.decisionCursors[accountId]);
   const performance = useAppSelector((s: RootState) => s.aiManager.performanceByAccount[accountId]);
   const logs = useAppSelector((s: RootState) => s.aiManager.logsByAccount[accountId] || []);

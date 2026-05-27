@@ -73,7 +73,7 @@ export interface AIManagerLog {
 interface AIManagerState {
   statusByAccount: Record<string, AIManagerStatus | null>;
   configByAccount: Record<string, Record<string, unknown> | null>;
-  decisionsbyAccount: Record<string, AIManagerDecision[]>;
+  decisionsByAccount: Record<string, AIManagerDecision[]>;
   decisionCursors: Record<string, string | null>;
   performanceByAccount: Record<string, AIManagerPerformance | null>;
   logsByAccount: Record<string, AIManagerLog[]>;
@@ -82,10 +82,27 @@ interface AIManagerState {
   error: string | null;
 }
 
+const MAX_DECISIONS = 500;
+const MAX_LOGS = 1000;
+
+function createDefaultStatus(overrides?: Partial<AIManagerStatus>): AIManagerStatus {
+  return {
+    enabled: true,
+    state: "sleeping",
+    last_analysis_at: null,
+    circuit_breaker: { count: 0, active: false },
+    actions_today: 0,
+    budget_remaining: { actions: 30, tokens: 100000 },
+    degradation_tier: 0,
+    kill_switch: false,
+    ...overrides,
+  } as AIManagerStatus;
+}
+
 const initialState: AIManagerState = {
   statusByAccount: {},
   configByAccount: {},
-  decisionsbyAccount: {},
+  decisionsByAccount: {},
   decisionCursors: {},
   performanceByAccount: {},
   logsByAccount: {},
@@ -227,16 +244,7 @@ const aiManagerSlice = createSlice({
       // If not yet in store, create a stub so the UI reflects the state immediately
       // before the fetchAIManagerStatus call completes
       if (!existing && enabled) {
-        state.statusByAccount[account_id] = {
-          enabled: true,
-          state: fsmState,
-          last_analysis_at: null,
-          circuit_breaker: { count: 0, active: false },
-          actions_today: 0,
-          budget_remaining: { actions: 30, tokens: 100000 },
-          degradation_tier: 0,
-          kill_switch: false,
-        };
+        state.statusByAccount[account_id] = createDefaultStatus({ state: fsmState });
       }
     },
     onExecution(state, action: PayloadAction<{ account_id: string; action: string; symbol: string; pnl: number }>) {
@@ -279,16 +287,7 @@ const aiManagerSlice = createSlice({
         if (s) {
           s.enabled = true;
         } else {
-          state.statusByAccount[action.payload.accountId] = {
-            enabled: true,
-            state: "sleeping",
-            last_analysis_at: null,
-            circuit_breaker: { count: 0, active: false },
-            actions_today: 0,
-            budget_remaining: { actions: 30, tokens: 100000 },
-            degradation_tier: 0,
-            kill_switch: false,
-          } as AIManagerStatus;
+          state.statusByAccount[action.payload.accountId] = createDefaultStatus();
         }
       })
       .addCase(enableAIManager.rejected, setError("enable"))
@@ -349,9 +348,10 @@ const aiManagerSlice = createSlice({
         state.loading["decisions"] = false;
         const { accountId, decisions, nextCursor, append } = action.payload;
         if (append) {
-          state.decisionsbyAccount[accountId] = [...(state.decisionsbyAccount[accountId] || []), ...decisions];
+          const combined = [...(state.decisionsByAccount[accountId] || []), ...decisions];
+          state.decisionsByAccount[accountId] = combined.slice(-MAX_DECISIONS);
         } else {
-          state.decisionsbyAccount[accountId] = decisions;
+          state.decisionsByAccount[accountId] = decisions.slice(-MAX_DECISIONS);
         }
         state.decisionCursors[accountId] = nextCursor;
       })
@@ -378,9 +378,10 @@ const aiManagerSlice = createSlice({
         state.loading["logs"] = false;
         const { accountId, logs, nextCursor, append } = action.payload;
         if (append) {
-          state.logsByAccount[accountId] = [...(state.logsByAccount[accountId] || []), ...logs];
+          const combined = [...(state.logsByAccount[accountId] || []), ...logs];
+          state.logsByAccount[accountId] = combined.slice(-MAX_LOGS);
         } else {
-          state.logsByAccount[accountId] = logs;
+          state.logsByAccount[accountId] = logs.slice(-MAX_LOGS);
         }
         state.logCursors[accountId] = nextCursor;
       })
