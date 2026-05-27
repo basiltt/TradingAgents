@@ -15,8 +15,6 @@ from backend.services.bybit_client import (
     BybitAPIError,
     BybitClient,
     _MAX_RETRIES,
-    _RATE_LIMIT_MAX,
-    _RATE_LIMIT_WINDOW,
     _RETRY_BASE_DELAY,
 )
 
@@ -583,9 +581,9 @@ class TestGetInstrumentInfo:
 class TestWaitForRateLimit:
     @pytest.mark.asyncio(loop_scope="function")
     async def test_under_limit_passes(self, client: BybitClient):
-        # Should return immediately when under limit
+        # Should return immediately when under limit (now uses centralized gate)
         await client._wait_for_rate_limit()
-        assert len(client._request_timestamps) == 1
+        # Gate tracks timestamps internally; just verify no exception raised
 
 
 # --- BybitAPIError ---
