@@ -12,6 +12,17 @@ export default defineConfig({
         main: path.resolve(__dirname, "index.html"),
         neumorphismPreview: path.resolve(__dirname, "neumorphism-preview.html"),
       },
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules/react-dom")) return "vendor-react";
+          if (id.includes("node_modules/react/")) return "vendor-react";
+          if (id.includes("node_modules/@tanstack/react-router")) return "vendor-router";
+          if (id.includes("node_modules/@tanstack/react-query") || id.includes("node_modules/@tanstack/query-sync-storage-persister")) return "vendor-query";
+          if (id.includes("node_modules/@reduxjs/toolkit") || id.includes("node_modules/react-redux")) return "vendor-redux";
+          if (id.includes("node_modules/framer-motion")) return "vendor-motion";
+          if (id.includes("node_modules/recharts") || id.includes("node_modules/d3-")) return "vendor-charts";
+        },
+      },
     },
   },
   resolve: {

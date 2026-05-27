@@ -53,21 +53,59 @@ async function throwApiError(res: Response): Promise<never> {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1000;
 
-/** Fetch JSON from a path. Applies 30s default timeout and throws ApiError on non-2xx. */
+function isRetriable(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Fetch JSON from a path. Applies 30s default timeout, retries transient errors, and throws ApiError on non-2xx. */
 async function request<T>(
   path: string,
   init?: RequestInit,
   signal?: AbortSignal,
 ): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    signal: signal ?? init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-    headers: { ...DEFAULT_HEADERS, ...init?.headers },
-  });
-  if (!res.ok) return throwApiError(res);
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const effectiveSignal = signal ?? init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const isIdempotent = method === "GET" || method === "HEAD";
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= (isIdempotent ? MAX_RETRIES : 0); attempt++) {
+    if (attempt > 0) {
+      await sleep(RETRY_DELAY_MS * attempt);
+    }
+    try {
+      const res = await fetch(`${BASE_URL}${path}`, {
+        ...init,
+        signal: effectiveSignal,
+        headers: { ...DEFAULT_HEADERS, ...init?.headers },
+      });
+      if (!res.ok) {
+        if (isIdempotent && isRetriable(res.status) && attempt < MAX_RETRIES) {
+          lastError = new ApiError(res.status, res.statusText);
+          continue;
+        }
+        return throwApiError(res);
+      }
+      if (res.status === 204) return undefined as T;
+      return res.json() as Promise<T>;
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      if (isIdempotent && attempt < MAX_RETRIES) {
+        lastError = e;
+        continue;
+      }
+      throw new ApiError(0, `Network error: ${e instanceof Error ? e.message : "unable to reach server"}`);
+    }
+  }
+  if (lastError instanceof ApiError) throw lastError;
+  throw new ApiError(0, `Network error: ${lastError instanceof Error ? lastError.message : "unable to reach server"}`);
 }
 
 /** Fetch plain text from a path. Throws ApiError on non-2xx. */

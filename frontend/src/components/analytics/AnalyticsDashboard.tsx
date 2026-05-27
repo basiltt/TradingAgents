@@ -110,7 +110,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   useEffect(() => {
     if (!accountId) {
       const controller = new AbortController();
-      accountsApi.getDashboard({ account_type: accountType }, controller.signal).then(setAccounts).catch(() => {});
+      accountsApi.getDashboard({ account_type: accountType }, controller.signal).then(setAccounts).catch((e) => {
+        if (e?.name !== "AbortError") setError("Failed to load accounts");
+      });
       return () => controller.abort();
     }
   }, [accountId, accountType]);
@@ -183,7 +185,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
     const controller = new AbortController();
     manualAbortRef.current = controller;
     setLoading(true);
-    fetchDataRef.current(controller.signal);
+    fetchDataRef.current(controller.signal).catch((e) => {
+      if (e?.name !== "AbortError") setError("Failed to refresh data");
+    });
   };
 
   const latestSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
@@ -405,7 +409,9 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
                 manualAbortRef.current?.abort();
                 const controller = new AbortController();
                 manualAbortRef.current = controller;
-                fetchDataRef.current(controller.signal);
+                fetchDataRef.current(controller.signal).catch((e) => {
+                  if (e?.name !== "AbortError") setError("Failed to refresh data");
+                });
               }}
               className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.1)] border border-primary/20 bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-[var(--shadow-accent)] hover:brightness-110"
             >
