@@ -1138,9 +1138,11 @@ class AIManagerTask:
                 return None
             positions = self._ws_buffer.get("positions") or []
             symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+            # Return MTF for the first symbol that has data (primary position)
+            # In multi-position scenarios, the LLM sees per-position context via market_data
             for sym in symbols:
                 klines = cache.get_mtf_klines(sym)
-                if klines:
+                if klines and len(klines) >= 2:
                     return self._mtf_analyzer.compute_signal(sym, klines)
         except Exception:
             logger.debug("MTF data fetch failed, skipping")
@@ -1234,7 +1236,7 @@ class AIManagerTask:
                 )
             correlation = state.get("correlation")
             if correlation and correlation.get("portfolio_heat", 0) > 0:
-                positions = state.get("positions", [])
+                positions = self._ws_buffer.get("positions") or []
                 await repo.insert_correlation_snapshot(
                     account_id,
                     portfolio_heat=correlation["portfolio_heat"],

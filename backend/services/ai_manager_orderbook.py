@@ -101,6 +101,7 @@ class OrderBookMonitor:
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._task: Optional[asyncio.Task] = None
+        self._fallback_task: Optional[asyncio.Task] = None
         self._running = False
 
     def update_orderbook(self, bids: List, asks: List) -> None:
@@ -183,6 +184,12 @@ class OrderBookMonitor:
         self._running = False
         if self._ws and not self._ws.closed:
             await self._ws.close()
+        if self._fallback_task and not self._fallback_task.done():
+            self._fallback_task.cancel()
+            try:
+                await self._fallback_task
+            except asyncio.CancelledError:
+                pass
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -206,7 +213,9 @@ class OrderBookMonitor:
                 logger.warning("OrderBook WS error for %s: %s", self._symbol, e)
             if not self._running:
                 break
-            asyncio.create_task(self._rest_fallback_once())
+            if self._fallback_task and not self._fallback_task.done():
+                self._fallback_task.cancel()
+            self._fallback_task = asyncio.create_task(self._rest_fallback_once())
             jitter = random.uniform(0, 5.0)
             await asyncio.sleep(delay + jitter)
             delay = min(delay * 2, _RECONNECT_MAX)

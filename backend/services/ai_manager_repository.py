@@ -633,35 +633,39 @@ class AIManagerRepository:
     # ─── Enhanced AI Manager persistence ──────────────────────────────────
 
     async def get_sweep_state(self, account_id: str) -> Dict[str, Any]:
-        row = await self._pool.fetchrow(
-            "SELECT sweep_state FROM ai_manager_state WHERE account_id = $1",
-            account_id,
-        )
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT sweep_state FROM ai_manager_state WHERE account_id = $1",
+                account_id,
+            )
         if row and row["sweep_state"]:
             return json.loads(row["sweep_state"]) if isinstance(row["sweep_state"], str) else row["sweep_state"]
         return {}
 
     async def update_sweep_state(self, account_id: str, sweep_state: Dict[str, Any]) -> None:
-        await self._pool.execute(
-            "UPDATE ai_manager_state SET sweep_state = $2::jsonb, updated_at = NOW() WHERE account_id = $1",
-            account_id, json.dumps(sweep_state),
-        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ai_manager_state SET sweep_state = $2::jsonb, updated_at = NOW() WHERE account_id = $1",
+                account_id, json.dumps(sweep_state),
+            )
 
     async def insert_regime_history(
         self, account_id: str, symbol: str, regime: str, confidence: float, detail: Dict[str, Any]
     ) -> None:
-        await self._pool.execute(
-            "INSERT INTO ai_manager_regime_history (account_id, symbol, regime, confidence, detail) VALUES ($1, $2, $3, $4, $5::jsonb)",
-            account_id, symbol, regime, confidence, json.dumps(detail),
-        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO ai_manager_regime_history (account_id, symbol, regime, confidence, detail) VALUES ($1, $2, $3, $4, $5::jsonb)",
+                account_id, symbol, regime, confidence, json.dumps(detail),
+            )
 
     async def insert_correlation_snapshot(
         self, account_id: str, portfolio_heat: float, matrix: Dict, clusters: list, position_count: int
     ) -> None:
-        await self._pool.execute(
-            "INSERT INTO ai_manager_correlation_snapshots (account_id, portfolio_heat, matrix, clusters, position_count) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)",
-            account_id, portfolio_heat, json.dumps(matrix), json.dumps(clusters), position_count,
-        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO ai_manager_correlation_snapshots (account_id, portfolio_heat, matrix, clusters, position_count) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)",
+                account_id, portfolio_heat, json.dumps(matrix), json.dumps(clusters), position_count,
+            )
 
     _SWEEP_EVENT_COLUMNS = frozenset({
         "symbol", "event_type", "confidence", "direction",
@@ -679,32 +683,35 @@ class AIManagerRepository:
             vals.append(json.dumps(detail))
         placeholders = ", ".join(f"${i+1}" for i in range(len(vals)))
         col_str = ", ".join(cols)
-        await self._pool.execute(
-            f"INSERT INTO ai_manager_sweep_events ({col_str}) VALUES ({placeholders})",
-            *vals,
-        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f"INSERT INTO ai_manager_sweep_events ({col_str}) VALUES ({placeholders})",
+                *vals,
+            )
 
     async def insert_orderbook_snapshot(
         self, account_id: str, symbol: str, imbalance_ratio: float, spread_bps: float,
         depth_ratio: float, bid_clusters: list, ask_clusters: list, spoofing_flags: list = None,
     ) -> None:
-        await self._pool.execute(
-            "INSERT INTO ai_manager_orderbook_snapshots (account_id, symbol, imbalance_ratio, spread_bps, depth_ratio, bid_clusters, ask_clusters, spoofing_flags) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)",
-            account_id, symbol, imbalance_ratio, spread_bps, depth_ratio,
-            json.dumps(bid_clusters), json.dumps(ask_clusters), json.dumps(spoofing_flags or []),
-        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO ai_manager_orderbook_snapshots (account_id, symbol, imbalance_ratio, spread_bps, depth_ratio, bid_clusters, ask_clusters, spoofing_flags) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)",
+                account_id, symbol, imbalance_ratio, spread_bps, depth_ratio,
+                json.dumps(bid_clusters), json.dumps(ask_clusters), json.dumps(spoofing_flags or []),
+            )
 
     async def cleanup_old_data(self) -> None:
         """Retention cleanup — call from a periodic task."""
-        await self._pool.execute(
-            "DELETE FROM ai_manager_orderbook_snapshots WHERE created_at < NOW() - INTERVAL '24 hours'"
-        )
-        await self._pool.execute(
-            "DELETE FROM ai_manager_correlation_snapshots WHERE created_at < NOW() - INTERVAL '7 days'"
-        )
-        await self._pool.execute(
-            "DELETE FROM ai_manager_regime_history WHERE created_at < NOW() - INTERVAL '30 days'"
-        )
-        await self._pool.execute(
-            "DELETE FROM ai_manager_sweep_events WHERE created_at < NOW() - INTERVAL '90 days'"
-        )
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM ai_manager_orderbook_snapshots WHERE created_at < NOW() - INTERVAL '24 hours'"
+            )
+            await conn.execute(
+                "DELETE FROM ai_manager_correlation_snapshots WHERE created_at < NOW() - INTERVAL '7 days'"
+            )
+            await conn.execute(
+                "DELETE FROM ai_manager_regime_history WHERE created_at < NOW() - INTERVAL '30 days'"
+            )
+            await conn.execute(
+                "DELETE FROM ai_manager_sweep_events WHERE created_at < NOW() - INTERVAL '90 days'"
+            )
