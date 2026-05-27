@@ -14,19 +14,32 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable, Coroutine, Optional
+from typing import TYPE_CHECKING, Callable, Coroutine, Optional
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
 LLMCallable = Callable[[str, str], Coroutine[None, None, str]]
 
-_active_clients: list = []
+_active_clients: list["httpx.AsyncClient"] = []
 
 _PROVIDER_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "azure": "AZURE_OPENAI_API_KEY",
 }
+
+
+async def _close_stale_clients() -> None:
+    """Close and discard all previously created clients before creating new ones."""
+    for client in _active_clients:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    _active_clients.clear()
 
 
 def create_llm_callable(

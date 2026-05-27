@@ -72,6 +72,14 @@ class BybitWSClient:
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
+        self._task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("BybitWSClient run loop crashed unexpectedly: %s", exc)
 
     async def stop(self) -> None:
         self._running = False

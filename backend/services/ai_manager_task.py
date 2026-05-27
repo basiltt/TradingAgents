@@ -54,6 +54,7 @@ class AIManagerTask:
         self._graph = compiled_graph
         self._state = SLEEPING
         self._task: Optional[asyncio.Task] = None
+        self._background_tasks: set[asyncio.Task] = set()
         self._cancel_event = asyncio.Event()
         self._pause_event = asyncio.Event()
         self._wake_event = asyncio.Event()
@@ -73,14 +74,19 @@ class AIManagerTask:
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name=f"ai-mgr-{self._account_id}")
 
+    def _track_task(self, task: asyncio.Task) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     def _log_async(self, level: str, category: str, message: str, details: dict | None = None) -> None:
         """Fire-and-forget log write to DB."""
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running() and self._service and self._service._repo:
-                loop.create_task(
+                t = loop.create_task(
                     self._service._repo.insert_log(self._account_id, level, category, message, details)
                 )
+                self._track_task(t)
         except RuntimeError:
             pass
 
@@ -94,7 +100,8 @@ class AIManagerTask:
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                loop.create_task(self._persist_and_emit_state())
+                t = loop.create_task(self._persist_and_emit_state())
+                self._track_task(t)
         except RuntimeError:
             pass
 

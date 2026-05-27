@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict
@@ -12,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 class PriorityLLMScheduler:
     """3 FAST reserved + 7 shared STANDARD/DEEP slots."""
+
+    _counter = itertools.count()
 
     def __init__(self):
         self._fast_sem = asyncio.Semaphore(3)
@@ -24,7 +27,7 @@ class PriorityLLMScheduler:
     _BURST_TIMEOUT_S = 5.0
 
     def _make_token_key(self, account_id: str) -> str:
-        return f"{account_id}:{id(asyncio.current_task())}"
+        return f"{account_id}:{next(self._counter)}"
 
     async def acquire(self, account_id: str, urgency: str) -> bool:
         inflight = self._account_inflight.get(account_id, 0)
@@ -71,11 +74,16 @@ class PriorityLLMScheduler:
             return True
 
     def release(self, account_id: str, urgency: str) -> None:
-        token_key = self._make_token_key(account_id)
-        effective = self._tokens.pop(token_key, None)
-        if effective is None:
+        token_key = None
+        prefix = f"{account_id}:"
+        for k in list(self._tokens):
+            if k.startswith(prefix):
+                token_key = k
+                break
+        if token_key is None:
             logger.warning("Double-release prevented for %s urgency=%s", account_id, urgency)
             return
+        effective = self._tokens.pop(token_key)
 
         inflight = self._account_inflight.get(account_id, 0)
         if inflight > 0:

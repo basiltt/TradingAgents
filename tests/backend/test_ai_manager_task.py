@@ -21,6 +21,7 @@ def mock_service():
     svc._lock_registry.acquire = AsyncMock(return_value=True)
     svc._lock_registry.release = MagicMock()
     svc._repo = MagicMock()
+    svc._repo.insert_log = AsyncMock()
     from datetime import datetime, timezone
     svc._repo.insert_decision = AsyncMock(return_value=(1, datetime.now(timezone.utc)))
     svc._repo.update_decision_outcome = AsyncMock()
