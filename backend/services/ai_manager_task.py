@@ -1204,17 +1204,94 @@ class AIManagerTask:
             logger.debug("Failed to persist enrichment data for %s", account_id)
 
     async def _persist_sweep_state(self) -> None:
-        try:
-            state_to_save = {}
-            for sym in self._sweep_state:
-                state_to_save[sym] = {
-                    "state": self._sweep_state[sym],
-                    "original_sl": self._sweep_original_sl.get(sym),
-                    "started_at_epoch": self._sweep_defense_started_at.get(sym),
+        state_dict = {}
+        for symbol, state in self._sweep_state.items():
+            if state in ("DEFENDING", "DETECTED"):
+                state_dict[symbol] = {
+                    "state": state,
+                    "original_sl": self._sweep_original_sl.get(symbol, 0),
+                    "started_at_epoch": self._sweep_defense_started_at.get(symbol, 0),
                 }
-            await self._service._repo.update_sweep_state(self._account_id, state_to_save)
+        try:
+            await self._service._repo.update_sweep_state(self._account_id, state_dict)
         except Exception:
-            logger.debug("Failed to persist sweep state for %s", self._account_id)
+            logger.warning("Failed to persist sweep state for %s", self._account_id)
+
+    async def _handle_sweep_detected(self, symbol: str, sweep: Dict[str, Any], current_sl: float) -> None:
+        """Handle sweep detection → DETECTED → DEFENDING."""
+        confidence = sweep.get("confidence", 0)
+
+        self._sweep_state[symbol] = "DETECTED"
+        await self._service._repo.insert_sweep_event(
+            self._account_id,
+            symbol=symbol, event_type="detected",
+            confidence=confidence, direction=sweep.get("direction", "unknown"),
+            swept_level=sweep.get("swept_level"), original_sl=current_sl,
+        )
+
+        self._sweep_state[symbol] = "DEFENDING"
+        self._sweep_original_sl[symbol] = current_sl
+        self._sweep_defense_started_at[symbol] = time.time()
+        self._sweep_blocked_symbols.add(symbol)
+
+        if confidence >= 0.75:
+            await self._modify_stop_loss(symbol, None)
+            defense_action = "cancel_sl"
+        elif confidence >= 0.5:
+            wider_sl = current_sl * 0.995 if sweep.get("direction") == "long_hunt" else current_sl * 1.005
+            await self._modify_stop_loss(symbol, wider_sl)
+            defense_action = "widen_sl"
+        else:
+            defense_action = "monitor_only"
+
+        await self._persist_sweep_state()
+        await self._service._repo.insert_sweep_event(
+            self._account_id,
+            symbol=symbol, event_type="defense_activated",
+            confidence=confidence, direction=sweep.get("direction", "unknown"),
+            swept_level=sweep.get("swept_level"), original_sl=current_sl,
+            defense_action=defense_action, detail=sweep,
+        )
+
+    async def _handle_sweep_resolved(self, symbol: str) -> None:
+        """Handle sweep recovery → restore SL."""
+        original_sl = self._sweep_original_sl.get(symbol)
+        if original_sl:
+            await self._modify_stop_loss(symbol, original_sl)
+
+        self._sweep_state.pop(symbol, None)
+        self._sweep_original_sl.pop(symbol, None)
+        self._sweep_defense_started_at.pop(symbol, None)
+        self._sweep_blocked_symbols.discard(symbol)
+
+        await self._persist_sweep_state()
+        await self._service._repo.insert_sweep_event(
+            self._account_id,
+            symbol=symbol, event_type="resolved", confidence=0.0, direction="",
+            original_sl=original_sl, outcome="recovered",
+        )
+
+    async def _check_sweep_timeout(self, symbol: str) -> None:
+        """Check if sweep defense has timed out."""
+        started = self._sweep_defense_started_at.get(symbol, 0)
+        timeout_s = self._config.sweep_recovery_timeout_candles * 300
+        if time.time() - started > timeout_s:
+            original_sl = self._sweep_original_sl.get(symbol)
+            if original_sl:
+                await self._modify_stop_loss(symbol, original_sl)
+
+            self._sweep_state.pop(symbol, None)
+            self._sweep_original_sl.pop(symbol, None)
+            self._sweep_defense_started_at.pop(symbol, None)
+            self._sweep_blocked_symbols.discard(symbol)
+
+            await self._persist_sweep_state()
+            await self._service._repo.insert_sweep_event(
+                self._account_id,
+                symbol=symbol, event_type="timeout", confidence=0.0, direction="",
+                original_sl=original_sl, outcome="timed_out",
+                duration_ms=int((time.time() - started) * 1000),
+            )
 
     async def _periodic_cleanup(self) -> None:
         while True:
