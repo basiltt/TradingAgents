@@ -59,7 +59,7 @@ def _compute_confidence(
     regime: str, adx: float, atr_ratio: float, bbw_pct: float, trend_alignment: float,
 ) -> float:
     if regime == "volatile":
-        return min(1.0, (atr_ratio - 1.5) / 1.5)
+        return max(0.0, min(1.0, (atr_ratio - 1.5) / 1.5))
     if regime == "compression":
         return min(1.0, (0.15 - bbw_pct) / 0.15) if bbw_pct < 0.15 else 0.5
     if regime in ("trending_up", "trending_down"):

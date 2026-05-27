@@ -670,6 +670,7 @@ class AIManagerRepository:
     _SWEEP_EVENT_COLUMNS = frozenset({
         "symbol", "event_type", "confidence", "direction",
         "swept_level", "original_sl", "defense_action", "outcome", "duration_ms",
+        "recovery_price",
     })
 
     async def insert_sweep_event(self, account_id: str, **kwargs) -> None:

@@ -66,7 +66,9 @@ class MultiTimeframeAnalyzer:
         }
 
     def _analyze_timeframe(self, klines: List) -> Dict[str, Any]:
-        closes = [float(k[4]) for k in klines]
+        closes = [float(k[4]) for k in klines if len(k) > 4]
+        if len(closes) < 10:
+            return {"trend": "mixed", "rsi": 50.0, "ema_alignment": 0.0}
         ema9 = self._ema(closes, 9)
         ema21 = self._ema(closes, 21)
         rsi = self._rsi(closes, 14)
@@ -97,9 +99,11 @@ class MultiTimeframeAnalyzer:
         for tf, data in klines.items():
             if not data or len(data) < 20:
                 continue
-            highs = [float(k[2]) for k in data[-50:]]
-            lows = [float(k[3]) for k in data[-50:]]
-            current = float(data[-1][4])
+            highs = [float(k[2]) for k in data[-50:] if len(k) > 4]
+            lows = [float(k[3]) for k in data[-50:] if len(k) > 4]
+            if not highs or not lows:
+                continue
+            current = float(data[-1][4]) if len(data[-1]) > 4 else 0.0
             if current == 0:
                 continue
 

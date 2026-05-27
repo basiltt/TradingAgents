@@ -1327,7 +1327,9 @@ class AIManagerTask:
         """Handle sweep recovery → restore SL."""
         original_sl = self._sweep_original_sl.get(symbol)
         if original_sl:
-            await self._modify_stop_loss(symbol, original_sl)
+            positions = self._ws_buffer.get("positions") or []
+            if any(p.get("symbol") == symbol for p in positions):
+                await self._modify_stop_loss(symbol, original_sl)
 
         self._sweep_state.pop(symbol, None)
         self._sweep_original_sl.pop(symbol, None)
@@ -1348,7 +1350,9 @@ class AIManagerTask:
         if time.time() - started > timeout_s:
             original_sl = self._sweep_original_sl.get(symbol)
             if original_sl:
-                await self._modify_stop_loss(symbol, original_sl)
+                positions = self._ws_buffer.get("positions") or []
+                if any(p.get("symbol") == symbol for p in positions):
+                    await self._modify_stop_loss(symbol, original_sl)
 
             self._sweep_state.pop(symbol, None)
             self._sweep_original_sl.pop(symbol, None)
