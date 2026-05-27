@@ -401,7 +401,8 @@ async def risk_validation_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # Correlation portfolio heat warning — annotate (don't reject)
     correlation = state.get("correlation") or {}
     heat = correlation.get("portfolio_heat", 0.0)
-    if heat > 0.7:
+    heat_threshold = config.get("portfolio_heat_warning", 0.8)
+    if heat > heat_threshold:
         state["_correlation_warning"] = f"HIGH portfolio heat={heat:.2f} — correlated risk"
 
     return state

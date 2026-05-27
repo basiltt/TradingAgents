@@ -241,6 +241,7 @@ class AIManagerTask:
     async def _run(self) -> None:
         try:
             await self._init_ws_buffer_from_exchange()
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
             while not self._cancel_event.is_set():
                 if self._killed:
@@ -269,6 +270,10 @@ class AIManagerTask:
             logger.exception("AIManagerTask %s crashed", self._account_id)
             self.transition_to(ERROR)
             self._log_async("critical", "lifecycle", "Task crashed unexpectedly")
+        finally:
+            await self._stop_orderbook_monitors()
+            if self._cleanup_task and not self._cleanup_task.done():
+                self._cleanup_task.cancel()
 
     async def _sleep_cycle(self) -> None:
         try:
