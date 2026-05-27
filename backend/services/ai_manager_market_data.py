@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
+from backend.services.bybit_rate_gate import get_rate_gate
+
 logger = logging.getLogger(__name__)
 
 _BYBIT_BASE = "https://api.bybit.com"
@@ -90,6 +92,7 @@ class MarketDataCache:
             return
 
         try:
+            await get_rate_gate().acquire_async()
             resp = await self._client.get(
                 f"{_BYBIT_BASE}{_TICKER_ENDPOINT}",
                 params={"category": "linear"},
@@ -175,6 +178,7 @@ class MarketDataCache:
 
         for symbol in list(self._symbols):
             try:
+                await get_rate_gate().acquire_async()
                 resp = await self._client.get(
                     f"{_BYBIT_BASE}{_KLINE_ENDPOINT}",
                     params={

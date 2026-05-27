@@ -94,3 +94,18 @@ class TestGetRateGate:
         g2 = get_rate_gate()
         assert g1 is g2
         mod._gate = None  # cleanup
+
+
+@pytest.mark.asyncio
+async def test_bybit_client_uses_gate(monkeypatch):
+    """BybitClient._wait_for_rate_limit delegates to centralized gate."""
+    from unittest.mock import AsyncMock, patch
+    from backend.services.bybit_client import BybitClient
+
+    mock_gate = AsyncMock()
+    mock_gate.acquire_async = AsyncMock()
+
+    with patch("backend.services.bybit_client.get_rate_gate", return_value=mock_gate):
+        client = BybitClient("key", "secret", "demo")
+        await client._wait_for_rate_limit()
+        mock_gate.acquire_async.assert_called_once_with(channel="private")
