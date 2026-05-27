@@ -1126,16 +1126,25 @@ class AIManagerTask:
         positions = self._ws_buffer.get("positions") or []
         if not positions:
             return None, None
-        pos = positions[0]
-        symbol = pos.get("symbol", "")
-        monitor = self._orderbook_monitors.get(symbol)
-        if not monitor:
-            return None, None
-        my_sl = float(pos.get("stopLoss", 0) or 0) or None
-        my_side = pos.get("side", "Buy")
-        current_price = float(pos.get("markPrice", 0) or 0)
-        ob_snapshot, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
-        return ob_snapshot, sweep
+        best_ob = None
+        best_sweep = None
+        best_confidence = 0.0
+        for pos in positions:
+            symbol = pos.get("symbol", "")
+            monitor = self._orderbook_monitors.get(symbol)
+            if not monitor:
+                continue
+            my_sl = float(pos.get("stopLoss", 0) or 0) or None
+            my_side = pos.get("side", "Buy")
+            current_price = float(pos.get("markPrice", 0) or 0)
+            ob_snapshot, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
+            if best_ob is None:
+                best_ob = ob_snapshot
+            if sweep and sweep.get("confidence", 0) > best_confidence:
+                best_confidence = sweep["confidence"]
+                best_sweep = sweep
+                best_ob = ob_snapshot
+        return best_ob, best_sweep
 
     # ─────────────────────────────────────────────────────────────────────────
     # OrderBook monitor lifecycle

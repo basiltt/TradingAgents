@@ -71,6 +71,9 @@ class MultiTimeframeAnalyzer:
         ema21 = self._ema(closes, 21)
         rsi = self._rsi(closes, 14)
 
+        if ema21 == 0:
+            return {"trend": "mixed", "rsi": round(rsi, 1), "ema_alignment": 0.0}
+
         if ema9 > ema21:
             trend = "bullish"
             alignment = min(1.0, (ema9 - ema21) / ema21 * 100)
@@ -97,6 +100,8 @@ class MultiTimeframeAnalyzer:
             highs = [float(k[2]) for k in data[-50:]]
             lows = [float(k[3]) for k in data[-50:]]
             current = float(data[-1][4])
+            if current == 0:
+                continue
 
             for i in range(2, len(highs) - 2):
                 if highs[i] == max(highs[i-2:i+3]):

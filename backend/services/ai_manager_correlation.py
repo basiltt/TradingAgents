@@ -30,7 +30,11 @@ class CorrelationAnalyzer:
             sym_klines = klines.get(sym, {}).get("1h", [])
             if len(sym_klines) >= 10:
                 closes = [float(k[4]) for k in sym_klines]
-                returns[sym] = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
+                returns[sym] = [
+                    (closes[i] - closes[i-1]) / closes[i-1]
+                    for i in range(1, len(closes))
+                    if closes[i-1] != 0
+                ]
 
         matrix = {}
         for i, s1 in enumerate(symbols):
