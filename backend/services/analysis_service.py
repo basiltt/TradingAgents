@@ -556,10 +556,9 @@ class AnalysisService:
                 ))
                 if not pf_result.should_proceed:
                     # Save prefilter result and skip LLM analysis
-                    import json as _json
                     self._db.sync_save_report_section(
                         run_id, "_ta_prefilter",
-                        _json.dumps(pf_result.to_dict()),
+                        json.dumps(pf_result.to_dict()),
                     )
                     return {"final_trade_decision": f"SKIPPED by TA Pre-Filter: {pf_result.reason}",
                             "ta_prefilter": pf_result.to_dict()}
@@ -662,7 +661,6 @@ class ConcurrencyLimitError(Exception):
 
 
 def _safe_json(obj: Any) -> str:
-    import json
     try:
         return json.dumps(obj, default=str)
     except Exception:

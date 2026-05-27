@@ -24,8 +24,7 @@ class PositionLockRegistry:
         async with self._internal_lock:
             if key not in self._locks:
                 self._locks[key] = asyncio.Lock()
-
-        lock = self._locks[key]
+            lock = self._locks[key]
         try:
             await asyncio.wait_for(lock.acquire(), timeout=timeout)
             self._last_used[key] = time.monotonic()

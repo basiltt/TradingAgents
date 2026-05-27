@@ -712,7 +712,7 @@ class AnalysisDB:
         to_date: Optional[str] = None,
         asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        limit = min(max(limit, 1), 10000)
+        limit = min(max(limit, 1), 500)
         conditions: list[str] = []
         params: list[Any] = []
 

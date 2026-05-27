@@ -104,10 +104,14 @@ class _Metrics:
 metrics = _Metrics()
 
 
+_UUID_RE = _re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_NUMERIC_SEGMENT_RE = _re.compile(r"/\d+")
+
+
 def _normalize_path(path: str) -> str:
     """Collapse path parameters to avoid cardinality explosion."""
-    path = _re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "/{id}", path)
-    path = _re.sub(r"/\d+", "/{id}", path)
+    path = _UUID_RE.sub("/{id}", path)
+    path = _NUMERIC_SEGMENT_RE.sub("/{id}", path)
     return path
 
 

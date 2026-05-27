@@ -11,10 +11,12 @@ import json as _json
 import os
 import re as _re
 from contextlib import asynccontextmanager
+from typing import Any, Callable, Coroutine
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from backend.event_bus import EventBus
 from backend.async_persistence import AsyncAnalysisDB
@@ -70,10 +72,10 @@ _CSRF_BODY = b'{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED
 class CSPCSRFMiddleware:
     """Pure ASGI middleware combining CSP header injection and CSRF check."""
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -113,10 +115,10 @@ _MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
 class ContentSizeLimitMiddleware:
     """Reject HTTP requests with Content-Length exceeding the limit."""
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] == "http":
             headers = dict(scope.get("headers", []))
             cl = headers.get(b"content-length")
