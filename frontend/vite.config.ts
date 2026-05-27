@@ -50,5 +50,20 @@ export default defineConfig({
     environment: "happy-dom",
     setupFiles: ["./src/test/setup.ts"],
     css: false,
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/test/**",
+        "src/**/__tests__/**",
+        "src/routes/**",
+        "src/main.tsx",
+        "src/App.tsx",
+        "src/design-system/**",
+        "src/lib/motion.tsx",
+        "src/lib/motion-constants.ts",
+        "src/lib/use-animations.ts",
+      ],
+    },
   },
 });

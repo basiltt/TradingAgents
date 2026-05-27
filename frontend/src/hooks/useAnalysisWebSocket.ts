@@ -150,7 +150,7 @@ export function useAnalysisWebSocket(runId: string) {
       if (type === WS_MSG.PROGRESS) {
         const phase = data.phase as string;
 
-        if (TERMINAL_PHASES.has(phase as typeof phase & string)) {
+        if (TERMINAL_PHASES.has(phase as "completed" | "failed" | "cancelled")) {
           dispatch(
             updateRunStatus({
               runId,

@@ -23,7 +23,7 @@ import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persist
 import { QueryClient } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { Provider as ReduxProvider } from "react-redux";
-import { ErrorBoundary } from "react-error-boundary";
+import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { NeuThemeScope } from "@/design-system/neumorphism";
 import { Toaster } from "@/components/ui/sonner";
 import { useThemeEffect } from "@/hooks/useThemeEffect";
@@ -78,7 +78,7 @@ const router = createAppRouter();
  *   hard navigation rather than re-rendering into a potentially broken state.
  * @returns A centred card containing the error message and a reload button.
  */
-function ErrorFallback({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) {
+function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   return (
     <div className="flex min-h-screen items-center justify-center p-8">
       <div className="max-w-md text-center">

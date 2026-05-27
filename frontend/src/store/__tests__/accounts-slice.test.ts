@@ -49,6 +49,7 @@ const baseCard: DashboardCard = {
   total_equity: "10000",
   total_perp_upl: "50",
   total_wallet_balance: "9950",
+  status: "active",
 };
 
 // ---------------------------------------------------------------------------

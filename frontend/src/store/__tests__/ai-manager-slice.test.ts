@@ -80,19 +80,19 @@ describe("aiManagerSlice truncation", () => {
   const initialState = reducer(undefined, { type: "@@INIT" });
 
   it("fetchDecisions.fulfilled truncates to MAX_DECISIONS (500) on append", () => {
-    const existing = Array.from({ length: 490 }, (_, i) => ({ id: `old-${i}`, action: "HOLD", symbol: "BTC", confidence: 0.5, timestamp: "", details: null }));
+    const existing = Array.from({ length: 490 }, (_, i) => ({ id: i, action_taken: { action: "HOLD", symbol: "BTC" }, confidence: 0.5, timestamp: "", reasoning: "", urgency: "low", execution_result: null, outcome: null, outcome_label: null }));
     const state = { ...initialState, decisionsByAccount: { "acc-1": existing } };
-    const newDecisions = Array.from({ length: 20 }, (_, i) => ({ id: `new-${i}`, action: "BUY", symbol: "ETH", confidence: 0.8, timestamp: "", details: null }));
+    const newDecisions = Array.from({ length: 20 }, (_, i) => ({ id: 500 + i, action_taken: { action: "BUY", symbol: "ETH" }, confidence: 0.8, timestamp: "", reasoning: "", urgency: "medium", execution_result: null, outcome: null, outcome_label: null }));
 
     const next = reducer(state, fetchDecisions.fulfilled({ accountId: "acc-1", decisions: newDecisions, nextCursor: null, append: true }, "", { accountId: "acc-1" }));
     expect(next.decisionsByAccount["acc-1"]).toHaveLength(500);
-    expect(next.decisionsByAccount["acc-1"][499].id).toBe("new-19");
+    expect(next.decisionsByAccount["acc-1"][499].id).toBe(519);
   });
 
   it("fetchLogs.fulfilled truncates to MAX_LOGS (1000) on append", () => {
-    const existing = Array.from({ length: 990 }, (_, i) => ({ id: i, level: "info", message: `msg-${i}`, timestamp: "" }));
+    const existing = Array.from({ length: 990 }, (_, i) => ({ id: i, level: "info", message: `msg-${i}`, timestamp: "", category: "general", details: null }));
     const state = { ...initialState, logsByAccount: { "acc-1": existing } };
-    const newLogs = Array.from({ length: 20 }, (_, i) => ({ id: 1000 + i, level: "warn", message: `new-${i}`, timestamp: "" }));
+    const newLogs = Array.from({ length: 20 }, (_, i) => ({ id: 1000 + i, level: "warn", message: `new-${i}`, timestamp: "", category: "general", details: null }));
 
     const next = reducer(state, fetchLogs.fulfilled({ accountId: "acc-1", logs: newLogs, nextCursor: null, append: true }, "", { accountId: "acc-1", cursor: null }));
     expect(next.logsByAccount["acc-1"]).toHaveLength(1000);
