@@ -38,8 +38,10 @@
 | 3.1 | Decision Graph Definition | IN_PROGRESS | Stub graph created, full LangGraph nodes pending |
 | 3.2 | Context Builder (Prompt Assembly) | PENDING | |
 | 3.3 | Memory Service | PENDING | |
-| 3.4 | Signal Detection | PENDING | |
-| 3.5 | Daily Loss Enforcement | PENDING | |
+| 3.4 | Signal Detection | PENDING | Includes regime classifier (3.4.1) + anomaly detection (3.4.2) |
+| 3.4.1 | Market Regime Detector | DONE | Multi-indicator classifier (ADX, BBW, ATR, MTF), 7 tests pass |
+| 3.5 | Multi-Timeframe Analysis | DONE | MTF signal computer (5 weighted timeframes), 5 tests pass |
+| 3.6 | Daily Loss Enforcement | PENDING | |
 
 ## Phase 4: API Endpoints + WebSocket Events
 
