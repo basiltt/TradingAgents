@@ -16,7 +16,6 @@ import {
   beforeAll,
   afterAll,
   afterEach,
-  beforeEach,
   vi,
 } from "vitest";
 import { http, HttpResponse } from "msw";
