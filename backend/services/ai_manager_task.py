@@ -1073,7 +1073,12 @@ class AIManagerTask:
                 if not monitor:
                     continue
 
-                my_sl = float(pos.get("stopLoss", 0) or 0) or None
+                # Use original SL for active defenses (position SL may have been cancelled/widened)
+                current_state = self._sweep_state.get(symbol, "INACTIVE")
+                if current_state == "DEFENDING":
+                    my_sl = self._sweep_original_sl.get(symbol) or None
+                else:
+                    my_sl = float(pos.get("stopLoss", 0) or 0) or None
                 my_side = pos.get("side", "Buy")
                 current_price = float(pos.get("markPrice", 0) or 0)
                 _, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
@@ -1175,7 +1180,11 @@ class AIManagerTask:
             monitor = self._orderbook_monitors.get(symbol)
             if not monitor:
                 continue
-            my_sl = float(pos.get("stopLoss", 0) or 0) or None
+            # Use original SL during active defense (position SL may be cancelled/widened)
+            if self._sweep_state.get(symbol) == "DEFENDING":
+                my_sl = self._sweep_original_sl.get(symbol) or None
+            else:
+                my_sl = float(pos.get("stopLoss", 0) or 0) or None
             my_side = pos.get("side", "Buy")
             current_price = float(pos.get("markPrice", 0) or 0)
             ob_snapshot, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
