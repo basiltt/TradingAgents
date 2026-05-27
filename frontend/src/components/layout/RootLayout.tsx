@@ -120,6 +120,7 @@ export function RootLayout() {
               variant="secondary"
               size="sm"
               onClick={() => dispatch(setCommandPaletteOpen(true))}
+              aria-label="Search"
             >
               <Search className="size-4" />
               <span className="hidden sm:inline">Search</span>
@@ -133,6 +134,9 @@ export function RootLayout() {
 
   return (
     <div className="min-h-screen p-1.5 sm:p-3 lg:p-5">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:shadow-lg">
+        Skip to content
+      </a>
       <NeuAppShell
         sidebar={sidebar}
         sidebarWidth={sidebarCollapsed ? "6.5rem" : "19rem"}
@@ -141,7 +145,7 @@ export function RootLayout() {
         dock={<MobileDock pathname={pathname} onMore={() => dispatch(setMobileNavOpen(true))} />}
         contentClassName="pb-24 lg:pb-10"
       >
-        <div className="mx-auto w-full max-w-[min(100%,116rem)]">
+        <main id="main-content" className="mx-auto w-full max-w-[min(100%,116rem)]">
           <AnimatePresence mode="wait">
             <motion.div
               key={pathname}
@@ -153,7 +157,7 @@ export function RootLayout() {
               <Outlet />
             </motion.div>
           </AnimatePresence>
-        </div>
+        </main>
       </NeuAppShell>
 
       <AppCommandPalette
