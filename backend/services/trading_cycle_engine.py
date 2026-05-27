@@ -208,7 +208,8 @@ class TradingCycleEngine:
         self._active_tasks[cycle_id] = task
 
         cycle = await self._repo.get_cycle(cycle_id)
-        assert cycle is not None
+        if cycle is None:
+            raise RuntimeError(f"Cycle {cycle_id} not found after operation")
         return cycle
 
     async def stop_cycle(self, cycle_id: int) -> dict:
@@ -233,7 +234,8 @@ class TradingCycleEngine:
 
         await self._finalize_cycle(cycle_id, "stopped", "user_stopped")
         cycle = await self._repo.get_cycle(cycle_id)
-        assert cycle is not None
+        if cycle is None:
+            raise RuntimeError(f"Cycle {cycle_id} not found after operation")
         return cycle
 
     async def dry_run(self, config: Any) -> dict:
