@@ -710,3 +710,79 @@ async def test_sleep_cycle_timeout_refreshes_from_exchange(task):
 
     task._init_ws_buffer_from_exchange.assert_called_once()
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sweep defense and module wiring tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def mock_task():
+    """Create a minimal mock AIManagerTask for testing."""
+    task = MagicMock()
+    task._account_id = "test-account"
+    task._config = MagicMock()
+    task._config.sweep_recovery_timeout_candles = 3
+    task._config.sweep_confidence_threshold = 0.5
+    task._config.orderbook_enabled = True
+    task._config.mtf_enabled = True
+    task._config.correlation_enabled = True
+    task._config.sweep_defense_enabled = True
+    task._config.correlation_threshold = 0.7
+    task._sweep_state = {}
+    task._sweep_original_sl = {}
+    task._sweep_defense_started_at = {}
+    task._sweep_blocked_symbols = set()
+    task._is_hedge_mode = False
+    task._service = MagicMock()
+    task._service._repo = MagicMock()
+    task._service._repo.get_sweep_state = AsyncMock(return_value={})
+    task._service._repo.update_sweep_state = AsyncMock()
+    task._service._repo.insert_sweep_event = AsyncMock()
+    task._modify_stop_loss = AsyncMock(return_value=True)
+    task._persist_sweep_state = AsyncMock()
+    task._ws_buffer = {"positions": []}
+    return task
+
+
+@pytest.mark.asyncio
+async def test_sweep_state_recovery_on_start(mock_task):
+    from backend.services.ai_manager_task import AIManagerTask
+    mock_task._service._repo.get_sweep_state = AsyncMock(return_value={
+        "BTCUSDT": {"state": "DEFENDING", "original_sl": 67000.0, "started_at_epoch": 1748340000.0, "confidence": 0.85}
+    })
+    # Set time to be within timeout (3 candles * 300s = 900s)
+    import time as _time
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(_time, "time", lambda: 1748340500.0)
+        await AIManagerTask._restore_sweep_state(mock_task)
+    assert "BTCUSDT" in mock_task._sweep_blocked_symbols
+    assert mock_task._sweep_state["BTCUSDT"] == "DEFENDING"
+    assert mock_task._sweep_original_sl["BTCUSDT"] == 67000.0
+
+
+@pytest.mark.asyncio
+async def test_modify_stop_loss_calls_set_trading_stop(mock_task):
+    from backend.services.ai_manager_task import AIManagerTask
+    mock_client = AsyncMock()
+    mock_task._service._accounts_service = MagicMock()
+    mock_task._service._accounts_service.get_client = AsyncMock(return_value=mock_client)
+    mock_task._is_hedge_mode = False
+    result = await AIManagerTask._modify_stop_loss(mock_task, "BTCUSDT", 66500.0, side="Buy")
+    assert result is True
+    mock_client.set_trading_stop.assert_called_once_with(
+        symbol="BTCUSDT", stop_loss="66500.0", position_idx=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_modify_stop_loss_cancel(mock_task):
+    from backend.services.ai_manager_task import AIManagerTask
+    mock_client = AsyncMock()
+    mock_task._service._accounts_service = MagicMock()
+    mock_task._service._accounts_service.get_client = AsyncMock(return_value=mock_client)
+    mock_task._is_hedge_mode = False
+    await AIManagerTask._modify_stop_loss(mock_task, "BTCUSDT", None, side="Buy")
+    mock_client.set_trading_stop.assert_called_once_with(
+        symbol="BTCUSDT", stop_loss="0", position_idx=0,
+    )
+

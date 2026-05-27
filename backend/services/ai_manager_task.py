@@ -12,10 +12,13 @@ import logging
 import time
 import copy
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from backend.ai_manager_schemas import AIManagerConfig
 from backend.services.ai_manager_evaluator import AIManagerEvaluator
+from backend.services.ai_manager_mtf import MultiTimeframeAnalyzer
+from backend.services.ai_manager_correlation import CorrelationAnalyzer
+from backend.services.ai_manager_orderbook import OrderBookMonitor
 
 MAX_DAILY_TOKEN_BUDGET = 100_000
 
@@ -65,6 +68,17 @@ class AIManagerTask:
         self._emergency_in_progress: bool = False
         self._emergency_cooldown_until: float = 0.0
         self._emergency_closed_symbols: Dict[str, float] = {}  # symbol → monotonic time of last emergency close
+        self._mtf_analyzer = MultiTimeframeAnalyzer()
+        self._correlation_analyzer = CorrelationAnalyzer(
+            correlation_threshold=self._config.correlation_threshold
+        )
+        self._orderbook_monitors: Dict[str, OrderBookMonitor] = {}
+        self._sweep_state: Dict[str, str] = {}
+        self._sweep_original_sl: Dict[str, float] = {}
+        self._sweep_defense_started_at: Dict[str, float] = {}
+        self._sweep_blocked_symbols: set = set()
+        self._is_hedge_mode: bool = False
+        self._cleanup_task: Optional[asyncio.Task] = None
 
     @property
     def state(self) -> str:
@@ -327,6 +341,7 @@ class AIManagerTask:
                 result = await asyncio.wait_for(
                     self._graph.ainvoke(state_dict), timeout=90.0
                 )
+                asyncio.create_task(self._persist_enrichment_data(result))
         except RuntimeError as e:
             if "slot not available" in str(e).lower():
                 if half_open_probe:
@@ -406,7 +421,10 @@ class AIManagerTask:
             logger.warning("Rejected invalid action_type '%s' for %s", action_type, self._account_id)
             return
 
-        if self._config.dry_run:
+        # Sweep block check
+        if symbol in self._sweep_blocked_symbols:
+            logger.info("Sweep block prevented execution for %s", symbol)
+            return
             logger.info("dry_run: would execute %s %s for %s", action_type, symbol, self._account_id)
             return
 
@@ -683,6 +701,11 @@ class AIManagerTask:
         except Exception:
             pass
 
+        await self._sync_orderbook_monitors()
+        mtf_data = self._get_mtf_data()
+        correlation_data = self._get_correlation_data()
+        orderbook_data, sweep_data = self._get_orderbook_sweep_data()
+
         return {
             "account_id": self._account_id,
             "config": self._config.model_dump(),
@@ -696,6 +719,11 @@ class AIManagerTask:
             "episodic_memory": episodic,
             "patterns": patterns,
             "decision_count": decision_count,
+            "mtf": mtf_data if self._config.mtf_enabled else None,
+            "correlation": correlation_data if self._config.correlation_enabled else None,
+            "orderbook": orderbook_data if self._config.orderbook_enabled else None,
+            "sweep": sweep_data if self._config.sweep_defense_enabled else None,
+            "_sweep_blocked_symbols": list(self._sweep_blocked_symbols),
         }
 
     def _get_urgency(self) -> str:
@@ -1010,3 +1038,188 @@ class AIManagerTask:
             )
         except Exception:
             pass
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Sweep defense helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _modify_stop_loss(self, symbol: str, new_sl: Optional[float], side: str = "") -> bool:
+        try:
+            client = await self._service._accounts_service.get_client(self._account_id)
+            sl_str = str(new_sl) if new_sl else "0"
+            pos_idx = 0
+            if side and self._is_hedge_mode:
+                pos_idx = 1 if side == "Buy" else 2
+            await client.set_trading_stop(symbol=symbol, stop_loss=sl_str, position_idx=pos_idx)
+            return True
+        except Exception:
+            logger.exception("Failed to modify SL for %s on %s", symbol, self._account_id)
+            return False
+
+    async def _restore_sweep_state(self) -> None:
+        """Restore sweep defense state from DB on startup."""
+        try:
+            saved = await self._service._repo.get_sweep_state(self._account_id)
+        except Exception:
+            logger.warning("Failed to load sweep state for %s", self._account_id)
+            return
+
+        now = time.time()
+        timeout_s = self._config.sweep_recovery_timeout_candles * 300
+
+        for symbol, data in saved.items():
+            state = data.get("state", "INACTIVE")
+            if state in ("DEFENDING", "DETECTED"):
+                started = data.get("started_at_epoch", now)
+                if now - started > timeout_s:
+                    original_sl = data.get("original_sl")
+                    if original_sl:
+                        await self._modify_stop_loss(symbol, original_sl)
+                    logger.warning("Sweep defense expired during restart for %s, restored SL", symbol)
+                else:
+                    self._sweep_state[symbol] = state
+                    self._sweep_original_sl[symbol] = data.get("original_sl", 0.0)
+                    self._sweep_defense_started_at[symbol] = started
+                    self._sweep_blocked_symbols.add(symbol)
+                    logger.info("Resumed sweep defense for %s", symbol)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Enrichment data helpers for _build_graph_state
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _get_mtf_data(self) -> Optional[Dict[str, Any]]:
+        try:
+            cache = self._service._market_data_cache
+            if not cache:
+                return None
+            positions = self._ws_buffer.get("positions") or []
+            symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+            for sym in symbols:
+                klines = cache.get_mtf_klines(sym)
+                if klines:
+                    return self._mtf_analyzer.compute_signal(sym, klines)
+        except Exception:
+            logger.debug("MTF data fetch failed, skipping")
+        return None
+
+    def _get_correlation_data(self) -> Optional[Dict[str, Any]]:
+        try:
+            positions = self._ws_buffer.get("positions") or []
+            if len(positions) < 2:
+                return None
+            cache = self._service._market_data_cache
+            if not cache:
+                return None
+            symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+            klines = {sym: {"1h": cache.get_klines(sym, "1h") or []} for sym in symbols}
+            return self._correlation_analyzer.compute(positions, klines)
+        except Exception:
+            logger.debug("Correlation data fetch failed, defaulting to zero heat")
+            return {"portfolio_heat": 0.0, "matrix": {}, "clusters": [], "max_correlated_exposure_pct": 0.0}
+
+    def _get_orderbook_sweep_data(self):
+        positions = self._ws_buffer.get("positions") or []
+        if not positions:
+            return None, None
+        pos = positions[0]
+        symbol = pos.get("symbol", "")
+        monitor = self._orderbook_monitors.get(symbol)
+        if not monitor:
+            return None, None
+        my_sl = float(pos.get("stopLoss", 0) or 0) or None
+        my_side = pos.get("side", "Buy")
+        current_price = float(pos.get("markPrice", 0) or 0)
+        ob_snapshot, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
+        return ob_snapshot, sweep
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # OrderBook monitor lifecycle
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _start_orderbook_monitor(self, symbol: str) -> None:
+        if not self._config.orderbook_enabled:
+            return
+        if symbol not in self._orderbook_monitors:
+            monitor = OrderBookMonitor(symbol, self._config.sweep_confidence_threshold)
+            self._orderbook_monitors[symbol] = monitor
+            await monitor.start()
+
+    async def _stop_orderbook_monitors(self) -> None:
+        for monitor in self._orderbook_monitors.values():
+            await monitor.stop()
+        self._orderbook_monitors.clear()
+
+    async def _sync_orderbook_monitors(self) -> None:
+        if not self._config.orderbook_enabled:
+            return
+        positions = self._ws_buffer.get("positions") or []
+        active_symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+        for sym in active_symbols:
+            if sym not in self._orderbook_monitors:
+                await self._start_orderbook_monitor(sym)
+        stale = set(self._orderbook_monitors.keys()) - active_symbols
+        for sym in stale:
+            monitor = self._orderbook_monitors.pop(sym)
+            await monitor.stop()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Enrichment persistence and periodic cleanup
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _persist_enrichment_data(self, state: Dict[str, Any]) -> None:
+        repo = self._service._repo
+        account_id = self._account_id
+        symbol = state.get("symbol", "")
+        try:
+            regime_detail = state.get("regime_detail")
+            if regime_detail:
+                await repo.insert_regime_history(
+                    account_id, symbol=symbol,
+                    regime=state.get("regime", "ranging"),
+                    confidence=regime_detail.get("confidence", 0.0),
+                    detail=regime_detail,
+                )
+            correlation = state.get("correlation")
+            if correlation and correlation.get("portfolio_heat", 0) > 0:
+                positions = state.get("positions", [])
+                await repo.insert_correlation_snapshot(
+                    account_id,
+                    portfolio_heat=correlation["portfolio_heat"],
+                    matrix=correlation.get("matrix", {}),
+                    clusters=correlation.get("clusters", []),
+                    position_count=len(positions),
+                )
+            orderbook = state.get("orderbook")
+            if orderbook:
+                await repo.insert_orderbook_snapshot(
+                    account_id, symbol=symbol,
+                    imbalance_ratio=orderbook.get("imbalance_ratio", 1.0),
+                    spread_bps=orderbook.get("spread_bps", 0.0),
+                    depth_ratio=orderbook.get("depth_ratio", 1.0),
+                    bid_clusters=orderbook.get("bid_clusters", []),
+                    ask_clusters=orderbook.get("ask_clusters", []),
+                    spoofing_flags=orderbook.get("spoofing_flags", []),
+                )
+        except Exception:
+            logger.debug("Failed to persist enrichment data for %s", account_id)
+
+    async def _persist_sweep_state(self) -> None:
+        try:
+            state_to_save = {}
+            for sym in self._sweep_state:
+                state_to_save[sym] = {
+                    "state": self._sweep_state[sym],
+                    "original_sl": self._sweep_original_sl.get(sym),
+                    "started_at_epoch": self._sweep_defense_started_at.get(sym),
+                }
+            await self._service._repo.update_sweep_state(self._account_id, state_to_save)
+        except Exception:
+            logger.debug("Failed to persist sweep state for %s", self._account_id)
+
+    async def _periodic_cleanup(self) -> None:
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                await self._service._repo.cleanup_old_data()
+            except Exception:
+                logger.debug("Data cleanup failed, will retry next hour")
