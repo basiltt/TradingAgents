@@ -39,6 +39,7 @@ def mock_service():
     svc._close_positions_service = MagicMock()
     svc._close_positions_service.close_all_for_rule = AsyncMock(return_value={"total": 1, "closed": 1, "failed": 0, "results": [{"realized_pnl": -5.0}]})
     svc._memory = None
+    svc.emit_event = AsyncMock()
     return svc
 
 

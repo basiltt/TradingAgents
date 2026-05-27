@@ -135,6 +135,8 @@ class BybitWSClient:
         if not auth_resp.get("success"):
             logger.error("Bybit WS auth failed: %s", auth_resp.get("ret_msg"))
             await self._ws.close()
+            await self._session.close()
+            self._session = None
             return
 
         await self._ws.send_json(self._subscribe_payload())

@@ -48,7 +48,7 @@ class ClosePositionsService:
                     raise ValueError("Close already in progress for this account")
                 logger.warning("Expired stale close lock for %s", account_id)
             self._closing_accounts[account_id] = time.monotonic()
-        t0 = time.monotonic()
+        t0 = self._closing_accounts[account_id]
         logger.info("close_all_positions_start", extra={"account_id": account_id})
 
         try:
@@ -113,7 +113,9 @@ class ClosePositionsService:
                 "execution_id": execution["id"],
             }
         finally:
-            self._closing_accounts.pop(account_id, None)
+            async with self._close_lock:
+                if self._closing_accounts.get(account_id) == t0:
+                    del self._closing_accounts[account_id]
 
     async def close_all_for_rule(self, account_id: str, rule_id: str | None, *, symbols: list[str] | None = None) -> dict[str, Any]:
         """Close positions triggered by a rule or cycle stop. If symbols is provided, only close those symbols."""
@@ -125,7 +127,7 @@ class ClosePositionsService:
                     return {"total": 0, "closed": 0, "failed": 0, "results": [], "skipped": True}
                 logger.warning("Expired stale close lock for %s", account_id)
             self._closing_accounts[account_id] = time.monotonic()
-        t0 = time.monotonic()
+        t0 = self._closing_accounts[account_id]
 
         try:
             client = await self._accounts_service.get_client(account_id)
@@ -176,7 +178,9 @@ class ClosePositionsService:
 
             return {"total": len(positions), "closed": closed, "failed": failed, "results": results}
         finally:
-            self._closing_accounts.pop(account_id, None)
+            async with self._close_lock:
+                if self._closing_accounts.get(account_id) == t0:
+                    del self._closing_accounts[account_id]
 
     # ── Trade record integration ────────────────────────────────
 

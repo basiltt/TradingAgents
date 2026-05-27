@@ -300,6 +300,18 @@ class AIManagerRepository:
             )
             return row is not None
 
+    async def decrement_actions_atomic(self, account_id: str) -> None:
+        """Roll back a budget increment when an action fails before execution."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE ai_manager_state "
+                "SET actions_today = GREATEST(actions_today - 1, 0), "
+                "    actions_this_hour = GREATEST(actions_this_hour - 1, 0), "
+                "    updated_at = NOW() "
+                "WHERE account_id = $1",
+                account_id,
+            )
+
     async def record_realized_loss(
         self, account_id: str, loss_amount: float
     ) -> Dict[str, Any]:

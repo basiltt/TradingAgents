@@ -353,7 +353,7 @@ class TradingCycleEngine:
             self._active_tasks.pop(cycle_id, None)
             raise
         except Exception as e:
-            logger.warning("Cycle %d failed unexpectedly: %s", cycle_id, e)
+            logger.exception("Cycle %d failed unexpectedly: %s", cycle_id, e)
             await self._finalize_cycle(cycle_id, "failed", "circuit_breaker")
         finally:
             self._active_tasks.pop(cycle_id, None)

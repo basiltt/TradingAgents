@@ -586,7 +586,11 @@ class AIManagerTask:
                 except Exception:
                     logger.exception("Failed to record dead-letter for %s", self._account_id)
             else:
-                logger.error("Budget consumed but no decision created for %s %s", self._account_id, symbol)
+                logger.error("Budget consumed but no decision created for %s %s — rolling back budget", self._account_id, symbol)
+                try:
+                    await self._service._repo.decrement_actions_atomic(self._account_id)
+                except Exception:
+                    logger.exception("Failed to roll back budget for %s", self._account_id)
         finally:
             lock.release(self._account_id, symbol)
 
@@ -615,11 +619,12 @@ class AIManagerTask:
             except Exception:
                 logger.exception("Post-execution bookkeeping failed for %s %s", self._account_id, symbol)
 
-        try:
-            await self._enforce_daily_limits(pnl)
-        except Exception:
-            logger.critical("Daily limit enforcement failed for %s — pausing as fail-safe", self._account_id)
-            self.pause()
+        if exec_result is not None and exec_result.get("status") == "closed":
+            try:
+                await self._enforce_daily_limits(pnl)
+            except Exception:
+                logger.critical("Daily limit enforcement failed for %s — pausing as fail-safe", self._account_id)
+                self.pause()
 
     async def _enforce_daily_limits(self, pnl: float) -> None:
         """Task 3.5: Daily loss enforcement after every AI-initiated close."""
@@ -1043,4 +1048,4 @@ class AIManagerTask:
                 self._account_id, emergency_ref_equity=value,
             )
         except Exception:
-            pass
+            logger.warning("Failed to persist ref equity for %s", self._account_id, exc_info=True)
