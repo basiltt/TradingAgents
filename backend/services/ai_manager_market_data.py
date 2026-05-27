@@ -40,12 +40,16 @@ class MarketDataCache:
         self._client: Optional[httpx.AsyncClient] = None
         self._last_refresh: float = 0.0
         self._last_kline_refresh: float = 0.0
+        self._mtf_klines: Dict[str, Dict[str, List]] = {}
+        self._mtf_tasks: List[asyncio.Task] = []
 
     async def start(self) -> None:
         self._client = httpx.AsyncClient(timeout=10.0)
         self._task = asyncio.create_task(self._refresh_loop())
         self._kline_task = asyncio.create_task(self._kline_refresh_loop())
-        logger.info("MarketDataCache started")
+        for tf, interval in {"15m": 60, "1h": 120, "4h": 300}.items():
+            self._mtf_tasks.append(asyncio.create_task(self._mtf_refresh_loop(tf, interval)))
+        logger.info("MarketDataCache started with MTF")
 
     async def stop(self) -> None:
         for t in [self._task, self._kline_task]:
@@ -55,6 +59,14 @@ class MarketDataCache:
                     await t
                 except asyncio.CancelledError:
                     pass
+        for t in self._mtf_tasks:
+            if t:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+        self._mtf_tasks.clear()
         if self._client:
             await self._client.aclose()
         logger.info("MarketDataCache stopped")
@@ -212,6 +224,55 @@ class MarketDataCache:
             await asyncio.sleep(0.2)
 
         self._last_kline_refresh = time.time()
+
+    # --- Multi-timeframe kline support ---
+
+    def get_mtf_klines(self, symbol: str) -> Dict[str, List]:
+        """Get all timeframe klines for a symbol."""
+        result = {}
+        if symbol in self._kline_data:
+            result["5m"] = self._kline_data[symbol]
+        if symbol in self._mtf_klines:
+            result.update(self._mtf_klines[symbol])
+        return result
+
+    def get_klines(self, symbol: str, timeframe: str):
+        """Get klines for a specific symbol and timeframe."""
+        if timeframe == "5m":
+            return self._kline_data.get(symbol)
+        return self._mtf_klines.get(symbol, {}).get(timeframe)
+
+    async def _mtf_refresh_loop(self, timeframe: str, interval: float) -> None:
+        from backend.services.bybit_rate_gate import get_rate_gate
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                for symbol in list(self._symbols):
+                    await get_rate_gate().acquire_async()
+                    await self._fetch_mtf_klines(symbol, timeframe)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.warning("MTF refresh failed for %s", timeframe, exc_info=True)
+
+    async def _fetch_mtf_klines(self, symbol: str, timeframe: str) -> None:
+        if not self._client:
+            return
+        try:
+            resp = await self._client.get(
+                f"{_BYBIT_BASE}{_KLINE_ENDPOINT}",
+                params={"category": "linear", "symbol": symbol, "interval": timeframe, "limit": 100},
+            )
+            data = resp.json()
+            klines = data.get("result", {}).get("list", [])
+            if klines:
+                parsed = [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in klines]
+                parsed.reverse()
+                if symbol not in self._mtf_klines:
+                    self._mtf_klines[symbol] = {}
+                self._mtf_klines[symbol][timeframe] = parsed
+        except Exception:
+            logger.debug("MTF kline fetch failed for %s %s", symbol, timeframe)
 
     def _compute_kline_indicators(self, symbol: str) -> Dict[str, Any]:
         """Compute EMA, RSI, ATR from kline data."""
