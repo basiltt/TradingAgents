@@ -19,6 +19,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from stockstats import wrap
 
+from backend.services.bybit_rate_gate import get_rate_gate
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -390,7 +392,8 @@ def _bybit_request(
             raise TimeoutError("Bybit request deadline exceeded")
 
         if limiter:
-            limiter.acquire(timeout=min(remaining, 10.0))
+            if not get_rate_gate().acquire_sync(timeout=min(remaining, 10.0)):
+                raise TimeoutError("Bybit rate gate timeout")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Bybit request deadline exceeded after rate limiter wait")

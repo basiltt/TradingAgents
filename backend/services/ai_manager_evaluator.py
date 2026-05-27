@@ -31,6 +31,7 @@ class AIManagerEvaluator:
         indicators: Optional[Dict[str, Any]] = None,
         peak_pnl: Optional[Dict[str, float]] = None,
         emergency_pnl_velocity_pct: float = 0.05,
+        correlation: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Returns 'EMERGENCY', 'FAST', 'STANDARD', or 'DEEP'.
 
@@ -86,6 +87,11 @@ class AIManagerEvaluator:
 
         if emergency_signals > 0:
             return "EMERGENCY"
+        # Correlation-based escalation
+        if correlation and emergency_signals == 0:
+            for cluster in correlation.get("clusters", []):
+                if cluster.get("combined_pnl_pct", 0) < -2.0:
+                    return "FAST"
         if fast_signals > 0:
             return "FAST"
         if conflicting:

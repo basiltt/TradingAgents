@@ -137,11 +137,14 @@ async def signal_detection_node(state: Dict[str, Any]) -> Dict[str, Any]:
     evaluator = state.get("_evaluator") or AIManagerEvaluator()
     positions = state.get("positions", [])
     indicators = state.get("indicators", {})
-    urgency = evaluator.classify_urgency(positions, indicators, peak_pnl=state.get("peak_pnl"))
+    correlation = state.get("correlation")
+    urgency = evaluator.classify_urgency(
+        positions, indicators, peak_pnl=state.get("peak_pnl"),
+        correlation=correlation,
+    )
     state["urgency"] = urgency
     state["graph_path"] = "preflight→data_aggregation→signal_detection"
 
-    # Cold-start restriction: no DEEP evaluations
     if state.get("_cold_start") and urgency == "DEEP":
         state["urgency"] = "STANDARD"
 
@@ -179,50 +182,33 @@ async def context_enrichment_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _do_enrichment(state: Dict[str, Any]) -> Dict[str, Any]:
     """Perform actual enrichment (memory, patterns, regime from indicators)."""
-    # Derive regime from indicator data
+    from backend.services.ai_manager_regime import compute_regime
+
     indicators = state.get("indicators", {})
-    regime = _detect_regime(indicators)
+    mtf_data = state.get("mtf", {})
+
+    symbol = state.get("symbol") or ""
+    if symbol and symbol in indicators:
+        sym_indicators = indicators[symbol]
+    elif indicators:
+        sym_indicators = next(iter(indicators.values()), {})
+    else:
+        sym_indicators = {}
+
+    try:
+        regime_result = compute_regime(sym_indicators, mtf_data or {})
+    except Exception:
+        logger.warning("Regime computation failed, defaulting to volatile")
+        regime_result = {"regime": "volatile", "regime_detail": {"confidence": 0.0, "adx": 0, "atr_ratio": 1.0, "bbw_percentile": 0.5, "trend_alignment": 0.0, "ema_distance_pct": 0.0}}
 
     return {
-        "regime": validate_regime(regime),
+        "regime": validate_regime(regime_result["regime"]),
+        "regime_detail": regime_result["regime_detail"],
         "session": validate_market_session(state.get("_raw_session", "unknown")),
         "episodic_memory": state.get("episodic_memory", []),
         "patterns": state.get("patterns", []),
     }
 
-
-def _detect_regime(indicators: Dict[str, Any]) -> str:
-    """Derive market regime from aggregated indicator signals."""
-    if not indicators:
-        return "ranging"
-
-    trend_scores = []
-    volatile_count = 0
-
-    for sym, data in indicators.items():
-        strength = data.get("ema_trend_strength")
-        if strength is not None:
-            trend_scores.append(strength)
-
-        # Volatility check: if 24h change > 5% or pnl_velocity extreme
-        pct_24h = data.get("price_24h_pct")
-        if pct_24h is not None and abs(pct_24h) > 0.05:
-            volatile_count += 1
-
-    if not trend_scores:
-        return "ranging"
-
-    avg_trend = sum(trend_scores) / len(trend_scores)
-
-    # If majority of symbols are volatile, regime is volatile
-    if volatile_count > len(trend_scores) * 0.5:
-        return "volatile"
-
-    if avg_trend > 0.002:
-        return "trending_up"
-    elif avg_trend < -0.002:
-        return "trending_down"
-    return "ranging"
 
 
 async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -251,6 +237,11 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         peak_pnl=state.get("peak_pnl"),
         daily_realized_pnl=state.get("daily_realized_pnl", 0.0),
         daily_profit_target=state.get("daily_profit_target"),
+        regime_detail=state.get("regime_detail"),
+        mtf=state.get("mtf"),
+        orderbook=state.get("orderbook"),
+        correlation=state.get("correlation"),
+        sweep=state.get("sweep"),
     )
 
     # LLM call (injected via state for testability)
@@ -304,7 +295,8 @@ def _parse_llm_response(raw: str) -> Optional[Dict[str, Any]]:
     if action not in _VALID_ACTIONS:
         return None
 
-    symbol = sanitize_for_injection(str(data.get("symbol", "")))
+    symbol_raw = data.get("symbol") or ""
+    symbol = sanitize_for_injection(str(symbol_raw), max_len=50) if symbol_raw else ""
     try:
         confidence = float(data.get("confidence", 0.0))
     except (ValueError, TypeError):
@@ -363,6 +355,24 @@ async def risk_validation_node(state: Dict[str, Any]) -> Dict[str, Any]:
             return state
 
     state["_risk_rejected"] = False
+
+    # Sweep block check (unless EMERGENCY overrides)
+    sweep_blocked = set(state.get("_sweep_blocked_symbols", []))
+    if symbol and symbol in sweep_blocked:
+        urgency = state.get("urgency", "STANDARD")
+        if urgency != "EMERGENCY":
+            state["_risk_rejected"] = True
+            state["action"] = "HOLD"
+            state["reason"] = f"sweep_block_active: {symbol}"
+            return state
+
+    # Correlation portfolio heat warning — annotate (don't reject)
+    correlation = state.get("correlation") or {}
+    heat = correlation.get("portfolio_heat", 0.0)
+    heat_threshold = config.get("portfolio_heat_warning", 0.8)
+    if heat > heat_threshold:
+        state["_correlation_warning"] = f"HIGH portfolio heat={heat:.2f} — correlated risk"
+
     return state
 
 

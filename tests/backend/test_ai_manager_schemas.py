@@ -189,3 +189,34 @@ def test_ai_manager_decision_response():
     )
     assert resp.id == 1
     assert resp.confidence == 0.6
+
+
+class TestEnhancedConfigFields:
+    def test_defaults(self):
+        from backend.ai_manager_schemas import AIManagerConfig
+        config = AIManagerConfig()
+        assert config.regime_enhanced is True
+        assert config.mtf_enabled is True
+        assert config.mtf_timeframes == "5m,15m,1h,4h"
+        assert config.orderbook_enabled is True
+        assert config.sweep_defense_enabled is True
+        assert config.sweep_recovery_timeout_candles == 3
+        assert config.sweep_confidence_threshold == 0.5
+        assert config.correlation_enabled is True
+        assert config.correlation_threshold == 0.7
+        assert config.portfolio_heat_warning == 0.8
+
+    def test_patch_fields(self):
+        from backend.ai_manager_schemas import AIManagerConfigPatch
+        patch = AIManagerConfigPatch(sweep_defense_enabled=False, correlation_threshold=0.8)
+        assert patch.sweep_defense_enabled is False
+        assert patch.correlation_threshold == 0.8
+        assert patch.mtf_enabled is None
+
+    def test_validation(self):
+        from backend.ai_manager_schemas import AIManagerConfig
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            AIManagerConfig(sweep_confidence_threshold=0.1)
+        with pytest.raises(ValidationError):
+            AIManagerConfig(correlation_threshold=1.5)

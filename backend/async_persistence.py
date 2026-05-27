@@ -383,6 +383,86 @@ CREATE INDEX IF NOT EXISTS idx_ai_logs_account_ts ON ai_manager_logs(account_id,
 CREATE INDEX IF NOT EXISTS idx_ai_logs_level ON ai_manager_logs(account_id, level, timestamp DESC)
     """)
 
+    # --- Enhanced AI Manager tables ---
+    await conn.execute(
+        "ALTER TABLE ai_manager_state ADD COLUMN IF NOT EXISTS sweep_state JSONB DEFAULT '{}'"
+    )
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_regime_history (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    symbol TEXT NOT NULL,
+    regime TEXT NOT NULL,
+    confidence FLOAT NOT NULL,
+    detail JSONB NOT NULL,
+    duration_s INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_regime_history_lookup
+    ON ai_manager_regime_history(account_id, symbol, created_at DESC)
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_correlation_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    portfolio_heat FLOAT NOT NULL,
+    matrix JSONB NOT NULL,
+    clusters JSONB NOT NULL,
+    position_count INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_correlation_snapshots_lookup
+    ON ai_manager_correlation_snapshots(account_id, created_at DESC)
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_sweep_events (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    symbol TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    confidence FLOAT NOT NULL,
+    direction TEXT NOT NULL,
+    swept_level NUMERIC(18,8),
+    original_sl NUMERIC(18,8),
+    defense_action TEXT,
+    recovery_price NUMERIC(18,8),
+    duration_ms INTEGER,
+    outcome TEXT,
+    detail JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_sweep_events_lookup
+    ON ai_manager_sweep_events(account_id, symbol, created_at DESC)
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_orderbook_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+    symbol TEXT NOT NULL,
+    imbalance_ratio FLOAT NOT NULL,
+    spread_bps FLOAT NOT NULL,
+    depth_ratio FLOAT NOT NULL,
+    bid_clusters JSONB NOT NULL,
+    ask_clusters JSONB NOT NULL,
+    spoofing_flags JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_lookup
+    ON ai_manager_orderbook_snapshots(account_id, symbol, created_at DESC)
+    """)
+
     await conn.execute("""
 DO $$
 BEGIN

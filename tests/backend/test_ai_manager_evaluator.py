@@ -65,3 +65,18 @@ class TestClassifyUrgency:
         positions = [{"symbol": "BTCUSDT"}]
         indicators = {"BTCUSDT": {"pnl_velocity_30s": -0.03}}
         assert evaluator.classify_urgency(positions, indicators) == "FAST"
+
+    def test_correlation_escalates_to_fast(self, evaluator):
+        positions = [{"symbol": "BTCUSDT", "side": "Buy", "unrealisedPnl": "-500"}]
+        correlation = {
+            "clusters": [{"symbols": ["BTCUSDT", "ETHUSDT"], "combined_pnl_pct": -2.5}]
+        }
+        result = evaluator.classify_urgency(positions, correlation=correlation)
+        assert result == "FAST"
+
+    def test_correlation_does_not_override_emergency(self, evaluator):
+        positions = [{"symbol": "BTCUSDT", "side": "Buy", "unrealisedPnl": "-5000"}]
+        indicators = {"BTCUSDT": {"pnl_velocity_30s": -0.06}}
+        correlation = {"clusters": [{"symbols": ["BTCUSDT"], "combined_pnl_pct": -3.0}]}
+        result = evaluator.classify_urgency(positions, indicators, emergency_pnl_velocity_pct=0.05, correlation=correlation)
+        assert result == "EMERGENCY"

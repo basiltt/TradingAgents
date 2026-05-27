@@ -25,7 +25,7 @@ _INJECTION_PATTERNS = re.compile(
 
 _HTML_TAGS = re.compile(r"<[^>]+>")
 
-_VALID_REGIMES = frozenset(["trending_up", "trending_down", "ranging", "volatile"])
+_VALID_REGIMES = frozenset(["trending_up", "trending_down", "ranging", "volatile", "compression"])
 _VALID_SESSIONS = frozenset(["asia", "europe", "us", "overlap"])
 
 _MAX_FIELD_LEN = 200
@@ -70,7 +70,7 @@ def validate_market_session(session: str) -> str:
     return "unknown"
 
 
-def truncate_to_token_budget(prompt: str, max_tokens: int = 4000) -> str:
+def truncate_to_token_budget(prompt: str, max_tokens: int = 5000) -> str:
     """Approximate token truncation (4 chars per token estimate)."""
     max_chars = max_tokens * 4
     if len(prompt) <= max_chars:
@@ -153,6 +153,11 @@ def build_context_prompt(
     peak_pnl: Optional[Dict[str, float]] = None,
     daily_realized_pnl: float = 0.0,
     daily_profit_target: Optional[float] = None,
+    regime_detail: Optional[Dict[str, Any]] = None,
+    mtf: Optional[Dict[str, Any]] = None,
+    orderbook: Optional[Dict[str, Any]] = None,
+    correlation: Optional[Dict[str, Any]] = None,
+    sweep: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build user context prompt with all available data."""
     regime = validate_regime(regime)
@@ -249,6 +254,8 @@ def build_context_prompt(
     if episodic_memory:
         parts.append("\nRecent decisions:")
         for mem in episodic_memory[:10]:
+            if not isinstance(mem, dict):
+                continue
             action = sanitize_for_injection(str(mem.get("action", "")), max_len=20)
             symbol = sanitize_for_injection(str(mem.get("symbol", "")), max_len=50)
             outcome = mem.get("outcome_label", "unknown")
@@ -258,8 +265,32 @@ def build_context_prompt(
     if patterns:
         parts.append("\nLearned patterns:")
         for pat in patterns[:5]:
+            if not isinstance(pat, dict):
+                continue
             desc = sanitize_for_injection(str(pat.get("description", "")), max_len=_MAX_FIELD_LEN)
             parts.append(f"  [{pat.get('type', '')}] {desc}")
+
+    if regime_detail:
+        parts.append(f"\nRegime detail: confidence={regime_detail.get('confidence')}, ADX={regime_detail.get('adx')}, ATR_ratio={regime_detail.get('atr_ratio')}")
+
+    if mtf:
+        parts.append(f"\nMulti-TF: alignment={mtf.get('trend_alignment')}, dominant={mtf.get('dominant_trend')}, strength={mtf.get('trend_strength')}")
+        if mtf.get("key_levels"):
+            levels_str = ", ".join(
+                f"{l.get('type', '?')}@{l.get('price', '?')}({l.get('timeframe', '?')})"
+                for l in mtf["key_levels"][:5] if isinstance(l, dict)
+            )
+            if levels_str:
+                parts.append(f"Key levels: {levels_str}")
+
+    if orderbook:
+        parts.append(f"\nOrderbook: imbalance={orderbook.get('imbalance_ratio')}, spread={orderbook.get('spread_bps')}bps, depth_ratio={orderbook.get('depth_ratio')}")
+
+    if correlation:
+        parts.append(f"\nCorrelation: heat={correlation.get('portfolio_heat')}, max_exposure={correlation.get('max_correlated_exposure_pct')}%")
+
+    if sweep:
+        parts.append(f"\n⚠️ SWEEP DETECTED: confidence={sweep.get('confidence')}, direction={sweep.get('direction')}, targets_me={sweep.get('targets_my_position')}")
 
     full_prompt = "\n".join(parts)
     full_prompt = _INJECTION_PATTERNS.sub("", full_prompt)

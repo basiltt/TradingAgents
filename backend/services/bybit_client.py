@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import collections
 import hashlib
 import hmac
 import json
@@ -16,10 +15,10 @@ from typing import Any
 import aiohttp
 from yarl import URL
 
+from backend.services.bybit_rate_gate import get_rate_gate
+
 logger = logging.getLogger(__name__)
 
-_RATE_LIMIT_WINDOW = 5
-_RATE_LIMIT_MAX = 550  # conservative: Bybit IP limit is 600/5s
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 0.5
 
@@ -43,8 +42,6 @@ class BybitClient:
         self._base_url = self.REST_ENDPOINTS.get(account_type, self.REST_ENDPOINTS["demo"])
         self._semaphore = asyncio.Semaphore(10)
         self._recv_window = "5000"
-        self._request_timestamps: collections.deque = collections.deque(maxlen=_RATE_LIMIT_MAX + 50)
-        self._rate_lock = asyncio.Lock()
         self._session_lock = asyncio.Lock()
         self._session: aiohttp.ClientSession | None = None
         self._time_offset_ms: int = 0
@@ -218,17 +215,8 @@ class BybitClient:
             return None
 
     async def _wait_for_rate_limit(self) -> None:
-        while True:
-            async with self._rate_lock:
-                now = time.monotonic()
-                while self._request_timestamps and self._request_timestamps[0] < now - _RATE_LIMIT_WINDOW:
-                    self._request_timestamps.popleft()
-                if len(self._request_timestamps) < _RATE_LIMIT_MAX:
-                    self._request_timestamps.append(time.monotonic())
-                    return
-                sleep_time = self._request_timestamps[0] - (now - _RATE_LIMIT_WINDOW) + 0.1
-                sleep_time = max(0.1, min(sleep_time, _RATE_LIMIT_WINDOW))
-            await asyncio.sleep(sleep_time)
+        """Acquire token from centralized IP-level rate gate (private channel)."""
+        await get_rate_gate().acquire_async(channel="private")
 
     async def test_connection(self) -> dict[str, Any]:
         try:

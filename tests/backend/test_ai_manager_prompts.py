@@ -134,3 +134,25 @@ class TestBuildContextPrompt:
             regime="INVALID",
         )
         assert "ranging" in prompt
+
+
+def test_validate_regime_compression():
+    from backend.services.ai_manager_prompts import validate_regime
+    assert validate_regime("compression") == "compression"
+
+
+def test_build_context_prompt_with_enhanced_data():
+    from backend.services.ai_manager_prompts import build_context_prompt
+    prompt = build_context_prompt(
+        positions=[{"symbol": "BTCUSDT", "side": "Buy", "unrealisedPnl": "100"}],
+        wallet={"equity": "10000"},
+        regime="trending_up",
+        regime_detail={"confidence": 0.85, "adx": 32.0},
+        mtf={"trend_alignment": 0.7, "dominant_trend": "bullish"},
+        orderbook={"imbalance_ratio": 1.4, "spread_bps": 1.2},
+        correlation={"portfolio_heat": 0.3},
+        sweep=None,
+    )
+    assert "regime" in prompt.lower()
+    assert "trend_alignment" in prompt or "0.7" in prompt
+    assert "imbalance" in prompt.lower()
