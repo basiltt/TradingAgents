@@ -7,6 +7,7 @@ import path from "path";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
+    chunkSizeWarningLimit: 250,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),
@@ -49,6 +50,7 @@ export default defineConfig({
     globals: true,
     environment: "happy-dom",
     setupFiles: ["./src/test/setup.ts"],
+    exclude: ["e2e/**", "node_modules/**"],
     css: false,
     coverage: {
       provider: "v8",
