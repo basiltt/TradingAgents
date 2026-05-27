@@ -210,39 +210,6 @@ async def _do_enrichment(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _detect_regime(indicators: Dict[str, Any]) -> str:
-    """Derive market regime from aggregated indicator signals."""
-    if not indicators:
-        return "ranging"
-
-    trend_scores = []
-    volatile_count = 0
-
-    for sym, data in indicators.items():
-        strength = data.get("ema_trend_strength")
-        if strength is not None:
-            trend_scores.append(strength)
-
-        # Volatility check: if 24h change > 5% or pnl_velocity extreme
-        pct_24h = data.get("price_24h_pct")
-        if pct_24h is not None and abs(pct_24h) > 0.05:
-            volatile_count += 1
-
-    if not trend_scores:
-        return "ranging"
-
-    avg_trend = sum(trend_scores) / len(trend_scores)
-
-    # If majority of symbols are volatile, regime is volatile
-    if volatile_count > len(trend_scores) * 0.5:
-        return "volatile"
-
-    if avg_trend > 0.002:
-        return "trending_up"
-    elif avg_trend < -0.002:
-        return "trending_down"
-    return "ranging"
-
 
 async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """LLM call to generate action decision."""

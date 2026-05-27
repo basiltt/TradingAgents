@@ -278,6 +278,10 @@ class AIManagerTask:
             await self._stop_orderbook_monitors()
             if self._cleanup_task and not self._cleanup_task.done():
                 self._cleanup_task.cancel()
+                try:
+                    await self._cleanup_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def _sleep_cycle(self) -> None:
         try:
@@ -498,7 +502,9 @@ class AIManagerTask:
 
         if len(self._last_eval_symbols) > 100:
             cutoff = now_mono - 60.0
-            self._last_eval_symbols = {k: v for k, v in self._last_eval_symbols.items() if v > cutoff}
+            stale = [k for k, v in self._last_eval_symbols.items() if v <= cutoff]
+            for k in stale:
+                del self._last_eval_symbols[k]
 
         lock = self._service._lock_registry
         acquired = await lock.acquire(self._account_id, symbol, timeout=5.0)
@@ -879,7 +885,9 @@ class AIManagerTask:
                 # Prune stale entries
                 if len(self._emergency_closed_symbols) > 50:
                     cutoff = now_mono - 60.0
-                    self._emergency_closed_symbols = {k: v for k, v in self._emergency_closed_symbols.items() if v > cutoff}
+                    stale = [k for k, v in self._emergency_closed_symbols.items() if v <= cutoff]
+                    for k in stale:
+                        del self._emergency_closed_symbols[k]
                 # Clear reference equity so it re-initializes from the NEXT WS wallet
                 # update (which reflects post-close balance). Using current buffer value
                 # would be stale (pre-close) and could re-trigger after cooldown.

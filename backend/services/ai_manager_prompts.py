@@ -254,6 +254,8 @@ def build_context_prompt(
     if episodic_memory:
         parts.append("\nRecent decisions:")
         for mem in episodic_memory[:10]:
+            if not isinstance(mem, dict):
+                continue
             action = sanitize_for_injection(str(mem.get("action", "")), max_len=20)
             symbol = sanitize_for_injection(str(mem.get("symbol", "")), max_len=50)
             outcome = mem.get("outcome_label", "unknown")
@@ -263,6 +265,8 @@ def build_context_prompt(
     if patterns:
         parts.append("\nLearned patterns:")
         for pat in patterns[:5]:
+            if not isinstance(pat, dict):
+                continue
             desc = sanitize_for_injection(str(pat.get("description", "")), max_len=_MAX_FIELD_LEN)
             parts.append(f"  [{pat.get('type', '')}] {desc}")
 
@@ -272,8 +276,12 @@ def build_context_prompt(
     if mtf:
         parts.append(f"\nMulti-TF: alignment={mtf.get('trend_alignment')}, dominant={mtf.get('dominant_trend')}, strength={mtf.get('trend_strength')}")
         if mtf.get("key_levels"):
-            levels_str = ", ".join(f"{l['type']}@{l['price']}({l['timeframe']})" for l in mtf["key_levels"][:5])
-            parts.append(f"Key levels: {levels_str}")
+            levels_str = ", ".join(
+                f"{l.get('type', '?')}@{l.get('price', '?')}({l.get('timeframe', '?')})"
+                for l in mtf["key_levels"][:5] if isinstance(l, dict)
+            )
+            if levels_str:
+                parts.append(f"Key levels: {levels_str}")
 
     if orderbook:
         parts.append(f"\nOrderbook: imbalance={orderbook.get('imbalance_ratio')}, spread={orderbook.get('spread_bps')}bps, depth_ratio={orderbook.get('depth_ratio')}")
