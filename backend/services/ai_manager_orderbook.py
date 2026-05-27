@@ -43,8 +43,11 @@ class SweepDetector:
         if now - self._last_update < 5.0 and self._avg_volume_30s > 0:
             return
         self._last_update = now
-        cutoff = now - _VOLUME_WINDOW_S
-        recent = [t for t in self._trades if t.get("time", 0) > cutoff * 1000]
+        if not self._trades:
+            return
+        latest_ts = self._trades[-1].get("time", 0)
+        cutoff_ms = latest_ts - int(_VOLUME_WINDOW_S * 1000)
+        recent = [t for t in self._trades if t.get("time", 0) > cutoff_ms]
         if recent:
             self._avg_volume_30s = sum(float(t.get("size", 0)) for t in recent) / max(1, len(recent))
 

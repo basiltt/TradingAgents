@@ -663,12 +663,18 @@ class AIManagerRepository:
             account_id, portfolio_heat, json.dumps(matrix), json.dumps(clusters), position_count,
         )
 
+    _SWEEP_EVENT_COLUMNS = frozenset({
+        "symbol", "event_type", "confidence", "direction",
+        "swept_level", "original_sl", "defense_action", "outcome", "duration_ms",
+    })
+
     async def insert_sweep_event(self, account_id: str, **kwargs) -> None:
         detail = kwargs.pop("detail", None)
-        cols = ["account_id"] + list(kwargs.keys())
+        filtered = {k: v for k, v in kwargs.items() if k in self._SWEEP_EVENT_COLUMNS}
+        cols = ["account_id"] + list(filtered.keys())
         if detail is not None:
             cols.append("detail")
-        vals = [account_id] + list(kwargs.values())
+        vals = [account_id] + list(filtered.values())
         if detail is not None:
             vals.append(json.dumps(detail))
         placeholders = ", ".join(f"${i+1}" for i in range(len(vals)))

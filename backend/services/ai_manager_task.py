@@ -244,6 +244,7 @@ class AIManagerTask:
     async def _run(self) -> None:
         try:
             await self._init_ws_buffer_from_exchange()
+            await self._restore_sweep_state()
             self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
             while not self._cancel_event.is_set():
@@ -315,6 +316,9 @@ class AIManagerTask:
         # Emergency fast-path before LLM evaluation
         if await self._check_emergency_close():
             return
+
+        # Sweep defense lifecycle: check timeouts, detect new sweeps, handle recovery
+        await self._process_sweep_lifecycle()
 
         await self._evaluate()
 
@@ -432,8 +436,6 @@ class AIManagerTask:
         # Sweep block check
         if symbol in self._sweep_blocked_symbols:
             logger.info("Sweep block prevented execution for %s", symbol)
-            return
-            logger.info("dry_run: would execute %s %s for %s", action_type, symbol, self._account_id)
             return
 
         # Config gates
@@ -1050,6 +1052,40 @@ class AIManagerTask:
     # ─────────────────────────────────────────────────────────────────────────
     # Sweep defense helpers
     # ─────────────────────────────────────────────────────────────────────────
+
+    async def _process_sweep_lifecycle(self) -> None:
+        """Run sweep defense checks each monitoring cycle."""
+        if not self._config.sweep_defense_enabled:
+            return
+        try:
+            # 1. Check timeouts on active defenses
+            for symbol in list(self._sweep_state.keys()):
+                if self._sweep_state.get(symbol) == "DEFENDING":
+                    await self._check_sweep_timeout(symbol)
+
+            # 2. Check for new sweeps and resolved defenses
+            positions = self._ws_buffer.get("positions") or []
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                if not symbol:
+                    continue
+                monitor = self._orderbook_monitors.get(symbol)
+                if not monitor:
+                    continue
+
+                my_sl = float(pos.get("stopLoss", 0) or 0) or None
+                my_side = pos.get("side", "Buy")
+                current_price = float(pos.get("markPrice", 0) or 0)
+                _, sweep = monitor.get_snapshot(my_sl, my_side, current_price)
+
+                current_state = self._sweep_state.get(symbol, "INACTIVE")
+
+                if current_state == "INACTIVE" and sweep:
+                    await self._handle_sweep_detected(symbol, sweep, my_sl or 0.0)
+                elif current_state == "DEFENDING" and not sweep:
+                    await self._handle_sweep_resolved(symbol)
+        except Exception:
+            logger.warning("Sweep lifecycle error for %s", self._account_id, exc_info=True)
 
     async def _modify_stop_loss(self, symbol: str, new_sl: Optional[float], side: str = "") -> bool:
         try:
