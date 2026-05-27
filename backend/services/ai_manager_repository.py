@@ -39,6 +39,7 @@ class AIManagerRepository:
         "heartbeat_at", "counters_reset_at", "hourly_reset_at",
         "kill_switch_active", "strategy_version", "updated_at",
         "emergency_ref_equity", "emergency_cooldown_until", "emergency_closed_symbols",
+        "sweep_state",
     })
 
     async def upsert_state(self, account_id: str, **fields) -> Dict[str, Any]:

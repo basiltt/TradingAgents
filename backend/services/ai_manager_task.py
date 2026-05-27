@@ -151,6 +151,9 @@ class AIManagerTask:
 
     def reload_config(self, config: AIManagerConfig) -> None:
         self._config = config
+        self._correlation_analyzer = CorrelationAnalyzer(
+            correlation_threshold=config.correlation_threshold,
+        )
 
     def is_dead(self) -> bool:
         return self._task is not None and self._task.done()
