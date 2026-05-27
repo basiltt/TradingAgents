@@ -60,8 +60,15 @@ describe("aiManagerSlice reducer", () => {
     expect(next.error).toBeNull();
   });
 
-  it("onStateChange does nothing for unknown account", () => {
+  it("onStateChange creates stub for unknown enabled account", () => {
     const next = reducer(initialState, onStateChange({ account_id: "nope", state: "paused", enabled: true }));
+    expect(next.statusByAccount["nope"]).toBeDefined();
+    expect(next.statusByAccount["nope"]!.state).toBe("paused");
+    expect(next.statusByAccount["nope"]!.enabled).toBe(true);
+  });
+
+  it("onStateChange does nothing for unknown disabled account", () => {
+    const next = reducer(initialState, onStateChange({ account_id: "nope", state: "paused", enabled: false }));
     expect(next.statusByAccount["nope"]).toBeUndefined();
   });
 });

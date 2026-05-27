@@ -1,6 +1,6 @@
 import type { PerformanceAnalytics } from "@/api/client";
-import { motion } from "@/lib/motion";
-import { springs } from "@/lib/motion";
+import { motion } from "framer-motion";
+import { springs } from "@/lib/motion-constants";
 
 interface Props {
   analytics: PerformanceAnalytics;

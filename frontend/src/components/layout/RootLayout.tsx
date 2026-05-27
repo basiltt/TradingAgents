@@ -23,7 +23,7 @@ import { AppMarketBar } from "@/components/layout/AppMarketBar";
 import { MobileDock } from "@/components/layout/MobileDock";
 import { getActiveNavigation, navSections } from "@/components/layout/navigation";
 import { useAppDispatch, useAppSelector } from "@/store";
-import { motion, AnimatePresence } from "@/lib/motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });

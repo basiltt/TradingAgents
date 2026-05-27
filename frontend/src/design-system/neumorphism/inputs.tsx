@@ -1012,7 +1012,6 @@ export function NeuSwitch({
   label,
   description,
   disabled,
-  accent: _accent = "accent",
   className,
 }: {
   checked: boolean;

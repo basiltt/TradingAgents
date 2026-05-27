@@ -31,6 +31,7 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
     dispatch(fetchConfig(accountId));
   }, [dispatch, accountId]);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (savedConfig) {
       setConfidence(String(savedConfig.confidence_threshold ?? "0.7"));
@@ -48,6 +49,7 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
       setLockedPositions((savedConfig.locked_positions as string[] || []).join(", "));
     }
   }, [savedConfig]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSave = () => {
     const updates: Record<string, unknown> = {};

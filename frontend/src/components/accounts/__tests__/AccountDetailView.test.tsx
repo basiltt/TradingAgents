@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import accountsReducer from "@/store/accounts-slice";
+import aiManagerReducer from "@/store/ai-manager-slice";
 import { uiSlice } from "@/store/ui-slice";
 import { analysisSlice } from "@/store/analysis-slice";
 import { AccountDetailView } from "../AccountDetailView";
@@ -26,7 +27,7 @@ import { accountsApi } from "@/api/client";
 
 function createStore() {
   return configureStore({
-    reducer: { accounts: accountsReducer, ui: uiSlice.reducer, analysis: analysisSlice.reducer },
+    reducer: { accounts: accountsReducer, aiManager: aiManagerReducer, ui: uiSlice.reducer, analysis: analysisSlice.reducer },
   });
 }
 
