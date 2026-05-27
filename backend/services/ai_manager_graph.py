@@ -101,7 +101,6 @@ def _route_after_risk(state: Dict[str, Any]) -> str:
 
 async def preflight_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Check positions exist and detect cold-start. Circuit breaker/budget/kill checked by caller."""
-    config = state.get("config", {})
     positions = (state.get("ws_snapshot", {}).get("positions")) or []
 
     if not positions:
@@ -334,7 +333,6 @@ async def risk_validation_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     config = state.get("config", {})
     symbol = state.get("symbol", "")
-    action = state.get("action", "HOLD")
 
     # Locked positions filter
     locked = config.get("locked_positions", [])

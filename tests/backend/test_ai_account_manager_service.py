@@ -30,6 +30,7 @@ def mock_repo():
     repo.insert_failed_outcome = AsyncMock()
     repo.mark_resolved = AsyncMock()
     repo.increment_retry = AsyncMock()
+    repo.insert_log = AsyncMock()
     return repo
 
 
@@ -71,6 +72,8 @@ async def test_enable_idempotent(service, mock_repo):
     with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
         mock_task_inst = MagicMock()
         mock_task_inst.start = MagicMock()
+        mock_task_inst.is_dead = MagicMock(return_value=False)
+        mock_task_inst._config = AIManagerConfig()
         MockTask.return_value = mock_task_inst
 
         await service.enable("acc-1", AIManagerConfig())
@@ -275,6 +278,7 @@ async def test_enable_reloads_config_on_auto_enabled_change(service, mock_repo):
     mock_task = MagicMock()
     mock_task._config = MagicMock()
     mock_task._config.auto_enabled = True
+    mock_task.is_dead = MagicMock(return_value=False)
     service._tasks["acc-1"] = mock_task
 
     from backend.ai_manager_schemas import AIManagerConfig

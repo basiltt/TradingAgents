@@ -378,7 +378,6 @@ class ScannerService:
             self._scans[scan_id] = scan
 
         if self._db:
-            import json as _json
             await self._db.insert_scan(
                 {"scan_id": scan_id, "status": "running", "config": _json.dumps(config), "started_at": now,
                  "schedule_id": schedule_id, "triggered_by": triggered_by},
@@ -477,7 +476,6 @@ class ScannerService:
                 continue
             scan_id = db_scan["scan_id"]
             try:
-                import json as _json
                 config = _json.loads(db_scan.get("config", "{}"))
             except Exception:
                 config = {}
@@ -588,7 +586,6 @@ class ScannerService:
         }
 
     def _serialize_db(self, scan: Dict[str, Any]) -> Dict[str, Any]:
-        import json as _json
         config = scan.get("config", {})
         if isinstance(config, str):
             try:
@@ -806,7 +803,6 @@ class ScannerService:
                     scan["auto_trade_summaries"] = executor.get_summaries()
 
         if self._db:
-            import json as _json
             async with self._lock:
                 scan_data = self._scans.get(scan_id, {})
                 auto_results = list(scan_data.get("auto_trade_results", []))

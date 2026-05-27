@@ -22,6 +22,7 @@ class AccountWSManager:
         self._frontend_queues: Set[asyncio.Queue] = set()
         self._wallet_listeners: list = []
         self._lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         async with self._lock:
@@ -110,7 +111,9 @@ class AccountWSManager:
     async def _notify_wallet_listeners(self, account_id: str, wallet_data: dict[str, Any]) -> None:
         for listener in self._wallet_listeners:
             try:
-                asyncio.create_task(self._run_wallet_listener(listener, account_id, wallet_data))
+                task = asyncio.create_task(self._run_wallet_listener(listener, account_id, wallet_data))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             except Exception:
                 logger.exception("Failed to schedule wallet listener for account %s", account_id)
 

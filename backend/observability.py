@@ -10,7 +10,9 @@ Provides ASGI middleware for:
 
 from __future__ import annotations
 
+import json as _json
 import logging
+import re as _re
 import time
 import uuid
 from collections import defaultdict
@@ -25,8 +27,6 @@ class StructuredFormatter(logging.Formatter):
     """JSON log formatter with correlation ID and standard fields."""
 
     def format(self, record: logging.LogRecord) -> str:
-        import json as _json
-
         cid = correlation_id.get("")
         entry: dict[str, Any] = {
             "ts": self.formatTime(record),
@@ -106,9 +106,8 @@ metrics = _Metrics()
 
 def _normalize_path(path: str) -> str:
     """Collapse path parameters to avoid cardinality explosion."""
-    import re
-    path = re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "/{id}", path)
-    path = re.sub(r"/\d+", "/{id}", path)
+    path = _re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "/{id}", path)
+    path = _re.sub(r"/\d+", "/{id}", path)
     return path
 
 

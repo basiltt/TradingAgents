@@ -120,7 +120,10 @@ async def get_account(request: Request, account_id: str):
 async def update_account(request: Request, account_id: str):
     """Update account label or active status."""
     _validate_account_id(account_id)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
     try:
         req = UpdateAccountRequest(**body)
     except ValidationError as e:

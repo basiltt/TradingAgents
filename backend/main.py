@@ -39,7 +39,10 @@ def _validated_int(name: str, default: int, min_val: int, max_val: int) -> int:
     raw = os.environ.get(name)
     if raw is None:
         return default
-    val = int(raw)
+    try:
+        val = int(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw!r} is not a valid integer")
     if not (min_val <= val <= max_val):
         raise ValueError(f"{name}={val} out of range [{min_val}, {max_val}]")
     return val
