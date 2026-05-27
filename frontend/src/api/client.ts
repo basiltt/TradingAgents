@@ -1348,34 +1348,45 @@ export const tradesApi = {
     ),
 };
 
+/** API methods for the AI autonomous trading manager (per-account lifecycle + global kill). */
 export const aiManagerApi = {
+  /** Enables autonomous trading for the given account. */
   enable: (accountId: string) =>
     mutate<{ status: string; account_id: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/enable`),
 
+  /** Disables autonomous trading, preserving config for later re-enable. */
   disable: (accountId: string) =>
     mutate<{ status: string; account_id: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/disable`),
 
+  /** Fetches current runtime status (state machine, budget, circuit breaker, positions). */
   getStatus: (accountId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/status`, undefined, signal),
 
+  /** Fetches the full configuration (risk params, schedule, symbol filters). */
   getConfig: (accountId: string, signal?: AbortSignal) =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, undefined, signal),
 
+  /** Partially updates configuration — only provided keys are changed. */
   patchConfig: (accountId: string, updates: Record<string, unknown>) =>
     mutate<{ status: string }>("PATCH", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/config`, updates),
 
+  /** Pauses the AI manager without disabling — retains state for fast resume. */
   pause: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/pause`),
 
+  /** Resumes a paused AI manager back to monitoring. */
   resume: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/resume`),
 
+  /** Activates the kill switch — immediately halts all trading for this account. */
   kill: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/kill`),
 
+  /** Resets the kill switch, allowing the AI manager to trade again. */
   resetKill: (accountId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/kill/reset`),
 
+  /** Fetches paginated trading decisions with cursor-based pagination. */
   getDecisions: (accountId: string, params?: { limit?: number; cursor?: string }) => {
     const sp = new URLSearchParams();
     if (params?.limit) sp.set("limit", String(params.limit));
@@ -1386,9 +1397,11 @@ export const aiManagerApi = {
     );
   },
 
+  /** Fetches aggregated performance metrics for a given time period. */
   getPerformance: (accountId: string, period = "7d") =>
     request<Record<string, unknown>>(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/performance?period=${encodeURIComponent(period)}`),
 
+  /** Fetches paginated structured logs with optional level/category filters. */
   getLogs: (accountId: string, params?: { limit?: number; level?: string; category?: string; cursor?: number }) => {
     const sp = new URLSearchParams();
     if (params?.limit) sp.set("limit", String(params.limit));
@@ -1401,6 +1414,7 @@ export const aiManagerApi = {
     );
   },
 
+  /** Activates the global kill switch across ALL accounts — emergency stop. */
   globalKill: () =>
     mutate<{ status: string }>("POST", "/api/v1/ai-manager/global-kill"),
 };

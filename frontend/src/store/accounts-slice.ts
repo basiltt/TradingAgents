@@ -9,6 +9,7 @@ import { createSlice } from "@reduxjs/toolkit";
 import type { PayloadAction } from "@reduxjs/toolkit";
 import type { DashboardCard, TradingAccount } from "@/api/client";
 
+/** Trend direction for real-time equity/PnL change indicators. "neutral" means unchanged or unparseable. */
 export type Direction = "up" | "down" | "neutral";
 
 const DEFAULT_POLLING_INTERVAL_MS = 30_000;

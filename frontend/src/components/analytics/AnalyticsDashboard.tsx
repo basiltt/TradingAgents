@@ -1,3 +1,12 @@
+/**
+ * @module AnalyticsDashboard
+ * @description Full-page analytics dashboard showing equity curve, drawdown profile,
+ * daily PnL bar chart, monthly PnL heat-grid, and performance KPI cards. Supports
+ * portfolio-level aggregation or single-account drill-down, with configurable
+ * timeframe periods and account-type filters. Filter state is persisted to
+ * localStorage. Can be rendered standalone or embedded inside AccountDetailView.
+ */
+
 import { useEffect, useState, useCallback, useRef } from "react";
 import { accountsApi, type DailySnapshot, type PerformanceAnalytics, type DashboardCard } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -38,11 +47,36 @@ function saveFilters(filters: { accountType: AccountType; period: Period; select
   localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
 }
 
+/** Props for {@link AnalyticsDashboard}. */
 interface Props {
+  /** When provided, locks the dashboard to this account; hides the account selector. */
   accountId?: string;
+  /** When `true`, renders without the standalone page header (for embedding inside another view). */
   embedded?: boolean;
 }
 
+/**
+ * Renders the analytics dashboard for either a single account or the full portfolio.
+ *
+ * In standalone mode the component shows a `PageHeader`, an account/type selector, and
+ * a period picker whose state is persisted to `localStorage`. In embedded mode (inside
+ * `AccountDetailView`) the header and account selector are hidden and the `accountId`
+ * prop pins the data scope.
+ *
+ * Data is fetched via `accountsApi.getSnapshots` / `getPortfolioSnapshots` and
+ * `getAnalytics` / `getPortfolioAnalytics`. All in-flight requests are cancelled on
+ * re-fetch or unmount via `AbortController`.
+ *
+ * @param props - See {@link Props}.
+ * @returns Chart widgets, KPI cards, and optional tooling dialogs, or loading/error states.
+ *
+ * @example
+ * // Full-page standalone usage
+ * <AnalyticsDashboard />
+ *
+ * // Embedded inside a detail view
+ * <AnalyticsDashboard accountId="acc_abc123" embedded />
+ */
 export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
   const [snapshots, setSnapshots] = useState<DailySnapshot[]>([]);
   const [analytics, setAnalytics] = useState<PerformanceAnalytics | null>(null);

@@ -1,3 +1,11 @@
+/**
+ * @module AccountDetailView
+ * @description Detail panel for a single trading account. Displays KPI cards (equity,
+ * balance, available margin, unrealised PnL), a tabbed interface for wallet info,
+ * open positions/orders, PnL history, analytics charts, and the AI Monitor panel.
+ * Includes dialogs for updating API credentials and deleting the account.
+ */
+
 import { useEffect, useRef, useState, type JSX } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { accountsApi, type WalletBalance, type Position, type OpenOrder, type PnlSummary } from "@/api/client";
@@ -24,10 +32,29 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/** Props for {@link AccountDetailView}. */
 interface AccountDetailViewProps {
+  /** The unique identifier of the account to display. */
   accountId: string;
 }
 
+/**
+ * Renders the full detail view for a single trading account.
+ *
+ * Fetches wallet balances, open positions, open orders, and a 7-day PnL summary
+ * concurrently on mount. Dispatches `fetchAIManagerStatus` so the AI Monitor tab
+ * reflects the current manager state immediately. Provides tabbed navigation across
+ * Wallet, Positions, Orders, PnL, Analytics, and AI Monitor panels, plus dialogs
+ * for credential rotation and account deletion.
+ *
+ * @param props - See {@link AccountDetailViewProps}.
+ * @returns The account detail panel, a loading skeleton, or an error state.
+ *
+ * @example
+ * ```tsx
+ * <AccountDetailView accountId="acc_abc123" />
+ * ```
+ */
 export function AccountDetailView({ accountId }: AccountDetailViewProps) {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();

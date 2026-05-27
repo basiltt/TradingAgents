@@ -1,3 +1,14 @@
+/**
+ * @module CycleDetailPage
+ *
+ * Detail view for a single trading cycle identified by its numeric ID.
+ * Displays execution parameters, lifecycle timestamps, PnL, and a full
+ * per-trade ledger.  Active cycles auto-refresh every 5 seconds via
+ * TanStack Query's `refetchInterval`.
+ *
+ * A confirmation dialog guards the destructive "Stop Cycle" action to prevent
+ * accidental cancellation of running trade batches.
+ */
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -37,6 +48,15 @@ const TRADE_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructiv
   cancelled: "outline",
 };
 
+/**
+ * Highlighted metric card used in the cycle detail sidebar.
+ *
+ * @param props.label - Short metric name shown as an uppercase eyebrow label.
+ * @param props.value - Primary value rendered prominently.
+ * @param props.tone - Color scheme variant. Defaults to `"neutral"`.
+ * @param props.helper - Optional secondary caption rendered below the value.
+ * @returns A surface-lifted card JSX element.
+ */
 function StatCard({ label, value, tone = "neutral", helper }: { label: string; value: string; tone?: "accent" | "success" | "warning" | "danger" | "neutral"; helper?: string }) {
   const toneClass = {
     accent: "page-header-stat text-primary",
@@ -57,6 +77,13 @@ function StatCard({ label, value, tone = "neutral", helper }: { label: string; v
   );
 }
 
+/**
+ * Two-line label/value cell used in the execution parameters grid.
+ *
+ * @param props.label - Field name shown as a small eyebrow label.
+ * @param props.value - Field value rendered in bold below the label.
+ * @returns A bordered detail cell JSX element.
+ */
 function DetailCell({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[calc(var(--radius)*1.1)] border border-border/55 bg-card/55 p-3.5 shadow-[var(--shadow-soft)]">
@@ -66,6 +93,24 @@ function DetailCell({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Page component that renders the full detail view of a single trading cycle.
+ *
+ * Responsibilities:
+ * - Loads cycle data from `GET /cycles/:id` via {@link cyclesApi.get}.
+ * - Auto-polls every 5 s while the cycle status is active; stops polling once terminal.
+ * - Renders a PageHeader with live status, trade counts, and PnL stats.
+ * - Shows execution configuration parameters in a detail grid.
+ * - Renders a responsive trade ledger (table on ≥sm, cards on mobile).
+ * - Provides a "Stop Cycle" button guarded by a confirmation dialog for active cycles.
+ *
+ * @param props.cycleId - String representation of the numeric cycle ID, supplied by the router.
+ * @returns The cycle detail page JSX element, or loading/error states.
+ *
+ * @example
+ * // Rendered by the router at /cycles/:cycleId
+ * <CycleDetailPage cycleId="42" />
+ */
 export function CycleDetailPage({ cycleId }: { cycleId: string }) {
   const id = Number(cycleId);
   const queryClient = useQueryClient();

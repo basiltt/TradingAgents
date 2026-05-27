@@ -1,34 +1,68 @@
+/**
+ * WebSocket hook for real-time analysis run updates.
+ *
+ * Connects to `/ws/v1/analysis/:runId`, handles heartbeats, reconnection
+ * with exponential backoff, and visibility-change recovery. Streams progress,
+ * agent status, messages, stats, and report chunks into React Query cache.
+ *
+ * @module hooks/useAnalysisWebSocket
+ */
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch } from "@/store";
 import { updateRunStatus } from "@/store/analysis-slice";
 
+// AI-CONTEXT: Reconnection caps prevent infinite retry loops on permanent failures.
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY = 1000;
 const MAX_DELAY = 30000;
+// AI-CONTEXT: Ring-buffer cap — prevents memory growth on long-running analyses.
 const MAX_MESSAGES = 500;
 
+/** Accumulated real-time state from the WebSocket stream, stored in React Query cache. */
 export interface WsState {
+  /** Map of agent name → status string ("in_progress", "completed", "failed"). */
   agents: Record<string, string>;
+  /** Map of report section ID → accumulated markdown content. */
   reports: Record<string, string>;
+  /** Ordered message log. `sender` is agent name, `seq` is server-assigned sequence number. */
   messages: Array<{ sender: string; content: string; seq: number }>;
+  /** Cumulative token/call usage stats, null until first stats event. */
   stats: { tokens_in: number; tokens_out: number; llm_calls: number; tool_calls: number } | null;
+  /** Current phase and detail string, null until first progress event. */
   progress: { phase: string; detail: string } | null;
 }
 
+/** Returns a fresh empty WsState — factory function ensures each query cache entry gets an independent object. */
 export function emptyWsState(): WsState {
   return { agents: {}, reports: {}, messages: [], stats: null, progress: null };
 }
 
+// AI-CONTEXT: Derives WS URL from page origin so it works behind any reverse proxy
+// without explicit hostname config. Protocol mirrors HTTP→WS (https→wss, http→ws).
 function getWsUrl(runId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws/v1/analysis/${encodeURIComponent(runId)}`;
 }
 
+/**
+ * WebSocket connection lifecycle state.
+ * - "connecting": initial connection attempt in flight
+ * - "connected": socket open, receiving messages
+ * - "reconnecting": temporarily lost, will retry with exponential backoff
+ * - "disconnected": permanently closed (terminal run state or max retries exceeded)
+ */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
 
+// AI-CONTEXT: Minimum display time prevents agent status flickering when
+// "in_progress" and "completed" arrive within the same frame.
 const MIN_IN_PROGRESS_MS = 1500;
 
+/**
+ * Manages a WebSocket connection to the analysis run stream.
+ * @param runId - The analysis run ID to subscribe to.
+ * @returns Connection status and reconnection attempt count.
+ */
 export function useAnalysisWebSocket(runId: string) {
   const dispatch = useAppDispatch();
   const queryClient = useQueryClient();
@@ -251,6 +285,8 @@ export function useAnalysisWebSocket(runId: string) {
       if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
+      // AI-CONTEXT: Non-retriable close codes — 1000=normal, 4400=bad request,
+      // 4403=forbidden, 4404=run not found, 1008=policy violation, 1009=too large.
       const NON_RETRIABLE = [1000, 4400, 4403, 4404, 1008, 1009];
       if (NON_RETRIABLE.includes(ev.code)) {
         setStatus("disconnected");

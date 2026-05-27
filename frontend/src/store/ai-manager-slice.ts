@@ -1,7 +1,17 @@
+/**
+ * Redux slice managing AI trading manager state per brokerage account.
+ *
+ * Stores status, config, decisions, performance metrics, and logs for each
+ * account's autonomous trading agent. Real-time WebSocket events update
+ * state via `onStateChange` and `onExecution` reducers.
+ *
+ * @module store/ai-manager-slice
+ */
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import type { PayloadAction } from "@reduxjs/toolkit";
 import { aiManagerApi } from "@/api/client";
 
+/** Runtime status snapshot of an AI manager instance for one account. */
 export interface AIManagerStatus {
   enabled: boolean;
   state: string;
@@ -37,6 +47,7 @@ export interface AIManagerStatus {
   current_equity?: number | null;
 }
 
+/** A single trading decision made by the AI manager, including outcome tracking. */
 export interface AIManagerDecision {
   id: number;
   timestamp: string;
@@ -49,6 +60,7 @@ export interface AIManagerDecision {
   outcome_label: string | null;
 }
 
+/** Aggregated win/loss performance metrics over a configurable time period. */
 export interface AIManagerPerformance {
   period: string;
   total_decisions: number;
@@ -61,6 +73,7 @@ export interface AIManagerPerformance {
   profit_factor: number;
 }
 
+/** Structured log entry from the AI manager's runtime logging system. */
 export interface AIManagerLog {
   id: number;
   timestamp: string;
@@ -82,9 +95,15 @@ interface AIManagerState {
   error: string | null;
 }
 
+// AI-CONTEXT: Cap collections to prevent unbounded memory growth in long-running sessions.
+// Decisions arrive via polling; logs via polling with cursor. Both append-only.
 const MAX_DECISIONS = 500;
 const MAX_LOGS = 1000;
 
+/**
+ * Creates a default AIManagerStatus with sensible zero-state values.
+ * Used when a WebSocket event references an account before the full status fetch completes.
+ */
 function createDefaultStatus(overrides?: Partial<AIManagerStatus>): AIManagerStatus {
   return {
     enabled: true,
@@ -111,6 +130,7 @@ const initialState: AIManagerState = {
   error: null,
 };
 
+/** Enables the AI manager for the given account via the backend API. */
 export const enableAIManager = createAsyncThunk(
   "aiManager/enable",
   async (accountId: string) => {
@@ -119,6 +139,7 @@ export const enableAIManager = createAsyncThunk(
   },
 );
 
+/** Disables the AI manager, halting all autonomous trading for the account. */
 export const disableAIManager = createAsyncThunk(
   "aiManager/disable",
   async (accountId: string) => {
@@ -127,6 +148,7 @@ export const disableAIManager = createAsyncThunk(
   },
 );
 
+/** Fetches the current AI manager status for an account. Returns null on 404 (not configured). */
 export const fetchAIManagerStatus = createAsyncThunk(
   "aiManager/fetchStatus",
   async (accountId: string) => {
@@ -142,6 +164,7 @@ export const fetchAIManagerStatus = createAsyncThunk(
   },
 );
 
+/** Patches AI manager configuration (risk params, schedule, etc.) for an account. */
 export const patchAIManagerConfig = createAsyncThunk(
   "aiManager/patchConfig",
   async ({ accountId, updates }: { accountId: string; updates: Record<string, unknown> }) => {
@@ -150,6 +173,7 @@ export const patchAIManagerConfig = createAsyncThunk(
   },
 );
 
+/** Fetches the full AI manager configuration for an account. Returns null on 404. */
 export const fetchConfig = createAsyncThunk(
   "aiManager/fetchConfig",
   async (accountId: string) => {
@@ -165,6 +189,7 @@ export const fetchConfig = createAsyncThunk(
   },
 );
 
+/** Pauses the AI manager — it stops analyzing but retains state for resume. */
 export const pauseAIManager = createAsyncThunk(
   "aiManager/pause",
   async (accountId: string) => {
@@ -173,6 +198,7 @@ export const pauseAIManager = createAsyncThunk(
   },
 );
 
+/** Resumes a paused AI manager, transitioning back to monitoring state. */
 export const resumeAIManager = createAsyncThunk(
   "aiManager/resume",
   async (accountId: string) => {
@@ -181,6 +207,7 @@ export const resumeAIManager = createAsyncThunk(
   },
 );
 
+/** Activates the kill switch for a single account — immediately halts all trading. */
 export const killAIManager = createAsyncThunk(
   "aiManager/kill",
   async (accountId: string) => {
@@ -189,6 +216,7 @@ export const killAIManager = createAsyncThunk(
   },
 );
 
+/** Resets the kill switch, allowing the AI manager to resume normal operations. */
 export const resetKillSwitch = createAsyncThunk(
   "aiManager/resetKill",
   async (accountId: string) => {
@@ -197,6 +225,7 @@ export const resetKillSwitch = createAsyncThunk(
   },
 );
 
+/** Fetches paginated trading decisions. Supports cursor-based pagination and append mode. */
 export const fetchDecisions = createAsyncThunk(
   "aiManager/fetchDecisions",
   async ({ accountId, limit = 50, cursor, append = false }: { accountId: string; limit?: number; cursor?: string | null; append?: boolean }) => {
@@ -205,6 +234,7 @@ export const fetchDecisions = createAsyncThunk(
   },
 );
 
+/** Fetches aggregated performance stats for the given time period (default "7d"). */
 export const fetchPerformance = createAsyncThunk(
   "aiManager/fetchPerformance",
   async ({ accountId, period = "7d" }: { accountId: string; period?: string }) => {
@@ -213,6 +243,7 @@ export const fetchPerformance = createAsyncThunk(
   },
 );
 
+/** Activates the global kill switch across ALL accounts. */
 export const globalKill = createAsyncThunk(
   "aiManager/globalKill",
   async () => {
@@ -220,6 +251,7 @@ export const globalKill = createAsyncThunk(
   },
 );
 
+/** Fetches paginated runtime logs with optional level/category filters. */
 export const fetchLogs = createAsyncThunk(
   "aiManager/fetchLogs",
   async ({ accountId, limit = 100, level, category, cursor, append = false }: {
@@ -234,6 +266,7 @@ const aiManagerSlice = createSlice({
   name: "aiManager",
   initialState,
   reducers: {
+    /** Handles FSM state-change events from WebSocket. Creates a stub entry for unknown-but-enabled accounts so UI reflects state before fetchStatus completes. Forces state to "sleeping" when enabled=false. */
     onStateChange(state, action: PayloadAction<{ account_id: string; state: string; enabled: boolean }>) {
       const { account_id, state: fsmState, enabled } = action.payload;
       const existing = state.statusByAccount[account_id];
@@ -247,6 +280,7 @@ const aiManagerSlice = createSlice({
         state.statusByAccount[account_id] = createDefaultStatus({ state: fsmState });
       }
     },
+    /** Increments actions_today and decrements budget on trade execution. No-ops for unknown accounts. Budget clamped to 0 minimum. */
     onExecution(state, action: PayloadAction<{ account_id: string; action: string; symbol: string; pnl: number }>) {
       const { account_id } = action.payload;
       const existing = state.statusByAccount[account_id];
@@ -255,6 +289,7 @@ const aiManagerSlice = createSlice({
         existing.budget_remaining.actions = Math.max(0, existing.budget_remaining.actions - 1);
       }
     },
+    /** Clears the slice-level error field after it has been displayed or handled. */
     clearError(state) {
       state.error = null;
     },

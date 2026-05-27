@@ -1,3 +1,11 @@
+/**
+ * @module AccountsDashboard
+ * @description Top-level accounts overview page. Fetches and polls the account
+ * dashboard cards, provides live/demo filtering, multi-column sortable grid, aggregate
+ * portfolio stats (equity, today PnL, margin, unrealised PnL), and bulk-action dialogs
+ * for master close-all positions and demo balance reset.
+ */
+
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { accountsApi } from "@/api/client";
 import type { MasterCloseAllResult, DemoResetBalanceResult, DashboardCard } from "@/api/client";
@@ -80,7 +88,24 @@ function sortAccounts(accounts: DashboardCard[], config: SortConfig): DashboardC
   });
 }
 
-/** Top-level accounts dashboard: fetches account cards, displays stats/filters, and renders AccountCard grid. */
+/**
+ * Top-level accounts overview dashboard.
+ *
+ * Fetches dashboard cards via `accountsApi.getDashboard` and keeps them live through
+ * `useAccountPolling`. Renders aggregate portfolio stats (total equity, today PnL,
+ * margin usage, unrealised PnL), a sortable/filterable grid of `AccountCard` tiles,
+ * and an `AddAccountDialog`. Includes bulk-action drawers for master close-all
+ * (live positions across all accounts) and demo-balance reset with real-time SSE
+ * progress streaming. Sort state is persisted to `localStorage`.
+ *
+ * @returns The accounts dashboard page.
+ *
+ * @example
+ * ```tsx
+ * // Rendered by the /accounts route
+ * <AccountsDashboard />
+ * ```
+ */
 export function AccountsDashboard() {
   const dispatch = useAppDispatch();
   const { dashboard, filterType, status, error } = useAppSelector((s) => s.accounts);
