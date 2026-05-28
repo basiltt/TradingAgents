@@ -132,6 +132,13 @@ class AIManagerTask:
             if loop.is_running():
                 t = loop.create_task(self._persist_and_emit_state())
                 self._track_task(t)
+                # Commentary loop management
+                if new_state == MONITORING and old_state != MONITORING:
+                    t2 = loop.create_task(self._start_commentary_loop())
+                    self._track_task(t2)
+                elif old_state == MONITORING and new_state != MONITORING:
+                    t2 = loop.create_task(self._stop_commentary_loop())
+                    self._track_task(t2)
         except RuntimeError:
             pass
 
@@ -388,9 +395,63 @@ class AIManagerTask:
                     return
 
                 state_dict = await self._build_graph_state()
+
+                # Dashboard enhancement: emit LLM started event
+                from uuid import uuid4
+                import time as _time
+                _eval_cycle_id = uuid4()
+                _call_id = uuid4()
+                _urgency = self._get_urgency()
+                await self._service.emit_event(self._account_id, "ai_manager.llm_started", {
+                    "account_id": self._account_id,
+                    "call_id": str(_call_id),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "urgency_tier": _urgency,
+                    "node_name": "action_generation",
+                })
+                _t0 = _time.perf_counter()
+
                 result = await asyncio.wait_for(
                     self._graph.ainvoke(state_dict), timeout=90.0
                 )
+
+                # Dashboard enhancement: emit LLM completed event + log
+                _latency_ms = int((_time.perf_counter() - _t0) * 1000)
+                _success = result is not None and "action" in result
+                await self._service.emit_event(self._account_id, "ai_manager.llm_call_complete", {
+                    "account_id": self._account_id,
+                    "call_id": str(_call_id),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "latency_ms": _latency_ms,
+                    "input_tokens": result.get("_input_tokens", 0) if result else 0,
+                    "output_tokens": result.get("_output_tokens", 0) if result else 0,
+                    "model": getattr(self._service, '_model_name', 'unknown'),
+                    "action_returned": result.get("action") if result else None,
+                    "confidence": result.get("confidence") if result else None,
+                    "reasoning_preview": result.get("reason", "")[:200] if result else None,
+                    "urgency_tier": _urgency,
+                    "attempt_number": 1,
+                    "success": _success,
+                })
+                if hasattr(self._service, '_llm_logger') and self._service._llm_logger:
+                    await self._service._llm_logger.log_call(
+                        account_id=self._account_id,
+                        call_id=_call_id,
+                        evaluation_cycle_id=_eval_cycle_id,
+                        node_name="action_generation",
+                        timestamp=datetime.now(timezone.utc),
+                        model=getattr(self._service, '_model_name', 'unknown'),
+                        input_tokens=result.get("_input_tokens", 0) if result else 0,
+                        output_tokens=result.get("_output_tokens", 0) if result else 0,
+                        latency_ms=_latency_ms,
+                        success=_success,
+                        urgency_tier=_urgency,
+                        action_returned=result.get("action") if result else None,
+                        confidence=result.get("confidence") if result else None,
+                        reasoning=result.get("reason") if result else None,
+                        attempt_number=1,
+                    )
+
                 asyncio.create_task(self._persist_enrichment_data(result))
         except RuntimeError as e:
             if "slot not available" in str(e).lower():
@@ -1424,3 +1485,165 @@ class AIManagerTask:
                 await self._service._repo.cleanup_old_data()
             except Exception:
                 logger.debug("Data cleanup failed, will retry next hour")
+
+    # --- Dashboard Enhancement: Commentary Loop (Task 1.9) ---
+
+    async def _start_commentary_loop(self) -> None:
+        if getattr(self, '_commentary_task', None) is not None:
+            return
+        self._commentary_task = asyncio.create_task(self._commentary_loop())
+
+    async def _stop_commentary_loop(self) -> None:
+        task = getattr(self, '_commentary_task', None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            self._commentary_task = None
+
+    async def _commentary_loop(self) -> None:
+        COMMENTARY_INTERVAL_S = 300
+        while True:
+            await asyncio.sleep(COMMENTARY_INTERVAL_S)
+            try:
+                await self._generate_commentary_once()
+            except Exception as e:
+                logger.warning("Commentary generation failed for %s: %s", self._account_id, e)
+
+    async def _generate_commentary_once(self) -> None:
+        from backend.services.ai_manager_commentary import compute_day_score, generate_template_commentary
+
+        context = self._get_analysis_context()
+        positions = self._get_live_positions()
+
+        score, label, justification = compute_day_score(
+            regime_label=context.get("regime", {}).get("label") if isinstance(context.get("regime"), dict) else context.get("regime"),
+            position_directions=[p.get("side", "") for p in positions],
+            unrealized_pnl_trend=self._compute_pnl_trend(),
+            urgency_history_1h=getattr(self, '_urgency_history_1h', []),
+            correlation_heat=context.get("correlation_heat"),
+        )
+
+        regime_label = context.get("regime", {}).get("label") if isinstance(context.get("regime"), dict) else context.get("regime")
+        summary = generate_template_commentary(
+            regime_label=regime_label,
+            session=context.get("session"),
+            positions=positions,
+            day_score=score,
+            day_score_label=label,
+        )
+
+        commentary_id = await self._service._repo.insert_commentary(
+            self._account_id, "template", regime_label or "unknown",
+            score, label, summary,
+            [p.get("symbol", "") for p in positions],
+        )
+
+        await self._service.emit_event(self._account_id, "ai_manager.market_commentary", {
+            "account_id": self._account_id,
+            "commentary_id": commentary_id,
+            "day_score": score,
+            "day_score_label": label,
+            "summary_text": summary,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "regime": regime_label,
+            "symbols_referenced": [p.get("symbol", "") for p in positions],
+        })
+
+    # --- Dashboard Enhancement: Attention Triggers (Task 1.10) ---
+
+    async def _check_attention_triggers(self, eval_result: dict, prev_urgency: str, curr_urgency: str) -> None:
+        if not hasattr(self, '_emitted_attention_ids'):
+            self._emitted_attention_ids: set = set()
+
+        items_to_emit: list[dict] = []
+        now = datetime.now(timezone.utc).isoformat()
+
+        if prev_urgency == "STANDARD" and curr_urgency == "FAST":
+            items_to_emit.append({
+                "id": f"urg-{self._account_id}-{int(time.time())}",
+                "severity": "warning",
+                "title": "Urgency Escalated to FAST",
+                "description": "Evaluation urgency increased — market conditions require faster response.",
+                "timestamp": now,
+                "source": "urgency_escalation",
+            })
+        elif curr_urgency == "EMERGENCY":
+            items_to_emit.append({
+                "id": f"emrg-{self._account_id}-{int(time.time())}",
+                "severity": "critical",
+                "title": "EMERGENCY Detected",
+                "description": "Emergency conditions triggered. Immediate protective action taken.",
+                "timestamp": now,
+                "source": "urgency_escalation",
+            })
+
+        for sweep in getattr(self, '_active_sweep_signals', []):
+            if sweep.get("confidence", 0) >= 0.5:
+                item_id = f"sweep-{sweep.get('symbol')}-{int(time.time())}"
+                if item_id not in self._emitted_attention_ids:
+                    items_to_emit.append({
+                        "id": item_id,
+                        "severity": "warning",
+                        "title": f"Sweep Detected: {sweep.get('symbol')}",
+                        "description": f"Stop-hunt sweep detected with {sweep['confidence']:.0%} confidence.",
+                        "timestamp": now,
+                        "source": "sweep_detection",
+                    })
+                    self._emitted_attention_ids.add(item_id)
+
+        budget_pct = self._get_token_budget_pct() if hasattr(self, '_get_token_budget_pct') else 0
+        if budget_pct > 80 and "budget_80" not in self._emitted_attention_ids:
+            items_to_emit.append({
+                "id": "budget_80",
+                "severity": "info",
+                "title": "Token Budget at 80%",
+                "description": "AI commentary frequency may reduce as budget approaches limit.",
+                "timestamp": now,
+                "source": "budget_warning",
+            })
+            self._emitted_attention_ids.add("budget_80")
+
+        if hasattr(self, '_prev_degradation_tier') and self._degradation_tier > self._prev_degradation_tier:
+            items_to_emit.append({
+                "id": f"degrad-{self._degradation_tier}-{int(time.time())}",
+                "severity": "warning",
+                "title": f"Degradation Tier Increased to {self._degradation_tier}",
+                "description": "Some AI capabilities are operating in reduced mode.",
+                "timestamp": now,
+                "source": "degradation",
+            })
+
+        for pos in self._get_live_positions():
+            if pos.get("drawdown_from_peak", 0) > 40:
+                item_id = f"dd-{pos.get('symbol', 'unknown')}-{int(time.time())}"
+                if item_id not in self._emitted_attention_ids:
+                    items_to_emit.append({
+                        "id": item_id,
+                        "severity": "critical",
+                        "title": f"High Drawdown: {pos.get('symbol', 'unknown')}",
+                        "description": "Position drawdown exceeds 40% from peak profit.",
+                        "timestamp": now,
+                        "source": "drawdown",
+                    })
+                    self._emitted_attention_ids.add(item_id)
+
+        for item in items_to_emit:
+            await self._service.emit_event(self._account_id, "ai_manager.attention_needed", {
+                "account_id": self._account_id,
+                "item": item,
+            })
+
+    # --- Dashboard Enhancement: Cleanup Scheduling (Task 1.12) ---
+
+    async def _daily_dashboard_cleanup(self) -> None:
+        try:
+            deleted_calls = await self._service._repo.cleanup_old_llm_calls(days=90)
+            deleted_commentary = await self._service._repo.cleanup_old_commentary(days=7)
+            if deleted_calls or deleted_commentary:
+                logger.info("Daily cleanup for %s: removed %d LLM calls, %d commentary entries",
+                            self._account_id, deleted_calls, deleted_commentary)
+        except Exception as e:
+            logger.warning("Daily dashboard cleanup failed for %s: %s", self._account_id, e)

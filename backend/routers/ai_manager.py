@@ -11,6 +11,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from backend.ai_manager_schemas import AIManagerConfigPatch
 from backend.rate_limit import check_rate_limit as _check_rate_limit
 from backend.routers._validators import validate_account_id as _validate_account_id
+from backend.schemas.ai_manager_dashboard import (
+    LLMCallEntry, LLMCallListResponse, CapabilitiesResponse,
+    MarketInsightResponse, AnalysisContextResponse, ErrorResponse,
+)
+from backend.services.ai_manager_capabilities_status import CapabilitiesStatusAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -263,3 +268,114 @@ async def global_kill(request: Request):
     svc = _get_service(request)
     await svc.global_kill()
     return {"status": "global_kill_activated"}
+
+
+# --- Dashboard Enhancement Endpoints ---
+
+
+@router.get(
+    "/accounts/{account_id}/ai-manager/llm-calls",
+    response_model=LLMCallListResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def get_llm_calls(
+    request: Request,
+    account_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+):
+    """Get paginated LLM call history for account."""
+    _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
+    svc = _get_service(request)
+    task = svc.get_task(account_id)
+    if task is None:
+        raise HTTPException(404, detail="Account not found or AI Manager not active")
+
+    cursor_ts, cursor_id = None, None
+    if cursor:
+        try:
+            parts = cursor.split("|")
+            cursor_ts, cursor_id = parts[0], int(parts[1])
+        except (ValueError, IndexError):
+            raise HTTPException(400, detail="Invalid cursor format")
+
+    calls, next_cursor = await svc._repo.get_llm_calls(
+        account_id, limit=limit, cursor_timestamp=cursor_ts, cursor_id=cursor_id
+    )
+    return LLMCallListResponse(
+        calls=[LLMCallEntry(**c) for c in calls],
+        next_cursor=next_cursor,
+    )
+
+
+@router.get(
+    "/accounts/{account_id}/ai-manager/capabilities-status",
+    response_model=CapabilitiesResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_capabilities_status(request: Request, account_id: str):
+    """Get current status of all AI Manager capabilities."""
+    _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
+    svc = _get_service(request)
+    task = svc.get_task(account_id)
+    if task is None:
+        raise HTTPException(404, detail="Account not found or AI Manager not active")
+
+    aggregator = CapabilitiesStatusAggregator(
+        config=task._config,
+        degradation_tier=task._degradation_tier,
+        task_state=task._get_dashboard_state(),
+        evaluation_interval_s=task._config.get("evaluation_interval_s", 60),
+        next_eval_at=task._next_eval_at,
+    )
+    return CapabilitiesResponse(**aggregator.get_response())
+
+
+@router.get(
+    "/accounts/{account_id}/ai-manager/market-insights",
+    response_model=MarketInsightResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_market_insights(request: Request, account_id: str):
+    """Get market insights including day score and latest commentary."""
+    _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
+    svc = _get_service(request)
+    task = svc.get_task(account_id)
+    if task is None:
+        raise HTTPException(404, detail="Account not found or AI Manager not active")
+
+    commentary = await svc._repo.get_latest_commentary(account_id)
+    context = task._get_analysis_context()
+
+    return MarketInsightResponse(
+        day_score=commentary.get("day_score") if commentary else None,
+        day_score_label=commentary.get("day_score_label") if commentary else None,
+        day_score_justification=context.get("day_score_justification"),
+        latest_commentary=commentary,
+        regime=context.get("regime"),
+        session=context.get("session"),
+        correlation_heat=context.get("correlation_heat"),
+        active_sweeps=context.get("active_sweeps", []),
+        positions_health=context.get("positions_health", []),
+    )
+
+
+@router.get(
+    "/accounts/{account_id}/ai-manager/analysis-context",
+    response_model=AnalysisContextResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_analysis_context(request: Request, account_id: str):
+    """Get current analysis enrichment context without triggering new analysis."""
+    _validate_account_id(account_id)
+    await _check_rate_limit(account_id)
+    svc = _get_service(request)
+    task = svc.get_task(account_id)
+    if task is None:
+        raise HTTPException(404, detail="Account not found or AI Manager not active")
+
+    context = task._get_analysis_context()
+    return AnalysisContextResponse(**context)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { useAppDispatch, useAppSelector } from "@/store";
 import {
   fetchAIManagerStatus,
@@ -6,6 +6,9 @@ import {
   fetchDecisions,
   fetchPerformance,
   fetchLogs,
+  fetchLLMCalls,
+  fetchCapabilities,
+  fetchInsights,
   enableAIManager,
   disableAIManager,
   pauseAIManager,
@@ -17,6 +20,12 @@ import type { RootState } from "@/store";
 import { NeuBadge } from "@/design-system/neumorphism/display";
 import { NeuButton } from "@/design-system/neumorphism/inputs";
 import { Shield, ShieldAlert, Zap, Calendar, Activity, ScrollText, TrendingUp, TrendingDown, Cpu, Clock } from "lucide-react";
+
+const LLMCallFeed = lazy(() => import("./ai-manager/LLMCallFeed"));
+const CapabilitiesGrid = lazy(() => import("./ai-manager/CapabilitiesGrid"));
+const MarketInsightsPanel = lazy(() => import("./ai-manager/MarketInsightsPanel"));
+const AttentionSection = lazy(() => import("./ai-manager/AttentionSection"));
+const SummarySection = lazy(() => import("./ai-manager/SummarySection"));
 
 interface AIMonitorPanelProps {
   accountId: string;
@@ -52,6 +61,9 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
     dispatch(fetchDecisions({ accountId, limit: 15 }));
     dispatch(fetchPerformance({ accountId, period: perfPeriod }));
     dispatch(fetchLogs({ accountId, limit: 50 }));
+    dispatch(fetchLLMCalls({ accountId, limit: 50 }));
+    dispatch(fetchCapabilities(accountId));
+    dispatch(fetchInsights(accountId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, accountId]);
 
@@ -881,6 +893,28 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
           </div>
         )}
       </div>
+
+      {/* Dashboard Enhancement Panels */}
+      <Suspense fallback={<div className="h-20 rounded-2xl animate-pulse bg-muted/10" />}>
+        <SummarySection accountId={accountId} />
+      </Suspense>
+
+      <Suspense fallback={<div className="h-20 rounded-2xl animate-pulse bg-muted/10" />}>
+        <AttentionSection accountId={accountId} />
+      </Suspense>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Suspense fallback={<div className="h-40 rounded-2xl animate-pulse bg-muted/10" />}>
+          <MarketInsightsPanel accountId={accountId} />
+        </Suspense>
+        <Suspense fallback={<div className="h-40 rounded-2xl animate-pulse bg-muted/10" />}>
+          <LLMCallFeed accountId={accountId} />
+        </Suspense>
+      </div>
+
+      <Suspense fallback={<div className="h-32 rounded-2xl animate-pulse bg-muted/10" />}>
+        <CapabilitiesGrid accountId={accountId} />
+      </Suspense>
     </div>
   );
 }
