@@ -150,26 +150,13 @@ function CountdownTimers({ targets }: { targets: Array<{ trigger_type: string; t
                 "w-3.5 h-3.5 shrink-0",
                 rule.expired ? "text-red-400" : urgent ? "text-red-400 animate-pulse" : warning ? "text-amber-400" : "text-sky-400",
               )} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-medium">{rule.label}</span>
-                  <span className={cn(
-                    "text-xs font-bold tabular-nums tracking-tight",
-                    rule.expired ? "text-red-400" : urgent ? "text-red-400" : warning ? "text-amber-400" : "text-foreground/90",
-                  )}>
-                    {rule.expired ? "Expired" : formatCountdown(rule.remainingMs)}
-                  </span>
-                </div>
-                <div className="h-[3px] w-full max-w-[80px] rounded-full bg-muted/30 overflow-hidden mt-0.5">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all duration-1000",
-                      rule.expired ? "bg-red-500" : urgent ? "bg-red-500" : warning ? "bg-amber-500" : "bg-sky-500",
-                    )}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              </div>
+              <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-medium">{rule.label}</span>
+              <span className={cn(
+                "text-xs font-bold tabular-nums tracking-tight",
+                rule.expired ? "text-red-400" : urgent ? "text-red-400" : warning ? "text-amber-400" : "text-foreground/90",
+              )}>
+                {rule.expired ? "Expired" : formatCountdown(rule.remainingMs)}
+              </span>
             </div>
           );
         })}
