@@ -134,6 +134,11 @@ class TestFactory:
     def test_unsupported_provider_raises(self):
         from tradingagents.llm_clients.factory import create_llm_client
         with pytest.raises(ValueError, match="Unsupported"):
+            create_llm_client("nonexistent", "model", use_litellm=False)
+
+    def test_unsupported_provider_raises_litellm(self):
+        from tradingagents.llm_clients.factory import create_llm_client
+        with pytest.raises(ValueError, match="Unsupported"):
             create_llm_client("nonexistent", "model")
 
     def test_anthropic_provider(self):
