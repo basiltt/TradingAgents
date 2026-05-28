@@ -116,6 +116,11 @@ def build_system_prompt(
         "- Use multi-indicator confluence: one signal alone is not enough.\n"
         f"- Risk sensitivity: {risk_params['loss_sensitivity']:.1f}x (higher = more cautious).\n"
         f"- Confidence adjustment: {risk_params['confidence_boost']:+.2f}.\n"
+        "\n## Focus Symbol Guidance:\n"
+        "When a FOCUS symbol is specified, that position triggered this evaluation.\n"
+        "Analyze it with priority. Only override to act on a different symbol if that other\n"
+        "position faces imminent risk (>40% drawdown from peak, extreme PnL velocity, or\n"
+        "clear trend reversal with multiple confirming signals). Explain why if you override.\n"
     )
 
     if daily_profit_target_pct:
@@ -159,6 +164,8 @@ def build_context_prompt(
     correlation: Optional[Dict[str, Any]] = None,
     sweep: Optional[Dict[str, Any]] = None,
     trigger_reason: Optional[str] = None,
+    trigger_symbol: Optional[str] = None,
+    queue_remaining: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """Build user context prompt with all available data."""
     regime = validate_regime(regime)
@@ -166,8 +173,14 @@ def build_context_prompt(
 
     parts = []
 
-    # Evaluation trigger context
-    if trigger_reason and trigger_reason != "scheduled":
+    # Evaluation trigger context — focus symbol guidance
+    if trigger_symbol:
+        reason_text = sanitize_for_injection(trigger_reason or "event", max_len=200)
+        parts.append(f"FOCUS SYMBOL: {sanitize_for_injection(trigger_symbol, max_len=50)} (trigger: {reason_text})")
+        if queue_remaining:
+            queue_items = [f"{sanitize_for_injection(q.get('symbol',''), max_len=20)} ({sanitize_for_injection(q.get('reason',''), max_len=80)})" for q in queue_remaining[:4]]
+            parts.append(f"Pending queue: {', '.join(queue_items)}")
+    elif trigger_reason and trigger_reason != "scheduled":
         parts.append(f"Evaluation triggered by: {sanitize_for_injection(trigger_reason, max_len=200)}")
 
     # Market context

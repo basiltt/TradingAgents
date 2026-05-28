@@ -59,6 +59,8 @@ class AIManagerTask:
         compiled_graph: Pre-compiled LangGraph StateGraph for decision inference.
     """
 
+    _MAX_DRAIN_DEPTH = 3  # Max consecutive rapid evals per trigger batch
+
     def __init__(
         self,
         account_id: str,
@@ -110,6 +112,10 @@ class AIManagerTask:
         )
         self._event_trigger_fired = asyncio.Event()
         self._last_trigger_reason: Optional[str] = None
+        self._trigger_queue: list = []  # [(priority, symbol, reason)]
+        self._trigger_symbol: Optional[str] = None
+        self._rapid_cycle_handle = None  # asyncio.TimerHandle for queue drain debounce
+        self._drain_count: int = 0  # Track consecutive rapid evals in one drain cycle
         # Dashboard enhancement attributes
         self._commentary_task: Optional[asyncio.Task] = None
         self._degradation_tier: int = 0
@@ -182,6 +188,9 @@ class AIManagerTask:
     def cancel(self) -> None:
         """Signal cancellation and terminate the run loop task."""
         self._cancel_event.set()
+        if self._rapid_cycle_handle:
+            self._rapid_cycle_handle.cancel()
+            self._rapid_cycle_handle = None
         if self._task and not self._task.done():
             self._task.cancel()
 
@@ -235,6 +244,13 @@ class AIManagerTask:
         self._event_trigger._last_eval_time = old_eval_time
         self._event_trigger._last_trigger_time = old_trigger_time
         self._event_trigger._min_trigger_interval_s = old_min_interval
+        # Clear queue state on reload — stale queue entries from old config are unreliable
+        if self._rapid_cycle_handle:
+            self._rapid_cycle_handle.cancel()
+            self._rapid_cycle_handle = None
+        self._trigger_queue.clear()
+        self._trigger_symbol = None
+        self._drain_count = 0
 
     def is_dead(self) -> bool:
         """Return True if the run loop task has completed (normally or via exception)."""
@@ -280,6 +296,7 @@ class AIManagerTask:
             # Fire trigger immediately so first position gets evaluated without waiting for safety net
             if self._config.event_driven_enabled:
                 self._last_trigger_reason = "position_opened"
+                self._trigger_symbol = data.get("symbol") if event_type == "position_update" else None
                 self._event_trigger_fired.set()
 
         # Wake monitoring cycle when all positions close so it can transition to SLEEPING
@@ -311,14 +328,23 @@ class AIManagerTask:
                 positions = self._ws_buffer.get("positions") or []
                 indicators = self._get_cached_indicators()
                 peak_pnl = self._ws_buffer.get("_peak_pnl") or {}
-                triggered, reason = self._event_trigger.check_triggers(
+                all_triggers = self._event_trigger.check_all_triggers(
                     positions, indicators, peak_pnl
                 )
-                if triggered:
-                    self._last_trigger_reason = reason
+                if all_triggers:
+                    # Build priority queue: [(priority, symbol, reason)]
+                    self._trigger_queue = [(prio, sym, reason) for sym, reason, prio in all_triggers]
+                    # Pop the highest priority as current focus
+                    top = self._trigger_queue.pop(0)
+                    self._trigger_symbol = top[1]
+                    self._last_trigger_reason = top[2]
+                    self._drain_count = 0  # Fresh batch — reset drain counter
                     self._event_trigger.mark_triggered()
                     self._event_trigger_fired.set()
-                    self._log.info("Event trigger fired: %s", reason)
+                    self._log.info(
+                        "Event trigger fired: %s (queue: %d more)",
+                        top[2], len(self._trigger_queue),
+                    )
             except Exception:
                 self._log.exception("Event trigger check failed")
 
@@ -471,6 +497,13 @@ class AIManagerTask:
 
         # Emergency fast-path before LLM evaluation
         if await self._check_emergency_close():
+            # Emergency closed positions — clear queue of potentially stale entries
+            self._trigger_queue.clear()
+            self._trigger_symbol = None
+            self._last_trigger_reason = None
+            if self._rapid_cycle_handle:
+                self._rapid_cycle_handle.cancel()
+                self._rapid_cycle_handle = None
             return
 
         # Sweep defense lifecycle: check timeouts, detect new sweeps, handle recovery
@@ -637,10 +670,62 @@ class AIManagerTask:
         positions = self._ws_buffer.get("positions") or []
         regime = regime_from_result or self._get_cached_regime()
         indicators = self._get_cached_indicators()
-        self._event_trigger.mark_evaluated(positions, regime, indicators)
-        self._event_trigger._min_trigger_interval_s = 15.0  # Restore normal debounce after successful eval
-        self._event_trigger_fired.clear()
-        self._last_trigger_reason = None
+
+        # Drain trigger queue: if more symbols need attention, schedule rapid re-eval
+        # Filter stale entries (positions that closed while queued)
+        open_symbols = {p.get("symbol") for p in positions if p.get("symbol")}
+        self._trigger_queue = [item for item in self._trigger_queue if item[1] in open_symbols]
+
+        # Cap rapid drain depth to prevent unbounded token consumption in volatile markets
+        self._drain_count += 1
+        can_drain = self._drain_count < self._MAX_DRAIN_DEPTH
+
+        if can_drain and self._trigger_queue and self._has_open_positions(self._ws_buffer):
+            # Mid-drain: only update baseline for the symbol just evaluated (not all)
+            # This preserves trigger sensitivity for remaining queued and unqueued positions
+            evaluated_sym = self._trigger_symbol
+            if evaluated_sym:
+                for pos in positions:
+                    if pos.get("symbol") == evaluated_sym:
+                        try:
+                            mp = float(pos.get("markPrice", pos.get("mark_price", 0)))
+                            if mp > 0:
+                                self._event_trigger._last_eval_prices[evaluated_sym] = mp
+                        except (ValueError, TypeError):
+                            pass
+                        break
+
+            top = self._trigger_queue.pop(0)
+            self._trigger_symbol = top[1]
+            self._last_trigger_reason = top[2]
+            self._event_trigger._min_trigger_interval_s = self._config.event_rapid_cycle_debounce_s
+            # Schedule next eval after rapid debounce; store handle for cancellation
+            try:
+                loop = asyncio.get_running_loop()
+                self._rapid_cycle_handle = loop.call_later(
+                    self._config.event_rapid_cycle_debounce_s,
+                    self._event_trigger_fired.set,
+                )
+            except RuntimeError:
+                self._event_trigger_fired.set()
+            self._log.info(
+                "Queue drain: next focus %s (%s), %d remaining (drain %d/%d)",
+                top[1], top[2], len(self._trigger_queue),
+                self._drain_count, self._MAX_DRAIN_DEPTH,
+            )
+        else:
+            # Queue empty or drain depth reached — full baseline reset
+            self._event_trigger.mark_evaluated(positions, regime, indicators)
+            if self._trigger_queue and not can_drain:
+                self._log.info("Drain depth reached (%d), deferring %d queued symbols to next cycle",
+                               self._MAX_DRAIN_DEPTH, len(self._trigger_queue))
+            self._event_trigger._min_trigger_interval_s = 15.0
+            self._event_trigger_fired.clear()
+            self._last_trigger_reason = None
+            self._trigger_symbol = None
+            self._trigger_queue.clear()
+            self._drain_count = 0
+
         # Dashboard: sync degradation tier and eval timing
         self._prev_degradation_tier = self._degradation_tier
         self._degradation_tier = self._service._degradation.get_tier()
@@ -661,6 +746,11 @@ class AIManagerTask:
                 self.transition_to(SLEEPING)
         self._event_trigger_fired.clear()
         self._last_trigger_reason = None
+        self._trigger_symbol = None
+        self._trigger_queue.clear()
+        if self._rapid_cycle_handle:
+            self._rapid_cycle_handle.cancel()
+            self._rapid_cycle_handle = None
         # Suppress re-triggering for 60s since gates are closed.
         # Also advance _last_eval_time so staleness alarm (which bypasses debounce)
         # won't fire again until 60s from now.
@@ -1001,6 +1091,8 @@ class AIManagerTask:
             "sweep": sweep_data if self._config.sweep_defense_enabled else None,
             "_sweep_blocked_symbols": list(self._sweep_blocked_symbols),
             "trigger_reason": self._last_trigger_reason or "scheduled",
+            "trigger_symbol": self._trigger_symbol if self._config.event_driven_enabled else None,
+            "queue_remaining": [{"symbol": sym, "reason": reason} for _, sym, reason in self._trigger_queue[:4]] if self._config.event_driven_enabled else None,
         }
 
     def _get_urgency(self) -> str:

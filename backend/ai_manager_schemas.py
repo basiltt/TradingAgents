@@ -56,6 +56,7 @@ class AIManagerConfig(BaseModel):
     event_volume_anomaly_multiplier: float = Field(default=3.0, ge=2.0, le=10.0)
     staleness_alarm_s: int = Field(default=600, ge=300, le=1800)
     event_funding_rate_threshold: float = Field(default=0.0005, ge=0.0001, le=0.005)
+    event_rapid_cycle_debounce_s: float = Field(default=5.0, ge=2.0, le=15.0)
 
 
 class PositionAction(BaseModel):
@@ -149,3 +150,4 @@ class AIManagerConfigPatch(BaseModel):
     event_volume_anomaly_multiplier: Optional[float] = Field(default=None, ge=2.0, le=10.0)
     staleness_alarm_s: Optional[int] = Field(default=None, ge=300, le=1800)
     event_funding_rate_threshold: Optional[float] = Field(default=None, ge=0.0001, le=0.005)
+    event_rapid_cycle_debounce_s: Optional[float] = Field(default=None, ge=2.0, le=15.0)
