@@ -19,6 +19,7 @@ import { getModelOptions } from "@/lib/model-catalog";
 import { ConnBadge } from "@/components/ui/conn-badge";
 import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
 import { cn } from "@/lib/utils";
+import { exportSingle, exportAll, parseImportFile } from "./scheduled-scan-io";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
 import { NeuSwitch } from "@/design-system/neumorphism";
@@ -147,6 +148,7 @@ function ScheduleCard({
   onResume,
   onTrigger,
   onEdit,
+  onExport,
   onDelete,
   isPending,
 }: {
@@ -155,6 +157,7 @@ function ScheduleCard({
   onResume: () => void;
   onTrigger: () => void;
   onEdit: () => void;
+  onExport: () => void;
   onDelete: () => void;
   isPending: boolean;
 }) {
@@ -287,6 +290,16 @@ function ScheduleCard({
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+            <button
+              onClick={onExport}
+              className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-accent)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all cursor-pointer"
+              aria-label="Export"
+              title="Export"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
             </button>
             <button
@@ -524,6 +537,7 @@ export function ScheduledScansPage() {
               onResume={() => resumeMut.mutate(s.id)}
               onTrigger={() => triggerMut.mutate(s.id)}
               onEdit={() => openEdit(s.id)}
+              onExport={() => exportSingle(s)}
               onDelete={() => setDeleteConfirm(s.id)}
               isPending={pendingActionIds.has(s.id)}
             />
