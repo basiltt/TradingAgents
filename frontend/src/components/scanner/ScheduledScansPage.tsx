@@ -325,6 +325,8 @@ export function ScheduledScansPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [pendingActionIds, setPendingActionIds] = useState<Set<string>>(new Set());
+  const [toolbarMenuOpen, setToolbarMenuOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["scheduled-scans"],
@@ -398,6 +400,43 @@ export function ScheduledScansPage() {
     setDialogOpen(true);
   }
 
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    const text = await file.text();
+    const result = parseImportFile(text);
+
+    if (result.toImport.length === 0) {
+      toast.error("Import failed", { description: result.errors.join("; ") });
+      return;
+    }
+
+    let created = 0;
+    const failures: string[] = [...result.errors];
+
+    for (const scan of result.toImport) {
+      try {
+        await scheduledScansApi.create(scan);
+        created++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        failures.push(`"${scan.name}": ${msg}`);
+      }
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["scheduled-scans"] });
+
+    if (failures.length === 0) {
+      toast.success(`Imported ${created} of ${result.total} scans successfully`);
+    } else {
+      toast.warning(`Imported ${created} of ${result.total} scans`, {
+        description: failures.join("; "),
+      });
+    }
+  }
+
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -422,12 +461,52 @@ export function ScheduledScansPage() {
         title="Scheduled Scans"
         description=""
         actions={
-          <Button onClick={openCreate} className="shrink-0 gap-1.5">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New schedule
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setToolbarMenuOpen(!toolbarMenuOpen)}
+                className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:shadow-[var(--neu-shadow-raised-hover)] transition-all cursor-pointer"
+                aria-label="More actions"
+                title="More actions"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01" />
+                </svg>
+              </button>
+              {toolbarMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setToolbarMenuOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] shadow-lg py-1">
+                    <button
+                      onClick={() => { setToolbarMenuOpen(false); fileInputRef.current?.click(); }}
+                      className="w-full text-left px-4 py-2 text-sm text-[var(--neu-text-base)] hover:bg-[var(--neu-surface-muted)] flex items-center gap-2 cursor-pointer"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Import Scans
+                    </button>
+                    <button
+                      onClick={() => { setToolbarMenuOpen(false); exportAll(schedules); }}
+                      disabled={!schedules.length}
+                      className="w-full text-left px-4 py-2 text-sm text-[var(--neu-text-base)] hover:bg-[var(--neu-surface-muted)] flex items-center gap-2 disabled:opacity-40 cursor-pointer"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Export All Scans
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            <Button onClick={openCreate} className="shrink-0 gap-1.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New schedule
+            </Button>
+          </div>
         }
         stats={[
           { label: "Active", value: String(activeCount), tone: activeCount ? "success" : "neutral" },
@@ -440,6 +519,13 @@ export function ScheduledScansPage() {
           <Badge variant="outline">{cancelledCount} cancelled schedules</Badge>
         </div>
       </PageHeader>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={handleImport}
+      />
 
       {/* Stats bar */}
       {!isLoading && schedules.length > 0 && (
