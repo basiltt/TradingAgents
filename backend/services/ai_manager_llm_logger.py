@@ -82,6 +82,8 @@ class LLMCallBatchLogger:
         reasoning: str | None = None,
         attempt_number: int = 1,
     ) -> None:
+        if not self._running:
+            return
         entry = {
             'account_id': account_id,
             'call_id': call_id,

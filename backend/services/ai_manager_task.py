@@ -1718,6 +1718,7 @@ class AIManagerTask:
                     self._emitted_attention_ids.add(item_id)
 
         for item in items_to_emit:
+            item["dismissed"] = False
             await self._service.emit_event(self._account_id, "ai_manager.attention_needed", {
                 "account_id": self._account_id,
                 "item": item,
