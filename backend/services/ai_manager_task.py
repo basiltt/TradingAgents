@@ -21,7 +21,7 @@ from backend.services.ai_manager_mtf import MultiTimeframeAnalyzer
 from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_orderbook import OrderBookMonitor
 
-MAX_DAILY_TOKEN_BUDGET = 100_000
+MAX_DAILY_TOKEN_BUDGET = 20_000_000
 
 if TYPE_CHECKING:
     from backend.services.ai_account_manager_service import AIAccountManagerService
