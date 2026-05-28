@@ -338,7 +338,7 @@ export const fetchInsights = createAsyncThunk(
   "aiManager/fetchInsights",
   async (accountId: string) => {
     const data = await aiManagerApi.getInsights(accountId);
-    return { accountId, data: data as MarketInsight };
+    return { accountId, data: data as unknown as MarketInsight };
   },
 );
 
