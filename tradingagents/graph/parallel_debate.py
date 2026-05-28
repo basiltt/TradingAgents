@@ -23,10 +23,13 @@ logger = logging.getLogger(__name__)
 
 _MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
 _WORKERS_PER_ANALYSIS = int(os.environ.get("DEBATE_WORKERS_PER_ANALYSIS", "3"))
+# Pool must accommodate retries: an orphaned timed-out thread still holds its
+# slot while the retry runs in a new slot.  Factor of 2 covers worst case.
 _DEBATE_EXECUTOR_WORKERS = int(os.environ.get(
     "DEBATE_EXECUTOR_WORKERS",
-    str(_MAX_CONCURRENT * _WORKERS_PER_ANALYSIS),
+    str(_MAX_CONCURRENT * _WORKERS_PER_ANALYSIS * 2),
 ))
+_DEBATE_TIMEOUT = int(os.environ.get("DEBATE_TIMEOUT_SECONDS", "420"))
 _debate_executor: ThreadPoolExecutor | None = None
 _debate_lock = threading.Lock()
 _debate_shutting_down = False
@@ -133,6 +136,54 @@ def _merge_invest_debate_states(
     return debate
 
 
+def _run_with_retry(
+    callables: List[Callable],
+    state: Dict[str, Any],
+    label: str,
+) -> List[Any]:
+    """Run callables in parallel with a single retry for timed-out futures.
+
+    Returns ordered results matching the input callables list.
+    Cancellation is handled at the graph-stream level (analysis_service checks
+    cancel_event between stream chunks), not inside individual nodes.
+    """
+    executor = _get_debate_executor()
+    futures = [executor.submit(fn, copy.deepcopy(state)) for fn in callables]
+    done, not_done = futures_wait(futures, timeout=_DEBATE_TIMEOUT)
+
+    if not_done:
+        # cancel() only prevents queued futures from starting; already-running
+        # threads finish on their own but results are discarded.
+        for f in not_done:
+            f.cancel()
+
+        timed_out_indices = [i for i, f in enumerate(futures) if f in not_done]
+        logger.warning(
+            "%s: %d/%d futures timed out after %ds, retrying once",
+            label, len(not_done), len(callables), _DEBATE_TIMEOUT,
+        )
+        for i in timed_out_indices:
+            futures[i] = executor.submit(callables[i], copy.deepcopy(state))
+        retry_futures = [futures[i] for i in timed_out_indices]
+        _, retry_not_done = futures_wait(retry_futures, timeout=_DEBATE_TIMEOUT)
+        if retry_not_done:
+            for f in retry_not_done:
+                f.cancel()
+            raise RuntimeError(
+                f"{label}: {len(retry_not_done)}/{len(callables)} futures timed out after retry"
+            )
+
+    results = []
+    for i, future in enumerate(futures):
+        try:
+            results.append(future.result())
+        except Exception:
+            logger.exception("%s: future %d failed", label, i)
+            raise
+
+    return results
+
+
 def create_parallel_risk_round1(
     debater_nodes: List[Callable],
 ) -> Callable:
@@ -142,22 +193,7 @@ def create_parallel_risk_round1(
     aggressive/conservative/neutral) debates.
     """
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        ordered_futures = [_get_debate_executor().submit(fn, copy.deepcopy(state)) for fn in debater_nodes]
-        done, not_done = futures_wait(ordered_futures, timeout=300)
-        for f in not_done:
-            f.cancel()
-        if not_done:
-            raise RuntimeError(f"{len(not_done)}/{len(ordered_futures)} risk debate futures timed out")
-
-        results = []
-        for future in ordered_futures:
-            if future in done:
-                try:
-                    results.append(future.result())
-                except Exception:
-                    logger.exception("Parallel risk debater failed")
-                    raise
-
+        results = _run_with_retry(debater_nodes, state, "Risk debate R1")
         merged = _merge_risk_debate_states(state, results)
         return {"risk_debate_state": merged}
 
@@ -170,18 +206,10 @@ def create_parallel_researcher_round1(
 ) -> Callable:
     """Return a node that runs bull and bear researchers in parallel for round 1."""
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
-        bull_future = _get_debate_executor().submit(bull_researcher, copy.deepcopy(state))
-        bear_future = _get_debate_executor().submit(bear_researcher, copy.deepcopy(state))
-        done, not_done = futures_wait([bull_future, bear_future], timeout=300)
-        for f in not_done:
-            f.cancel()
-        if not_done:
-            raise RuntimeError(f"{len(not_done)}/2 researcher futures timed out")
-
-        bull_result = bull_future.result()
-        bear_result = bear_future.result()
-
-        merged = _merge_invest_debate_states(state, [bull_result, bear_result])
+        results = _run_with_retry(
+            [bull_researcher, bear_researcher], state, "Researcher debate R1"
+        )
+        merged = _merge_invest_debate_states(state, results)
         return {"investment_debate_state": merged}
 
     return node

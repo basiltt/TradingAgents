@@ -703,11 +703,21 @@ class AIAccountManagerService:
             state.get("circuit_breaker_active", False),
         )
 
+        # Fetch account label for per-account logging
+        account_label = ""
+        try:
+            acct = await self._accounts_service.get_account(account_id)
+            if acct:
+                account_label = acct.get("label", "")
+        except Exception:
+            pass
+
         task = AIManagerTask(
             account_id=account_id,
             service=self,
             config=config,
             compiled_graph=self._compiled_graph,
+            account_label=account_label,
         )
         task._restore_emergency_state(state)
         self._tasks[account_id] = task

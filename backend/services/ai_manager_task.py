@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import copy
 from datetime import datetime, timedelta, timezone
@@ -24,8 +25,6 @@ MAX_DAILY_TOKEN_BUDGET = 100_000
 
 if TYPE_CHECKING:
     from backend.services.ai_account_manager_service import AIAccountManagerService
-
-logger = logging.getLogger(__name__)
 
 # FSM states
 SLEEPING = "sleeping"
@@ -65,8 +64,12 @@ class AIManagerTask:
         service: "AIAccountManagerService",
         config: AIManagerConfig,
         compiled_graph,
+        account_label: str = "",
     ):
         self._account_id = account_id
+        self._account_label = account_label or account_id[:8]
+        safe_label = re.sub(r"[^a-zA-Z0-9_-]", "_", self._account_label)
+        self._log = logging.getLogger(f"ai_manager.{safe_label}")
         self._service = service
         self._config = config
         self._graph = compiled_graph
@@ -125,7 +128,7 @@ class AIManagerTask:
             return
         old_state = self._state
         self._state = new_state
-        logger.info("AI Manager task %s transitioning state: %s -> %s", self._account_id, old_state, new_state)
+        self._log.info("State transition: %s -> %s", old_state, new_state)
         self._log_async("info", "lifecycle", f"State transition: {old_state} → {new_state}")
         try:
             loop = asyncio.get_running_loop()
@@ -140,7 +143,7 @@ class AIManagerTask:
             if self._service and self._service._repo:
                 await self._service._repo.upsert_state(self._account_id, fsm_state=self._state)
         except Exception:
-            logger.warning("Failed to persist state transition to %s in DB for %s", self._state, self._account_id)
+            self._log.warning("Failed to persist state transition to %s in DB", self._state)
         try:
             if self._service:
                 await self._service.emit_event(self._account_id, "state_change", {
@@ -228,7 +231,7 @@ class AIManagerTask:
             try:
                 await self._check_emergency_close()
             except Exception:
-                logger.exception("Emergency close check failed for %s", self._account_id)
+                self._log.exception("Emergency close check failed")
 
     def _update_peak_pnl(self, symbol: str, position_data: dict) -> None:
         """Track per-position peak unrealized PnL for drawdown-from-peak detection."""
@@ -264,7 +267,7 @@ class AIManagerTask:
                 if symbol:
                     self._update_peak_pnl(symbol, pos)
 
-            logger.info("AI Manager task %s initialized state from exchange: %d position(s) found", self._account_id, len(positions))
+            self._log.info("Initialized state from exchange: %d position(s) found", len(positions))
             self._log_async("info", "lifecycle", f"Task started, {len(positions)} open position(s) found")
             
             # Transition to MONITORING if we have open positions on startup
@@ -272,7 +275,7 @@ class AIManagerTask:
                 self.transition_to(MONITORING)
                 self._wake_event.set()
         except Exception:
-            logger.exception("AI Manager task %s failed to initialize state from exchange", self._account_id)
+            self._log.exception("Failed to initialize state from exchange")
             self._log_async("error", "lifecycle", "Failed to initialize state from exchange")
 
     async def _run(self) -> None:
@@ -305,7 +308,7 @@ class AIManagerTask:
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception("AIManagerTask %s crashed", self._account_id)
+            self._log.exception("Task crashed")
             self.transition_to(ERROR)
             self._log_async("critical", "lifecycle", "Task crashed unexpectedly")
         finally:
@@ -383,7 +386,7 @@ class AIManagerTask:
                     self._account_id, 1000, MAX_DAILY_TOKEN_BUDGET
                 )
                 if not budget_ok:
-                    logger.warning("Token budget exhausted for %s", self._account_id)
+                    self._log.warning("Token budget exhausted")
                     self._transition_post_eval()
                     return
 
@@ -406,7 +409,7 @@ class AIManagerTask:
             self._transition_post_eval()
             return
         except Exception:
-            logger.exception("Graph evaluation failed for %s", self._account_id)
+            self._log.exception("Graph evaluation failed")
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
                 circuit_breaker.restart_cooldown(self._account_id)
@@ -460,7 +463,7 @@ class AIManagerTask:
                     self._account_id, circuit_breaker_half_open_used=False
                 )
         except Exception:
-            logger.warning("Failed to reset half_open_used for %s", self._account_id)
+            self._log.warning("Failed to reset half_open_used")
 
     async def _execute_action(self, result: Dict[str, Any]) -> None:
         action_type = result.get("action", "HOLD")
@@ -470,29 +473,29 @@ class AIManagerTask:
             return
 
         if action_type not in _ALLOWED_ACTIONS:
-            logger.warning("Rejected invalid action_type '%s' for %s", action_type, self._account_id)
+            self._log.warning("Rejected invalid action_type '%s'", action_type)
             return
 
         # Sweep block check
         if symbol in self._sweep_blocked_symbols:
-            logger.info("Sweep block prevented execution for %s", symbol)
+            self._log.info("Sweep block prevented execution for %s", symbol)
             return
 
         # Config gates
         if result.get("confidence", 0.0) < self._config.confidence_threshold:
-            logger.debug("Confidence too low for %s %s: %.2f < %.2f",
-                         self._account_id, symbol, result.get("confidence", 0.0), self._config.confidence_threshold)
+            self._log.debug("Confidence too low for %s: %.2f < %.2f",
+                         symbol, result.get("confidence", 0.0), self._config.confidence_threshold)
             return
         if symbol in self._config.excluded_symbols:
-            logger.debug("Symbol %s excluded for %s", symbol, self._account_id)
+            self._log.debug("Symbol %s excluded", symbol)
             return
         if symbol in self._config.locked_positions:
-            logger.debug("Symbol %s locked for %s", symbol, self._account_id)
+            self._log.debug("Symbol %s locked", symbol)
             return
 
         current_positions = [p for p in (self._ws_buffer.get("positions") or []) if p.get("symbol", "") == symbol]
         if not current_positions:
-            logger.debug("Symbol %s no longer in positions for %s", symbol, self._account_id)
+            self._log.debug("Symbol %s no longer in positions", symbol)
             return
         position = current_positions[0]
 
@@ -511,8 +514,8 @@ class AIManagerTask:
                 created_ms = int(position["createdTime"])
                 age_s = (time.time() * 1000 - created_ms) / 1000
                 if age_s < self._config.min_position_age_s:
-                    logger.debug("Position %s too young (%.0fs < %ds) for %s",
-                                 symbol, age_s, self._config.min_position_age_s, self._account_id)
+                    self._log.debug("Position %s too young (%.0fs < %ds)",
+                                 symbol, age_s, self._config.min_position_age_s)
                     return
             except (ValueError, TypeError):
                 pass
@@ -524,8 +527,8 @@ class AIManagerTask:
             try:
                 loss_pct = abs(float(upnl)) / float(equity) * 100 if equity and float(upnl) < 0 else 0
                 if loss_pct > self._config.max_single_decision_loss_pct:
-                    logger.warning("Single decision loss %.2f%% exceeds cap %.2f%% for %s %s",
-                                   loss_pct, self._config.max_single_decision_loss_pct, self._account_id, symbol)
+                    self._log.warning("Single decision loss %.2f%% exceeds cap %.2f%% for %s",
+                                   loss_pct, self._config.max_single_decision_loss_pct, symbol)
                     return
             except (TypeError, ValueError, ZeroDivisionError):
                 pass
@@ -545,7 +548,7 @@ class AIManagerTask:
         lock = self._service._lock_registry
         acquired = await lock.acquire(self._account_id, symbol, timeout=5.0)
         if not acquired:
-            logger.warning("Position lock unavailable: %s %s", self._account_id, symbol)
+            self._log.warning("Position lock unavailable for %s", symbol)
             return
 
         # Record cooldown only after lock acquired
@@ -562,13 +565,13 @@ class AIManagerTask:
                 return
 
             if not self._service._hmac_key:
-                logger.error("Cannot execute action without HMAC key for %s", self._account_id)
+                self._log.error("Cannot execute action without HMAC key")
                 return
 
             # Budget gate — must succeed before execution
             budget_ok = await self._service._repo.increment_actions_atomic(self._account_id)
             if not budget_ok:
-                logger.warning("Budget exhausted for %s, skipping action", self._account_id)
+                self._log.warning("Budget exhausted, skipping action")
                 self._log_async("warning", "budget", f"Action budget exhausted, skipping {action_type} on {symbol}", {"action": action_type, "symbol": symbol})
                 return
 
@@ -613,19 +616,19 @@ class AIManagerTask:
             }
 
         except Exception:
-            logger.exception("Execution failed for %s %s", self._account_id, symbol)
+            self._log.exception("Execution failed for %s", symbol)
             if decision_id is not None:
                 try:
                     await self._service._repo.insert_failed_outcome(
                         decision_id, decision_ts, {}, "execution_error"
                     )
                 except Exception:
-                    logger.exception("Failed to record dead-letter for %s", self._account_id)
+                    self._log.exception("Failed to record dead-letter")
             # Roll back budget since no exchange action was completed
             try:
                 await self._service._repo.decrement_actions_atomic(self._account_id)
             except Exception:
-                logger.exception("Failed to roll back budget for %s", self._account_id)
+                self._log.exception("Failed to roll back budget")
         finally:
             lock.release(self._account_id, symbol)
 
@@ -652,13 +655,13 @@ class AIManagerTask:
                         "status": "failed",
                     })
             except Exception:
-                logger.exception("Post-execution bookkeeping failed for %s %s", self._account_id, symbol)
+                self._log.exception("Post-execution bookkeeping failed for %s", symbol)
 
         if exec_result is not None and exec_result.get("status") == "closed":
             try:
                 await self._enforce_daily_limits(pnl)
             except Exception:
-                logger.critical("Daily limit enforcement failed for %s — pausing as fail-safe", self._account_id)
+                self._log.critical("Daily limit enforcement failed — pausing as fail-safe")
                 self.pause()
 
     async def _enforce_daily_limits(self, pnl: float) -> None:
@@ -672,9 +675,9 @@ class AIManagerTask:
             if equity_start and equity_start > 0:
                 loss_pct = (realized_loss / equity_start) * 100
                 if loss_pct >= self._config.max_daily_loss_pct:
-                    logger.warning(
-                        "Daily loss cap breached for %s: %.2f%% >= %.2f%%",
-                        self._account_id, loss_pct, self._config.max_daily_loss_pct,
+                    self._log.warning(
+                        "Daily loss cap breached: %.2f%% >= %.2f%%",
+                        loss_pct, self._config.max_daily_loss_pct,
                     )
                     self.pause()
                     return
@@ -682,9 +685,9 @@ class AIManagerTask:
                 unrealized_loss = self._get_unrealized_loss()
                 total_loss_pct = ((realized_loss + unrealized_loss) / equity_start) * 100
                 if total_loss_pct >= self._config.max_daily_loss_pct * 2:
-                    logger.critical(
-                        "Kill switch triggered for %s: total loss %.2f%%",
-                        self._account_id, total_loss_pct,
+                    self._log.critical(
+                        "Kill switch triggered: total loss %.2f%%",
+                        total_loss_pct,
                     )
                     await self._service._repo.set_kill_switch(self._account_id, True)
                     self.set_killed()
@@ -696,7 +699,7 @@ class AIManagerTask:
                 realized_profit = profit_data.get("realized_profit_today", 0.0)
                 target = self._config.daily_profit_target_pct * equity_start / 100
                 if realized_profit >= target:
-                    logger.info("Profit target reached for %s", self._account_id)
+                    self._log.info("Profit target reached")
                     self.transition_to(SLEEPING)
 
     async def _init_equity_at_day_start(self) -> Optional[float]:
@@ -727,7 +730,7 @@ class AIManagerTask:
                 if val < 0:
                     total += abs(val)
             except (TypeError, ValueError):
-                logger.warning("Malformed unrealisedPnl for %s: %r", self._account_id, upnl)
+                self._log.warning("Malformed unrealisedPnl: %r", upnl)
         return total
 
     async def _build_graph_state(self) -> Dict[str, Any]:
@@ -742,7 +745,7 @@ class AIManagerTask:
                     self._service._memory.get_decision_count(self._account_id),
                 )
         except Exception:
-            logger.warning("Memory fetch failed for %s", self._account_id)
+            self._log.warning("Memory fetch failed")
 
         # Daily P&L context for the LLM
         daily_realized_pnl = 0.0
@@ -764,6 +767,7 @@ class AIManagerTask:
 
         return {
             "account_id": self._account_id,
+            "_logger": self._log,
             "config": self._config.model_dump(),
             "ws_snapshot": copy.deepcopy(self._ws_buffer),
             "market_data": self._get_market_data(),
@@ -906,9 +910,9 @@ class AIManagerTask:
         if not close_symbols:
             return False
 
-        logger.warning(
-            "EMERGENCY_CLOSE triggered for %s: reason=%s, closing %d positions",
-            self._account_id, trigger_reason, len(close_symbols),
+        self._log.warning(
+            "EMERGENCY_CLOSE triggered: reason=%s, closing %d positions",
+            trigger_reason, len(close_symbols),
         )
 
         self._emergency_in_progress = True
@@ -964,15 +968,15 @@ class AIManagerTask:
                 timeout=30.0,
             )
             if close_result.get("skipped"):
-                logger.warning(
-                    "Emergency batch close SKIPPED for %s (concurrent close in progress), reason=%s",
-                    self._account_id, reason,
+                self._log.warning(
+                    "Emergency batch close SKIPPED (concurrent close in progress), reason=%s",
+                    reason,
                 )
                 return False
             closed = close_result.get("closed", 0)
-            logger.info(
-                "Emergency batch close completed for %s: closed=%d, reason=%s",
-                self._account_id, closed, reason,
+            self._log.info(
+                "Emergency batch close completed: closed=%d, reason=%s",
+                closed, reason,
             )
             self._log_async("critical", "emergency", f"Emergency close: {closed} position(s) closed. Reason: {reason}", {"symbols": symbols, "closed": closed, "reason": reason})
 
@@ -985,7 +989,7 @@ class AIManagerTask:
                 if pnl_val < 0:
                     await self._enforce_daily_limits(pnl_val)
             except Exception:
-                logger.warning("Daily limit tracking failed after emergency close for %s", self._account_id)
+                self._log.warning("Daily limit tracking failed after emergency close")
 
             # Emit execution event for frontend/WS listeners
             try:
@@ -1017,14 +1021,14 @@ class AIManagerTask:
                 )
             return True
         except Exception:
-            logger.exception("Emergency batch close FAILED for %s", self._account_id)
+            self._log.exception("Emergency batch close FAILED")
             return False
 
     async def _update_heartbeat(self) -> None:
         try:
             await self._service._repo.update_heartbeat(self._account_id)
         except Exception:
-            logger.warning("Heartbeat update failed for %s", self._account_id)
+            self._log.warning("Heartbeat update failed")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Emergency state persistence (survives restart)
@@ -1086,7 +1090,7 @@ class AIManagerTask:
                 emergency_closed_symbols=json.dumps(symbols_json),
             )
         except Exception:
-            logger.warning("Failed to persist emergency state for %s", self._account_id)
+            self._log.warning("Failed to persist emergency state")
 
     async def _persist_ref_equity(self, value: float) -> None:
         """Persist reference equity ratchet to DB (fire-and-forget)."""
@@ -1095,14 +1099,14 @@ class AIManagerTask:
                 self._account_id, emergency_ref_equity=value,
             )
         except Exception:
-            logger.warning("Failed to persist ref equity for %s", self._account_id, exc_info=True)
+            self._log.warning("Failed to persist ref equity", exc_info=True)
 
     async def _rollback_token_budget(self) -> None:
         """Roll back the 1000-token budget increment on LLM call failure."""
         try:
             await self._service._repo.decrement_token_budget_atomic(self._account_id, 1000)
         except Exception:
-            logger.warning("Failed to roll back token budget for %s", self._account_id, exc_info=True)
+            self._log.warning("Failed to roll back token budget", exc_info=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Sweep defense helpers
@@ -1143,7 +1147,7 @@ class AIManagerTask:
                 elif current_state == "DEFENDING" and not sweep:
                     await self._handle_sweep_resolved(symbol)
         except Exception:
-            logger.warning("Sweep lifecycle error for %s", self._account_id, exc_info=True)
+            self._log.warning("Sweep lifecycle error", exc_info=True)
 
     async def _modify_stop_loss(self, symbol: str, new_sl: Optional[float], side: str = "") -> bool:
         try:
@@ -1155,7 +1159,7 @@ class AIManagerTask:
             await client.set_trading_stop(symbol=symbol, stop_loss=sl_str, position_idx=pos_idx)
             return True
         except Exception:
-            logger.exception("Failed to modify SL for %s on %s", symbol, self._account_id)
+            self._log.exception("Failed to modify SL for %s", symbol)
             return False
 
     async def _restore_sweep_state(self) -> None:
@@ -1163,7 +1167,7 @@ class AIManagerTask:
         try:
             saved = await self._service._repo.get_sweep_state(self._account_id)
         except Exception:
-            logger.warning("Failed to load sweep state for %s", self._account_id)
+            self._log.warning("Failed to load sweep state")
             return
 
         now = time.time()
@@ -1177,13 +1181,13 @@ class AIManagerTask:
                     original_sl = data.get("original_sl")
                     if original_sl:
                         await self._modify_stop_loss(symbol, original_sl)
-                    logger.warning("Sweep defense expired during restart for %s, restored SL", symbol)
+                    self._log.warning("Sweep defense expired during restart for %s, restored SL", symbol)
                 else:
                     self._sweep_state[symbol] = state
                     self._sweep_original_sl[symbol] = data.get("original_sl", 0.0)
                     self._sweep_defense_started_at[symbol] = started
                     self._sweep_blocked_symbols.add(symbol)
-                    logger.info("Resumed sweep defense for %s", symbol)
+                    self._log.info("Resumed sweep defense for %s", symbol)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Enrichment data helpers for _build_graph_state
@@ -1203,7 +1207,7 @@ class AIManagerTask:
                 if klines and len(klines) >= 2:
                     return self._mtf_analyzer.compute_signal(sym, klines)
         except Exception:
-            logger.debug("MTF data fetch failed, skipping")
+            self._log.debug("MTF data fetch failed, skipping")
         return None
 
     def _get_correlation_data(self) -> Optional[Dict[str, Any]]:
@@ -1218,7 +1222,7 @@ class AIManagerTask:
             klines = {sym: {"1h": cache.get_klines(sym, "1h") or []} for sym in symbols}
             return self._correlation_analyzer.compute(positions, klines)
         except Exception:
-            logger.debug("Correlation data fetch failed, defaulting to zero heat")
+            self._log.debug("Correlation data fetch failed, defaulting to zero heat")
             return {"portfolio_heat": 0.0, "matrix": {}, "clusters": [], "max_correlated_exposure_pct": 0.0}
 
     def _get_orderbook_sweep_data(self):
@@ -1318,7 +1322,7 @@ class AIManagerTask:
                     spoofing_flags=orderbook.get("spoofing_flags", []),
                 )
         except Exception:
-            logger.debug("Failed to persist enrichment data for %s", account_id)
+            self._log.debug("Failed to persist enrichment data for %s", account_id)
 
     async def _persist_sweep_state(self) -> None:
         state_dict = {}
@@ -1332,7 +1336,7 @@ class AIManagerTask:
         try:
             await self._service._repo.update_sweep_state(self._account_id, state_dict)
         except Exception:
-            logger.warning("Failed to persist sweep state for %s", self._account_id)
+            self._log.warning("Failed to persist sweep state")
 
     async def _handle_sweep_detected(self, symbol: str, sweep: Dict[str, Any], current_sl: float) -> None:
         """Handle sweep detection → DETECTED → DEFENDING."""
@@ -1423,4 +1427,4 @@ class AIManagerTask:
             try:
                 await self._service._repo.cleanup_old_data()
             except Exception:
-                logger.debug("Data cleanup failed, will retry next hour")
+                self._log.debug("Data cleanup failed, will retry next hour")

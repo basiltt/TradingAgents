@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import threading
+import time
+from unittest.mock import patch
+
 import pytest
 
 from tradingagents.graph.parallel_debate import (
     create_parallel_risk_round1,
     create_parallel_researcher_round1,
+    _run_with_retry,
     reset_debate_executor,
 )
 
@@ -244,3 +248,53 @@ class TestParallelResearcherRound1:
         node = create_parallel_researcher_round1(bull, bear)
         result = node(_base_state())
         assert result["investment_debate_state"]["count"] == 2
+
+
+class TestRunWithRetry:
+    """Tests for the timeout-and-retry mechanism."""
+
+    def test_retry_succeeds_after_first_timeout(self):
+        call_count = [0]
+
+        def slow_then_fast(state):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                time.sleep(5)  # will exceed our patched timeout
+            return {"value": "ok"}
+
+        def fast(state):
+            return {"value": "fast"}
+
+        with patch("tradingagents.graph.parallel_debate._DEBATE_TIMEOUT", 1):
+            results = _run_with_retry([slow_then_fast, fast], {}, "test")
+
+        assert results[0] == {"value": "ok"}
+        assert results[1] == {"value": "fast"}
+        assert call_count[0] == 2  # first attempt + retry
+
+    def test_raises_after_retry_also_times_out(self):
+        def always_slow(state):
+            time.sleep(5)
+            return {"value": "never"}
+
+        def fast(state):
+            return {"value": "fast"}
+
+        with patch("tradingagents.graph.parallel_debate._DEBATE_TIMEOUT", 1):
+            with pytest.raises(RuntimeError, match="timed out after retry"):
+                _run_with_retry([always_slow, fast], {}, "test")
+
+    def test_no_retry_when_all_succeed(self):
+        call_counts = [0, 0]
+
+        def fn0(state):
+            call_counts[0] += 1
+            return {"value": 0}
+
+        def fn1(state):
+            call_counts[1] += 1
+            return {"value": 1}
+
+        results = _run_with_retry([fn0, fn1], {}, "test")
+        assert results == [{"value": 0}, {"value": 1}]
+        assert call_counts == [1, 1]

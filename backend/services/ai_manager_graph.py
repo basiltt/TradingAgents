@@ -28,6 +28,10 @@ from backend.services.ai_manager_prompts import (
 
 logger = logging.getLogger(__name__)
 
+
+def _get_log(state: Dict[str, Any]) -> logging.Logger:
+    return state.get("_logger") or logger
+
 # Valid actions the LLM can return
 _VALID_ACTIONS = frozenset(["HOLD", "FULL_CLOSE", "PARTIAL_CLOSE"])
 
@@ -170,7 +174,7 @@ async def context_enrichment_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         state.update(enrichment)
     except asyncio.TimeoutError:
-        logger.warning("Context enrichment timed out for %s", state.get("account_id"))
+        _get_log(state).warning("Context enrichment timed out")
         state["regime"] = "unavailable"
         state["session"] = "unknown"
         state["episodic_memory"] = state.get("episodic_memory", [])
@@ -197,7 +201,7 @@ async def _do_enrichment(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         regime_result = compute_regime(sym_indicators, mtf_data or {})
     except Exception:
-        logger.warning("Regime computation failed, defaulting to volatile")
+        _get_log(state).warning("Regime computation failed, defaulting to volatile")
         regime_result = {"regime": "volatile", "regime_detail": {"confidence": 0.0, "adx": 0, "atr_ratio": 1.0, "bbw_percentile": 0.5, "trend_alignment": 0.0, "ema_distance_pct": 0.0}}
 
     return {
@@ -264,9 +268,9 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 state["reason"] = sanitize_llm_output(state.get("reason", ""))
                 return state
         except asyncio.TimeoutError:
-            logger.warning("LLM timeout attempt %d for %s", attempt + 1, state.get("account_id"))
+            _get_log(state).warning("LLM timeout attempt %d", attempt + 1)
         except Exception:
-            logger.exception("LLM call failed attempt %d for %s", attempt + 1, state.get("account_id"))
+            _get_log(state).exception("LLM call failed attempt %d", attempt + 1)
 
     # Both attempts failed or malformed → HOLD
     state["action"] = "HOLD"
