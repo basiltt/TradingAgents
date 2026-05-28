@@ -327,7 +327,7 @@ async def get_capabilities_status(request: Request, account_id: str):
         config=task._config.model_dump(),
         degradation_tier=task._degradation_tier,
         task_state=task._get_dashboard_state(),
-        evaluation_interval_s=getattr(task._config, "evaluation_interval_s", 60),
+        evaluation_interval_s=task._config.safety_net_interval_s if task._config.event_driven_enabled else task._config.evaluation_interval_s,
         next_eval_at=task._next_eval_at,
     )
     return CapabilitiesResponse(**aggregator.get_response())

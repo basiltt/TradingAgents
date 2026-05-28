@@ -245,6 +245,7 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         orderbook=state.get("orderbook"),
         correlation=state.get("correlation"),
         sweep=state.get("sweep"),
+        trigger_reason=state.get("trigger_reason"),
     )
 
     # LLM call (injected via state for testability)

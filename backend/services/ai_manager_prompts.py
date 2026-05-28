@@ -158,12 +158,17 @@ def build_context_prompt(
     orderbook: Optional[Dict[str, Any]] = None,
     correlation: Optional[Dict[str, Any]] = None,
     sweep: Optional[Dict[str, Any]] = None,
+    trigger_reason: Optional[str] = None,
 ) -> str:
     """Build user context prompt with all available data."""
     regime = validate_regime(regime)
     session = validate_market_session(session)
 
     parts = []
+
+    # Evaluation trigger context
+    if trigger_reason and trigger_reason != "scheduled":
+        parts.append(f"Evaluation triggered by: {sanitize_for_injection(trigger_reason, max_len=200)}")
 
     # Market context
     parts.append(f"Market regime: {regime}")

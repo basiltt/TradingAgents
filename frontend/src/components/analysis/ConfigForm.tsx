@@ -211,12 +211,7 @@ export function ConfigForm() {
   const navigate = useNavigate();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const saved = useMemo(() => loadSettings(), []);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const isTest =
-    (typeof window !== "undefined" && ((window as any).__vitest_worker__ || (window as any).process?.env?.NODE_ENV === "test")) ||
-    (typeof globalThis !== "undefined" && ((globalThis as any).process?.env?.NODE_ENV === "test"));
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const [sectionOpen, setSectionOpen] = useState({ target: true, team: true, engine: true });
 
   const [showLLM, setShowLLM] = useState(!!(saved.llm_api_key || saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
   const [showWorkflow, setShowWorkflow] = useState(false);
@@ -251,8 +246,7 @@ export function ConfigForm() {
     control,
     setValue,
     watch,
-    trigger,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, submitCount },
   } = useForm<FormValues>({
     defaultValues: {
       asset_type: saved.asset_type || "stock",
@@ -401,6 +395,19 @@ export function ConfigForm() {
     }
   }, [deepOptions, quickOptions, watchedDeep, watchedQuick, setValue]);
 
+  useEffect(() => {
+    if (!submitCount) return;
+    if (errors.ticker || errors.analysis_date || errors.asset_type) {
+      setSectionOpen(s => ({ ...s, target: true }));
+    }
+    if (errors.analysts) {
+      setSectionOpen(s => ({ ...s, team: true }));
+    }
+    if (errors.provider || errors.deep_think_llm || errors.quick_think_llm) {
+      setSectionOpen(s => ({ ...s, engine: true }));
+    }
+  }, [submitCount, errors.ticker, errors.analysis_date, errors.asset_type, errors.analysts, errors.provider, errors.deep_think_llm, errors.quick_think_llm]);
+
   async function onSubmit(data: FormValues) {
     setSubmitError(null);
     try {
@@ -493,81 +500,26 @@ export function ConfigForm() {
         </div>
       </PageHeader>
 
-      {/* Progress Stepper */}
-      <div className="glass-card mb-2 sm:mb-5 flex w-full items-center justify-between gap-1 sm:gap-2 rounded-[calc(var(--radius)*1.3)] sm:rounded-[calc(var(--radius)*1.65)] border border-border/60 px-2.5 py-2 sm:px-5 sm:py-3">
-        {[
-          { stepNum: 1, title: "Target Asset" },
-          { stepNum: 2, title: "Analyst Team" },
-          { stepNum: 3, title: "Engine Setup" },
-        ].map((s, idx) => (
-          <div key={s.stepNum} className="flex items-center flex-1 last:flex-initial">
-            <button
-              type="button"
-              onClick={async () => {
-                if (s.stepNum < step) {
-                  setStep(s.stepNum as 1 | 2 | 3);
-                } else if (s.stepNum === 2 && step === 1) {
-                  const isValid = await trigger(["ticker", "analysis_date"]);
-                  if (isValid) setStep(2);
-                } else if (s.stepNum === 3 && step === 2) {
-                  const isValid1 = await trigger(["ticker", "analysis_date"]);
-                  const isValid2 = await trigger(["analysts"]);
-                  if (isValid1 && isValid2) setStep(3);
-                }
-              }}
-              className="flex flex-col items-center gap-2 focus:outline-none cursor-pointer group"
-            >
-              <div
-                className={cn(
-                  "flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-[calc(var(--radius)*1.1)] border font-bold text-xs transition-all duration-300",
-                  step === s.stepNum
-                    ? "bg-primary border-primary text-primary-foreground shadow-lg shadow-primary/20 scale-110"
-                    : step > s.stepNum
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500"
-                    : "bg-muted/30 border-border/50 text-muted-foreground group-hover:border-muted-foreground/50"
-                )}
-              >
-                {step > s.stepNum ? (
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  s.stepNum
-                )}
-              </div>
-              <span
-                className={cn(
-                  "text-[9px] font-black uppercase tracking-[0.24em] transition-all text-center",
-                  step === s.stepNum ? "text-foreground" : "text-muted-foreground"
-                )}
-              >
-                {s.title}
-              </span>
-            </button>
-            {idx < 2 && (
-              <div
-                className={cn(
-                  "mx-3 h-[2px] flex-1 rounded-full transition-all duration-500 sm:mx-4",
-                  step > s.stepNum ? "bg-emerald-500/30" : "bg-border/30"
-                )}
-              />
-            )}
-          </div>
-        ))}
-      </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3 sm:gap-5">
-        {/* Step 1: Target Asset */}
-        {(step === 1 || isTest) && (
-          <div className="glass-card border border-border/50 rounded-xl sm:rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in">
-            <div className="px-3 sm:px-5 pt-3 sm:pt-5 pb-2 sm:pb-3.5 border-b border-border/40">
-              <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-foreground">
-                <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                </svg>
-                Core Target Settings
-              </h2>
-            </div>
+        {/* Section 1: Target Asset */}
+        <div className="glass-card border border-border/50 rounded-xl sm:rounded-2xl shadow-sm overflow-hidden bg-card/65">
+          <button
+            type="button"
+            onClick={() => setSectionOpen(s => ({ ...s, target: !s.target }))}
+            className={`w-full px-3 sm:px-5 pt-3 sm:pt-5 pb-2 sm:pb-3.5 flex items-center justify-between cursor-pointer ${sectionOpen.target ? "border-b border-border/40" : ""}`}
+          >
+            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-foreground">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+              Core Target Settings
+            </h2>
+            <svg className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${sectionOpen.target ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {sectionOpen.target && (
             <div className="flex flex-col gap-3 sm:gap-5 p-3 sm:p-5">
               {/* Asset Type Toggle */}
               <div className="flex flex-col gap-2">
@@ -777,21 +729,26 @@ export function ConfigForm() {
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* Step 2: Analyst Team Config */}
-        {(step === 2 || isTest) && (
-          <div className="glass-card border border-border/50 rounded-2xl shadow-sm overflow-hidden bg-card/65 animate-fade-in p-5 space-y-5">
-            <div className="border-b border-border/40 pb-4">
-              <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
-                <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-3c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-3c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                Analyst Team Configuration
-              </h2>
-              <p className="text-xs text-muted-foreground mt-1 font-medium">Activate specific expert agents to include in this debate pipeline.</p>
-            </div>
+          )}
+        </div>
+        <div className="glass-card border border-border/50 rounded-xl sm:rounded-2xl shadow-sm overflow-hidden bg-card/65">
+          <button
+            type="button"
+            onClick={() => setSectionOpen(s => ({ ...s, team: !s.team }))}
+            className={`w-full px-3 sm:px-5 pt-3 sm:pt-5 pb-2 sm:pb-3.5 flex items-center justify-between cursor-pointer ${sectionOpen.team ? "border-b border-border/40" : ""}`}
+          >
+            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-foreground">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-3c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-3c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              Analyst Team Configuration
+            </h2>
+            <svg className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${sectionOpen.team ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {sectionOpen.team && (
+          <div className="p-3 sm:p-5 space-y-3 sm:space-y-5">
 
             {/* Analyst Check-Cards */}
             <div className="flex flex-col gap-3">
@@ -897,25 +854,31 @@ export function ConfigForm() {
                     </Select>
                   )}
                 />
-                <p className="text-[10px] text-muted-foreground font-medium pl-1">Final output delivery language (agent logs remain in English)</p>
               </div>
             </div>
           </div>
-        )}
+          )}
+        </div>
 
-        {/* Step 3: Engine Settings & Deploy */}
-        {(step === 3 || isTest) && (
-          <div className="space-y-6 animate-fade-in">
-            {/* LLM Options Panel */}
-            <div className="glass-card border border-border/50 rounded-2xl bg-card/65 p-5 space-y-4.5">
-              <div className="border-b border-border/40 pb-4">
-                <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
-                  <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                  </svg>
-                  Model & Engine Presets
-                </h2>
-              </div>
+        {/* Section 3: Engine Settings & Deploy */}
+        <div className="glass-card border border-border/50 rounded-xl sm:rounded-2xl shadow-sm overflow-hidden bg-card/65">
+          <button
+            type="button"
+            onClick={() => setSectionOpen(s => ({ ...s, engine: !s.engine }))}
+            className={`w-full px-3 sm:px-5 pt-3 sm:pt-5 pb-2 sm:pb-3.5 flex items-center justify-between cursor-pointer ${sectionOpen.engine ? "border-b border-border/40" : ""}`}
+          >
+            <h2 className="text-sm sm:text-base font-bold flex items-center gap-2 text-foreground">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              Model & Engine Presets
+            </h2>
+            <svg className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${sectionOpen.engine ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {sectionOpen.engine && (
+          <div className="p-3 sm:p-5 space-y-4 sm:space-y-6">
 
               {/* Provider */}
               <div className="flex flex-col gap-2">
@@ -992,7 +955,6 @@ export function ConfigForm() {
                   </p>
                 </div>
               </div>
-            </div>
 
             {/* Custom LLM API & Proxy Settings */}
             <div className="glass-card border border-border/50 rounded-2xl overflow-hidden bg-card/65">
@@ -1185,7 +1147,8 @@ export function ConfigForm() {
               </div>
             )}
           </div>
-        )}
+          )}
+        </div>
 
         {/* ── Submit Error ── */}
         {submitError && (
@@ -1197,68 +1160,38 @@ export function ConfigForm() {
           </div>
         )}
 
-        {/* Wizard Footer Controls */}
+        {/* Footer Controls */}
         <div className="flex gap-4 items-center justify-end mt-4">
-          {(step > 1 && !isTest) && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setStep((prev) => (prev - 1) as 1 | 2 | 3)}
-              className="px-5 h-10 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
-            >
-              Back
-            </Button>
-          )}
-          {(step < 3 && !isTest) ? (
-            <Button
-              type="button"
-              onClick={async () => {
-                if (step === 1) {
-                  const isValid = await trigger(["ticker", "analysis_date"]);
-                  if (isValid) setStep(2);
-                } else if (step === 2) {
-                  const isValid = await trigger(["analysts"]);
-                  if (isValid) setStep(3);
-                }
-              }}
-              className="flex-1 h-10 rounded-xl font-bold uppercase tracking-wider text-xs cursor-pointer active:scale-95 transition-all hover:scale-[1.01] shadow-lg shadow-primary/10"
-            >
-              Continue
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex-1 font-bold h-10 rounded-xl text-xs uppercase tracking-wider transition-all duration-300 hover:scale-[1.01] active:scale-[0.98] cursor-pointer shadow-lg shadow-primary/15 flex items-center justify-center gap-2"
-            >
-              {isSubmitting ? (
-                <>
-                  <svg className="w-4 h-4 animate-spin text-current" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Starting...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  Start Analysis Engine
-                </>
-              )}
-            </Button>
-          )}
-          {(step === 1 || isTest) && (
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 px-5 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
-              onClick={() => navigate({ to: "/" })}
-            >
-              Cancel
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 px-5 rounded-xl font-bold uppercase tracking-wider text-xs border-border/50 hover:bg-muted/10 cursor-pointer active:scale-95 transition-all"
+            onClick={() => navigate({ to: "/" })}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={isSubmitting}
+            className="flex-1 font-bold h-10 rounded-xl text-xs uppercase tracking-wider transition-all duration-300 hover:scale-[1.01] active:scale-[0.98] cursor-pointer shadow-lg shadow-primary/15 flex items-center justify-center gap-2"
+          >
+            {isSubmitting ? (
+              <>
+                <svg className="w-4 h-4 animate-spin text-current" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4} />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Starting...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Start Analysis Engine
+              </>
+            )}
+          </Button>
         </div>
       </form>
 

@@ -133,7 +133,10 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
         resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
-        return data["content"][0]["text"]
+        content = data.get("content") or []
+        if not content:
+            raise ValueError(f"Anthropic returned empty content array: stop_reason={data.get('stop_reason')}")
+        return content[0]["text"]
 
     return call_anthropic
 

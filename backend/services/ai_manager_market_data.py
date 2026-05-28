@@ -321,6 +321,15 @@ class MarketDataCache:
             if (ema_bullish and rsi_overbought) or (not ema_bullish and rsi_oversold):
                 indicators["conflicting"] = True
 
+        # Volume: last candle vs 20-candle average (for anomaly detection)
+        volumes = [c[5] for c in candles if len(c) > 5]
+        if volumes:
+            indicators["volume_last_candle"] = volumes[-1]
+            if len(volumes) >= 20:
+                indicators["volume_20_avg"] = sum(volumes[-20:]) / 20.0
+            elif len(volumes) >= 5:
+                indicators["volume_20_avg"] = sum(volumes) / len(volumes)
+
         return indicators
 
 

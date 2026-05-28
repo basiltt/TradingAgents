@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
 import { formatDuration } from "@/lib/format";
 import { apiClient, type AnalysisSnapshot } from "@/api/client";
@@ -134,6 +134,7 @@ function DurationBadge({ startedAt, completedAt, isTerminal }: { startedAt?: str
 }
 
 export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
+  const queryClient = useQueryClient();
   const { status, attempt } = useAnalysisWebSocket(runId);
   const { data: wsData } = useQuery<WsState>({
     queryKey: ["analysis", runId, "ws-state"],
@@ -210,6 +211,14 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
       ? (wsData?.progress?.phase ?? runDetails?.status ?? "running")
       : (runDetails?.status ?? "running");
 
+  const cancelMutation = useMutation({
+    mutationFn: () => apiClient.cancelAnalysis(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analysis", runId, "details"] });
+      queryClient.invalidateQueries({ queryKey: ["analyses"] });
+    },
+  });
+
   return (
     <div className="page-shell space-y-5 pb-8">
       <PageHeader
@@ -251,6 +260,27 @@ export function AnalysisDashboard({ runId }: AnalysisDashboardProps) {
               </svg>
               Back
             </button>
+            {runDetails && !isTerminal && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm("Cancel this analysis run?")) {
+                    cancelMutation.mutate();
+                  }
+                }}
+                disabled={cancelMutation.isPending}
+                className="touch-target inline-flex items-center justify-center rounded-[calc(var(--radius)*1.15)] border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-sm font-semibold text-amber-500 shadow-[var(--shadow-soft)] hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+                title="Cancel analysis"
+              >
+                <svg className="mr-2 size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                {cancelMutation.isPending ? "Cancelling..." : "Cancel"}
+              </button>
+            )}
+            {cancelMutation.isError && (
+              <span className="text-xs text-destructive font-medium">Failed to cancel</span>
+            )}
             <div className="hidden sm:block">
               <ReconnectionIndicator status={status} attempt={attempt} />
             </div>

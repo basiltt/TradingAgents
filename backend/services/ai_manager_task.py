@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from backend.ai_manager_schemas import AIManagerConfig
 from backend.services.ai_manager_evaluator import AIManagerEvaluator
+from backend.services.ai_manager_event_triggers import EventTriggerDetector
 from backend.services.ai_manager_mtf import MultiTimeframeAnalyzer
 from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_orderbook import OrderBookMonitor
@@ -98,6 +99,17 @@ class AIManagerTask:
         self._sweep_blocked_symbols: set = set()
         self._is_hedge_mode: bool = False
         self._cleanup_task: Optional[asyncio.Task] = None
+        # Event-driven evaluation trigger
+        self._event_trigger = EventTriggerDetector(
+            price_move_pct=config.event_price_move_pct,
+            drawdown_from_peak_pct=config.event_drawdown_from_peak_pct,
+            pnl_velocity_pct=config.event_pnl_velocity_pct,
+            volume_anomaly_multiplier=config.event_volume_anomaly_multiplier,
+            staleness_alarm_s=config.staleness_alarm_s,
+            funding_rate_threshold=config.event_funding_rate_threshold,
+        )
+        self._event_trigger_fired = asyncio.Event()
+        self._last_trigger_reason: Optional[str] = None
         # Dashboard enhancement attributes
         self._commentary_task: Optional[asyncio.Task] = None
         self._degradation_tier: int = 0
@@ -200,6 +212,29 @@ class AIManagerTask:
         self._correlation_analyzer = CorrelationAnalyzer(
             correlation_threshold=config.correlation_threshold,
         )
+        # Preserve baseline state (prices, regime, funding, volume) across reload
+        old_prices = self._event_trigger._last_eval_prices.copy()
+        old_regime = self._event_trigger._last_regime
+        old_funding = self._event_trigger._last_eval_funding.copy()
+        old_volume = self._event_trigger._last_eval_volume.copy()
+        old_eval_time = self._event_trigger._last_eval_time
+        old_trigger_time = self._event_trigger._last_trigger_time
+        old_min_interval = self._event_trigger._min_trigger_interval_s
+        self._event_trigger = EventTriggerDetector(
+            price_move_pct=config.event_price_move_pct,
+            drawdown_from_peak_pct=config.event_drawdown_from_peak_pct,
+            pnl_velocity_pct=config.event_pnl_velocity_pct,
+            volume_anomaly_multiplier=config.event_volume_anomaly_multiplier,
+            staleness_alarm_s=config.staleness_alarm_s,
+            funding_rate_threshold=config.event_funding_rate_threshold,
+        )
+        self._event_trigger._last_eval_prices = old_prices
+        self._event_trigger._last_regime = old_regime
+        self._event_trigger._last_eval_funding = old_funding
+        self._event_trigger._last_eval_volume = old_volume
+        self._event_trigger._last_eval_time = old_eval_time
+        self._event_trigger._last_trigger_time = old_trigger_time
+        self._event_trigger._min_trigger_interval_s = old_min_interval
 
     def is_dead(self) -> bool:
         """Return True if the run loop task has completed (normally or via exception)."""
@@ -239,6 +274,21 @@ class AIManagerTask:
         if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
             self.transition_to(MONITORING)
             self._wake_event.set()
+            # Initialize trigger baselines so triggers can fire on subsequent events
+            positions = self._ws_buffer.get("positions") or []
+            self._event_trigger.mark_initial_prices(positions)
+            # Fire trigger immediately so first position gets evaluated without waiting for safety net
+            if self._config.event_driven_enabled:
+                self._last_trigger_reason = "position_opened"
+                self._event_trigger_fired.set()
+
+        # Wake monitoring cycle when all positions close so it can transition to SLEEPING
+        if (
+            self._config.event_driven_enabled
+            and self._state == MONITORING
+            and not self._has_open_positions(self._ws_buffer)
+        ):
+            self._event_trigger_fired.set()
 
         # Emergency fast-path: check on every WS event (no debounce, no LLM)
         # Runs even during PAUSED — crash protection must never be gated by daily limits
@@ -247,6 +297,30 @@ class AIManagerTask:
                 await self._check_emergency_close()
             except Exception:
                 self._log.exception("Emergency close check failed")
+
+        # Event-driven trigger check: evaluate if meaningful event occurred
+        # Only check on position_update events (wallet updates don't affect triggers)
+        if (
+            event_type == "position_update"
+            and self._config.event_driven_enabled
+            and self._state == MONITORING
+            and self._has_open_positions(self._ws_buffer)
+            and not self._event_trigger_fired.is_set()
+        ):
+            try:
+                positions = self._ws_buffer.get("positions") or []
+                indicators = self._get_cached_indicators()
+                peak_pnl = self._ws_buffer.get("_peak_pnl") or {}
+                triggered, reason = self._event_trigger.check_triggers(
+                    positions, indicators, peak_pnl
+                )
+                if triggered:
+                    self._last_trigger_reason = reason
+                    self._event_trigger.mark_triggered()
+                    self._event_trigger_fired.set()
+                    self._log.info("Event trigger fired: %s", reason)
+            except Exception:
+                self._log.exception("Event trigger check failed")
 
     def _update_peak_pnl(self, symbol: str, position_data: dict) -> None:
         """Track per-position peak unrealized PnL for drawdown-from-peak detection."""
@@ -289,6 +363,11 @@ class AIManagerTask:
             if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
                 self.transition_to(MONITORING)
                 self._wake_event.set()
+                self._event_trigger.mark_initial_prices(positions)
+                # Trigger immediate evaluation on cold start — don't wait 180s with unmonitored positions
+                if self._config.event_driven_enabled:
+                    self._last_trigger_reason = "cold_start"
+                    self._event_trigger_fired.set()
         except Exception:
             self._log.exception("Failed to initialize state from exchange")
             self._log_async("error", "lifecycle", "Failed to initialize state from exchange")
@@ -354,13 +433,34 @@ class AIManagerTask:
                     return
 
     async def _monitoring_cycle(self) -> None:
-        try:
-            await asyncio.wait_for(
-                self._cancel_event.wait(), timeout=self._config.evaluation_interval_s
-            )
-            return  # cancel_event was set
-        except asyncio.TimeoutError:
-            pass
+        if self._config.event_driven_enabled:
+            # Event-driven: wait for trigger OR safety-net timeout
+            # Do NOT clear _event_trigger_fired here — it may have been set between
+            # _transition_post_eval and now. Only _transition_post_eval clears it.
+            timeout = self._config.safety_net_interval_s
+            if self._event_trigger_fired.is_set():
+                # Trigger already pending — proceed immediately
+                self._event_trigger_fired.clear()
+            else:
+                try:
+                    await asyncio.wait_for(
+                        self._wait_for_trigger_or_cancel(),
+                        timeout=timeout,
+                    )
+                    if self._cancel_event.is_set() or self._killed:
+                        return
+                    self._event_trigger_fired.clear()
+                except asyncio.TimeoutError:
+                    self._last_trigger_reason = "safety_net_timer"
+        else:
+            # Legacy fixed-interval mode
+            try:
+                await asyncio.wait_for(
+                    self._cancel_event.wait(), timeout=self._config.evaluation_interval_s
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
 
         if self._cancel_event.is_set() or self._killed:
             return
@@ -378,11 +478,30 @@ class AIManagerTask:
 
         await self._evaluate()
 
+    async def _wait_for_trigger_or_cancel(self) -> None:
+        """Wait until either the event trigger fires or cancel is requested."""
+        trigger_task = asyncio.create_task(self._event_trigger_fired.wait())
+        cancel_task = asyncio.create_task(self._cancel_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {trigger_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+        except asyncio.CancelledError:
+            trigger_task.cancel()
+            cancel_task.cancel()
+            raise
+
     async def _evaluate(self) -> None:
         self._state = ANALYZING
 
         if self._service._degradation.get_tier() >= 3:
-            self._transition_post_eval()
+            self._transition_post_eval_aborted()
             return
 
         circuit_breaker = self._service._circuit_breaker
@@ -390,7 +509,7 @@ class AIManagerTask:
         if circuit_breaker.is_tripped(self._account_id):
             cooldown_ok = await circuit_breaker.check_cooldown(self._account_id)
             if not cooldown_ok:
-                self._transition_post_eval()
+                self._transition_post_eval_aborted()
                 return
             half_open_probe = True
 
@@ -402,7 +521,7 @@ class AIManagerTask:
                 )
                 if not budget_ok:
                     self._log.warning("Token budget exhausted")
-                    self._transition_post_eval()
+                    self._transition_post_eval_aborted()
                     return
 
                 state_dict = await self._build_graph_state()
@@ -471,14 +590,14 @@ class AIManagerTask:
             if "slot not available" in str(e).lower():
                 if half_open_probe:
                     await self._reset_half_open(circuit_breaker)
-                self._transition_post_eval()
+                self._transition_post_eval_aborted()
                 return
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
                 circuit_breaker.restart_cooldown(self._account_id)
             await self._rollback_token_budget()
             await self._service._degradation.check_health("timeout")
-            self._transition_post_eval()
+            self._transition_post_eval_aborted()
             return
         except Exception:
             self._log.exception("Graph evaluation failed")
@@ -487,7 +606,7 @@ class AIManagerTask:
                 circuit_breaker.restart_cooldown(self._account_id)
             await self._rollback_token_budget()
             await self._service._degradation.check_health("timeout")
-            self._transition_post_eval()
+            self._transition_post_eval_aborted()
             return
 
         action = result.get("action", "HOLD")
@@ -495,7 +614,7 @@ class AIManagerTask:
             await self._service._degradation.check_health("indeterminate")
             if half_open_probe:
                 await self._reset_half_open(circuit_breaker)
-            self._transition_post_eval()
+            self._transition_post_eval(result.get("regime"))
             return
 
         await self._service._degradation.check_health("success")
@@ -505,33 +624,53 @@ class AIManagerTask:
         if half_open_probe and circuit_breaker.is_tripped(self._account_id):
             await self._reset_half_open(circuit_breaker)
             circuit_breaker.restart_cooldown(self._account_id)
-        self._transition_post_eval()
+        self._transition_post_eval(result.get("regime"))
 
-    def _transition_post_eval(self) -> None:
+    def _transition_post_eval(self, regime_from_result: Optional[str] = None) -> None:
+        """Transition after a SUCCESSFUL evaluation (LLM actually ran)."""
         if self._state != PAUSED:
             if self._has_open_positions(self._ws_buffer):
-                self._state = MONITORING
+                self.transition_to(MONITORING)
             else:
-                self._state = SLEEPING
+                self.transition_to(SLEEPING)
+        # Reset event triggers after evaluation
+        positions = self._ws_buffer.get("positions") or []
+        regime = regime_from_result or self._get_cached_regime()
+        indicators = self._get_cached_indicators()
+        self._event_trigger.mark_evaluated(positions, regime, indicators)
+        self._event_trigger._min_trigger_interval_s = 15.0  # Restore normal debounce after successful eval
+        self._event_trigger_fired.clear()
+        self._last_trigger_reason = None
         # Dashboard: sync degradation tier and eval timing
         self._prev_degradation_tier = self._degradation_tier
         self._degradation_tier = self._service._degradation.get_tier()
         self._last_eval_completed_at = datetime.now(timezone.utc)
-        self._next_eval_at = datetime.now(timezone.utc) + timedelta(seconds=self._config.evaluation_interval_s)
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                loop.create_task(self._emit_state_change())
-        except RuntimeError:
-            pass
+        interval = self._config.safety_net_interval_s if self._config.event_driven_enabled else self._config.evaluation_interval_s
+        self._next_eval_at = datetime.now(timezone.utc) + timedelta(seconds=interval)
 
-    async def _emit_state_change(self) -> None:
-        try:
-            await self._service.emit_event(self._account_id, "state_change", {
-                "account_id": self._account_id, "state": self._state, "enabled": True,
-            })
-        except Exception:
-            pass
+    def _transition_post_eval_aborted(self) -> None:
+        """Transition after an ABORTED evaluation (LLM did NOT run — gate rejected).
+
+        Does NOT fully reset staleness timer, but advances it enough to prevent
+        hot-looping (staleness will re-fire after the debounce period, not immediately).
+        """
+        if self._state != PAUSED:
+            if self._has_open_positions(self._ws_buffer):
+                self.transition_to(MONITORING)
+            else:
+                self.transition_to(SLEEPING)
+        self._event_trigger_fired.clear()
+        self._last_trigger_reason = None
+        # Suppress re-triggering for 60s since gates are closed.
+        # Also advance _last_eval_time so staleness alarm (which bypasses debounce)
+        # won't fire again until 60s from now.
+        now = time.monotonic()
+        self._event_trigger._last_trigger_time = now
+        self._event_trigger._min_trigger_interval_s = 60.0
+        self._event_trigger._last_eval_time = now - (self._event_trigger._staleness_alarm_s - 60)
+        # Dashboard sync only
+        self._prev_degradation_tier = self._degradation_tier
+        self._degradation_tier = self._service._degradation.get_tier()
 
     async def _reset_half_open(self, circuit_breaker) -> None:
         try:
@@ -861,6 +1000,7 @@ class AIManagerTask:
             "orderbook": orderbook_data if self._config.orderbook_enabled else None,
             "sweep": sweep_data if self._config.sweep_defense_enabled else None,
             "_sweep_blocked_symbols": list(self._sweep_blocked_symbols),
+            "trigger_reason": self._last_trigger_reason or "scheduled",
         }
 
     def _get_urgency(self) -> str:
@@ -878,6 +1018,17 @@ class AIManagerTask:
         if symbols:
             cache.track_symbols(symbols)
         return cache.get_all_indicators()
+
+    def _get_cached_indicators(self) -> dict:
+        """Get current indicators for event trigger checks (lightweight, no side effects)."""
+        cache = self._service._market_data_cache
+        if not cache:
+            return {}
+        return cache.get_all_indicators()
+
+    def _get_cached_regime(self) -> Optional[str]:
+        """Get the last-known market regime from the event trigger's stored state."""
+        return self._event_trigger._last_regime
 
     def _has_open_positions(self, data: dict) -> bool:
         positions = data.get("positions") or []

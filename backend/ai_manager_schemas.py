@@ -47,6 +47,15 @@ class AIManagerConfig(BaseModel):
     correlation_enabled: bool = True
     correlation_threshold: float = Field(default=0.7, ge=0.3, le=0.95)
     portfolio_heat_warning: float = Field(default=0.8, ge=0.5, le=1.0)
+    # Event-driven evaluation (replaces fixed-interval polling with event triggers + safety net)
+    event_driven_enabled: bool = True
+    safety_net_interval_s: int = Field(default=180, ge=60, le=600)
+    event_price_move_pct: float = Field(default=1.5, ge=0.5, le=5.0)
+    event_drawdown_from_peak_pct: float = Field(default=25.0, ge=10.0, le=50.0)
+    event_pnl_velocity_pct: float = Field(default=1.5, ge=0.5, le=5.0)
+    event_volume_anomaly_multiplier: float = Field(default=3.0, ge=2.0, le=10.0)
+    staleness_alarm_s: int = Field(default=600, ge=300, le=1800)
+    event_funding_rate_threshold: float = Field(default=0.0005, ge=0.0001, le=0.005)
 
 
 class PositionAction(BaseModel):
@@ -131,3 +140,12 @@ class AIManagerConfigPatch(BaseModel):
     correlation_enabled: Optional[bool] = None
     correlation_threshold: Optional[float] = Field(default=None, ge=0.3, le=0.95)
     portfolio_heat_warning: Optional[float] = Field(default=None, ge=0.5, le=1.0)
+    # Event-driven evaluation
+    event_driven_enabled: Optional[bool] = None
+    safety_net_interval_s: Optional[int] = Field(default=None, ge=60, le=600)
+    event_price_move_pct: Optional[float] = Field(default=None, ge=0.5, le=5.0)
+    event_drawdown_from_peak_pct: Optional[float] = Field(default=None, ge=10.0, le=50.0)
+    event_pnl_velocity_pct: Optional[float] = Field(default=None, ge=0.5, le=5.0)
+    event_volume_anomaly_multiplier: Optional[float] = Field(default=None, ge=2.0, le=10.0)
+    staleness_alarm_s: Optional[int] = Field(default=None, ge=300, le=1800)
+    event_funding_rate_threshold: Optional[float] = Field(default=None, ge=0.0001, le=0.005)
