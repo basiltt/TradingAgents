@@ -102,6 +102,17 @@ function RouteLoading() {
 }
 
 function RouteErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
+  const isChunkError = error instanceof Error && (
+    error.message.includes("Failed to fetch dynamically imported module") ||
+    error.message.includes("Loading chunk") ||
+    error.name === "ChunkLoadError"
+  );
+
+  if (isChunkError) {
+    window.location.reload();
+    return null;
+  }
+
   return (
     <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
       <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-8 max-w-md w-full shadow-[var(--neu-shadow-float)]">

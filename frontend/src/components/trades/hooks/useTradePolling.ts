@@ -66,7 +66,7 @@ export function useTradePolling(enabled: boolean) {
   useEffect(() => {
     const handler = () => {
       if (document.visibilityState === "visible") {
-        fetchAllActiveTrades(dispatch);
+        fetchAllActiveTrades(dispatch).catch(() => {});
       }
     };
     document.addEventListener("visibilitychange", handler);

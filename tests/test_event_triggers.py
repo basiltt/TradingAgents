@@ -315,3 +315,92 @@ class TestDebounceCooldown:
 
         triggered, reason = detector.check_triggers(pos)
         assert not triggered  # Neither staleness (540s < 600s) nor debounce-gated triggers
+
+
+# --- check_all_triggers tests ---
+
+
+class TestCheckAllTriggers:
+    """Tests for the multi-symbol trigger detection."""
+
+    def test_returns_multiple_triggered_symbols(self, detector):
+        """Multiple positions triggering should all be returned."""
+        detector.mark_evaluated(
+            [_make_position("BTCUSDT", 50000), _make_position("ETHUSDT", 3000)],
+        )
+        # Move both prices beyond threshold
+        positions = [
+            _make_position("BTCUSDT", 51000),  # 2% move
+            _make_position("ETHUSDT", 3060),   # 2% move
+        ]
+        results = detector.check_all_triggers(positions)
+        symbols = [r[0] for r in results]
+        assert "BTCUSDT" in symbols
+        assert "ETHUSDT" in symbols
+        assert len(results) == 2
+
+    def test_sorted_by_priority_descending(self, detector):
+        """Higher priority triggers should be first."""
+        detector.mark_evaluated(
+            [_make_position("BTCUSDT", 50000), _make_position("ETHUSDT", 3000)],
+        )
+        # BTC: 1.6% move (priority ~1.6), ETH: 3% move (priority ~3.0)
+        positions = [
+            _make_position("BTCUSDT", 50800),
+            _make_position("ETHUSDT", 3090),
+        ]
+        results = detector.check_all_triggers(positions)
+        assert results[0][0] == "ETHUSDT"  # Higher priority first
+        assert results[0][2] > results[1][2]
+
+    def test_dedupes_per_symbol_keeps_highest(self, detector):
+        """If multiple triggers fire for same symbol, keep highest priority."""
+        detector.mark_evaluated(
+            [_make_position("BTCUSDT", 50000, unrealised_pnl=1000)],
+        )
+        # Price move (2%) AND drawdown (50% from peak)
+        positions = [_make_position("BTCUSDT", 51000, unrealised_pnl=500)]
+        peak_pnl = {"BTCUSDT": 1000.0}
+        results = detector.check_all_triggers(positions, peak_pnl=peak_pnl)
+        assert len(results) == 1  # Deduped to one entry
+        assert results[0][0] == "BTCUSDT"
+        assert results[0][2] == 50.0  # Drawdown % is higher priority than 2% price move
+
+    def test_staleness_returns_all_symbols(self, detector):
+        """Staleness alarm should return all position symbols."""
+        detector._last_eval_time = time.monotonic() - 700  # 700s > 600s
+        positions = [
+            _make_position("BTCUSDT", 50000),
+            _make_position("ETHUSDT", 3000),
+            _make_position("SOLUSDT", 150),
+        ]
+        results = detector.check_all_triggers(positions)
+        assert len(results) == 3
+        assert all("staleness" in r[1] for r in results)
+
+    def test_debounce_suppresses_all(self, detector):
+        """Debounce should suppress all triggers (not just first)."""
+        detector.mark_evaluated([_make_position("BTCUSDT", 50000)])
+        detector.mark_triggered()  # Just triggered
+        positions = [_make_position("BTCUSDT", 51000)]  # 2% move
+        results = detector.check_all_triggers(positions)
+        assert results == []
+
+    def test_empty_when_no_triggers(self, detector):
+        """No triggers = empty list."""
+        detector.mark_evaluated([_make_position("BTCUSDT", 50000)])
+        positions = [_make_position("BTCUSDT", 50100)]  # 0.2% — below threshold
+        results = detector.check_all_triggers(positions)
+        assert results == []
+
+    def test_new_position_detected(self, detector):
+        """New position should be in results."""
+        detector.mark_evaluated([_make_position("BTCUSDT", 50000)])
+        positions = [
+            _make_position("BTCUSDT", 50100),  # No trigger (small move)
+            _make_position("ETHUSDT", 3000),   # New position
+        ]
+        results = detector.check_all_triggers(positions)
+        assert len(results) == 1
+        assert results[0][0] == "ETHUSDT"
+        assert "new_position" in results[0][1]

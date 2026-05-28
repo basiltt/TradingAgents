@@ -63,7 +63,8 @@ export function useAccountWebSocket() {
 
   const connect = useCallback(() => {
     if (!mounted.current) return;
-    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
+    const existing = wsRef.current;
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
@@ -74,7 +75,7 @@ export function useAccountWebSocket() {
       const now = Date.now();
       if (now - lastFetchRef.current > 5000) {
         lastFetchRef.current = now;
-        fetchAllActiveTrades(dispatch);
+        fetchAllActiveTrades(dispatch).catch(() => {});
         queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
       }
       refreshDashboard();
@@ -208,8 +209,20 @@ export function useAccountWebSocket() {
   useEffect(() => {
     mounted.current = true;
     connect();
+
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "visible") return;
+      const ws = wsRef.current;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      clearTimeout(reconnectTimer.current);
+      connectRef.current?.();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       mounted.current = false;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       clearTimeout(reconnectTimer.current);
       clearTimeout(pingWatchdog.current);
       clearTimeout(dashboardRefreshTimer.current);
