@@ -61,11 +61,17 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
     dispatch(fetchDecisions({ accountId, limit: 15 }));
     dispatch(fetchPerformance({ accountId, period: perfPeriod }));
     dispatch(fetchLogs({ accountId, limit: 50 }));
-    dispatch(fetchLLMCalls({ accountId, limit: 50 }));
-    dispatch(fetchCapabilities(accountId));
-    dispatch(fetchInsights(accountId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, accountId]);
+
+  // Dashboard enhancement fetches — only when AI Manager is confirmed active
+  useEffect(() => {
+    if (status && status.enabled) {
+      dispatch(fetchLLMCalls({ accountId, limit: 50 }));
+      dispatch(fetchCapabilities(accountId));
+      dispatch(fetchInsights(accountId));
+    }
+  }, [dispatch, accountId, status?.enabled]);
 
   // Periodic live refresh for status (so panel stays current without relying only on WS)
   useEffect(() => {

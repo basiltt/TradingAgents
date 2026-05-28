@@ -562,7 +562,7 @@ const aiManagerSlice = createSlice({
       })
       .addCase(fetchLogs.rejected, setError("logs"))
 
-      // Dashboard enhancement
+      // Dashboard enhancement (rejections clear loading but don't set global error)
       .addCase(fetchLLMCalls.pending, setLoading("llmCalls"))
       .addCase(fetchLLMCalls.fulfilled, (state, action) => {
         state.loading["llmCalls"] = false;
@@ -575,21 +575,21 @@ const aiManagerSlice = createSlice({
         }
         state.llmCallCursors[accountId] = nextCursor;
       })
-      .addCase(fetchLLMCalls.rejected, setError("llmCalls"))
+      .addCase(fetchLLMCalls.rejected, clearLoading("llmCalls"))
 
       .addCase(fetchCapabilities.pending, setLoading("capabilities"))
       .addCase(fetchCapabilities.fulfilled, (state, action) => {
         state.loading["capabilities"] = false;
         state.capabilitiesByAccount[action.payload.accountId] = action.payload.data.capabilities;
       })
-      .addCase(fetchCapabilities.rejected, setError("capabilities"))
+      .addCase(fetchCapabilities.rejected, clearLoading("capabilities"))
 
       .addCase(fetchInsights.pending, setLoading("insights"))
       .addCase(fetchInsights.fulfilled, (state, action) => {
         state.loading["insights"] = false;
         state.insightsByAccount[action.payload.accountId] = action.payload.data;
       })
-      .addCase(fetchInsights.rejected, setError("insights"));
+      .addCase(fetchInsights.rejected, clearLoading("insights"));
   },
 });
 

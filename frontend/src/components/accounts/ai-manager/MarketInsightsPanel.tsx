@@ -25,6 +25,10 @@ export default function MarketInsightsPanel({ accountId }: MarketInsightsPanelPr
     }
   }, [dispatch, accountId, fsmState]);
 
+  if (!fsmState) {
+    return <div className="rounded-2xl p-5 animate-pulse bg-muted/10 h-20" style={{ boxShadow: "var(--neu-shadow-pill)" }} />;
+  }
+
   if (fsmState === "sleeping") {
     return (
       <div className="rounded-2xl p-5 text-center text-muted-foreground/50" style={{ background: "var(--neu-surface-base)", boxShadow: "var(--neu-shadow-pill)" }}>

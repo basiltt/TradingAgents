@@ -33,6 +33,10 @@ export default function CapabilitiesGrid({ accountId }: CapabilitiesGridProps) {
     }
   }, [dispatch, accountId, fsmState]);
 
+  if (!fsmState) {
+    return <div className="rounded-2xl p-5 animate-pulse bg-muted/10 h-20" style={{ boxShadow: "var(--neu-shadow-pill)" }} />;
+  }
+
   const isMuted = fsmState === "sleeping" || fsmState === "paused";
 
   return (
