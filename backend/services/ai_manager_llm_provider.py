@@ -238,7 +238,12 @@ def create_llm_callable_with_cleanup(
                 content = data.get("content") or []
                 if not content:
                     raise ValueError(f"Anthropic returned empty content: stop_reason={data.get('stop_reason')}")
-                return content[0]["text"]
+                # Find the text block (skip thinking/tool_use blocks)
+                for block in content:
+                    if block.get("type") == "text":
+                        return block["text"]
+                # Fallback: return first block's text-like field
+                return content[0].get("text") or content[0].get("thinking") or str(content[0])
             finally:
                 _release_global_rate_limit(acquired)
 
@@ -311,7 +316,10 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
             content = data.get("content") or []
             if not content:
                 raise ValueError(f"Anthropic returned empty content array: stop_reason={data.get('stop_reason')}")
-            return content[0]["text"]
+            for block in content:
+                if block.get("type") == "text":
+                    return block["text"]
+            return content[0].get("text") or content[0].get("thinking") or str(content[0])
         finally:
             _release_global_rate_limit(acquired)
 
