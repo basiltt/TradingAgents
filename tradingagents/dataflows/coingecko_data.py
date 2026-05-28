@@ -29,7 +29,7 @@ _SESSION.headers.update({"Accept": "application/json"})
 
 _TIER_DEFAULTS = {
     "demo":  {"base": "https://api.coingecko.com/api/v3",     "auth": "header", "rpm": 30,  "concurrency": 2},
-    "basic": {"base": "https://pro-api.coingecko.com/api/v3", "auth": "param",  "rpm": 250, "concurrency": 5},
+    "basic": {"base": "https://pro-api.coingecko.com/api/v3", "auth": "param",  "rpm": 300, "concurrency": 5},
 }
 
 _configured = False
