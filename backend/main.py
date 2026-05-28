@@ -332,11 +332,12 @@ def create_app() -> FastAPI:
 
             # Wire LLM callable for AI Manager decisions
             from backend.services.ai_manager_llm_provider import create_llm_callable
-            llm_callable = create_llm_callable()
+            llm_callable, resolved_model = create_llm_callable()
             if llm_callable:
                 ai_manager_service._llm_callable = llm_callable
                 ai_manager_service._pattern_llm_callable = llm_callable
-                logger.info("AI Manager LLM callable configured")
+                ai_manager_service._model_name = resolved_model
+                logger.info("AI Manager LLM callable configured (model=%s)", resolved_model)
 
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService

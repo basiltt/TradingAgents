@@ -47,32 +47,35 @@ def create_llm_callable(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     backend_url: Optional[str] = None,
-) -> Optional[LLMCallable]:
-    """Create an LLM callable. Explicit params take priority over env vars."""
+) -> tuple[Optional[LLMCallable], str]:
+    """Create an LLM callable. Explicit params take priority over env vars.
+
+    Returns (callable_or_None, resolved_model_name).
+    """
     provider = (provider or os.getenv("TRADINGAGENTS_LLM_PROVIDER", "")).lower()
     if not provider:
         logger.warning("AI Manager: No LLM provider configured (set TRADINGAGENTS_LLM_PROVIDER)")
-        return None
+        return None, "unknown"
 
     if not api_key:
         env_key = _PROVIDER_KEY_MAP.get(provider)
         if not env_key:
             logger.warning("AI Manager: Unsupported LLM provider '%s'", provider)
-            return None
+            return None, "unknown"
         api_key = os.getenv(env_key)
         if not api_key:
             logger.warning("AI Manager: %s not set — LLM disabled", env_key)
-            return None
+            return None, "unknown"
 
     model = model or os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-4o-mini")
     backend_url = backend_url or os.getenv("TRADINGAGENTS_BACKEND_URL")
 
     if provider == "openai" or provider == "azure":
-        return _create_openai_callable(api_key, model, backend_url, provider)
+        return _create_openai_callable(api_key, model, backend_url, provider), model
     elif provider == "anthropic":
-        return _create_anthropic_callable(api_key, model, backend_url)
+        return _create_anthropic_callable(api_key, model, backend_url), model
 
-    return None
+    return None, "unknown"
 
 
 def _create_openai_callable(
