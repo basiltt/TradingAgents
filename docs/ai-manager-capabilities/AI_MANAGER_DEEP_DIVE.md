@@ -27,7 +27,7 @@ WebSocket Events → FSM (SLEEPING → MONITORING → ANALYZING → EXECUTING �
 | State | Description | Transition |
 |-------|-------------|------------|
 | SLEEPING | Idle, no open positions (60s heartbeat) | → MONITORING (WebSocket position detected) |
-| MONITORING | Evaluating every N seconds | → ANALYZING (timer expired) |
+| MONITORING | Waiting for event trigger or safety-net timer | → ANALYZING (trigger fired or timer expired) |
 | ANALYZING | Running decision graph | → EXECUTING (action determined) |
 | EXECUTING | Placing order on exchange | → MONITORING (loop) |
 | PAUSED | Manual user pause | → MONITORING (resume) |
@@ -45,6 +45,7 @@ WebSocket Events → FSM (SLEEPING → MONITORING → ANALYZING → EXECUTING �
 | File | Purpose | Size |
 |------|---------|------|
 | `backend/services/ai_manager_task.py` | Per-account FSM engine | 2100+ lines |
+| `backend/services/ai_manager_event_triggers.py` | Event-driven trigger detection & queue | 380+ lines |
 | `backend/services/ai_manager_graph.py` | LangGraph decision graph (8 nodes) | 600+ lines |
 | `backend/ai_manager_schemas.py` | Configuration and type definitions | — |
 | `backend/services/ai_manager_market_data.py` | Real-time Bybit ticker/kline feeds | — |
@@ -320,7 +321,10 @@ _RISK_TOLERANCE_MAP = {
 
 **Key Principles Enforced:**
 
-- Only ONE position per evaluation (choose the most urgent)
+- Only ONE position per evaluation call (focus symbol is pre-selected by the trigger queue)
+- Focus symbol guidance: LLM is told which symbol triggered the eval and should analyze it first
+- LLM can override focus only if another position faces imminent risk (>40% drawdown, extreme velocity)
+- Multiple positions are handled via rapid sequential evaluation (5s debounce, max 3 per batch)
 - Multi-indicator confluence required — one signal alone is never sufficient
 - Must consider account's recent decision history (avoid flip-flopping)
 - Preserving realized profit is prioritized over hoping for more
@@ -418,7 +422,9 @@ The evaluator classifies every evaluation cycle into one of four urgency levels:
 
 **Triggers:**
 - No urgent signals detected
-- Standard evaluation cycle (every `evaluation_interval_s` seconds, default 60)
+- Event-driven: waits for market event triggers (see Event-Driven Evaluation section)
+- Safety net fallback: evaluates every `safety_net_interval_s` seconds (default 180) if no events fire
+- Legacy mode (`event_driven_enabled=False`): fixed interval every `evaluation_interval_s` seconds (default 60)
 - Fast enrichment (subset of context) before decision
 
 ### Peak PnL Tracking
@@ -427,6 +433,91 @@ The evaluator classifies every evaluation cycle into one of four urgency levels:
 - Updated whenever new position data arrives with higher unrealized profit
 - Reset when position is closed
 - Used for drawdown-from-peak urgency calculation and profit preservation signals
+
+---
+
+## Event-Driven Evaluation System
+
+The AI Manager uses an **event-driven primary trigger** model with a **periodic safety net**, replacing the original fixed-interval polling. LLM evaluations fire when meaningful market events occur, not on a blind timer.
+
+### Architecture
+
+```
+MONITORING state:
+  1. Wait for EITHER:
+     a) An event trigger fires (price move, drawdown, regime change, etc.)
+     b) Safety-net timer expires (default 180s)
+  2. Whichever fires first → run _evaluate() (LLM call)
+  3. After evaluation → drain trigger queue (rapid 5s debounce)
+  4. After queue drained or depth cap reached → back to MONITORING, reset baselines
+```
+
+### Event Triggers
+
+The `EventTriggerDetector` runs on every WebSocket position update with negligible overhead (no LLM, no network calls):
+
+| Trigger | Condition | Priority Score |
+|---------|-----------|----------------|
+| **Staleness alarm** | No evaluation for >`staleness_alarm_s` (600s) | 1000 (always highest) |
+| **New position** | Symbol not in baseline prices | 200 (or higher if velocity/drawdown also fires) |
+| **Price move** | Mark price moved >`event_price_move_pct` (1.5%) from last-evaluated price | move_pct value |
+| **PnL velocity** | >`event_pnl_velocity_pct` (1.5%) change in 30s | abs(velocity) × 100 |
+| **Drawdown from peak** | Unrealized PnL dropped >`event_drawdown_from_peak_pct` (25%) from tracked peak | drawdown_pct value |
+| **Funding rate change** | Delta >`event_funding_rate_threshold` (0.05%) since last eval | 50 (fixed) |
+| **Volume anomaly** | 1m candle volume >`event_volume_anomaly_multiplier` (3×) of 20-candle avg | ratio × 10 |
+| **Regime change** | Market regime classification changed since last eval | 60 (fixed) |
+
+### Multi-Symbol Trigger Queue
+
+When multiple positions trigger simultaneously (common in correlated crypto markets):
+
+1. `check_all_triggers()` returns ALL triggered symbols with priority scores (no short-circuit)
+2. Highest-priority symbol becomes the **focus symbol** for the first LLM call
+3. Remaining triggered symbols are queued, sorted by priority descending
+4. After each evaluation, the next queued symbol is evaluated after a rapid debounce (`event_rapid_cycle_debounce_s`, default 5s)
+5. **Max drain depth**: 3 consecutive rapid evaluations per batch (prevents token budget exhaustion)
+6. After drain completes or depth cap reached, baselines are fully reset and normal debounce (15s) resumes
+
+**Per-symbol deduplication**: If multiple triggers fire for the same symbol, only the highest-priority trigger is kept.
+
+### Focus Symbol Guidance
+
+The LLM receives explicit focus guidance in its prompt:
+
+```
+FOCUS SYMBOL: ETHUSDT (trigger: price_move (ETHUSDT: 2.10%))
+Pending queue: BTCUSDT (drawdown_from_peak (BTCUSDT: 35.2%)), SOLUSDT (funding_change)
+```
+
+The system prompt instructs:
+> "Analyze [focus symbol] with priority. Only override to act on a different symbol if that other position faces imminent risk (>40% drawdown from peak, extreme PnL velocity, or clear trend reversal with multiple confirming signals). Explain why if you override."
+
+### Baseline Management
+
+- **Mid-drain**: Only the just-evaluated symbol's baseline price is updated (preserves trigger sensitivity for remaining/unqueued positions)
+- **End of drain**: Full `mark_evaluated()` resets all baselines (prices, funding, volume, regime)
+- Positions that close mid-drain are filtered from the queue before each iteration
+- Emergency close clears the entire queue immediately
+
+### Safety Net Timer
+
+If no event triggers fire for `safety_net_interval_s` (default 180s), evaluation runs anyway. This catches:
+- Slow bleed scenarios (price drifting without crossing trigger thresholds)
+- Missed WebSocket events
+- Silent indicator drift
+
+### Backward Compatibility
+
+- `event_driven_enabled=True` (default): Event-driven triggers + safety net
+- `event_driven_enabled=False`: Legacy fixed-interval polling using `evaluation_interval_s`
+- All trigger thresholds are hot-reloadable via config patch
+- No database migration needed
+
+### Key Source File
+
+| File | Purpose |
+|------|---------|
+| `backend/services/ai_manager_event_triggers.py` | EventTriggerDetector — lightweight per-tick event detection |
 
 ---
 
@@ -717,6 +808,17 @@ class AIManagerConfig(BaseModel):
     correlation_threshold: float = Field(default=0.7, ge=0.3, le=0.95)
     portfolio_heat_warning: float = Field(default=0.8, ge=0.3, le=1.0)
 
+    # ── Event-Driven Evaluation ──
+    event_driven_enabled: bool = True
+    safety_net_interval_s: int = Field(default=180, ge=60, le=600)
+    event_price_move_pct: float = Field(default=1.5, ge=0.5, le=5.0)
+    event_drawdown_from_peak_pct: float = Field(default=25.0, ge=10.0, le=50.0)
+    event_pnl_velocity_pct: float = Field(default=1.5, ge=0.5, le=5.0)
+    event_volume_anomaly_multiplier: float = Field(default=3.0, ge=2.0, le=10.0)
+    staleness_alarm_s: int = Field(default=600, ge=300, le=1800)
+    event_funding_rate_threshold: float = Field(default=0.0005, ge=0.0001, le=0.005)
+    event_rapid_cycle_debounce_s: float = Field(default=5.0, ge=2.0, le=15.0)
+
     # ── Strategy ──
     strategy_version: Optional[str] = None  # For A/B testing
 ```
@@ -781,7 +883,10 @@ POST /ai-manager/global-kill    (kill switch across ALL accounts)
 ```json
 {
   "risk_tolerance": "conservative",
-  "evaluation_interval_s": 120,
+  "event_driven_enabled": true,
+  "safety_net_interval_s": 300,
+  "event_price_move_pct": 2.5,
+  "event_drawdown_from_peak_pct": 35.0,
   "max_daily_actions": 10,
   "confidence_threshold": 0.85,
   "emergency_equity_drop_pct": 5.0,
@@ -794,7 +899,11 @@ POST /ai-manager/global-kill    (kill switch across ALL accounts)
 ```json
 {
   "risk_tolerance": "moderate",
-  "evaluation_interval_s": 60,
+  "event_driven_enabled": true,
+  "safety_net_interval_s": 180,
+  "event_price_move_pct": 1.5,
+  "event_drawdown_from_peak_pct": 25.0,
+  "event_rapid_cycle_debounce_s": 5.0,
   "max_daily_actions": 25,
   "confidence_threshold": 0.7,
   "emergency_equity_drop_pct": 10.0,
@@ -807,7 +916,11 @@ POST /ai-manager/global-kill    (kill switch across ALL accounts)
 ```json
 {
   "risk_tolerance": "aggressive",
-  "evaluation_interval_s": 30,
+  "event_driven_enabled": true,
+  "safety_net_interval_s": 120,
+  "event_price_move_pct": 1.0,
+  "event_drawdown_from_peak_pct": 15.0,
+  "event_rapid_cycle_debounce_s": 3.0,
   "max_daily_actions": 50,
   "confidence_threshold": 0.6,
   "emergency_equity_drop_pct": 15.0,
@@ -824,17 +937,20 @@ POST /ai-manager/global-kill    (kill switch across ALL accounts)
 | Operation | Time |
 |-----------|------|
 | WebSocket event → state update | <10ms |
+| Event trigger check (per tick) | <1ms |
 | Emergency signal detection | <50ms |
-| Standard evaluation cycle | 60–90s (includes LLM call) |
+| Event trigger → LLM call start | <100ms |
 | Claude LLM call | 1–5s with retries |
-| Full decision → execution | 30–90s |
+| Full trigger queue drain (3 positions) | ~15s (3 × 5s debounce) |
+| Safety net fallback | 180s (configurable) |
 
 ### Resource Usage
 
 | Resource | Budget |
 |----------|--------|
-| Token budget | 100K/day per account |
+| Token budget | 20M/day per account |
 | Daily decisions | 30 max (configurable) |
+| Max rapid drain calls per batch | 3 (capped by `_MAX_DRAIN_DEPTH`) |
 | Memory per account | ~1MB |
 | Market data | ~50 candles × tracked symbols |
 
