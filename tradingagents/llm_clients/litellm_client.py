@@ -81,7 +81,19 @@ _PROVIDER_API_KEY_ENVS = {
 
 
 class NormalizedChatLiteLLM(ChatLiteLLM):
-    """ChatLiteLLM with normalized content output and rate limiting."""
+    """ChatLiteLLM with normalized content output and rate limiting.
+
+    Also fixes api_key propagation: langchain's ChatLiteLLM sets api_key as
+    a litellm module global but does NOT pass it to litellm.completion().
+    We override _client_params to include it explicitly.
+    """
+
+    @property
+    def _client_params(self) -> dict:
+        params = super()._client_params
+        if self.api_key:
+            params["api_key"] = self.api_key
+        return params
 
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
