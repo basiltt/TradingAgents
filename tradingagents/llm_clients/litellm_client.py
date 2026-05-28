@@ -26,8 +26,14 @@ logging.getLogger("litellm").setLevel(logging.WARNING)
 try:
     import litellm as _litellm
     _litellm.drop_params = True
+    # Suppress noisy warnings about unused providers (e.g. bedrock/botocore)
+    _litellm.suppress_debug_info = True
 except ImportError:
     pass
+
+# Silence the specific botocore/bedrock warning since we don't use AWS
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+logging.getLogger("litellm").setLevel(logging.ERROR)
 
 _serialize_lock = threading.Lock()
 
