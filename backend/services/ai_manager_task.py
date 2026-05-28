@@ -1529,7 +1529,10 @@ class AIManagerTask:
             "regime": {"label": regime_label} if regime_label else None,
             "session": None,  # Session detection not yet implemented
             "correlation_heat": correlation_data.get("portfolio_heat") if correlation_data and isinstance(correlation_data, dict) else None,
-            "active_sweeps": list(self._sweep_state.keys()) if self._sweep_state else [],
+            "active_sweeps": [
+                {"symbol": sym, "confidence": 0.5, "direction": "unknown"}
+                for sym in (self._sweep_state.keys() if self._sweep_state else [])
+            ],
             "positions_health": [
                 {"symbol": p.get("symbol", ""), "health_score": max(0, 100 - abs(int(p.get("drawdown_from_peak", 0) or 0))), "concern": None}
                 for p in positions
