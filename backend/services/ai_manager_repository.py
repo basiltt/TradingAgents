@@ -783,7 +783,15 @@ class AIManagerRepository:
                     "WHERE account_id = $1 ORDER BY timestamp DESC, id DESC LIMIT $2",
                     account_id, limit,
                 )
-        results = [dict(r) for r in rows]
+        results = []
+        for r in rows:
+            row_dict = dict(r)
+            # Convert UUID fields to strings for Pydantic serialization
+            if "call_id" in row_dict and row_dict["call_id"] is not None:
+                row_dict["call_id"] = str(row_dict["call_id"])
+            if "evaluation_cycle_id" in row_dict and row_dict["evaluation_cycle_id"] is not None:
+                row_dict["evaluation_cycle_id"] = str(row_dict["evaluation_cycle_id"])
+            results.append(row_dict)
         next_cursor = None
         if len(results) == limit and results:
             last = results[-1]

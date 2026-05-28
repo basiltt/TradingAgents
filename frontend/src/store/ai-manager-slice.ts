@@ -397,14 +397,23 @@ const aiManagerSlice = createSlice({
     },
     onMarketCommentary(state, action: PayloadAction<{ account_id: string; day_score: number | null; day_score_label: string | null; summary_text: string; regime: string; generated_at: string }>) {
       const { account_id, ...data } = action.payload;
-      const insight = state.insightsByAccount[account_id];
-      if (insight) {
-        insight.day_score = data.day_score;
-        insight.day_score_label = data.day_score_label as MarketInsight["day_score_label"];
-        if (insight.latest_commentary) {
-          insight.latest_commentary.summary_text = data.summary_text;
-          insight.latest_commentary.generated_at = data.generated_at;
-        }
+      if (!state.insightsByAccount[account_id]) {
+        state.insightsByAccount[account_id] = {
+          day_score: data.day_score, day_score_label: data.day_score_label as MarketInsight["day_score_label"],
+          day_score_justification: null,
+          latest_commentary: { id: 0, generated_at: data.generated_at, summary_text: data.summary_text, regime_label: data.regime, commentary_type: "template" },
+          regime: null, session: null, correlation_heat: null, active_sweeps: [], positions_health: [],
+        };
+        return;
+      }
+      const insight = state.insightsByAccount[account_id]!;
+      insight.day_score = data.day_score;
+      insight.day_score_label = data.day_score_label as MarketInsight["day_score_label"];
+      if (insight.latest_commentary) {
+        insight.latest_commentary.summary_text = data.summary_text;
+        insight.latest_commentary.generated_at = data.generated_at;
+      } else {
+        insight.latest_commentary = { id: 0, generated_at: data.generated_at, summary_text: data.summary_text, regime_label: data.regime, commentary_type: "template" };
       }
     },
     addAttentionItem(state, action: PayloadAction<AttentionItem & { account_id: string }>) {

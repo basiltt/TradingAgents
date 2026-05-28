@@ -428,7 +428,10 @@ class AIManagerTask:
                 _success = result is not None and "action" in result
                 await self._service.emit_event(self._account_id, "ai_manager.llm_call_complete", {
                     "account_id": self._account_id,
+                    "id": int(_time.time() * 1000) % 2147483647,
                     "call_id": str(_call_id),
+                    "evaluation_cycle_id": str(_eval_cycle_id),
+                    "node_name": "action_generation",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "latency_ms": _latency_ms,
                     "input_tokens": result.get("_input_tokens", 0) if result else 0,
