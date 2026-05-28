@@ -304,7 +304,7 @@ async def get_llm_calls(
         account_id, limit=limit, cursor_timestamp=cursor_ts, cursor_id=cursor_id
     )
     return LLMCallListResponse(
-        calls=[LLMCallEntry(**c) for c in calls],
+        calls=[LLMCallEntry(**{k: v for k, v in c.items() if k != "account_id"}) for c in calls],
         next_cursor=next_cursor,
     )
 

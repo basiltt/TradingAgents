@@ -1426,7 +1426,8 @@ export const aiManagerApi = {
     const searchParams = new URLSearchParams();
     if (params?.limit) searchParams.set("limit", String(params.limit));
     if (params?.cursor) searchParams.set("cursor", params.cursor);
-    return request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/llm-calls?${searchParams}`);
+    const qs = searchParams.toString();
+    return request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/llm-calls${qs ? `?${qs}` : ""}`);
   },
 
   getCapabilities: (accountId: string): Promise<Record<string, unknown>> =>

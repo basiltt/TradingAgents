@@ -73,7 +73,7 @@ class MarketInsightResponse(BaseModel):
     day_score: int | None = Field(default=None, ge=0, le=100)
     day_score_label: Literal["good", "neutral", "caution", "danger"] | None = None
     day_score_justification: str | None = None
-    latest_commentary: CommentaryEntry | None = None
+    latest_commentary: CommentaryEntry | dict | None = None
     regime: dict | None = None
     session: Literal["asia", "london", "new_york", "off_hours"] | None = None
     correlation_heat: float | None = Field(default=None, ge=0, le=1)
@@ -83,12 +83,12 @@ class MarketInsightResponse(BaseModel):
 
 class AnalysisContextResponse(BaseModel):
     regime: dict | None = None
-    mtf: dict | None = None
-    correlation: dict | None = None
-    orderbook: dict | None = None
-    sweep_signals: list[SweepSignal] = []
+    session: str | None = None
+    correlation_heat: float | None = None
+    active_sweeps: list = []
+    positions_health: list[PositionHealth] = []
+    day_score_justification: str | None = None
     evaluation_cycle_id: str | None = None
-    computed_at: datetime | None = None
 
 
 class AttentionItem(BaseModel):

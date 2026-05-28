@@ -95,6 +95,14 @@ class AIManagerTask:
         self._sweep_blocked_symbols: set = set()
         self._is_hedge_mode: bool = False
         self._cleanup_task: Optional[asyncio.Task] = None
+        # Dashboard enhancement attributes
+        self._commentary_task: Optional[asyncio.Task] = None
+        self._degradation_tier: int = 0
+        self._prev_degradation_tier: int = 0
+        self._next_eval_at: Optional[datetime] = None
+        self._urgency_history_1h: list = []
+        self._emitted_attention_ids: set = set()
+        self._last_eval_completed_at: Optional[datetime] = None
 
     @property
     def state(self) -> str:
@@ -499,6 +507,11 @@ class AIManagerTask:
                 self._state = MONITORING
             else:
                 self._state = SLEEPING
+        # Dashboard: sync degradation tier and eval timing
+        self._prev_degradation_tier = self._degradation_tier
+        self._degradation_tier = self._service._degradation.get_tier()
+        self._last_eval_completed_at = datetime.now(timezone.utc)
+        self._next_eval_at = datetime.now(timezone.utc) + timedelta(seconds=self._config.evaluation_interval_s)
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
@@ -1485,6 +1498,74 @@ class AIManagerTask:
                 await self._service._repo.cleanup_old_data()
             except Exception:
                 logger.debug("Data cleanup failed, will retry next hour")
+
+    # --- Dashboard Enhancement: Helper Methods ---
+
+    def _get_live_positions(self) -> list:
+        """Return current positions from WS buffer."""
+        return self._ws_buffer.get("positions") or []
+
+    def _get_analysis_context(self) -> dict:
+        """Return current enrichment context for dashboard display."""
+        mtf_data = self._get_mtf_data() if hasattr(self, '_get_mtf_data') else None
+        correlation_data = self._get_correlation_data() if hasattr(self, '_get_correlation_data') else None
+        orderbook_data, sweep_data = (None, None)
+        if hasattr(self, '_get_orderbook_sweep_data'):
+            orderbook_data, sweep_data = self._get_orderbook_sweep_data()
+
+        # Map MTF trend to regime label
+        regime_label = None
+        if mtf_data and isinstance(mtf_data, dict):
+            trend = mtf_data.get("trend")
+            if trend == "bullish":
+                regime_label = "trending_up"
+            elif trend == "bearish":
+                regime_label = "trending_down"
+            elif trend:
+                regime_label = trend  # "mixed" etc.
+
+        positions = self._get_live_positions()
+        return {
+            "regime": {"label": regime_label} if regime_label else None,
+            "session": None,  # Session detection not yet implemented
+            "correlation_heat": correlation_data.get("portfolio_heat") if correlation_data and isinstance(correlation_data, dict) else None,
+            "active_sweeps": list(self._sweep_state.keys()) if self._sweep_state else [],
+            "positions_health": [
+                {"symbol": p.get("symbol", ""), "health_score": max(0, 100 - abs(int(p.get("drawdown_from_peak", 0) or 0))), "concern": None}
+                for p in positions
+            ],
+            "day_score_justification": None,
+            "evaluation_cycle_id": None,
+        }
+
+    def _get_dashboard_state(self) -> dict:
+        """Return task state dict for capabilities aggregator."""
+        state: Dict[str, Any] = {}
+        if self._sweep_state:
+            state["active_sweep_symbols"] = list(self._sweep_state.keys())
+        return state
+
+    def _compute_pnl_trend(self) -> str:
+        """Compute unrealized PnL trend (rising/falling/flat)."""
+        positions = self._get_live_positions()
+        if not positions:
+            return "flat"
+        total_upnl = sum(float(p.get("unrealisedPnl", 0) or p.get("current_upnl", 0) or 0) for p in positions)
+        if total_upnl > 0:
+            return "rising"
+        elif total_upnl < 0:
+            return "falling"
+        return "flat"
+
+    def _get_token_budget_pct(self) -> float:
+        """Return current token budget usage percentage."""
+        status = self._ws_buffer.get("_token_budget")
+        if status and isinstance(status, dict):
+            used = status.get("used", 0)
+            max_val = status.get("max", MAX_DAILY_TOKEN_BUDGET)
+            if max_val > 0:
+                return (used / max_val) * 100
+        return 0.0
 
     # --- Dashboard Enhancement: Commentary Loop (Task 1.9) ---
 

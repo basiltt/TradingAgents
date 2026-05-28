@@ -305,6 +305,13 @@ class AIAccountManagerService:
         """Return {account_id: state} for all active (non-dead) AI manager tasks."""
         return {aid: t.state for aid, t in self._tasks.items() if not t.is_dead()}
 
+    def get_task(self, account_id: str) -> Optional["AIManagerTask"]:
+        """Return the in-memory task for an account, or None if not running."""
+        task = self._tasks.get(account_id)
+        if task and not task.is_dead():
+            return task
+        return None
+
     async def get_status(self, account_id: str) -> Optional[AIManagerStatus]:
         """Build full status object including real-time FSM state from in-memory task."""
         state = await self._repo.get_state(account_id)
