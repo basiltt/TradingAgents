@@ -139,7 +139,7 @@ function CountdownTimers({ targets }: { targets: Array<{ trigger_type: string; t
 
   return (
     <div className="mx-4.5 mb-2.5 px-3 py-2 rounded-lg bg-muted/[0.06] border border-border/20">
-      <div className={cn("grid gap-3", timeRules.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+      <div className="flex items-center justify-between">
         {timeRules.map((rule, i) => {
           const pct = rule.totalMs > 0 ? Math.max(0, Math.min(100, (rule.remainingMs / rule.totalMs) * 100)) : 0;
           const urgent = pct < 15;
