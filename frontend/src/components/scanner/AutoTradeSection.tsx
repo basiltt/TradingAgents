@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Sparkles, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ChevronRight, Sparkles, ShieldCheck, TriangleAlert } from "lucide-react";
 import { accountsApi, type TradingAccount, type AutoTradeConfig } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -188,9 +188,7 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
         className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[color-mix(in_oklch,var(--neu-accent)_4%,var(--neu-surface-base))] transition-colors duration-150"
       >
         <span className="inline-flex size-10 items-center justify-center rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] text-[var(--neu-accent)] shadow-[var(--neu-shadow-inset)] border-none">
-          <svg className={cn("size-4 transition-transform duration-200", expanded && "rotate-90")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.25}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
+          <ChevronRight className={cn("size-4 transition-transform duration-200", expanded && "rotate-90")} />
         </span>
         <div className="min-w-0">
           <div className="text-sm font-semibold tracking-[-0.03em] text-[var(--neu-text-strong)]">Auto-trade execution</div>
@@ -230,7 +228,7 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
           <div className="space-y-4">
             {value.map((config, idx) => (
               <AutoTradeCard
-                key={idx}
+                key={config.account_id || `new-${idx}`}
                 config={config}
                 index={idx}
                 accounts={accounts}
@@ -265,6 +263,7 @@ interface CardProps {
 }
 
 function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onDuplicate, onRemove }: CardProps) {
+  const [expanded, setExpanded] = useState(!config.account_id);
   const selectedAccount = accounts.find((a) => a.id === config.account_id);
   const leverageNum = config.leverage || 1;
   const capitalPctNum = config.capital_pct || 0;
@@ -273,17 +272,32 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
 
   return (
     <article className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] border-none shadow-[var(--shadow-card)] p-5">
-      <div className="flex flex-wrap items-start gap-3">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">
-            Account {index + 1}
-          </div>
-          <div className="mt-1 text-sm font-semibold text-[var(--neu-text-strong)]">
-            {selectedAccount ? selectedAccount.label : "Configure account routing"}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        className="flex flex-wrap items-start gap-3 cursor-pointer select-none rounded-[var(--neu-radius-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--neu-accent)]"
+        onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded((v) => !v); } }}
+      >
+        <div className="flex items-center gap-2">
+          <ChevronRight className={cn("size-4 text-[var(--neu-text-muted)] transition-transform duration-200", expanded && "rotate-90")} />
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">
+              Account {index + 1}
+            </div>
+            <div className="mt-1 text-sm font-semibold text-[var(--neu-text-strong)]">
+              {selectedAccount ? selectedAccount.label : "Configure account routing"}
+            </div>
           </div>
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          {config.account_id && !accountsLoading && !selectedAccount ? (
+            <Badge variant="destructive" className="px-3 py-1 text-[10px] tracking-[0.16em] uppercase">
+              Account removed
+            </Badge>
+          ) : null}
           {selectedAccount ? (
             <Badge variant={selectedAccount.account_type === "live" ? "destructive" : "secondary"} className="px-3 py-1 text-[10px] tracking-[0.16em] uppercase">
               {selectedAccount.account_type}
@@ -305,7 +319,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
         <MetricChip label="SL move" value={`${slPriceMove}%`} tone="danger" />
       </div>
 
-      <div className="mt-5 space-y-4">
+      <div className={cn("mt-5 space-y-4", !expanded && "hidden")}>
         <div className={SECTION_CLASS}>
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
@@ -331,6 +345,11 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
           </Select>
           {!config.account_id && !accountsLoading ? (
             <p className="mt-2 text-[11px] text-destructive">Required. This configuration is skipped until an account is assigned.</p>
+          ) : null}
+          {config.account_id && !accountsLoading && !selectedAccount ? (
+            <Notice tone="danger" icon={<TriangleAlert className="size-3.5" />}>
+              <strong>Account removed.</strong> The previously assigned account no longer exists. Please select a different account or remove this config.
+            </Notice>
           ) : null}
           {selectedAccount?.account_type === "live" ? (
             <p className="mt-2 text-[11px] text-[color:color-mix(in_oklch,var(--warning)_76%,var(--foreground))]">Live account selected. Orders route to real funds.</p>

@@ -42,16 +42,22 @@ export function DemoResetDialog({ open, onClose, onComplete, dashboard, initialS
   const [result, setResult] = useState<DemoResetBalanceResult | null>(null);
   const [progress, setProgress] = useState<ResetProgressState>({ current: 0, total: 0, accounts: [] });
   const [selectedIds, setSelectedIds] = useState<string[]>(initialSelectedIds);
+  const [searchQuery, setSearchQuery] = useState("");
   const taskId = useRef<string | null>(null);
 
+  const prevOpenRef = useRef(false);
   useEffect(() => {
-    if (open) setSelectedIds(initialSelectedIds);
+    if (open && !prevOpenRef.current) {
+      setSelectedIds(initialSelectedIds);
+    }
+    prevOpenRef.current = open;
   }, [open, initialSelectedIds]);
 
   const reset = useCallback(() => {
     setResult(null);
     setProgress({ current: 0, total: 0, accounts: [] });
     setSelectedIds([]);
+    setSearchQuery("");
   }, []);
 
   useEffect(() => {
@@ -85,6 +91,7 @@ export function DemoResetDialog({ open, onClose, onComplete, dashboard, initialS
   if (!open) return null;
 
   const demoAccounts = dashboard.filter(c => c.account_type === "demo" && c.is_active);
+  const filteredDemoAccounts = demoAccounts.filter(a => a.label.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const handleExecute = async () => {
     const parsedAmount = parseFloat(amount);
@@ -148,8 +155,29 @@ export function DemoResetDialog({ open, onClose, onComplete, dashboard, initialS
               </div>
               <div>
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block">Select Accounts</label>
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search accounts..."
+                    className="flex-1 rounded-xl border border-border/40 bg-muted/20 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const filteredIds = filteredDemoAccounts.map(a => a.id);
+                      const allSelected = filteredIds.every(id => selectedIds.includes(id));
+                      if (allSelected) setSelectedIds(prev => prev.filter(id => !filteredIds.includes(id)));
+                      else setSelectedIds(prev => [...new Set([...prev, ...filteredIds])]);
+                    }}
+                    className="text-[10px] font-bold uppercase tracking-wider text-amber-500 hover:text-amber-400 transition-colors whitespace-nowrap px-2 py-1.5 rounded-lg hover:bg-amber-500/10"
+                  >
+                    {filteredDemoAccounts.length > 0 && filteredDemoAccounts.every(a => selectedIds.includes(a.id)) ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
                 <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar pr-1">
-                  {demoAccounts.map((acc) => (
+                  {filteredDemoAccounts.map((acc) => (
                     <label key={acc.id} className="flex items-center gap-2.5 text-xs px-3 py-2 rounded-xl bg-muted/20 border border-border/20 cursor-pointer hover:bg-muted/30 transition-colors">
                       <input
                         type="checkbox"
@@ -163,6 +191,9 @@ export function DemoResetDialog({ open, onClose, onComplete, dashboard, initialS
                       <span className="font-semibold truncate">{acc.label}</span>
                     </label>
                   ))}
+                  {filteredDemoAccounts.length === 0 && (
+                    <p className="text-xs text-muted-foreground/60 text-center py-2">No accounts match</p>
+                  )}
                 </div>
               </div>
             </div>

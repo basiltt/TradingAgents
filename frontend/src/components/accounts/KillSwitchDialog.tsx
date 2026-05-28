@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { accountsApi } from "@/api/client";
-import type { MasterCloseAllResult } from "@/api/client";
+import type { MasterCloseAllResult, DashboardCard } from "@/api/client";
 import { Button } from "@/components/ui/button";
 
 /** Maximum number of progress entries to retain to prevent unbounded growth. */
@@ -16,8 +16,7 @@ interface KillSwitchDialogProps {
   open: boolean;
   onClose: () => void;
   onComplete: () => void;
-  allActiveCount: number;
-  allPositionsCount: number;
+  dashboard: DashboardCard[];
 }
 
 interface KillProgressState {
@@ -33,18 +32,32 @@ interface KillProgressState {
  * @param props.open - Whether the dialog is visible.
  * @param props.onClose - Called when the user dismisses the dialog.
  * @param props.onComplete - Called after the operation finishes (to refresh dashboard).
- * @param props.allActiveCount - Total active accounts count for the warning message.
- * @param props.allPositionsCount - Total open positions count for the warning message.
+ * @param props.dashboard - Current dashboard cards (used to derive active account list).
  */
-export function KillSwitchDialog({ open, onClose, onComplete, allActiveCount, allPositionsCount }: KillSwitchDialogProps) {
+export function KillSwitchDialog({ open, onClose, onComplete, dashboard }: KillSwitchDialogProps) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<MasterCloseAllResult | null>(null);
   const [progress, setProgress] = useState<KillProgressState>({ current: 0, total: 0, accounts: [] });
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const taskId = useRef<string | null>(null);
+
+  const activeAccounts = dashboard.filter(a => a.is_active);
+  const filteredAccounts = activeAccounts.filter(a => a.label.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    if (open && !prevOpenRef.current) {
+      setSelectedIds(dashboard.filter(a => a.is_active).map(a => a.id));
+    }
+    prevOpenRef.current = open;
+  }, [open, dashboard]);
 
   const reset = useCallback(() => {
     setResult(null);
     setProgress({ current: 0, total: 0, accounts: [] });
+    setSelectedIds([]);
+    setSearchQuery("");
   }, []);
 
   useEffect(() => {
@@ -78,10 +91,12 @@ export function KillSwitchDialog({ open, onClose, onComplete, allActiveCount, al
   if (!open) return null;
 
   const handleExecute = async () => {
+    if (selectedIds.length === 0) return;
     setLoading(true);
     setProgress({ current: 0, total: 0, accounts: [] });
     try {
-      const res = await accountsApi.masterCloseAll();
+      const ids = selectedIds.length === activeAccounts.length ? undefined : selectedIds;
+      const res = await accountsApi.masterCloseAll(ids);
       taskId.current = res.task_id;
       setProgress(p => ({ ...p, total: res.accounts_total }));
       if (!res.task_id) {
@@ -119,29 +134,71 @@ export function KillSwitchDialog({ open, onClose, onComplete, allActiveCount, al
               </div>
             </div>
             <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wider">This will immediately:</p>
-            <ul className="text-xs text-muted-foreground/90 mb-5 space-y-1.5">
+            <ul className="text-xs text-muted-foreground/90 mb-4 space-y-1.5">
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" aria-hidden="true" />
-                <span>Close <span className="text-foreground font-bold">all open positions</span> on every active account</span>
+                <span>Close <span className="text-foreground font-bold">all open positions</span> on selected accounts</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" aria-hidden="true" />
                 <span>Delete <span className="text-foreground font-bold">all conditional close rules</span></span>
               </li>
-              <li className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" aria-hidden="true" />
-                <span>Affects <span className="text-foreground font-bold">{allActiveCount} accounts</span> with <span className="text-foreground font-bold">{allPositionsCount} positions</span></span>
-              </li>
             </ul>
+            <div className="mb-4">
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block">Select Accounts</label>
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search accounts..."
+                  className="flex-1 rounded-xl border border-border/40 bg-muted/20 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500/50 transition-all"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const filteredIds = filteredAccounts.map(a => a.id);
+                    const allSelected = filteredIds.every(id => selectedIds.includes(id));
+                    if (allSelected) setSelectedIds(prev => prev.filter(id => !filteredIds.includes(id)));
+                    else setSelectedIds(prev => [...new Set([...prev, ...filteredIds])]);
+                  }}
+                  className="text-[10px] font-bold uppercase tracking-wider text-red-500 hover:text-red-400 transition-colors whitespace-nowrap px-2 py-1.5 rounded-lg hover:bg-red-500/10"
+                >
+                  {filteredAccounts.length > 0 && filteredAccounts.every(a => selectedIds.includes(a.id)) ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                {filteredAccounts.map((acc) => (
+                  <label key={acc.id} className="flex items-center gap-2.5 text-xs px-3 py-2 rounded-xl bg-muted/20 border border-border/20 cursor-pointer hover:bg-muted/30 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(acc.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedIds(prev => [...prev, acc.id]);
+                        else setSelectedIds(prev => prev.filter(id => id !== acc.id));
+                      }}
+                      className="rounded border-border/40"
+                    />
+                    <span className="font-semibold truncate">{acc.label}</span>
+                    {(acc.positions_count || 0) > 0 && (
+                      <span className="ml-auto text-[10px] text-muted-foreground">{acc.positions_count} pos</span>
+                    )}
+                  </label>
+                ))}
+                {filteredAccounts.length === 0 && (
+                  <p className="text-xs text-muted-foreground/60 text-center py-2">No accounts match</p>
+                )}
+              </div>
+            </div>
             <div className="rounded-xl bg-red-500/5 border border-red-500/10 p-3 mb-5">
               <p className="text-xs text-red-500 font-bold uppercase tracking-wide mb-1">This action cannot be undone.</p>
-              <p className="text-[11px] text-muted-foreground/80 leading-relaxed">Note: Active scheduled scans will not be paused. Pause them separately to prevent new trades from opening.</p>
+              <p className="text-[11px] text-muted-foreground/80 leading-relaxed">Affects <span className="font-bold text-foreground">{selectedIds.length} accounts</span>. Active scheduled scans will not be paused. Pause them separately to prevent new trades from opening.</p>
             </div>
             <div className="flex gap-3">
               <Button variant="outline" onClick={handleDismiss} className="flex-1">
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={handleExecute} className="flex-1">
+              <Button variant="destructive" onClick={handleExecute} disabled={selectedIds.length === 0} className="flex-1">
                 Confirm &mdash; Close All
               </Button>
             </div>

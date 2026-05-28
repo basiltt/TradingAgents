@@ -1494,6 +1494,30 @@ class AsyncAnalysisDB:
         )
         return int(result.split()[-1]) > 0
 
+    async def remove_account_from_scheduled_scans(self, account_id: str) -> List[str]:
+        """Remove an account from all scheduled scan auto_trade_configs. Returns list of modified schedule IDs."""
+        modified_ids: List[str] = []
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        async with self._transaction() as conn:
+            rows = await conn.fetch(
+                "SELECT id, scan_config FROM scheduled_scans "
+                "WHERE scan_config->'auto_trade_configs' IS NOT NULL AND status IN ('active','paused')"
+            )
+            for row in rows:
+                scan_config = row["scan_config"] if isinstance(row["scan_config"], dict) else json.loads(row["scan_config"])
+                configs = scan_config.get("auto_trade_configs") or []
+                if not isinstance(configs, list):
+                    continue
+                filtered = [c for c in configs if c.get("account_id") != account_id]
+                if len(filtered) < len(configs):
+                    scan_config["auto_trade_configs"] = filtered
+                    await conn.execute(
+                        "UPDATE scheduled_scans SET scan_config=$1, updated_at=$2 WHERE id=$3",
+                        json.dumps(scan_config), now, row["id"],
+                    )
+                    modified_ids.append(row["id"])
+        return modified_ids
+
     # ── Closed PnL persistence ──────────────────────────────────────────
 
     async def insert_closed_pnl_records(self, account_id: str, records: List[Dict[str, Any]]) -> int:

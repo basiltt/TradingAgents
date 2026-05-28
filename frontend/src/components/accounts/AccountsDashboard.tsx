@@ -348,8 +348,7 @@ export function AccountsDashboard() {
         open={killOpen}
         onClose={() => setKillOpen(false)}
         onComplete={() => fetchDashboard(true)}
-        allActiveCount={allActiveCount}
-        allPositionsCount={allPositionsCount}
+        dashboard={dashboard}
       />
 
       <DemoResetDialog

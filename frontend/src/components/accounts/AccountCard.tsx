@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { MoreVertical, XCircle, SlidersHorizontal, History } from "lucide-react";
+import { MoreVertical, XCircle, SlidersHorizontal, History, Timer } from "lucide-react";
 import type { DashboardCard } from "@/api/client";
 import type { Direction } from "@/store/accounts-slice";
 import { useAppSelector } from "@/store";
@@ -76,6 +76,106 @@ function mkFloor(label: string, display: string, current: number, threshold: num
   const range = Math.abs(threshold) || 1;
   const bufferPct = (buffer / range) * 100;
   return { kind: "floor", label, thresholdDisplay: display, pct: bufferPct, reached: buffer <= 0, warn: bufferPct > 0 && bufferPct < FLOOR_WARNING_THRESHOLD_PCT };
+}
+
+/* ── Time-based rules ────────────────────────────────────────────── */
+
+interface TimeRule {
+  label: string;
+  remainingMs: number;
+  totalMs: number;
+  expired: boolean;
+}
+
+function resolveTimeRules(
+  targets: Array<{ trigger_type: string; threshold_value: string | null; reference_value: string | null }>,
+  now: number,
+): TimeRule[] {
+  const results: TimeRule[] = [];
+  for (const t of targets) {
+    if (t.trigger_type !== "BREAKEVEN_TIMEOUT" && t.trigger_type !== "MAX_DURATION") continue;
+    if (!t.threshold_value || !t.reference_value) continue;
+    const hours = parseFloat(t.threshold_value);
+    if (isNaN(hours)) continue;
+    const start = new Date(t.reference_value).getTime();
+    if (isNaN(start)) continue;
+    const totalMs = hours * 3600_000;
+    const deadline = start + totalMs;
+    const remainingMs = deadline - now;
+    results.push({
+      label: t.trigger_type === "BREAKEVEN_TIMEOUT" ? "Breakeven" : "Force Close",
+      remainingMs: Math.max(remainingMs, 0),
+      totalMs,
+      expired: remainingMs <= 0,
+    });
+  }
+  return results.sort((a, b) => a.remainingMs - b.remainingMs);
+}
+
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return "0:00:00";
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+function CountdownTimers({ targets }: { targets: Array<{ trigger_type: string; threshold_value: string | null; reference_value: string | null }> }) {
+  const [now, setNow] = useState(Date.now());
+  const timeRules = resolveTimeRules(targets, now);
+  const allExpired = timeRules.length > 0 && timeRules.every((r) => r.expired);
+
+  const hasTimeRules = timeRules.length > 0;
+  const shouldTick = hasTimeRules && !allExpired;
+
+  useEffect(() => {
+    if (!shouldTick) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [shouldTick]);
+
+  if (!hasTimeRules) return null;
+
+  return (
+    <div className="mx-4.5 mb-2.5 px-3 py-2 rounded-lg bg-muted/[0.06] border border-border/20">
+      <div className="flex items-center gap-4 flex-wrap">
+        {timeRules.map((rule, i) => {
+          const pct = rule.totalMs > 0 ? Math.max(0, Math.min(100, (rule.remainingMs / rule.totalMs) * 100)) : 0;
+          const urgent = pct < 15;
+          const warning = pct < 30 && !urgent;
+          return (
+            <div key={i} className="flex items-center gap-2 min-w-0">
+              <Timer className={cn(
+                "w-3.5 h-3.5 shrink-0",
+                rule.expired ? "text-red-400" : urgent ? "text-red-400 animate-pulse" : warning ? "text-amber-400" : "text-sky-400",
+              )} />
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-medium whitespace-nowrap">{rule.label}</span>
+                  <span className={cn(
+                    "text-xs font-bold tabular-nums tracking-tight whitespace-nowrap",
+                    rule.expired ? "text-red-400" : urgent ? "text-red-400" : warning ? "text-amber-400" : "text-foreground/90",
+                  )}>
+                    {rule.expired ? "Expired" : formatCountdown(rule.remainingMs)}
+                  </span>
+                </div>
+                <div className="h-[3px] w-16 sm:w-20 rounded-full bg-muted/30 overflow-hidden">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all duration-1000",
+                      rule.expired ? "bg-red-500" : urgent ? "bg-red-500" : warning ? "bg-amber-500" : "bg-sky-500",
+                    )}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /* ── Sub-components ──────────────────────────────────────────────── */
@@ -332,6 +432,11 @@ export const AccountCard = memo(function AccountCard({ card, onRefresh }: Accoun
           <div className="px-4.5 pb-2.5 space-y-1.5">
             {rules.map((r, i) => <RuleIndicator key={i} rule={r} />)}
           </div>
+        )}
+
+        {/* Time-based countdown timers */}
+        {card.active_rule_targets && (
+          <CountdownTimers targets={card.active_rule_targets} />
         )}
 
         {/* Metrics grid */}

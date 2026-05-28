@@ -136,6 +136,8 @@ class AutoTradeExecutor:
             except Exception as e:
                 logger.warning("auto_trade_close_on_profit_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
 
+        account_valid_cache: Dict[str, bool] = {}
+
         for key, state in self._state.items():
             if state.stopped:
                 continue
@@ -143,6 +145,19 @@ class AutoTradeExecutor:
             if not account_id:
                 state.stopped = True
                 state.stopped_reason = "no_account_id"
+                continue
+            # Validate account still exists (not soft-deleted)
+            if account_id not in account_valid_cache:
+                try:
+                    acct = await self._accounts.get_account(account_id)
+                    account_valid_cache[account_id] = acct is not None
+                except Exception as e:
+                    account_valid_cache[account_id] = False
+                    logger.warning("auto_trade_account_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+            if not account_valid_cache[account_id]:
+                state.stopped = True
+                state.stopped_reason = "account_deleted"
+                logger.warning("auto_trade_account_deleted", extra={"account_id": account_id})
                 continue
             # Check positions if skip_if_positions_open is enabled
             if state.config.get("skip_if_positions_open") and account_id not in force_closed_accounts:

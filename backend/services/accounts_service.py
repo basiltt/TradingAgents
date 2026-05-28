@@ -461,6 +461,12 @@ class AccountsService:
             self.invalidate_cache(account_id)
             if self._ws_manager:
                 asyncio.ensure_future(self._ws_manager.stop_account(account_id))
+            try:
+                modified_ids = await self._db.remove_account_from_scheduled_scans(account_id)
+                if modified_ids:
+                    logger.info("delete_account_cleaned_scheduled_scans", extra={"account_id": account_id, "schedule_ids": modified_ids})
+            except Exception as e:
+                logger.warning("delete_account_scheduled_scan_cleanup_failed", extra={"account_id": account_id, "error": str(e)[:200]})
             logger.info("delete_account_done", extra={"account_id": account_id})
         return result
 

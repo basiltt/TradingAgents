@@ -55,7 +55,7 @@ async def close_all_positions(request: Request, account_id: str):
 
 @router.post("/accounts/master-close-all")
 async def master_close_all(request: Request):
-    """Kill switch: close all positions and delete all rules across ALL accounts.
+    """Kill switch: close all positions and delete all rules across ALL accounts (or a subset).
     Returns immediately with a task_id; progress is streamed via WebSocket."""
     svc = _get_service(request)
     accounts_svc = getattr(request.app.state, "accounts_service", None)
@@ -63,8 +63,20 @@ async def master_close_all(request: Request):
         raise HTTPException(503, detail="Accounts service not available")
     ws_mgr = getattr(request.app.state, "account_ws_manager", None)
 
+    body = {}
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    requested_ids = body.get("account_ids") if isinstance(body, dict) else None
+
     accounts = await accounts_svc.list_accounts()
     active_accounts = [a for a in accounts if a.get("is_active")]
+
+    if requested_ids:
+        requested_set = set(requested_ids)
+        active_accounts = [a for a in active_accounts if a["id"] in requested_set]
 
     if not active_accounts:
         return {"task_id": None, "accounts_total": 0, "message": "No active accounts"}

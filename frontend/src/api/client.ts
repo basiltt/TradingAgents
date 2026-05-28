@@ -938,8 +938,8 @@ export const accountsApi = {
     mutate<CloseAllResult>("POST", `/api/v1/accounts/${encodeURIComponent(accountId)}/positions/close-all`, undefined, signal),
 
   /** POST /api/v1/accounts/master-close-all — kill switch: starts background close, progress via WS. */
-  masterCloseAll: (signal?: AbortSignal) =>
-    mutate<MasterCloseStartResult>("POST", `/api/v1/accounts/master-close-all`, undefined, signal),
+  masterCloseAll: (accountIds?: string[], signal?: AbortSignal) =>
+    mutate<MasterCloseStartResult>("POST", `/api/v1/accounts/master-close-all`, accountIds?.length ? { account_ids: accountIds } : undefined, signal),
 
   /** POST /api/v1/accounts/demo-reset-balance — starts background balance reset, progress via WS. */
   demoResetBalance: (targetBalance: number, accountIds?: string[], signal?: AbortSignal) =>
