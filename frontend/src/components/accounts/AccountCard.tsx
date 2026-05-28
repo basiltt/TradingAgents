@@ -139,28 +139,28 @@ function CountdownTimers({ targets }: { targets: Array<{ trigger_type: string; t
 
   return (
     <div className="mx-4.5 mb-2.5 px-3 py-2 rounded-lg bg-muted/[0.06] border border-border/20">
-      <div className="flex items-center gap-4 flex-wrap">
+      <div className={cn("grid gap-3", timeRules.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {timeRules.map((rule, i) => {
           const pct = rule.totalMs > 0 ? Math.max(0, Math.min(100, (rule.remainingMs / rule.totalMs) * 100)) : 0;
           const urgent = pct < 15;
           const warning = pct < 30 && !urgent;
           return (
-            <div key={i} className="flex items-center gap-2 min-w-0">
+            <div key={i} className="flex items-center gap-2">
               <Timer className={cn(
                 "w-3.5 h-3.5 shrink-0",
                 rule.expired ? "text-red-400" : urgent ? "text-red-400 animate-pulse" : warning ? "text-amber-400" : "text-sky-400",
               )} />
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-medium whitespace-nowrap">{rule.label}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-medium">{rule.label}</span>
                   <span className={cn(
-                    "text-xs font-bold tabular-nums tracking-tight whitespace-nowrap",
+                    "text-xs font-bold tabular-nums tracking-tight",
                     rule.expired ? "text-red-400" : urgent ? "text-red-400" : warning ? "text-amber-400" : "text-foreground/90",
                   )}>
                     {rule.expired ? "Expired" : formatCountdown(rule.remainingMs)}
                   </span>
                 </div>
-                <div className="h-[3px] w-16 sm:w-20 rounded-full bg-muted/30 overflow-hidden">
+                <div className="h-[3px] w-full max-w-[80px] rounded-full bg-muted/30 overflow-hidden mt-0.5">
                   <div
                     className={cn(
                       "h-full rounded-full transition-all duration-1000",
