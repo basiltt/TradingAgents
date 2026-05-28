@@ -24,11 +24,15 @@ echo "[4/6] Building frontend..."
 npm run build
 cd ..
 
-echo "[5/6] Restarting services..."
+echo "[5/7] Running database migrations..."
+set -a; source .env; set +a
+python -m backend.migrate
+
+echo "[6/7] Restarting services..."
 systemctl restart tradingagents-backend
 systemctl restart tradingagents-frontend
 
-echo "[6/6] Verifying services..."
+echo "[7/7] Verifying services..."
 sleep 5
 if systemctl is-active --quiet tradingagents-backend && systemctl is-active --quiet tradingagents-frontend; then
     echo "=== Deploy successful ==="

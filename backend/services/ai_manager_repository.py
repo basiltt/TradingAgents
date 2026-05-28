@@ -769,20 +769,23 @@ class AIManagerRepository:
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """Fetch paginated LLM calls newest first. Returns (rows, next_cursor)."""
         limit = max(1, min(limit, 100))
-        async with self._pool.acquire() as conn:
-            if cursor_timestamp and cursor_id:
-                rows = await conn.fetch(
-                    "SELECT * FROM ai_manager_llm_calls "
-                    "WHERE account_id = $1 AND (timestamp, id) < ($2::timestamptz, $3) "
-                    "ORDER BY timestamp DESC, id DESC LIMIT $4",
-                    account_id, cursor_timestamp, cursor_id, limit,
-                )
-            else:
-                rows = await conn.fetch(
-                    "SELECT * FROM ai_manager_llm_calls "
-                    "WHERE account_id = $1 ORDER BY timestamp DESC, id DESC LIMIT $2",
-                    account_id, limit,
-                )
+        try:
+            async with self._pool.acquire() as conn:
+                if cursor_timestamp and cursor_id:
+                    rows = await conn.fetch(
+                        "SELECT * FROM ai_manager_llm_calls "
+                        "WHERE account_id = $1 AND (timestamp, id) < ($2::timestamptz, $3) "
+                        "ORDER BY timestamp DESC, id DESC LIMIT $4",
+                        account_id, cursor_timestamp, cursor_id, limit,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        "SELECT * FROM ai_manager_llm_calls "
+                        "WHERE account_id = $1 ORDER BY timestamp DESC, id DESC LIMIT $2",
+                        account_id, limit,
+                    )
+        except Exception:
+            return [], None
         results = []
         for r in rows:
             row_dict = dict(r)
@@ -816,13 +819,16 @@ class AIManagerRepository:
 
     async def get_latest_commentary(self, account_id: str) -> Optional[Dict[str, Any]]:
         """Get the most recent commentary for account."""
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM ai_manager_market_commentary "
-                "WHERE account_id = $1 ORDER BY generated_at DESC LIMIT 1",
-                account_id,
-            )
-        return dict(row) if row else None
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM ai_manager_market_commentary "
+                    "WHERE account_id = $1 ORDER BY generated_at DESC LIMIT 1",
+                    account_id,
+                )
+            return dict(row) if row else None
+        except Exception:
+            return None
 
     async def cleanup_old_llm_calls(self, days: int = 90) -> int:
         """Delete LLM call logs older than N days. Batched."""
