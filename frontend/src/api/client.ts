@@ -1419,4 +1419,23 @@ export const aiManagerApi = {
   /** Activates the global kill switch across ALL accounts — emergency stop. */
   globalKill: () =>
     mutate<{ status: string }>("POST", "/api/v1/ai-manager/global-kill"),
+
+  // --- Dashboard Enhancement ---
+
+  getLLMCalls: (accountId: string, params?: { limit?: number; cursor?: string }): Promise<{ calls: unknown[]; next_cursor: string | null }> => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.cursor) searchParams.set("cursor", params.cursor);
+    const qs = searchParams.toString();
+    return request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/llm-calls${qs ? `?${qs}` : ""}`);
+  },
+
+  getCapabilities: (accountId: string): Promise<Record<string, unknown>> =>
+    request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/capabilities-status`),
+
+  getInsights: (accountId: string): Promise<Record<string, unknown>> =>
+    request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/market-insights`),
+
+  getAnalysisContext: (accountId: string): Promise<Record<string, unknown>> =>
+    request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/analysis-context`),
 };

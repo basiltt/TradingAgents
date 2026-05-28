@@ -463,6 +463,54 @@ CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_lookup
     ON ai_manager_orderbook_snapshots(account_id, symbol, created_at DESC)
     """)
 
+    # --- AI Manager Dashboard Enhancement tables ---
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_llm_calls (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    call_id UUID NOT NULL,
+    evaluation_cycle_id UUID NOT NULL,
+    node_name TEXT NOT NULL DEFAULT 'action_generation',
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    success BOOLEAN NOT NULL,
+    urgency_tier TEXT NOT NULL,
+    action_returned TEXT,
+    confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    reasoning_preview TEXT,
+    attempt_number INTEGER NOT NULL DEFAULT 1
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_llm_calls_account_time
+    ON ai_manager_llm_calls(account_id, timestamp DESC, id)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_llm_calls_cycle
+    ON ai_manager_llm_calls(evaluation_cycle_id)
+    """)
+
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS ai_manager_market_commentary (
+    id BIGSERIAL PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    commentary_type TEXT NOT NULL CHECK (commentary_type IN ('template', 'llm')),
+    regime_label TEXT NOT NULL,
+    day_score INTEGER CHECK (day_score IS NULL OR (day_score >= 0 AND day_score <= 100)),
+    day_score_label TEXT CHECK (day_score_label IS NULL OR day_score_label IN ('good', 'neutral', 'caution', 'danger')),
+    summary_text TEXT NOT NULL CHECK (char_length(summary_text) <= 4000),
+    symbols_referenced TEXT[] NOT NULL DEFAULT '{}'
+)
+    """)
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_commentary_account_time
+    ON ai_manager_market_commentary(account_id, generated_at DESC)
+    """)
+
     await conn.execute("""
 DO $$
 BEGIN

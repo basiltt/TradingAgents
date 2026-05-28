@@ -9,6 +9,12 @@ import {
   fetchAIManagerStatus,
   fetchDecisions,
   fetchLogs,
+  onLLMStarted,
+  onLLMCompleted,
+  onCapabilityUpdate,
+  onMarketCommentary,
+  addAttentionItem,
+  fetchInsights,
 } from "@/store/ai-manager-slice";
 import type { Trade } from "@/components/trades/types";
 import {
@@ -159,6 +165,24 @@ export function useAccountWebSocket() {
         // Note: fetchPerformance is intentionally not called here because we don't know
         // the user's selected period (1d/7d/30d). The AIMonitorPanel polls status every 30s
         // and the user can switch periods manually.
+      }
+
+      // Dashboard enhancement WS handlers
+      if (msg.type === "ai_manager.llm_started" && msg.account_id) {
+        dispatch(onLLMStarted({ account_id: msg.account_id as string, call_id: msg.call_id as string }));
+      }
+      if (msg.type === "ai_manager.llm_call_complete" && msg.account_id) {
+        dispatch(onLLMCompleted(msg as unknown as Parameters<typeof onLLMCompleted>[0]));
+      }
+      if (msg.type === "ai_manager.capability_update" && msg.account_id) {
+        dispatch(onCapabilityUpdate(msg as unknown as Parameters<typeof onCapabilityUpdate>[0]));
+      }
+      if (msg.type === "ai_manager.market_commentary" && msg.account_id) {
+        dispatch(onMarketCommentary(msg as unknown as Parameters<typeof onMarketCommentary>[0]));
+        dispatch(fetchInsights(msg.account_id as string));
+      }
+      if (msg.type === "ai_manager.attention_needed" && msg.account_id) {
+        dispatch(addAttentionItem({ account_id: msg.account_id as string, ...(msg.item as Record<string, unknown>) } as unknown as Parameters<typeof addAttentionItem>[0]));
       }
     };
 

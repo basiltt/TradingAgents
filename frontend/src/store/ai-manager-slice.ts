@@ -83,6 +83,38 @@ export interface AIManagerLog {
   details: Record<string, unknown> | null;
 }
 
+// --- Dashboard Enhancement Types ---
+
+export interface LLMCallEntry {
+  id: number; call_id: string; evaluation_cycle_id: string;
+  node_name: string; timestamp: string; model: string;
+  input_tokens: number; output_tokens: number; latency_ms: number;
+  success: boolean; urgency_tier: string; action_returned: string | null;
+  confidence: number | null; reasoning_preview: string | null; attempt_number: number;
+}
+
+export interface CapabilityStatus {
+  capability_key: string; display_name: string; enabled: boolean;
+  status: "healthy" | "degraded" | "failed" | "disabled";
+  last_triggered_at: string | null; trigger_count_session: number;
+  next_trigger_condition: string; countdown_seconds: number | null; armed: boolean;
+}
+
+export interface MarketInsight {
+  day_score: number | null; day_score_label: "good" | "neutral" | "caution" | "danger" | null;
+  day_score_justification: string | null;
+  latest_commentary: { id: number; generated_at: string; summary_text: string; regime_label: string; commentary_type: "template" | "llm"; } | null;
+  regime: Record<string, unknown> | null; session: string | null;
+  correlation_heat: number | null;
+  active_sweeps: Array<{ symbol: string; confidence: number; direction: string }>;
+  positions_health: Array<{ symbol: string; health_score: number; concern: string | null }>;
+}
+
+export interface AttentionItem {
+  id: string; severity: "critical" | "warning" | "info";
+  title: string; description: string; timestamp: string; source: string; dismissed: boolean;
+}
+
 interface AIManagerState {
   statusByAccount: Record<string, AIManagerStatus | null>;
   configByAccount: Record<string, Record<string, unknown> | null>;
@@ -93,6 +125,13 @@ interface AIManagerState {
   logCursors: Record<string, number | null>;
   loading: Record<string, boolean>;
   error: string | null;
+  // Dashboard enhancement
+  llmCallsByAccount: Record<string, LLMCallEntry[]>;
+  llmCallCursors: Record<string, string | null>;
+  inFlightCalls: Record<string, string[]>;
+  capabilitiesByAccount: Record<string, CapabilityStatus[]>;
+  insightsByAccount: Record<string, MarketInsight | null>;
+  attentionByAccount: Record<string, AttentionItem[]>;
 }
 
 const AI_MGR_STATE = { SLEEPING: "sleeping", PAUSED: "paused", MONITORING: "monitoring" } as const;
@@ -134,6 +173,13 @@ const initialState: AIManagerState = {
   logCursors: {},
   loading: {},
   error: null,
+  // Dashboard enhancement
+  llmCallsByAccount: {},
+  llmCallCursors: {},
+  inFlightCalls: {},
+  capabilitiesByAccount: {},
+  insightsByAccount: {},
+  attentionByAccount: {},
 };
 
 /** Enables the AI manager for the given account via the backend API. */
@@ -268,6 +314,34 @@ export const fetchLogs = createAsyncThunk(
   },
 );
 
+// --- Dashboard Enhancement Thunks ---
+
+export const fetchLLMCalls = createAsyncThunk(
+  "aiManager/fetchLLMCalls",
+  async ({ accountId, limit = 50, cursor, append = false }: {
+    accountId: string; limit?: number; cursor?: string | null; append?: boolean;
+  }) => {
+    const data = await aiManagerApi.getLLMCalls(accountId, { limit, cursor: cursor ?? undefined });
+    return { accountId, calls: data.calls as LLMCallEntry[], nextCursor: data.next_cursor, append };
+  },
+);
+
+export const fetchCapabilities = createAsyncThunk(
+  "aiManager/fetchCapabilities",
+  async (accountId: string) => {
+    const data = await aiManagerApi.getCapabilities(accountId);
+    return { accountId, data: data as { capabilities: CapabilityStatus[] } };
+  },
+);
+
+export const fetchInsights = createAsyncThunk(
+  "aiManager/fetchInsights",
+  async (accountId: string) => {
+    const data = await aiManagerApi.getInsights(accountId);
+    return { accountId, data: data as MarketInsight };
+  },
+);
+
 const aiManagerSlice = createSlice({
   name: "aiManager",
   initialState,
@@ -298,6 +372,62 @@ const aiManagerSlice = createSlice({
     /** Clears the slice-level error field after it has been displayed or handled. */
     clearError(state) {
       state.error = null;
+    },
+    // --- Dashboard Enhancement Reducers ---
+    onLLMStarted(state, action: PayloadAction<{ account_id: string; call_id: string }>) {
+      const { account_id, call_id } = action.payload;
+      if (!state.inFlightCalls[account_id]) state.inFlightCalls[account_id] = [];
+      state.inFlightCalls[account_id].push(call_id);
+    },
+    onLLMCompleted(state, action: PayloadAction<LLMCallEntry & { account_id: string }>) {
+      const { account_id, ...entry } = action.payload;
+      state.inFlightCalls[account_id] = (state.inFlightCalls[account_id] || []).filter(id => id !== entry.call_id);
+      if (!state.llmCallsByAccount[account_id]) state.llmCallsByAccount[account_id] = [];
+      state.llmCallsByAccount[account_id].unshift(entry);
+      if (state.llmCallsByAccount[account_id].length > 200) {
+        state.llmCallsByAccount[account_id].pop();
+      }
+    },
+    onCapabilityUpdate(state, action: PayloadAction<{ account_id: string; capability_key: string; new_status: string }>) {
+      const caps = state.capabilitiesByAccount[action.payload.account_id];
+      if (caps) {
+        const cap = caps.find(c => c.capability_key === action.payload.capability_key);
+        if (cap) cap.status = action.payload.new_status as CapabilityStatus["status"];
+      }
+    },
+    onMarketCommentary(state, action: PayloadAction<{ account_id: string; day_score: number | null; day_score_label: string | null; summary_text: string; regime: string; generated_at: string }>) {
+      const { account_id, ...data } = action.payload;
+      if (!state.insightsByAccount[account_id]) {
+        state.insightsByAccount[account_id] = {
+          day_score: data.day_score, day_score_label: data.day_score_label as MarketInsight["day_score_label"],
+          day_score_justification: null,
+          latest_commentary: { id: 0, generated_at: data.generated_at, summary_text: data.summary_text, regime_label: data.regime, commentary_type: "template" },
+          regime: null, session: null, correlation_heat: null, active_sweeps: [], positions_health: [],
+        };
+        return;
+      }
+      const insight = state.insightsByAccount[account_id]!;
+      insight.day_score = data.day_score;
+      insight.day_score_label = data.day_score_label as MarketInsight["day_score_label"];
+      if (insight.latest_commentary) {
+        insight.latest_commentary.summary_text = data.summary_text;
+        insight.latest_commentary.generated_at = data.generated_at;
+      } else {
+        insight.latest_commentary = { id: 0, generated_at: data.generated_at, summary_text: data.summary_text, regime_label: data.regime, commentary_type: "template" };
+      }
+    },
+    addAttentionItem(state, action: PayloadAction<AttentionItem & { account_id: string }>) {
+      const { account_id, ...item } = action.payload;
+      if (!state.attentionByAccount[account_id]) state.attentionByAccount[account_id] = [];
+      state.attentionByAccount[account_id].unshift(item);
+      if (state.attentionByAccount[account_id].length > 50) state.attentionByAccount[account_id].pop();
+    },
+    dismissAttentionItem(state, action: PayloadAction<{ account_id: string; item_id: string }>) {
+      const items = state.attentionByAccount[action.payload.account_id];
+      if (items) {
+        const item = items.find(i => i.id === action.payload.item_id);
+        if (item) item.dismissed = true;
+      }
     },
   },
   extraReducers: (builder) => {
@@ -430,9 +560,38 @@ const aiManagerSlice = createSlice({
         }
         state.logCursors[accountId] = nextCursor;
       })
-      .addCase(fetchLogs.rejected, setError("logs"));
+      .addCase(fetchLogs.rejected, setError("logs"))
+
+      // Dashboard enhancement (rejections clear loading but don't set global error)
+      .addCase(fetchLLMCalls.pending, setLoading("llmCalls"))
+      .addCase(fetchLLMCalls.fulfilled, (state, action) => {
+        state.loading["llmCalls"] = false;
+        const { accountId, calls, nextCursor, append } = action.payload;
+        if (append) {
+          const combined = [...(state.llmCallsByAccount[accountId] || []), ...calls];
+          state.llmCallsByAccount[accountId] = combined.slice(0, 200);
+        } else {
+          state.llmCallsByAccount[accountId] = calls.slice(0, 200);
+        }
+        state.llmCallCursors[accountId] = nextCursor;
+      })
+      .addCase(fetchLLMCalls.rejected, clearLoading("llmCalls"))
+
+      .addCase(fetchCapabilities.pending, setLoading("capabilities"))
+      .addCase(fetchCapabilities.fulfilled, (state, action) => {
+        state.loading["capabilities"] = false;
+        state.capabilitiesByAccount[action.payload.accountId] = action.payload.data.capabilities;
+      })
+      .addCase(fetchCapabilities.rejected, clearLoading("capabilities"))
+
+      .addCase(fetchInsights.pending, setLoading("insights"))
+      .addCase(fetchInsights.fulfilled, (state, action) => {
+        state.loading["insights"] = false;
+        state.insightsByAccount[action.payload.accountId] = action.payload.data;
+      })
+      .addCase(fetchInsights.rejected, clearLoading("insights"));
   },
 });
 
-export const { onStateChange, onExecution, clearError } = aiManagerSlice.actions;
+export const { onStateChange, onExecution, clearError, onLLMStarted, onLLMCompleted, onCapabilityUpdate, onMarketCommentary, addAttentionItem, dismissAttentionItem } = aiManagerSlice.actions;
 export default aiManagerSlice.reducer;

@@ -71,6 +71,7 @@ class AIAccountManagerService:
         self._llm_callable = None  # Set externally: async (system_prompt, context_prompt) -> str
         self._pattern_llm_callable = None  # Set externally when LLM provider is configured
         self._memory = None
+        self._llm_logger = None  # Initialized in start()
         try:
             from backend.services.ai_manager_memory import AIManagerMemory
             self._memory = AIManagerMemory(repo=ai_manager_repo)
@@ -125,6 +126,11 @@ class AIAccountManagerService:
         self._dead_letter_task = asyncio.create_task(self._dead_letter_loop())
         self._pattern_task = asyncio.create_task(self._pattern_generation_loop())
 
+        # Start LLM call logger
+        from backend.services.ai_manager_llm_logger import LLMCallBatchLogger
+        self._llm_logger = LLMCallBatchLogger(repo=self._repo)
+        await self._llm_logger.start()
+
         # Register global WS listener
         if self._ws_manager:
             self._ws_manager.register_wallet_listener(self._on_ws_event)
@@ -160,6 +166,10 @@ class AIAccountManagerService:
             bg.cancel()
         if bg_tasks:
             await asyncio.gather(*bg_tasks, return_exceptions=True)
+
+        # Stop LLM logger (flush remaining buffer)
+        if self._llm_logger:
+            await self._llm_logger.stop()
 
         # Release singleton advisory lock connection
         if self._singleton_conn:
@@ -304,6 +314,13 @@ class AIAccountManagerService:
     def get_all_task_states(self) -> Dict[str, str]:
         """Return {account_id: state} for all active (non-dead) AI manager tasks."""
         return {aid: t.state for aid, t in self._tasks.items() if not t.is_dead()}
+
+    def get_task(self, account_id: str) -> Optional["AIManagerTask"]:
+        """Return the in-memory task for an account, or None if not running."""
+        task = self._tasks.get(account_id)
+        if task and not task.is_dead():
+            return task
+        return None
 
     async def get_status(self, account_id: str) -> Optional[AIManagerStatus]:
         """Build full status object including real-time FSM state from in-memory task."""

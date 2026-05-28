@@ -740,3 +740,120 @@ class AIManagerRepository:
             await conn.execute(
                 "DELETE FROM ai_manager_sweep_events WHERE created_at < NOW() - INTERVAL '90 days'"
             )
+
+    # ─── Dashboard Enhancement: LLM Call + Commentary Methods ───
+
+    async def insert_llm_calls_batch(self, entries: list[dict]) -> None:
+        """Batch insert LLM call log entries."""
+        if not entries:
+            return
+        query = """
+            INSERT INTO ai_manager_llm_calls (
+                account_id, call_id, evaluation_cycle_id, node_name, timestamp,
+                model, input_tokens, output_tokens, latency_ms, success,
+                urgency_tier, action_returned, confidence, reasoning_preview, attempt_number
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        """
+        async with self._pool.acquire() as conn:
+            await conn.executemany(query, [
+                (e['account_id'], e['call_id'], e['evaluation_cycle_id'], e['node_name'],
+                 e['timestamp'], e['model'], e['input_tokens'], e['output_tokens'],
+                 e['latency_ms'], e['success'], e['urgency_tier'], e.get('action_returned'),
+                 e.get('confidence'), e.get('reasoning_preview'), e['attempt_number'])
+                for e in entries
+            ])
+
+    async def get_llm_calls(
+        self, account_id: str, limit: int = 50,
+        cursor_timestamp: Optional[str] = None, cursor_id: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Fetch paginated LLM calls newest first. Returns (rows, next_cursor)."""
+        limit = max(1, min(limit, 100))
+        async with self._pool.acquire() as conn:
+            if cursor_timestamp and cursor_id:
+                rows = await conn.fetch(
+                    "SELECT * FROM ai_manager_llm_calls "
+                    "WHERE account_id = $1 AND (timestamp, id) < ($2::timestamptz, $3) "
+                    "ORDER BY timestamp DESC, id DESC LIMIT $4",
+                    account_id, cursor_timestamp, cursor_id, limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT * FROM ai_manager_llm_calls "
+                    "WHERE account_id = $1 ORDER BY timestamp DESC, id DESC LIMIT $2",
+                    account_id, limit,
+                )
+        results = []
+        for r in rows:
+            row_dict = dict(r)
+            # Convert UUID fields to strings for Pydantic serialization
+            if "call_id" in row_dict and row_dict["call_id"] is not None:
+                row_dict["call_id"] = str(row_dict["call_id"])
+            if "evaluation_cycle_id" in row_dict and row_dict["evaluation_cycle_id"] is not None:
+                row_dict["evaluation_cycle_id"] = str(row_dict["evaluation_cycle_id"])
+            results.append(row_dict)
+        next_cursor = None
+        if len(results) == limit and results:
+            last = results[-1]
+            next_cursor = f"{last['timestamp'].isoformat()}|{last['id']}"
+        return results, next_cursor
+
+    async def insert_commentary(
+        self, account_id: str, commentary_type: str, regime_label: str,
+        day_score: Optional[int], day_score_label: Optional[str],
+        summary_text: str, symbols_referenced: List[str],
+    ) -> int:
+        """Insert market commentary. Returns id."""
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "INSERT INTO ai_manager_market_commentary "
+                "(account_id, commentary_type, regime_label, day_score, day_score_label, "
+                "summary_text, symbols_referenced) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+                account_id, commentary_type, regime_label,
+                day_score, day_score_label, summary_text, symbols_referenced,
+            )
+
+    async def get_latest_commentary(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Get the most recent commentary for account."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM ai_manager_market_commentary "
+                "WHERE account_id = $1 ORDER BY generated_at DESC LIMIT 1",
+                account_id,
+            )
+        return dict(row) if row else None
+
+    async def cleanup_old_llm_calls(self, days: int = 90) -> int:
+        """Delete LLM call logs older than N days. Batched."""
+        total = 0
+        async with self._pool.acquire() as conn:
+            while True:
+                result = await conn.execute(
+                    "DELETE FROM ai_manager_llm_calls WHERE id IN "
+                    "(SELECT id FROM ai_manager_llm_calls "
+                    "WHERE timestamp < NOW() - make_interval(days => $1) LIMIT 1000)",
+                    days,
+                )
+                count = int(result.split()[-1])
+                total += count
+                if count < 1000:
+                    break
+        return total
+
+    async def cleanup_old_commentary(self, days: int = 7) -> int:
+        """Delete commentary older than N days. Batched."""
+        total = 0
+        async with self._pool.acquire() as conn:
+            while True:
+                result = await conn.execute(
+                    "DELETE FROM ai_manager_market_commentary WHERE id IN "
+                    "(SELECT id FROM ai_manager_market_commentary "
+                    "WHERE generated_at < NOW() - make_interval(days => $1) LIMIT 1000)",
+                    days,
+                )
+                count = int(result.split()[-1])
+                total += count
+                if count < 1000:
+                    break
+        return total
