@@ -93,6 +93,7 @@ VALID_STOCK_AGENT_KEYS = frozenset([
     "trader", "compliance_officer",
     "aggressive_analyst", "neutral_analyst", "conservative_analyst",
     "portfolio_manager", "execution_monitor",
+    "ai_account_manager",
 ])
 
 VALID_CRYPTO_AGENT_KEYS = frozenset([
@@ -102,6 +103,7 @@ VALID_CRYPTO_AGENT_KEYS = frozenset([
     "trader", "compliance_officer",
     "bull_analyst", "bear_analyst",
     "portfolio_manager", "execution_monitor",
+    "ai_account_manager",
 ])
 
 

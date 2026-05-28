@@ -68,12 +68,16 @@ class AIManagerTask:
         config: AIManagerConfig,
         compiled_graph,
         account_label: str = "",
+        llm_callable=None,
+        llm_close_fn=None,
     ):
         self._account_id = account_id
         self._account_label = account_label or account_id[:8]
         safe_label = re.sub(r"[^a-zA-Z0-9_-]", "_", self._account_label)
         self._log = logging.getLogger(f"ai_manager.{safe_label}")
         self._service = service
+        self._llm_callable = llm_callable
+        self._llm_close_fn = llm_close_fn
         self._config = config
         self._graph = compiled_graph
         self._state = SLEEPING
@@ -193,6 +197,9 @@ class AIManagerTask:
             self._rapid_cycle_handle = None
         if self._task and not self._task.done():
             self._task.cancel()
+        if self._llm_close_fn:
+            asyncio.ensure_future(self._llm_close_fn())
+            self._llm_close_fn = None
 
     def pause(self) -> None:
         """Transition to PAUSED state; the run loop blocks until resume()."""
@@ -251,6 +258,13 @@ class AIManagerTask:
         self._trigger_queue.clear()
         self._trigger_symbol = None
         self._drain_count = 0
+
+    def update_llm_callable(self, llm_callable, llm_close_fn=None) -> None:
+        """Replace the per-account LLM callable (e.g. when scan config changes)."""
+        if self._llm_close_fn:
+            asyncio.ensure_future(self._llm_close_fn())
+        self._llm_callable = llm_callable
+        self._llm_close_fn = llm_close_fn
 
     def is_dead(self) -> bool:
         """Return True if the run loop task has completed (normally or via exception)."""
@@ -1081,7 +1095,7 @@ class AIManagerTask:
             "daily_realized_pnl": daily_realized_pnl,
             "daily_profit_target": daily_profit_target,
             "_evaluator": self._evaluator,
-            "_llm_callable": self._service._llm_callable,
+            "_llm_callable": self._llm_callable or self._service._llm_callable,
             "episodic_memory": episodic,
             "patterns": patterns,
             "decision_count": decision_count,

@@ -245,6 +245,7 @@ class AIAccountManagerService:
             # No task or dead task — (re)spawn
             if existing_task and existing_task.is_dead():
                 logger.info("AI Manager: respawning dead task for account %s on enable()", account_id)
+                existing_task.cancel()
                 self._tasks.pop(account_id, None)
             await self._repo.upsert_state(account_id, enabled=True, fsm_state="sleeping")
             await self._repo.sync_config_columns(account_id, config.model_dump())
@@ -500,6 +501,7 @@ class AIAccountManagerService:
                 # If the underlying asyncio task was cancelled by set_killed(), respawn immediately
                 if task.is_dead():
                     logger.info("AI Manager: respawning dead task for account %s after kill switch reset", account_id)
+                    task.cancel()
                     self._tasks.pop(account_id, None)
                     await self._spawn_task(account_id)
             else:
@@ -636,27 +638,37 @@ class AIAccountManagerService:
                     rows = await conn.fetch(
                         "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
                     )
-                
-                enabled_accounts_in_schedules = set()
+
+                # Parse all scan_configs once
+                parsed_scan_configs = []
                 for row in rows:
                     try:
                         scan_config = row["scan_config"]
                         if isinstance(scan_config, str):
                             scan_config = _json.loads(scan_config)
-                        
-                        auto_configs = scan_config.get("auto_trade_configs") or []
-                        for cfg in auto_configs:
-                            account_id = cfg.get("account_id")
-                            if account_id and cfg.get("ai_manager_enabled"):
-                                enabled_accounts_in_schedules.add(account_id)
+                        parsed_scan_configs.append(scan_config)
                     except Exception:
                         logger.warning("Failed to parse scan_config in scheduled_scans reconciliation", exc_info=True)
-                
+
+                enabled_accounts_in_schedules = set()
+                for scan_config in parsed_scan_configs:
+                    auto_configs = scan_config.get("auto_trade_configs") or []
+                    for cfg in auto_configs:
+                        account_id = cfg.get("account_id")
+                        if account_id and cfg.get("ai_manager_enabled"):
+                            enabled_accounts_in_schedules.add(account_id)
+
                 # 1. Enable and spawn tasks for accounts enabled in schedules
                 for account_id in enabled_accounts_in_schedules:
                     existing_task = self._tasks.get(account_id)
-                    # Skip if there's already a healthy running task
                     if existing_task and not existing_task.is_dead():
+                        # Refresh LLM callable only if provider/model actually changed
+                        identity = self._extract_llm_identity(account_id, parsed_scan_configs)
+                        if identity and identity != getattr(existing_task, "_llm_identity", None):
+                            llm_callable, close_fn = self._create_llm_from_scan_configs(account_id, parsed_scan_configs)
+                            if llm_callable:
+                                existing_task.update_llm_callable(llm_callable, close_fn)
+                                existing_task._llm_identity = identity
                         continue
                     config = None
                     try:
@@ -697,6 +709,126 @@ class AIAccountManagerService:
             except Exception:
                 logger.exception("Error during scheduled scans AI manager reconciliation")
 
+    @staticmethod
+    def _extract_llm_identity(account_id: str, scan_configs: list) -> Optional[str]:
+        """Extract 'provider:model' from pre-parsed scan_configs without creating clients."""
+        for scan_config in scan_configs:
+            auto_configs = scan_config.get("auto_trade_configs") or []
+            for cfg in auto_configs:
+                if cfg.get("account_id") == account_id and cfg.get("ai_manager_enabled"):
+                    provider = scan_config.get("provider", "openai")
+                    overrides = scan_config.get("agent_model_overrides") or {}
+                    model = overrides.get("ai_account_manager") or scan_config.get("deep_think_llm")
+                    if not model:
+                        return None
+                    return f"{provider}:{model}"
+        return None
+
+    @staticmethod
+    def _create_llm_from_scan_configs(account_id: str, scan_configs: list):
+        """Create LLM callable from pre-parsed scan_configs. Returns (callable, close_fn) or (None, None)."""
+        for scan_config in scan_configs:
+            auto_configs = scan_config.get("auto_trade_configs") or []
+            for cfg in auto_configs:
+                if cfg.get("account_id") == account_id and cfg.get("ai_manager_enabled"):
+                    provider = scan_config.get("provider", "openai")
+                    overrides = scan_config.get("agent_model_overrides") or {}
+                    model = overrides.get("ai_account_manager") or scan_config.get("deep_think_llm")
+                    api_key = scan_config.get("llm_api_key")
+                    backend_url = scan_config.get("backend_url")
+                    if not model:
+                        return None, None
+                    from backend.services.ai_manager_llm_provider import create_llm_callable_with_cleanup
+                    callable_, _, close_fn = create_llm_callable_with_cleanup(
+                        provider=provider,
+                        api_key=api_key,
+                        model=model,
+                        backend_url=backend_url,
+                    )
+                    return callable_, close_fn
+        return None, None
+
+    async def _resolve_account_llm_identity(self, account_id: str) -> Optional[str]:
+        """Return 'provider:model' for the account's scan_config without creating a client."""
+        if not self._repo._pool:
+            return None
+        try:
+            async with self._repo._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
+                )
+            for row in rows:
+                try:
+                    scan_config = row["scan_config"]
+                    if isinstance(scan_config, str):
+                        scan_config = _json.loads(scan_config)
+                    auto_configs = scan_config.get("auto_trade_configs") or []
+                    for cfg in auto_configs:
+                        if cfg.get("account_id") == account_id and cfg.get("ai_manager_enabled"):
+                            provider = scan_config.get("provider", "openai")
+                            overrides = scan_config.get("agent_model_overrides") or {}
+                            model = overrides.get("ai_account_manager") or scan_config.get("deep_think_llm")
+                            if not model:
+                                return None
+                            return f"{provider}:{model}"
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    async def _resolve_account_llm_callable(self, account_id: str):
+        """Look up the scan_config for this account and create a per-account LLM callable.
+
+        Uses the deep_think_llm model (or ai_account_manager agent override) + provider
+        from the scheduled scan that enabled this account's AI Manager.
+        Falls back to None (which causes the task to use the global service callable).
+
+        Returns (callable_or_None, close_fn_or_None, llm_identity_str_or_None).
+        The identity string is "provider:model" for change-detection.
+        """
+        if not self._repo._pool:
+            return None, None, None
+        try:
+            async with self._repo._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
+                )
+            for row in rows:
+                try:
+                    scan_config = row["scan_config"]
+                    if isinstance(scan_config, str):
+                        scan_config = _json.loads(scan_config)
+                    auto_configs = scan_config.get("auto_trade_configs") or []
+                    for cfg in auto_configs:
+                        if cfg.get("account_id") == account_id and cfg.get("ai_manager_enabled"):
+                            provider = scan_config.get("provider", "openai")
+                            overrides = scan_config.get("agent_model_overrides") or {}
+                            model = overrides.get("ai_account_manager") or scan_config.get("deep_think_llm")
+                            api_key = scan_config.get("llm_api_key")
+                            backend_url = scan_config.get("backend_url")
+                            if not model:
+                                return None, None, None
+                            identity = f"{provider}:{model}"
+                            from backend.services.ai_manager_llm_provider import create_llm_callable_with_cleanup
+                            callable_, resolved, close_fn = create_llm_callable_with_cleanup(
+                                provider=provider,
+                                api_key=api_key,
+                                model=model,
+                                backend_url=backend_url,
+                            )
+                            if callable_:
+                                logger.info(
+                                    "AI Manager: per-account LLM for %s: provider=%s model=%s",
+                                    account_id[:8], provider, resolved,
+                                )
+                            return callable_, close_fn, identity
+                except Exception:
+                    continue
+        except Exception:
+            logger.warning("Failed to resolve per-account LLM callable for %s", account_id[:8])
+        return None, None, None
+
     async def _spawn_task(self, account_id: str) -> None:
         from backend.services.ai_manager_task import AIManagerTask
 
@@ -706,7 +838,6 @@ class AIAccountManagerService:
         try:
             raw_config = state.get("config") or {}
             if isinstance(raw_config, str):
-                import json as _json
                 raw_config = _json.loads(raw_config)
             config = AIManagerConfig(**raw_config)
         except Exception:
@@ -729,13 +860,19 @@ class AIAccountManagerService:
         except Exception:
             pass
 
+        # Create per-account LLM callable from scan_config
+        llm_callable, llm_close_fn, llm_identity = await self._resolve_account_llm_callable(account_id)
+
         task = AIManagerTask(
             account_id=account_id,
             service=self,
             config=config,
             compiled_graph=self._compiled_graph,
             account_label=account_label,
+            llm_callable=llm_callable,
+            llm_close_fn=llm_close_fn,
         )
+        task._llm_identity = llm_identity
         task._restore_emergency_state(state)
         self._tasks[account_id] = task
         task.start()
@@ -769,6 +906,7 @@ class AIAccountManagerService:
                         async with lock:
                             if account_id in self._tasks and self._tasks[account_id].is_dead():
                                 logger.warning("Dead task detected: %s, restarting", account_id)
+                                self._tasks[account_id].cancel()
                                 self._tasks.pop(account_id, None)
                                 await self._spawn_task(account_id)
                 # Heartbeat-orphan detection (stalled tasks still alive as asyncio tasks)

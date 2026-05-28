@@ -29,6 +29,7 @@ const STOCK_AGENTS: AgentDef[] = [
   { key: "conservative_analyst", label: "Conservative Analyst", tier: "quick" },
   { key: "portfolio_manager", label: "Portfolio Manager", tier: "deep" },
   { key: "execution_monitor", label: "Execution Monitor", tier: "quick" },
+  { key: "ai_account_manager", label: "AI Account Manager", tier: "deep" },
 ];
 
 const CRYPTO_AGENTS: AgentDef[] = [
@@ -47,6 +48,7 @@ const CRYPTO_AGENTS: AgentDef[] = [
   { key: "bear_analyst", label: "Bear Analyst", tier: "quick" },
   { key: "portfolio_manager", label: "Portfolio Manager", tier: "deep" },
   { key: "execution_monitor", label: "Execution Monitor", tier: "quick" },
+  { key: "ai_account_manager", label: "AI Account Manager", tier: "deep" },
 ];
 
 function loadOverrides(): Record<string, string> {
