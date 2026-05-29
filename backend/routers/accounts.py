@@ -621,6 +621,15 @@ async def demo_reset_balance(request: Request):
                         if remaining > 0:
                             await asyncio.sleep(0.3)
                     entry.update({"status": "reduced", "amount": abs_amount, "new_balance": round(current_balance - abs_amount, 2)})
+                # Sync AI Manager with new equity baseline
+                ai_svc = getattr(request.app.state, "ai_manager_service", None)
+                if ai_svc:
+                    try:
+                        ai_state = await ai_svc._repo.get_state(acct_id)
+                        if ai_state and ai_state.get("enabled"):
+                            await ai_svc.notify_equity_reset(acct_id, target)
+                    except Exception:
+                        logger.warning("Failed to sync AI manager for %s after balance reset", acct_id)
                 if i < total - 1:
                     await asyncio.sleep(0.5)
             except BybitAPIError as e:
@@ -660,3 +669,31 @@ async def demo_reset_balance(request: Request):
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return {"task_id": task_id, "accounts_total": len(demo_accounts), "message": "Balance reset started"}
+
+
+@router.post("/accounts/{account_id}/notify-equity-change")
+async def notify_equity_change(account_id: str, request: Request):
+    """Notify AI Manager that account equity has changed externally (withdrawal, deposit, transfer).
+
+    Resets daily loss tracking to use current wallet balance as the new baseline.
+    Auto-resumes AI if it was paused due to stale daily loss calculations.
+    """
+    _validate_id(account_id, "account ID")
+    ai_svc = getattr(request.app.state, "ai_manager_service", None)
+    if not ai_svc:
+        return JSONResponse({"detail": "AI Manager service not available"}, 503)
+
+    ai_state = await ai_svc._repo.get_state(account_id)
+    if not ai_state:
+        return JSONResponse({"detail": "AI Manager not configured for this account"}, 404)
+
+    svc = _get_service(request)
+    client = await svc.get_client(account_id)
+    wallet = await client.get_wallet_balance()
+    current_equity = float(wallet.get("totalEquity") or wallet.get("totalWalletBalance") or "0")
+
+    if current_equity <= 0:
+        return JSONResponse({"detail": "Could not determine current equity"}, 400)
+
+    await ai_svc.notify_equity_reset(account_id, current_equity)
+    return {"status": "ok", "new_equity_baseline": current_equity}

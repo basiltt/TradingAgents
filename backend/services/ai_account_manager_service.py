@@ -290,6 +290,38 @@ class AIAccountManagerService:
             else:
                 await self._repo.upsert_state(account_id, fsm_state="sleeping")
 
+    async def notify_equity_reset(self, account_id: str, new_equity: float) -> None:
+        """Called when account equity changes externally (balance reset, withdrawal, deposit).
+
+        Resets daily counters and equity reference to reflect the new baseline.
+        Auto-resumes if paused due to daily loss limits.
+        """
+        # Set in-memory state FIRST to prevent emergency close race on WS events
+        task = self._tasks.get(account_id)
+        if task:
+            task.reset_equity_baseline(new_equity)
+        await self._repo.upsert_state(
+            account_id,
+            equity_at_day_start=new_equity,
+            realized_loss_today=0,
+            realized_profit_today=0,
+            actions_today=0,
+            actions_this_hour=0,
+            token_budget_used_today=0,
+            counters_reset_at=datetime.now(timezone.utc),
+            hourly_reset_at=datetime.now(timezone.utc),
+            emergency_ref_equity=new_equity,
+            emergency_cooldown_until=None,
+            emergency_closed_symbols="{}",
+        )
+        await self._repo.insert_log(
+            account_id, "info", "lifecycle",
+            f"Equity baseline reset to {new_equity:.2f} (external change)",
+        )
+        state = await self._repo.get_state(account_id)
+        if state and state.get("fsm_state") == "paused":
+            await self.resume(account_id)
+
     async def kill(self, account_id: str) -> None:
         """Activate per-account kill switch — halts all AI decisions."""
         await self._repo.set_kill_switch(account_id, True)

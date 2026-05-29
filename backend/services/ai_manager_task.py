@@ -207,6 +207,12 @@ class AIManagerTask:
         self._pause_event.set()
         self._wake_event.set()
 
+    def reset_equity_baseline(self, new_equity: float) -> None:
+        """Reset in-memory emergency state after external equity change."""
+        self._ws_buffer["_emergency_ref_equity"] = new_equity
+        self._emergency_closed_symbols.clear()
+        self._emergency_cooldown_until = 0.0
+
     def resume(self) -> None:
         """Exit PAUSED state; resumes in MONITORING or SLEEPING depending on positions."""
         if self._has_open_positions(self._ws_buffer):
