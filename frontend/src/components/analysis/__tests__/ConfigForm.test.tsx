@@ -105,7 +105,7 @@ describe("ConfigForm", () => {
 
   it("shows provider select field", () => {
     render(<ConfigForm />, { wrapper: createWrapper() });
-    expect(screen.getByLabelText(/provider/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Default LLM Provider/i)).toBeInTheDocument();
   });
 
   it("disables submit button while submitting", async () => {
@@ -140,10 +140,7 @@ describe("ConfigForm", () => {
     mockStartAnalysis.mockResolvedValue({ run_id: "key-run", status: "running" });
     render(<ConfigForm />, { wrapper: createWrapper() });
 
-    // Open LLM settings section
-    await user.click(screen.getByText(/LLM & Proxy Settings/i));
-
-    const apiKeyInput = screen.getByLabelText(/API Key/i);
+    const apiKeyInput = screen.getByLabelText(/Provider API Key/i);
     await user.type(apiKeyInput, "sk-test-minimax-key");
 
     await fillAndSubmit(user, "SPY");

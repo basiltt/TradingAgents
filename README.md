@@ -474,6 +474,7 @@ The backend validates provider auth before creating a run.
 
 Fix one of these:
 
+- enter the Provider API Key in the Model & Engine Presets section of the UI
 - set the matching provider key in `.env`
 - switch to a provider whose key is already configured
 - provide a custom `backend_url` and API key through the UI

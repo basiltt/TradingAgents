@@ -67,15 +67,31 @@ async def connectivity_check(req: ConnectivityRequest):
     if req.custom_url:
         _validate_url_ssrf(base)
 
-    url = f"{base}/v1/models"
-    headers = {}
-    if req.api_key:
-        headers["Authorization"] = f"Bearer {req.api_key}"
+    # Provider-specific URL and auth patterns
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    if req.custom_url:
+        url = f"{base}/v1/models"
+        if req.api_key:
+            headers["Authorization"] = f"Bearer {req.api_key}"
+    elif req.provider == "anthropic":
+        url = f"{base}/v1/models"
+        if req.api_key:
+            headers["x-api-key"] = req.api_key
+            headers["anthropic-version"] = "2023-06-01"
+    elif req.provider == "google":
+        url = f"{base}/v1beta/models"
+        if req.api_key:
+            params["key"] = req.api_key
+    else:
+        url = f"{base}/v1/models"
+        if req.api_key:
+            headers["Authorization"] = f"Bearer {req.api_key}"
 
     start = time.time()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, headers=headers)
+            resp = await client.get(url, headers=headers, params=params)
         latency_ms = int((time.time() - start) * 1000)
 
         if resp.status_code in (200, 201):

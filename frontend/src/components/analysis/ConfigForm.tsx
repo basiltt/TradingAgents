@@ -213,7 +213,7 @@ export function ConfigForm() {
   const saved = useMemo(() => loadSettings(), []);
   const [sectionOpen, setSectionOpen] = useState({ target: true, team: true, engine: true });
 
-  const [showLLM, setShowLLM] = useState(!!(saved.llm_api_key || saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
+  const [showLLM, setShowLLM] = useState(!!(saved.backend_url || saved.deep_think_llm || saved.quick_think_llm));
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [showData, setShowData] = useState(false);
   const [endpoints, setEndpoints] = useState(loadEndpoints);
@@ -905,6 +905,24 @@ export function ConfigForm() {
                 </p>
               </div>
 
+              {/* Provider API Key */}
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="llm_api_key_main" className="font-semibold text-xs text-foreground/80 flex items-center gap-2">
+                  Provider API Key
+                  {watchedApiKey?.trim() && <ConnBadge status={backendConn.status} latency={null} error={backendConn.errorMsg} label={trimmedBackendUrl ? "Proxy connected" : "Key validated"} />}
+                </Label>
+                <Input
+                  id="llm_api_key_main"
+                  type="password"
+                  placeholder={`API key for ${selectedProvider || "selected provider"}`}
+                  className="font-mono text-sm bg-card h-10"
+                  {...register("llm_api_key")}
+                />
+                <p className="text-[10px] text-muted-foreground pl-1">
+                  API key for <span className="font-semibold capitalize">{selectedProvider || "provider"}</span>. Stored in browser locally. Overrides environment variable if set.
+                </p>
+              </div>
+
               {/* LLM Models Selection */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
                 <div className="flex flex-col gap-2">
@@ -963,14 +981,14 @@ export function ConfigForm() {
                   label="LLM & Proxy Settings"
                   open={showLLM}
                   onToggle={() => setShowLLM(!showLLM)}
-                  badge={backendConn.status === "ok" ? "Connected" : envBackendUrl ? "Proxy configured" : undefined}
+                  badge={trimmedBackendUrl && backendConn.status === "ok" ? "Connected" : envBackendUrl ? "Proxy configured" : undefined}
                 />
                 {showLLM && (
                   <div className="mt-5 space-y-5 pl-1 border-t border-border/30 pt-5 animate-fade-in">
                     <div className="flex flex-col gap-2">
                       <Label htmlFor="backend_url" className="font-semibold text-xs text-foreground/80 flex items-center gap-2">
                         Backend URL / Custom API Base
-                        <ConnBadge status={backendConn.status} latency={backendConn.latency} error={backendConn.errorMsg} />
+                        {trimmedBackendUrl && <ConnBadge status={backendConn.status} latency={backendConn.latency} error={backendConn.errorMsg} />}
                       </Label>
                       <div ref={endpointsRef} className="relative">
                         <div className="relative">
@@ -1031,23 +1049,6 @@ export function ConfigForm() {
                         {!modelsLoading && proxyModels && <span className="ml-1.5 text-primary font-bold">{proxyModels.length} models fetched</span>}
                         {modelsError && <span className="ml-1.5 text-destructive font-semibold">Failed querying endpoint</span>}
                         {envBackendUrl && <span className="block mt-1 text-primary/75 font-semibold">Environment preset: {envBackendUrl}</span>}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <Label htmlFor="llm_api_key" className="font-semibold text-xs text-foreground/80 flex items-center gap-2">
-                        Custom Provider API Key
-                        {watchedApiKey?.trim() && <ConnBadge status={backendConn.status} latency={null} error={backendConn.errorMsg} label="Key active" />}
-                      </Label>
-                      <Input
-                        id="llm_api_key"
-                        type="password"
-                        placeholder="API key override (stored locally)"
-                        className="font-mono text-sm bg-card h-10"
-                        {...register("llm_api_key")}
-                      />
-                      <p className="text-[10px] text-muted-foreground pl-1">
-                        API key credentials for the selected provider (replaces environment variable).
                       </p>
                     </div>
                   </div>

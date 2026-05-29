@@ -41,10 +41,11 @@ async def start_scan(request: Request, body: ScanRequest):
     provider = body.provider or resolved.get("llm_provider", "openai")
     backend_url = body.backend_url or resolved.get("backend_url")
     env_key = PROVIDER_API_KEY_MAP.get(provider)
-    if env_key and not backend_url and not os.getenv(env_key):
+    if env_key and not backend_url and not body.llm_api_key and not os.getenv(env_key):
         raise HTTPException(
             status_code=422,
-            detail=f"API key not set: {env_key} environment variable required for provider '{provider}'",
+            detail=f"API key not set for provider '{provider}'. "
+                   f"Either enter a Provider API Key in the UI or set the {env_key} environment variable.",
         )
 
     scan_config = body.model_dump()

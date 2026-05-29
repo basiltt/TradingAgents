@@ -8,7 +8,7 @@ from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from backend.schemas import AnalysisRequest, AnalysisCreateResponse
+from backend.schemas import AnalysisRequest, AnalysisCreateResponse, PROVIDER_API_KEY_MAP
 from backend.services.analysis_service import ConcurrencyLimitError
 
 router = APIRouter(tags=["analysis"])
@@ -20,30 +20,19 @@ def _validate_run_id(run_id: str) -> None:
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid run_id format")
 
-_PROVIDER_KEY_MAP = {
-    "openai": "OPENAI_API_KEY",
-    "google": "GOOGLE_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "xai": "XAI_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "qwen": "DASHSCOPE_API_KEY",
-    "glm": "ZHIPU_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "azure": "AZURE_OPENAI_API_KEY",
-}
-
 
 @router.post("/analysis", response_model=AnalysisCreateResponse, status_code=201)
 async def start_analysis(request: Request, body: AnalysisRequest):
     resolved = request.app.state.config_service.get_config()["resolved"]
     provider = body.provider or resolved.get("llm_provider", "openai")
     backend_url = body.backend_url or resolved.get("backend_url")
-    env_key = _PROVIDER_KEY_MAP.get(provider)
+    env_key = PROVIDER_API_KEY_MAP.get(provider)
     # Crypto uses Bybit public API (no key needed), but still requires LLM provider key
-    if env_key and not backend_url and not os.getenv(env_key):
+    if env_key and not backend_url and not body.llm_api_key and not os.getenv(env_key):
         raise HTTPException(
             status_code=422,
-            detail=f"API key not set: {env_key} environment variable required for provider '{provider}'",
+            detail=f"API key not set for provider '{provider}'. "
+                   f"Either enter a Provider API Key in the UI or set the {env_key} environment variable.",
         )
 
     try:
