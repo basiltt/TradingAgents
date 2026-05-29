@@ -148,7 +148,7 @@ class SignalPerformanceMaterializer:
         sl_pct = float(trade.get("stop_loss_pct") or 0)
         benchmark_random_expected_pnl = compute_random_expected_pnl(tp_pct, sl_pct)
 
-        confidence_score = abs(scan_result["score"])
+        confidence_score = abs(scan_result["score"] or 0)
         is_win = (trade.get("net_pnl") or 0) > 0
 
         # ---- insert -----------------------------------------------------------
