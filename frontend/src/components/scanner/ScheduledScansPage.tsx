@@ -331,9 +331,11 @@ export function ScheduledScansPage() {
 
   useEffect(() => {
     if (!toolbarMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setToolbarMenuOpen(false); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); setToolbarMenuOpen(false); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [toolbarMenuOpen]);
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -430,7 +432,7 @@ export function ScheduledScansPage() {
         const { _originalStatus, ...createPayload } = scan;
         const created_scan = await scheduledScansApi.create(createPayload);
         created++;
-        if (_originalStatus === "paused") {
+        if (_originalStatus && _originalStatus !== "active") {
           try { await scheduledScansApi.pause(created_scan.id); } catch {}
         }
       } catch (err) {
