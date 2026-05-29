@@ -509,6 +509,62 @@ ALTER TABLE trades ADD CONSTRAINT trades_source_check CHECK (source IN ('manual'
 """),
     (31, _fix_source_constraint_sync),
     (32, _fix_close_rules_constraints_sync),
+    (33, """
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS scan_result_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_trades_scan_result_id ON trades(scan_result_id) WHERE scan_result_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS signal_performance (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trade_id UUID NOT NULL UNIQUE REFERENCES trades(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    symbol VARCHAR(30) NOT NULL,
+    direction VARCHAR(4) NOT NULL CHECK (direction IN ('buy', 'sell')),
+    confidence_score INTEGER,
+    confidence_tier VARCHAR(10) CHECK (confidence_tier IN ('high', 'moderate', 'low')),
+    signal_source VARCHAR(10),
+    regime_at_entry VARCHAR(15) CHECK (regime_at_entry IS NULL OR regime_at_entry IN ('trending_up', 'trending_down', 'ranging', 'volatile')),
+    regime_confidence NUMERIC(4,2),
+    entry_price NUMERIC(20,8),
+    exit_price NUMERIC(20,8),
+    hold_duration_minutes INTEGER,
+    realized_pnl_pct NUMERIC(12,4),
+    net_pnl NUMERIC(20,8),
+    fees NUMERIC(20,8),
+    close_reason VARCHAR(20),
+    benchmark_bnh_pnl_pct NUMERIC(12,4),
+    benchmark_random_expected_pnl NUMERIC(12,4),
+    is_win BOOLEAN NOT NULL,
+    opened_at TIMESTAMPTZ,
+    closed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sp_account_closed ON signal_performance(account_id, closed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sp_symbol_closed ON signal_performance(symbol, closed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sp_confidence ON signal_performance(confidence_score);
+CREATE INDEX IF NOT EXISTS idx_sp_regime ON signal_performance(regime_at_entry);
+CREATE TABLE IF NOT EXISTS regime_snapshots (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(30) NOT NULL,
+    regime VARCHAR(15) NOT NULL CHECK (regime IN ('trending_up', 'trending_down', 'ranging', 'volatile')),
+    adx NUMERIC(8,4),
+    atr_pct NUMERIC(8,4),
+    bb_width_pct NUMERIC(8,4),
+    llm_confirmed BOOLEAN DEFAULT FALSE,
+    llm_regime VARCHAR(15),
+    classified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rs_symbol_time ON regime_snapshots(symbol, classified_at DESC);
+CREATE TABLE IF NOT EXISTS decay_alerts (
+    id SERIAL PRIMARY KEY,
+    alert_type VARCHAR(30) NOT NULL,
+    severity VARCHAR(10) NOT NULL CHECK (severity IN ('warning', 'critical')),
+    message TEXT NOT NULL,
+    metric_value NUMERIC(12,4),
+    threshold NUMERIC(12,4),
+    window_trades INTEGER,
+    acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""),
 ]
 def _default_dsn() -> str:
     dsn = os.environ.get("DATABASE_URL")
