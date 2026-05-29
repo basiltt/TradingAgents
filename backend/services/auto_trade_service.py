@@ -868,6 +868,7 @@ class AutoTradeExecutor:
                 capital_pct=cfg.get("capital_pct", 5),
                 base_capital=state.base_capital,
                 source="scanner",
+                scan_result_id=result.get("id"),
             )
             execution = TradeExecution(
                 account_id=account_id,

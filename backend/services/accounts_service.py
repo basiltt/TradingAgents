@@ -185,6 +185,7 @@ class AccountsService:
         base_capital: float,
         source: str = "manual",
         source_id: int | None = None,
+        scan_result_id: int | None = None,
     ) -> Dict[str, Any]:
         """Place a market trade with leverage, TP, and SL.
 
@@ -321,7 +322,8 @@ class AccountsService:
                             conn, account_id=account_id, symbol=symbol,
                             side=side, qty=float(qty_rounded), leverage=leverage,
                             margin_mode="isolated", order_type="market",
-                            source=source, source_id=source_id, stop_loss_price=float(sl_price_str) if sl_price_str else None,
+                            source=source, source_id=source_id, scan_result_id=scan_result_id,
+                            stop_loss_price=float(sl_price_str) if sl_price_str else None,
                             take_profit_price=float(tp_price_str) if tp_price_str else None,
                             mark_price_at_open=float(mark_price),
                             capital_pct=capital_pct, base_capital=base_capital,

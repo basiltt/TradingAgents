@@ -110,7 +110,8 @@ class TradeRepository:
         self, conn, *, account_id: str, symbol: str, side: str,
         qty: float, leverage: int = 1, margin_mode: str = "isolated",
         order_type: str = "market", source: str = "manual",
-        source_id: int | None = None, position_idx: int = 0,
+        source_id: int | None = None, scan_result_id: int | None = None,
+        position_idx: int = 0,
         stop_loss_price: float | None = None,
         take_profit_price: float | None = None,
         mark_price_at_open: float | None = None,
@@ -136,16 +137,16 @@ class TradeRepository:
                 account_id, symbol, side, order_type, qty, leverage, margin_mode,
                 position_idx, stop_loss_price, take_profit_price, mark_price_at_open,
                 capital_pct, base_capital, signal_direction, trade_direction,
-                take_profit_pct, stop_loss_pct, source, source_id,
+                take_profit_pct, stop_loss_pct, source, source_id, scan_result_id,
                 order_link_id, metadata
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                $16, $17, $18, $19, $20, $21
+                $16, $17, $18, $19, $20, $21, $22
             ) RETURNING *""",
             account_id, symbol, side, order_type, qty, leverage, margin_mode,
             position_idx, stop_loss_price, take_profit_price, mark_price_at_open,
             capital_pct, base_capital, signal_direction, trade_direction,
-            take_profit_pct, stop_loss_pct, source, source_id,
+            take_profit_pct, stop_loss_pct, source, source_id, scan_result_id,
             order_link_id, json.dumps(metadata or {}),
         )
         trade = dict(row)
