@@ -380,6 +380,25 @@ def create_app() -> FastAPI:
             app.state.trade_service = None
             app.state.position_reconciler = None
 
+        # Regime classifier — always running, independent of accounts
+        from backend.services.regime_classifier import RegimeClassifier
+        regime_classifier = RegimeClassifier(db=db, llm_callable=None)
+
+        async def _run_regime_classification() -> None:
+            rows = await db.pool.fetch(
+                "SELECT DISTINCT unnest(string_to_array(config::json->>'symbols', ',')) AS symbol "
+                "FROM scheduled_scans WHERE status = 'active'"
+            )
+            symbols = [r["symbol"] for r in rows if r["symbol"]]
+            if not symbols:
+                return
+            logger.info("regime_classification_tick", extra={"symbols": len(symbols)})
+
+        from backend.scheduler import SnapshotScheduler as _SnapshotScheduler
+        regime_scheduler = _SnapshotScheduler(regime_fn=_run_regime_classification)
+        await regime_scheduler.start()
+        app.state.regime_scheduler = regime_scheduler
+
         logger.info("app_ready: all services initialised")
         app.state._ready = True
 
@@ -416,6 +435,8 @@ def create_app() -> FastAPI:
         if app.state.snapshot_scheduler:
             await _safe_shutdown("snapshot_scheduler", app.state.snapshot_scheduler.shutdown())
             await asyncio.sleep(0.5)
+        if getattr(app.state, "regime_scheduler", None):
+            await _safe_shutdown("regime_scheduler", app.state.regime_scheduler.shutdown())
         if app.state.account_ws_manager:
             await _safe_shutdown("account_ws_manager", app.state.account_ws_manager.shutdown())
         if app.state.accounts_service:
