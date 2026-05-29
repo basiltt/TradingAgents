@@ -439,7 +439,7 @@ export function ScheduledScansPage() {
           const { _originalStatus, ...createPayload } = scan;
           const created_scan = await scheduledScansApi.create(createPayload);
           created++;
-          if (_originalStatus && _originalStatus !== "active") {
+          if (_originalStatus === "paused") {
             try { await scheduledScansApi.pause(created_scan.id); } catch { /* best-effort */ }
           }
         } catch (err) {
