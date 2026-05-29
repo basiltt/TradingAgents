@@ -385,14 +385,56 @@ def create_app() -> FastAPI:
         regime_classifier = RegimeClassifier(db=db, llm_callable=None)
 
         async def _run_regime_classification() -> None:
-            rows = await db.pool.fetch(
-                "SELECT DISTINCT unnest(string_to_array(config::json->>'symbols', ',')) AS symbol "
-                "FROM scheduled_scans WHERE status = 'active'"
+            import asyncio as _asyncio
+            import csv as _csv
+            import io as _io
+            import time as _time
+            from tradingagents.dataflows.bybit_data import (
+                get_bybit_klines,
+                get_shared_limiter,
+                get_shared_circuit_breaker,
             )
-            symbols = [r["symbol"] for r in rows if r["symbol"]]
-            if not symbols:
+            from backend.services.bybit_rate_gate import get_rate_gate
+
+            pos_rows = await db.pool.fetch(
+                "SELECT DISTINCT symbol FROM trades"
+                " WHERE status IN ('open', 'partially_filled', 'closing', 'partially_closed')"
+            )
+            all_symbols = [r["symbol"] for r in pos_rows if r.get("symbol")]
+            if not all_symbols:
                 return
-            logger.info("regime_classification_tick", extra={"symbols": len(symbols)})
+
+            _limiter = get_shared_limiter()
+            _cb = get_shared_circuit_breaker()
+
+            async def _fetch_candles(symbol: str, interval: str = "240", limit: int = 50) -> list:
+                await get_rate_gate().acquire_async(channel="public")
+                end_ms = int(_time.time() * 1000)
+                start_ms = end_ms - (limit * int(interval) * 60 * 1000)
+                loop = _asyncio.get_event_loop()
+                csv_data = await loop.run_in_executor(
+                    None,
+                    lambda: get_bybit_klines(
+                        symbol, interval, start_ms, end_ms,
+                        None, _limiter, _cb,
+                    ),
+                )
+                candles = []
+                reader = _csv.DictReader(_io.StringIO(csv_data))
+                for row in reader:
+                    try:
+                        candles.append({
+                            "open": float(row["open"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                            "close": float(row["close"]),
+                        })
+                    except (KeyError, ValueError):
+                        pass
+                return candles
+
+            await regime_classifier.run_all(all_symbols, _fetch_candles)
+            logger.info("regime_classification_complete", extra={"symbols": len(all_symbols)})
 
         from backend.scheduler import SnapshotScheduler as _SnapshotScheduler
         regime_scheduler = _SnapshotScheduler(regime_fn=_run_regime_classification)
