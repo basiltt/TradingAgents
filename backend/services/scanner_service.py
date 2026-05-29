@@ -1071,6 +1071,14 @@ class ScannerService:
                     scan["failed"] += 1
                 scan["results"].append(result)
 
+        # Persist scan result first so we have the row ID for auto-trade linking
+        if self._db:
+            scan_result_id = await self._db.insert_scan_result(scan_id, result)
+            if scan_result_id:
+                result["id"] = scan_result_id
+            count_field = "completed" if status == "completed" else "failed"
+            await self._db.increment_scan_counter(scan_id, count_field)
+
         # Auto-trade immediate execution
         if status == "completed":
             async with self._lock:
@@ -1091,8 +1099,3 @@ class ScannerService:
                                 )
                 except Exception as e:
                     logger.warning("auto_trade_immediate_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
-
-        if self._db:
-            await self._db.insert_scan_result(scan_id, result)
-            count_field = "completed" if status == "completed" else "failed"
-            await self._db.increment_scan_counter(scan_id, count_field)

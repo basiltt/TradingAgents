@@ -1349,7 +1349,7 @@ class AsyncAnalysisDB:
             *params,
         )
 
-    async def insert_scan_result(self, scan_id: str, result: Dict[str, Any]) -> None:
+    async def insert_scan_result(self, scan_id: str, result: Dict[str, Any]) -> Optional[int]:
         direction = result.get("direction", "hold")
         if direction not in ("buy", "sell", "hold"):
             logger.error("insert_scan_result: invalid direction %r — forcing hold", direction)
@@ -1365,7 +1365,7 @@ class AsyncAnalysisDB:
             logger.warning("insert_scan_result: invalid status %r — forcing unknown", status)
             status = "unknown"
 
-        await self.pool.execute(
+        row = await self.pool.fetchrow(
             "INSERT INTO scan_results "
             "(scan_id, ticker, run_id, status, direction, confidence, "
             "score, decision_summary, signal_source) "
@@ -1374,7 +1374,8 @@ class AsyncAnalysisDB:
             "run_id = EXCLUDED.run_id, status = EXCLUDED.status, "
             "direction = EXCLUDED.direction, confidence = EXCLUDED.confidence, "
             "score = EXCLUDED.score, decision_summary = EXCLUDED.decision_summary, "
-            "signal_source = EXCLUDED.signal_source",
+            "signal_source = EXCLUDED.signal_source "
+            "RETURNING id",
             scan_id,
             result["ticker"],
             result.get("run_id"),
@@ -1385,6 +1386,7 @@ class AsyncAnalysisDB:
             result.get("decision_summary", ""),
             result.get("signal_source", "unknown"),
         )
+        return row["id"] if row else None
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
         row = await self.pool.fetchrow(
