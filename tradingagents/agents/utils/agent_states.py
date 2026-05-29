@@ -112,3 +112,6 @@ class AgentState(MessagesState):
 
     # Historical signal performance feedback injected by the caller
     performance_context: Annotated[Optional[str], _last]
+
+    # Current market regime context injected by the caller (Task 13)
+    regime_context: Annotated[Optional[str], _last]

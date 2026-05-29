@@ -17,7 +17,7 @@ class Propagator:
     def create_initial_state(
         self, company_name: str, trade_date: str, past_context: str = "",
         asset_type: str = "stock", crypto_interval: str | None = None,
-        performance_context: str = "",
+        performance_context: str = "", regime_context: str = "",
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
         return {
@@ -26,6 +26,7 @@ class Propagator:
             "trade_date": str(trade_date),
             "past_context": past_context,
             "performance_context": performance_context,
+            "regime_context": regime_context,
             "asset_type": asset_type,
             "crypto_interval": crypto_interval,
             "error": None,

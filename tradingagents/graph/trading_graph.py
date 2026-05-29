@@ -570,7 +570,7 @@ class TradingAgentsGraph:
         if updates:
             self.memory_log.batch_update_with_outcomes(updates)
 
-    def propagate(self, company_name, trade_date, performance_context: str = ""):
+    def propagate(self, company_name, trade_date, performance_context: str = "", regime_context: str = ""):
         """Run the trading agents graph for a company on a specific date.
 
         Args:
@@ -610,14 +610,14 @@ class TradingAgentsGraph:
                 logger.info("Starting fresh for %s on %s", company_name, trade_date)
 
         try:
-            return self._run_graph(company_name, trade_date, performance_context=performance_context)
+            return self._run_graph(company_name, trade_date, performance_context=performance_context, regime_context=regime_context)
         finally:
             if self._checkpointer_ctx is not None:
                 self._checkpointer_ctx.__exit__(None, None, None)
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
 
-    def _run_graph(self, company_name, trade_date, performance_context: str = ""):
+    def _run_graph(self, company_name, trade_date, performance_context: str = "", regime_context: str = ""):
         """Execute the graph and write the resulting state to disk and memory log."""
         import time as _time
         import threading as _threading
@@ -654,6 +654,7 @@ class TradingAgentsGraph:
             asset_type=self.config.get("asset_type", "stock"),
             crypto_interval=self.config.get("crypto_interval"),
             performance_context=performance_context,
+            regime_context=regime_context,
         )
 
         # Migration shim: fundamentals_report → derivatives_report (keep both for compat)
