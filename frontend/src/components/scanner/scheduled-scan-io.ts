@@ -58,9 +58,11 @@ export function exportAll(scans: ScheduledScan[]) {
   downloadJson(payload, "scheduled-scans-export.json");
 }
 
+export type ImportableScan = CreateScheduledScanRequest & { _originalStatus?: string };
+
 export interface ImportResult {
   total: number;
-  toImport: CreateScheduledScanRequest[];
+  toImport: ImportableScan[];
   errors: string[];
 }
 
@@ -85,7 +87,7 @@ export function parseImportFile(text: string): ImportResult {
     return { total: 0, toImport: [], errors: ["'scans' must be an array"] };
   }
 
-  const toImport: CreateScheduledScanRequest[] = [];
+  const toImport: ImportableScan[] = [];
   const errors: string[] = [];
 
   for (let i = 0; i < file.scans.length; i++) {
@@ -105,6 +107,7 @@ export function parseImportFile(text: string): ImportResult {
       schedule_config: scan.schedule_config as CreateScheduledScanRequest["schedule_config"],
       scan_config: scan.scan_config as Record<string, unknown>,
       timezone: (scan.timezone as string) || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      _originalStatus: (scan.status as string) || undefined,
     });
   }
 
