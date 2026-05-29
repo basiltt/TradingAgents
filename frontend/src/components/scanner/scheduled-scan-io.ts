@@ -16,11 +16,16 @@ interface ExportedScan {
 }
 
 function stripToExportable(s: ScheduledScan): ExportedScan {
+  let scanConfig = s.scan_config;
+  if (scanConfig && typeof scanConfig === "object" && "llm_api_key" in scanConfig) {
+    const { llm_api_key, ...rest } = scanConfig as Record<string, unknown>;
+    scanConfig = rest;
+  }
   return {
     name: s.name,
     schedule_type: s.schedule_type,
     schedule_config: s.schedule_config,
-    scan_config: s.scan_config,
+    scan_config: scanConfig,
     status: s.status,
     timezone: s.timezone,
   };

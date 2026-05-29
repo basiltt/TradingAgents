@@ -415,7 +415,13 @@ export function ScheduledScansPage() {
     if (!file) return;
     e.target.value = "";
 
-    const text = await file.text();
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      toast.error("Import failed", { description: "Could not read file" });
+      return;
+    }
     const result = parseImportFile(text);
 
     if (result.toImport.length === 0) {
@@ -427,21 +433,24 @@ export function ScheduledScansPage() {
     let created = 0;
     const failures: string[] = [...result.errors];
 
-    for (const scan of result.toImport) {
-      try {
-        const { _originalStatus, ...createPayload } = scan;
-        const created_scan = await scheduledScansApi.create(createPayload);
-        created++;
-        if (_originalStatus && _originalStatus !== "active") {
-          try { await scheduledScansApi.pause(created_scan.id); } catch {}
+    try {
+      for (const scan of result.toImport) {
+        try {
+          const { _originalStatus, ...createPayload } = scan;
+          const created_scan = await scheduledScansApi.create(createPayload);
+          created++;
+          if (_originalStatus && _originalStatus !== "active") {
+            try { await scheduledScansApi.pause(created_scan.id); } catch {}
+          }
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Unknown error";
+          failures.push(`"${scan.name}": ${msg}`);
         }
-      } catch (err) {
-        const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Unknown error";
-        failures.push(`"${scan.name}": ${msg}`);
       }
+    } finally {
+      setImporting(false);
     }
 
-    setImporting(false);
     queryClient.invalidateQueries({ queryKey: ["scheduled-scans"] });
 
     if (failures.length === 0) {
