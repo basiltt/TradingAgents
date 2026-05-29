@@ -203,6 +203,8 @@ class OrderBookMonitor:
         delay = _RECONNECT_BASE
         while self._running:
             try:
+                if self._fallback_task and not self._fallback_task.done():
+                    self._fallback_task.cancel()
                 from backend.services.bybit_rate_gate import get_rate_gate
                 await get_rate_gate().acquire_async(channel="ws_connect")
                 await self._connect_and_listen()
@@ -220,13 +222,17 @@ class OrderBookMonitor:
             await asyncio.sleep(delay + jitter)
             delay = min(delay * 2, _RECONNECT_MAX)
 
+    def _ensure_session(self) -> aiohttp.ClientSession:
+        if not self._session or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
     async def _rest_fallback_once(self) -> None:
         try:
             from backend.services.bybit_rate_gate import get_rate_gate
             await get_rate_gate().acquire_async(channel="public")
-            if not self._session or self._session.closed:
-                self._session = aiohttp.ClientSession()
-            async with self._session.get(
+            session = self._ensure_session()
+            async with session.get(
                 f"https://api.bybit.com/v5/market/orderbook?category=linear&symbol={self._symbol}&limit=50",
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
@@ -239,8 +245,7 @@ class OrderBookMonitor:
             logger.debug("REST fallback failed for %s", self._symbol)
 
     async def _connect_and_listen(self) -> None:
-        if not self._session or self._session.closed:
-            self._session = aiohttp.ClientSession()
+        self._ensure_session()
         self._ws = await asyncio.wait_for(
             self._session.ws_connect(_WS_PUBLIC_LINEAR, heartbeat=20),
             timeout=15,
