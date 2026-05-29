@@ -91,6 +91,11 @@ const CycleDetailPage = lazy(() =>
   })),
 );
 const TradesPageComponent = lazy(() => import("@/components/trades/TradesPage"));
+const SignalAnalyticsPageComponent = lazy(() =>
+  import("@/components/signal-analytics/SignalAnalyticsPage").then((module) => ({
+    default: module.SignalAnalyticsPage,
+  })),
+);
 
 function RouteLoading() {
   return (
@@ -284,6 +289,14 @@ function TradesPage() {
   );
 }
 
+function SignalAnalyticsPageWrapper() {
+  return (
+    <RouteSuspense>
+      <SignalAnalyticsPageComponent />
+    </RouteSuspense>
+  );
+}
+
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -387,6 +400,12 @@ const tradesRoute = createRoute({
   component: TradesPage,
 });
 
+const signalAnalyticsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/signal-analytics",
+  component: SignalAnalyticsPageWrapper,
+});
+
 
 export const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -406,6 +425,7 @@ export const routeTree = rootRoute.addChildren([
   cyclesRoute,
   cycleDetailRoute,
   tradesRoute,
+  signalAnalyticsRoute,
 ]);
 
 export function createAppRouter() {
