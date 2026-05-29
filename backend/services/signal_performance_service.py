@@ -109,9 +109,8 @@ class SignalPerformanceMaterializer:
         )
         if scan_result is None:
             logger.warning(
-                "signal_performance: scan_result %s not found for trade %s",
-                trade["scan_result_id"],
-                trade.get("id"),
+                "signal_performance_scan_result_missing",
+                extra={"scan_result_id": trade["scan_result_id"], "trade_id": trade.get("id")},
             )
             return None
 
@@ -136,7 +135,7 @@ class SignalPerformanceMaterializer:
         entry = float(trade["entry_price"])
         exit_ = float(trade["exit_price"])
         if not entry:
-            logger.warning("signal_performance: entry_price is 0 for trade %s", trade.get("id"))
+            logger.warning("signal_performance_entry_price_zero", extra={"trade_id": trade.get("id")})
             return None
         direction = (trade.get("signal_direction") or "buy").lower()
 
@@ -227,8 +226,8 @@ class SignalPerformanceMaterializer:
                 await self._decay.check(row)
             except Exception:
                 logger.exception(
-                    "signal_performance: decay_detector.check raised for trade %s",
-                    trade.get("id"),
+                    "signal_performance_decay_check_failed",
+                    extra={"trade_id": trade.get("id")},
                 )
 
         return row

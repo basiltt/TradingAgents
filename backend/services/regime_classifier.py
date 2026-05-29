@@ -287,7 +287,7 @@ class RegimeClassifier:
                     final_regime = llm_regime
                     llm_confirmed = True
             except Exception:
-                logger.exception("LLM callable failed for symbol %s", symbol)
+                logger.exception("regime_llm_callable_failed", extra={"symbol": symbol})
 
         await self._persist(
             symbol=symbol,
@@ -327,7 +327,7 @@ class RegimeClassifier:
                 result = await self.classify_symbol(symbol, candles)
                 results.append(result)
             except Exception:
-                logger.exception("Failed to classify regime for symbol %s", symbol)
+                logger.exception("regime_classify_failed", extra={"symbol": symbol})
         return results
 
     # ------------------------------------------------------------------

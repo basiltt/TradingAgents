@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
-from backend.routers.signal_analytics import router, set_service
+from backend.routers.signal_analytics import router
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def mock_service():
 def app(mock_service):
     application = FastAPI()
     application.include_router(router)
-    set_service(mock_service)
+    application.state.signal_analytics_service = mock_service
     return application
 
 

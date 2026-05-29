@@ -206,9 +206,8 @@ def create_app() -> FastAPI:
         app.state.config_service = config_service
         app.state.memory_service = MemoryService()
 
-        from backend.routers.signal_analytics import set_service as _set_signal_analytics_service
         from backend.services.signal_analytics_service import SignalAnalyticsService
-        _set_signal_analytics_service(SignalAnalyticsService(db=db))
+        app.state.signal_analytics_service = SignalAnalyticsService(db=db)
         app.state.cors_origins = cors_origins
         app.state.analysis_service = AnalysisService(
             persistence=db,
