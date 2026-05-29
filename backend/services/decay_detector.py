@@ -21,8 +21,9 @@ class DecayDetector:
     # Construction
     # --------------------------------------------------------------------------
 
-    def __init__(self, db: Any) -> None:
+    def __init__(self, db: Any, ws_manager: Any = None) -> None:
         self._db = db
+        self._ws = ws_manager
 
     # --------------------------------------------------------------------------
     # Public API
@@ -224,6 +225,17 @@ class DecayDetector:
             threshold,
             window_trades,
         )
+
+        if self._ws:
+            try:
+                await self._ws._broadcast({
+                    "type": "decay_alert.fired",
+                    "alert_type": alert_type,
+                    "severity": severity,
+                    "message": message,
+                })
+            except Exception:
+                pass
 
         return {
             "alert_type": alert_type,

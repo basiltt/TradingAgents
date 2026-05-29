@@ -346,8 +346,10 @@ def create_app() -> FastAPI:
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService
             from backend.services.signal_performance_service import SignalPerformanceMaterializer
+            from backend.services.decay_detector import DecayDetector
             trade_repo = TradeRepository(db=db)
-            signal_perf = SignalPerformanceMaterializer(db=db, decay_detector=None)
+            decay_detector = DecayDetector(db=db, ws_manager=account_ws_mgr)
+            signal_perf = SignalPerformanceMaterializer(db=db, decay_detector=decay_detector)
             trade_service = TradeService(
                 db=db,
                 trade_repo=trade_repo,
