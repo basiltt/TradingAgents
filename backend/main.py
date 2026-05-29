@@ -205,6 +205,10 @@ def create_app() -> FastAPI:
         app.state.ws_manager = ws_manager
         app.state.config_service = config_service
         app.state.memory_service = MemoryService()
+
+        from backend.routers.signal_analytics import set_service as _set_signal_analytics_service
+        from backend.services.signal_analytics_service import SignalAnalyticsService
+        _set_signal_analytics_service(SignalAnalyticsService(db=db))
         app.state.cors_origins = cors_origins
         app.state.analysis_service = AnalysisService(
             persistence=db,
@@ -460,6 +464,7 @@ def create_app() -> FastAPI:
     from backend.routers.scheduled_scans import router as scheduled_scans_router
     from backend.routers.close_positions import router as close_positions_router
     from backend.routers.ai_manager import router as ai_manager_router
+    from backend.routers.signal_analytics import router as signal_analytics_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
@@ -476,6 +481,7 @@ def create_app() -> FastAPI:
     app.include_router(trades_router, prefix="/api/v1")
     app.include_router(close_positions_router, prefix="/api/v1")
     app.include_router(ai_manager_router, prefix="/api/v1")
+    app.include_router(signal_analytics_router, prefix="/api/v1")
     from backend.routers.trading_cycles import router as trading_cycles_router
     app.include_router(trading_cycles_router, prefix="/api/v1")
     app.include_router(ws_router)
