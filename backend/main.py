@@ -395,7 +395,6 @@ def create_app() -> FastAPI:
                 get_shared_limiter,
                 get_shared_circuit_breaker,
             )
-            from backend.services.bybit_rate_gate import get_rate_gate
 
             pos_rows = await db.pool.fetch(
                 "SELECT DISTINCT symbol FROM trades"
@@ -409,7 +408,6 @@ def create_app() -> FastAPI:
             _cb = get_shared_circuit_breaker()
 
             async def _fetch_candles(symbol: str, interval: str = "240", limit: int = 50) -> list:
-                await get_rate_gate().acquire_async(channel="public")
                 end_ms = int(_time.time() * 1000)
                 start_ms = end_ms - (limit * int(interval) * 60 * 1000)
                 loop = _asyncio.get_event_loop()
@@ -420,6 +418,9 @@ def create_app() -> FastAPI:
                         None, _limiter, _cb,
                     ),
                 )
+                # Strip any truncation warning line before CSV header
+                if csv_data.startswith("["):
+                    csv_data = csv_data[csv_data.index("\n") + 1:]
                 candles = []
                 reader = _csv.DictReader(_io.StringIO(csv_data))
                 for row in reader:
