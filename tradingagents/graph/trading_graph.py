@@ -39,6 +39,90 @@ logger = logging.getLogger(__name__)
 _REASONING_PREFIXES: Tuple[str, ...] = ("o1", "o3", "o4")
 
 
+def format_performance_context(
+    perf_rows: list,
+    symbol: str,
+    current_regime: str | None = None,
+) -> str:
+    """Format signal_performance DB rows into a human-readable context string.
+
+    Args:
+        perf_rows: List of dicts with keys: direction, confidence_score, regime,
+                   outcome (WIN/LOSS/BREAKEVEN), pnl_pct, hold_duration_minutes,
+                   close_reason.  Ordered by closed_at DESC (most recent first).
+                   Pass up to 20 rows; the function renders only the 5 most recent.
+        symbol: Ticker/coin symbol, used for the section header.
+        current_regime: Optional current volatility regime string (e.g. "Normal").
+
+    Returns:
+        A formatted multi-line string ready for inclusion in an LLM prompt, or
+        an empty string when perf_rows is empty.
+    """
+    if not perf_rows:
+        return ""
+
+    lines: list[str] = [f"Recent signal performance for {symbol}:"]
+
+    # --- 5 most recent individual signals ---
+    for row in perf_rows[:5]:
+        direction = row.get("direction", "?").upper()
+        score = row.get("confidence_score") or 0
+        regime = row.get("regime") or "unknown"
+        outcome = (row.get("outcome") or "?").upper()
+        pnl = row.get("pnl_pct") or 0.0
+        hold = row.get("hold_duration_minutes") or 0
+        reason = row.get("close_reason") or "unknown"
+        lines.append(
+            f"- {direction}, confidence {score}, regime={regime} -> "
+            f"{outcome} {pnl:+.1f}% (held {hold:.0f}min, closed: {reason})"
+        )
+
+    # --- Rolling statistics across all rows ---
+    total = len(perf_rows)
+    wins = sum(1 for r in perf_rows if (r.get("outcome") or "").upper() == "WIN")
+    win_rate = (wins / total * 100) if total else 0.0
+    holds = [r.get("hold_duration_minutes") or 0 for r in perf_rows]
+    avg_hold = sum(holds) / len(holds) if holds else 0.0
+
+    lines.append("")
+    lines.append(
+        f"Rolling stats for {symbol}: {wins}/{total} wins ({win_rate:.0f}%), "
+        f"avg hold {avg_hold:.0f}min"
+    )
+
+    # --- Per-regime breakdown ---
+    regime_stats: dict[str, dict] = {}
+    for row in perf_rows:
+        rg = row.get("regime") or "unknown"
+        if rg not in regime_stats:
+            regime_stats[rg] = {"wins": 0, "total": 0}
+        regime_stats[rg]["total"] += 1
+        if (row.get("outcome") or "").upper() == "WIN":
+            regime_stats[rg]["wins"] += 1
+
+    def _wr(stats: dict) -> float:
+        return (stats["wins"] / stats["total"] * 100) if stats["total"] else 0.0
+
+    if regime_stats:
+        sorted_regimes = sorted(regime_stats.items(), key=lambda kv: _wr(kv[1]))
+        worst_rg, worst_stats = sorted_regimes[0]
+        best_rg, best_stats = sorted_regimes[-1]
+        lines.append(
+            f"Best regime: {best_rg} ({_wr(best_stats):.0f}%), "
+            f"Worst regime: {worst_rg} ({_wr(worst_stats):.0f}%)"
+        )
+
+    # --- Current regime performance ---
+    if current_regime and current_regime in regime_stats:
+        cs = regime_stats[current_regime]
+        lines.append(
+            f"Performance in CURRENT regime ({current_regime}): "
+            f"{cs['wins']}/{cs['total']} ({_wr(cs):.0f}%)"
+        )
+
+    return "\n".join(lines)
+
+
 def _is_reasoning_model(model_name: str) -> bool:
     """Return True if the model is a reasoning model that rejects temperature."""
     return any(model_name.lower().startswith(p) for p in _REASONING_PREFIXES)
@@ -486,8 +570,17 @@ class TradingAgentsGraph:
         if updates:
             self.memory_log.batch_update_with_outcomes(updates)
 
-    def propagate(self, company_name, trade_date):
+    def propagate(self, company_name, trade_date, performance_context: str = ""):
         """Run the trading agents graph for a company on a specific date.
+
+        Args:
+            company_name: Ticker or coin symbol.
+            trade_date: ISO date string for the analysis run.
+            performance_context: Optional pre-formatted string summarising recent
+                signal performance for this symbol (produced by
+                ``format_performance_context``).  When provided it is injected
+                into the initial state so the Trader and Risk Manager agents can
+                calibrate on past accuracy.  Pass an empty string to omit.
 
         When ``checkpoint_enabled`` is set in config, the graph is recompiled
         with a per-ticker SqliteSaver so a crashed run can resume from the last
@@ -517,14 +610,14 @@ class TradingAgentsGraph:
                 logger.info("Starting fresh for %s on %s", company_name, trade_date)
 
         try:
-            return self._run_graph(company_name, trade_date)
+            return self._run_graph(company_name, trade_date, performance_context=performance_context)
         finally:
             if self._checkpointer_ctx is not None:
                 self._checkpointer_ctx.__exit__(None, None, None)
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
 
-    def _run_graph(self, company_name, trade_date):
+    def _run_graph(self, company_name, trade_date, performance_context: str = ""):
         """Execute the graph and write the resulting state to disk and memory log."""
         import time as _time
         import threading as _threading
@@ -560,6 +653,7 @@ class TradingAgentsGraph:
             company_name, trade_date, past_context=past_context,
             asset_type=self.config.get("asset_type", "stock"),
             crypto_interval=self.config.get("crypto_interval"),
+            performance_context=performance_context,
         )
 
         # Migration shim: fundamentals_report → derivatives_report (keep both for compat)

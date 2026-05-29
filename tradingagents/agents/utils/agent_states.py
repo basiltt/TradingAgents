@@ -109,3 +109,6 @@ class AgentState(MessagesState):
 
     # Trader context: market session
     market_session: Annotated[Optional[str], _last]
+
+    # Historical signal performance feedback injected by the caller
+    performance_context: Annotated[Optional[str], _last]

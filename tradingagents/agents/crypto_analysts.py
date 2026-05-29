@@ -612,6 +612,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
         raw_investment_plan = filtered.get("investment_plan", "")
         investment_plan = wrap_external_data(raw_investment_plan, "research_manager")
         technical_levels = wrap_external_data(filtered.get("technical_levels_summary", "Not available"), "technical_analyst")
+        performance_context = filtered.get("performance_context") or ""
 
         if not raw_investment_plan or not raw_investment_plan.strip():
             logger.warning(
@@ -638,6 +639,16 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             f"## Research Manager's Investment Plan\n{investment_plan}\n\n"
             f"## Technical Levels Summary\n{technical_levels}\n\n"
             f"IMPORTANT — CURRENT PRICE DATA (base your entry/SL/TP on this):\n{price_context}\n\n"
+        )
+        if performance_context:
+            base_prompt += (
+                f"## Historical Signal Performance\n"
+                f"{performance_context}\n\n"
+                f"Use the above performance history to calibrate your confidence score: "
+                f"lower confidence in regimes where past signals have performed poorly, "
+                f"higher in regimes with strong win rates.\n\n"
+            )
+        base_prompt += (
             f"EXECUTION RULES:\n"
             f"- If the RM recommends Buy or Overweight, output a Long signal\n"
             f"- If the RM recommends Sell, output a Short signal\n"

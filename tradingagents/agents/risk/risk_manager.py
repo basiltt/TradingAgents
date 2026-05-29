@@ -60,6 +60,7 @@ _RISK_USER = (
     "## Trader's Proposal\n{trader_plan}\n\n"
     "## Current Price Data\n{price_context}\n\n"
     "## Market Microstructure\n{microstructure}\n\n"
+    "{performance_section}"
     "Perform all risk checks and provide your structured assessment."
 )
 
@@ -76,8 +77,17 @@ def create_risk_manager(llm, max_leverage: int = 20):
         price_context = wrap_external_data(filtered.get("current_price_context", ""), "exchange_ticker")
         microstructure = filtered.get("market_microstructure", "")
         cfg_max_leverage = filtered.get("max_leverage") or max_leverage
+        performance_context = filtered.get("performance_context") or ""
 
         micro_str = wrap_external_data(str(microstructure) if microstructure else "Not available", "market_microstructure")
+
+        performance_section = ""
+        if performance_context:
+            performance_section = (
+                f"## Historical Signal Performance\n{performance_context}\n\n"
+                "Consider the above performance history when assessing position sizing risk: "
+                "flag elevated risk in regimes with historically poor win rates.\n\n"
+            )
 
         prompt = [
             {"role": "system", "content": _RISK_SYSTEM},
@@ -90,6 +100,7 @@ def create_risk_manager(llm, max_leverage: int = 20):
                     trader_plan=trader_plan,
                     price_context=price_context or "Not available",
                     microstructure=micro_str,
+                    performance_section=performance_section,
                 ),
             },
         ]
