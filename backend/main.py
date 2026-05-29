@@ -341,12 +341,15 @@ def create_app() -> FastAPI:
 
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService
+            from backend.services.signal_performance_service import SignalPerformanceMaterializer
             trade_repo = TradeRepository(db=db)
+            signal_perf = SignalPerformanceMaterializer(db=db, decay_detector=None)
             trade_service = TradeService(
                 db=db,
                 trade_repo=trade_repo,
                 accounts_service=app.state.accounts_service,
                 ws_manager=account_ws_mgr,
+                signal_perf=signal_perf,
             )
             app.state.trade_repo = trade_repo
             app.state.trade_service = trade_service

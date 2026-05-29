@@ -11,6 +11,7 @@ from typing import Any
 
 from backend.async_persistence import AsyncAnalysisDB
 from backend.utils import serialize_trade as _serialize_trade_shared
+from backend.services.signal_performance_service import SignalPerformanceMaterializer
 from backend.services.trade_repository import (
     ConcurrentModification,
     InvalidStatusTransition,
@@ -37,12 +38,14 @@ class TradeService:
         trade_repo: TradeRepository,
         accounts_service: Any,
         ws_manager: Any = None,
+        signal_perf: SignalPerformanceMaterializer | None = None,
     ) -> None:
         """Initialize with database, repository, accounts service, and optional WS manager."""
         self._db = db
         self._repo = trade_repo
         self._accounts = accounts_service
         self._ws = ws_manager
+        self._signal_perf = signal_perf
         self._stats_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 
     _STATS_CACHE_TTL = 10.0
@@ -280,6 +283,11 @@ class TradeService:
         if closed is None:
             raise RuntimeError("close_trade returned None unexpectedly")
         await self._broadcast_trade_event("trade.closed", closed)
+        if self._signal_perf and closed.get("scan_result_id"):
+            try:
+                await self._signal_perf.materialize(closed)
+            except Exception:
+                logger.exception("signal_performance_materialize_failed", extra={"trade_id": trade_id})
         logger.info("close_full_done", extra={
             "trade_id": trade_id, "account_id": account_id,
             "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
