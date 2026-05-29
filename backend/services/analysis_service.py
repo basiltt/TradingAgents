@@ -361,9 +361,67 @@ class AnalysisService:
 
             callback = WebCallbackHandler(run_id=run_id, event_bus=self._bus)
 
+            # Fetch performance and regime context for crypto assets (must happen
+            # here in the async context, before the graph runs in a thread).
+            performance_context = ""
+            regime_context = ""
+            if config.get("asset_type") == "crypto":
+                ticker = request["ticker"]
+                try:
+                    perf_rows = await self._db.pool.fetch(
+                        "SELECT direction, confidence_score, regime_at_entry, is_win, "
+                        "realized_pnl_pct, hold_duration_minutes, close_reason "
+                        "FROM signal_performance WHERE symbol = $1 "
+                        "ORDER BY closed_at DESC LIMIT 20",
+                        ticker,
+                    )
+                    if perf_rows:
+                        regime_row = await self._db.pool.fetchrow(
+                            "SELECT regime FROM regime_snapshots WHERE symbol = $1 "
+                            "ORDER BY classified_at DESC LIMIT 1",
+                            ticker,
+                        )
+                        current_regime = regime_row["regime"] if regime_row else None
+                        from tradingagents.graph.trading_graph import format_performance_context
+                        performance_context = format_performance_context(
+                            [dict(r) for r in perf_rows], ticker, current_regime
+                        )
+                except Exception:
+                    logger.debug(
+                        "performance_context_fetch_failed",
+                        extra={"ticker": ticker},
+                    )
+
+                try:
+                    regime_snap = await self._db.pool.fetchrow(
+                        "SELECT regime, adx, atr_pct, bb_width_pct, llm_confirmed, llm_regime "
+                        "FROM regime_snapshots WHERE symbol = $1 "
+                        "ORDER BY classified_at DESC LIMIT 1",
+                        ticker,
+                    )
+                    if regime_snap:
+                        regime_context = (
+                            f"Current market regime for {ticker}: {regime_snap['regime']}\n"
+                            f"Indicators: ADX={float(regime_snap['adx'] or 0):.1f} (trend strength), "
+                            f"ATR%={float(regime_snap['atr_pct'] or 0):.2f} (volatility), "
+                            f"BB Width={float(regime_snap['bb_width_pct'] or 0):.2f}%\n"
+                            f"LLM confirmed: {'yes' if regime_snap['llm_confirmed'] else 'no'} "
+                            f"(LLM classified as: {regime_snap['llm_regime'] or 'N/A'})\n\n"
+                            f"Adjust analysis: trend-following signals carry more weight in trending "
+                            f"regimes, mean-reversion signals in ranging regimes. In volatile regimes, "
+                            f"widen expected ranges and lower confidence unless conviction is very high."
+                        )
+                except Exception:
+                    logger.debug(
+                        "regime_context_fetch_failed",
+                        extra={"ticker": ticker},
+                    )
+
             result = await asyncio.wait_for(
                 asyncio.get_running_loop().run_in_executor(
-                    _get_graph_executor(), self._execute_graph, run_id, request, config, callback, cancel_event,
+                    _get_graph_executor(), self._execute_graph,
+                    run_id, request, config, callback, cancel_event,
+                    performance_context, regime_context,
                 ),
                 timeout=_WALL_TIMEOUT,
             )
@@ -529,6 +587,7 @@ class AnalysisService:
     def _execute_graph(
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
         callback: Any, cancel_event: threading.Event,
+        performance_context: str = "", regime_context: str = "",
     ) -> Optional[Dict[str, Any]]:
         # --- TA Pre-Filter gate (crypto only) ---
         if config.get("ta_prefilter_enabled") and config.get("asset_type") == "crypto":
@@ -607,6 +666,8 @@ class AnalysisService:
             past_context=past_context,
             asset_type=config.get("asset_type", "stock"),
             crypto_interval=config.get("crypto_interval"),
+            performance_context=performance_context,
+            regime_context=regime_context,
         )
 
         # For crypto: fetch live price + lower-timeframe candles so all agents
