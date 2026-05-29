@@ -63,9 +63,12 @@ export function SignalAnalyticsPage() {
   const [data, setData] = useState<PageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
+    setLoading(true);
+    setError(null);
     fetchAll(controller.signal)
       .then((d) => {
         setData(d);
@@ -77,7 +80,7 @@ export function SignalAnalyticsPage() {
         setLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [retryCount]);
 
   const handleAcknowledge = async (id: number) => {
     try {
@@ -113,6 +116,12 @@ export function SignalAnalyticsPage() {
         <Card className="border-destructive/25 bg-destructive/6">
           <CardContent className="p-6 text-center">
             <p className="text-destructive font-semibold">{error}</p>
+            <button
+              onClick={() => setRetryCount((c) => c + 1)}
+              className="mt-3 px-4 py-1.5 rounded bg-destructive text-destructive-foreground text-sm"
+            >
+              Retry
+            </button>
           </CardContent>
         </Card>
       );

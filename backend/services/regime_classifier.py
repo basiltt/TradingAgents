@@ -104,6 +104,9 @@ def compute_indicators(candles: list[dict]) -> dict:
     highs = [float(c["high"]) for c in candles]
     lows = [float(c["low"]) for c in candles]
 
+    if not closes[-1]:
+        raise ValueError("Last candle close price is 0 or None")
+
     price = closes[-1]
 
     # --- EMA(20) ---

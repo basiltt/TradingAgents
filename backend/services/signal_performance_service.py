@@ -135,6 +135,9 @@ class SignalPerformanceMaterializer:
 
         entry = float(trade["entry_price"])
         exit_ = float(trade["exit_price"])
+        if not entry:
+            logger.warning("signal_performance: entry_price is 0 for trade %s", trade.get("id"))
+            return None
         direction = (trade.get("signal_direction") or "buy").lower()
 
         if direction in ("sell", "short"):
