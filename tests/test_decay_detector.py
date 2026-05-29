@@ -105,8 +105,8 @@ async def test_detects_win_rate_critical():
 @pytest.mark.asyncio
 async def test_detects_negative_alpha():
     """Cumulative PnL below cumulative BnH benchmark fires negative_alpha warning."""
-    # Each trade: PnL = 0.5%, BnH = 1.0%  → negative alpha
-    rows = [_row(True, realized_pnl_pct=0.5, benchmark_bnh_pnl_pct=1.0)] * 10
+    # Each trade: PnL = 0.5%, BnH = 1.0%  → negative alpha (need >= 20 trades)
+    rows = [_row(True, realized_pnl_pct=0.5, benchmark_bnh_pnl_pct=1.0)] * 20
     db = _make_db(fetch_return=rows, fetchrow_return=None)
     detector = DecayDetector(db)
 

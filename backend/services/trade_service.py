@@ -378,6 +378,12 @@ class TradeService:
             except Exception:
                 logger.warning("ws_partially_closed_broadcast_failed", extra={"trade_id": trade_id})
 
+        if self._signal_perf and child.get("scan_result_id"):
+            try:
+                await self._signal_perf.materialize(child)
+            except Exception:
+                logger.exception("signal_performance_materialize_failed", extra={"trade_id": str(child.get("id"))})
+
         return child
 
     async def _handle_close_failure(self, client: Any, trade: dict, version: int) -> None:

@@ -152,7 +152,7 @@ class DecayDetector:
                     fired.append(alert)
 
         # ── negative_alpha ────────────────────────────────────────────────
-        if rows:
+        if len(rows) >= 20:
             total_pnl = sum(
                 float(r["realized_pnl_pct"] or 0) for r in rows
             )
