@@ -52,6 +52,7 @@ def _make_db(scan_row=None, regime_row=None) -> AsyncMock:
         row = MagicMock()
         row.__getitem__ = lambda self, key: data[key]
         row.__contains__ = lambda self, key: key in data
+        row.get = lambda key, default=None: data.get(key, default)
         return row
 
     mock_db.pool.fetchrow = AsyncMock(
@@ -193,7 +194,7 @@ class TestMaterializeValidTrade:
         assert row is not None
         assert row["is_win"] is True
         assert row["confidence_score"] == 8
-        assert row["score_tier"] == "high"
+        assert row["confidence_tier"] == "high"
         assert row["signal_source"] == "momentum_scanner"
         assert row["regime_at_entry"] == "bull"
         assert math.isclose(row["hold_duration_minutes"], 30.0, abs_tol=1e-6)

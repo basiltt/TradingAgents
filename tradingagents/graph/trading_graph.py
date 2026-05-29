@@ -67,9 +67,10 @@ def format_performance_context(
     for row in perf_rows[:5]:
         direction = row.get("direction", "?").upper()
         score = row.get("confidence_score") or 0
-        regime = row.get("regime") or "unknown"
-        outcome = (row.get("outcome") or "?").upper()
-        pnl = row.get("pnl_pct") or 0.0
+        regime = row.get("regime_at_entry") or "unknown"
+        is_win = row.get("is_win")
+        outcome = "WIN" if is_win else "LOSS"
+        pnl = row.get("realized_pnl_pct") or 0.0
         hold = row.get("hold_duration_minutes") or 0
         reason = row.get("close_reason") or "unknown"
         lines.append(
@@ -79,7 +80,7 @@ def format_performance_context(
 
     # --- Rolling statistics across all rows ---
     total = len(perf_rows)
-    wins = sum(1 for r in perf_rows if (r.get("outcome") or "").upper() == "WIN")
+    wins = sum(1 for r in perf_rows if r.get("is_win"))
     win_rate = (wins / total * 100) if total else 0.0
     holds = [r.get("hold_duration_minutes") or 0 for r in perf_rows]
     avg_hold = sum(holds) / len(holds) if holds else 0.0
@@ -93,11 +94,11 @@ def format_performance_context(
     # --- Per-regime breakdown ---
     regime_stats: dict[str, dict] = {}
     for row in perf_rows:
-        rg = row.get("regime") or "unknown"
+        rg = row.get("regime_at_entry") or "unknown"
         if rg not in regime_stats:
             regime_stats[rg] = {"wins": 0, "total": 0}
         regime_stats[rg]["total"] += 1
-        if (row.get("outcome") or "").upper() == "WIN":
+        if row.get("is_win"):
             regime_stats[rg]["wins"] += 1
 
     def _wr(stats: dict) -> float:
