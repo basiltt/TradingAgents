@@ -440,7 +440,7 @@ export function ScheduledScansPage() {
           const created_scan = await scheduledScansApi.create(createPayload);
           created++;
           if (_originalStatus && _originalStatus !== "active") {
-            try { await scheduledScansApi.pause(created_scan.id); } catch {}
+            try { await scheduledScansApi.pause(created_scan.id); } catch { /* best-effort */ }
           }
         } catch (err) {
           const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Unknown error";
