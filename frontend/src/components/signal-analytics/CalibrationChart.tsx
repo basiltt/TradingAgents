@@ -40,7 +40,7 @@ export function CalibrationChart({ data }: Props) {
           width={40}
         />
         <Tooltip
-          formatter={(value: number) => [`${value.toFixed(1)}%`, "Win Rate"]}
+          formatter={(value) => [`${Number(value).toFixed(1)}%`, "Win Rate"]}
           contentStyle={{ fontSize: 12 }}
         />
         <ReferenceLine y={50} stroke="#6366f1" strokeDasharray="4 2" strokeOpacity={0.7} label={{ value: "50%", position: "right", fontSize: 10 }} />

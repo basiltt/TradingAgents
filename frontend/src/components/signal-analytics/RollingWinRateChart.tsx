@@ -40,7 +40,7 @@ export function RollingWinRateChart({ data }: Props) {
           width={40}
         />
         <Tooltip
-          formatter={(value: number) => [`${value.toFixed(1)}%`, "Win Rate"]}
+          formatter={(value) => [`${Number(value).toFixed(1)}%`, "Win Rate"]}
           labelFormatter={(label) => `Trade #${label}`}
           contentStyle={{ fontSize: 12 }}
         />

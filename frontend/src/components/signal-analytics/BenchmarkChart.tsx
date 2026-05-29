@@ -41,7 +41,7 @@ export function BenchmarkChart({ data }: Props) {
           width={45}
         />
         <Tooltip
-          formatter={(value: number, name: string) => [`${value.toFixed(2)}%`, name]}
+          formatter={(value, name) => [`${Number(value).toFixed(2)}%`, name]}
           labelFormatter={(label) => `Trade #${label}`}
           contentStyle={{ fontSize: 12 }}
         />
