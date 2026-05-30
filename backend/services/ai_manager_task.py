@@ -303,6 +303,7 @@ class AIManagerTask:
             positions = self._ws_buffer.get("positions") or []
             symbol = data.get("symbol")
             size = data.get("size", "0")
+            old_position = next((p for p in positions if p.get("symbol") == symbol), None)
             positions = [p for p in positions if p.get("symbol") != symbol]
             try:
                 if size and float(size) != 0:
@@ -313,6 +314,22 @@ class AIManagerTask:
                     peaks = self._ws_buffer.get("_peak_pnl")
                     if peaks:
                         peaks.pop(symbol, None)
+                    # Track exchange-side SL execution for trailing symbols
+                    if symbol in self._active_trailing and old_position:
+                        try:
+                            entry = float(old_position.get("avgPrice", old_position.get("entryPrice", 0)))
+                            last_mark = float(old_position.get("markPrice", 0))
+                            pos_size = float(old_position.get("size", 0))
+                            pos_side = old_position.get("side", "Buy")
+                            if pos_side == "Buy":
+                                estimated_pnl = (last_mark - entry) * pos_size
+                            else:
+                                estimated_pnl = (entry - last_mark) * pos_size
+                            if estimated_pnl < 0:
+                                asyncio.create_task(self._enforce_daily_limits(estimated_pnl))
+                                self._log.info("Exchange-side SL for trailing %s, est PnL: $%.2f", symbol, estimated_pnl)
+                        except (TypeError, ValueError):
+                            self._log.warning("Could not compute PnL for exchange-closed trailing %s", symbol)
             except (ValueError, TypeError):
                 positions.append(data)
             self._ws_buffer["positions"] = positions
