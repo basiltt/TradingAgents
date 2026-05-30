@@ -949,6 +949,10 @@ class AIManagerTask:
                 await self._service._repo.insert_decision(
                     self._account_id, decision_data, self._service._hmac_key
                 )
+                if self._config.dry_run:
+                    self._log_async("info", "trailing", f"[DRY RUN] Would start trailing {symbol}", {"action": action_type, "symbol": symbol})
+                    return
+                self._log_async("info", "trailing", f"Starting trailing for {symbol}", {"action": action_type, "symbol": symbol, "params": result.get("params")})
                 await self._start_trailing(symbol, result)
                 return
 
@@ -1238,6 +1242,7 @@ class AIManagerTask:
             if self._active_trailing.get(sym) is ts:
                 self._active_trailing.pop(sym, None)
             self._log.info("Trailing ended for %s", sym)
+            self._log_async("info", "trailing", f"Trailing ended for {sym}", {"symbol": sym})
 
         ts = TrailingState(
             params=params,

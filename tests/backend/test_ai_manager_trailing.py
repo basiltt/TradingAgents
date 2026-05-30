@@ -147,7 +147,102 @@ class TestTrailingLifecycle:
         assert not ts.is_active
 
 
-class TestFullIntegration:
+class TestTPNeverBackwards:
+    @pytest.mark.asyncio
+    async def test_long_tp_does_not_decrease_on_pullback(self):
+        """TP must never decrease even when price pulls back."""
+        prices = ["115", "112", "110"]  # price pulling back
+        tick_idx = [0]
+        client = AsyncMock()
+        client.set_trading_stop = AsyncMock(return_value={})
+
+        def fake_indicators(s):
+            return {"atr_14": 2.0, "adx_14": 30.0}
+
+        ws = {"positions": [{"symbol": "BTCUSDT", "markPrice": "115", "_ws_updated_at": time.time()}]}
+        params = TrailingParams(symbol="BTCUSDT", side="Buy", entry_price=100.0,
+                               position_idx=0, tick_interval_s=0.1, adx_exit_threshold=10.0)
+
+        ts = TrailingState(
+            params=params, initial_sl=110.0, initial_tp=120.0, initial_atr=2.0,
+            ws_buffer=ws, get_indicators_fn=fake_indicators,
+            get_client_fn=AsyncMock(return_value=client),
+        )
+
+        original_tick = TrailingState._tick
+        async def update_tick(self_ts):
+            tick_idx[0] = min(tick_idx[0] + 1, len(prices) - 1)
+            ws["positions"][0]["markPrice"] = prices[tick_idx[0]]
+            ws["positions"][0]["_ws_updated_at"] = time.time()
+            await original_tick(self_ts)
+
+        with patch.object(TrailingState, '_tick', update_tick):
+            ts.start()
+            await asyncio.sleep(0.5)
+            ts.cancel()
+
+        # TP should stay at initial 120 or higher, never decrease
+        for call in client.set_trading_stop.call_args_list:
+            tp_arg = call.kwargs.get("take_profit")
+            if tp_arg is not None:
+                assert float(tp_arg) >= 120.0, f"TP moved backwards to {tp_arg}"
+
+
+class TestResumeFromSweep:
+    @pytest.mark.asyncio
+    async def test_resume_resets_sl_and_continues(self):
+        params = TrailingParams(symbol="BTCUSDT", side="Buy", entry_price=100.0,
+                               position_idx=0, tick_interval_s=0.1, adx_exit_threshold=10.0)
+        client = AsyncMock()
+        client.set_trading_stop = AsyncMock(return_value={})
+        ws = {"positions": [{"symbol": "BTCUSDT", "markPrice": "115", "_ws_updated_at": time.time()}]}
+
+        ts = TrailingState(
+            params=params, initial_sl=110.0, initial_tp=120.0, initial_atr=2.0,
+            ws_buffer=ws, get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
+            get_client_fn=AsyncMock(return_value=client),
+        )
+        ts.start()
+        # Suspend (sweep defense)
+        ts.suspend()
+        await asyncio.sleep(0.15)
+        assert client.set_trading_stop.call_count == 0  # no calls while suspended
+
+        # Resume with a lower SL (sweep widened it)
+        ts.resume_from_sweep(105.0)
+        assert ts._current_sl == 105.0
+        assert not ts._suspended
+        await asyncio.sleep(0.15)
+        # After resume, should have made at least one call
+        assert client.set_trading_stop.call_count >= 1
+        ts.cancel()
+
+
+class TestMiniLLMTighten:
+    @pytest.mark.asyncio
+    async def test_tighten_reduces_atr_multiplier(self):
+        params = TrailingParams(symbol="BTCUSDT", side="Buy", entry_price=100.0,
+                               position_idx=0, tick_interval_s=0.1,
+                               mini_llm_every_n_ticks=1, adx_exit_threshold=10.0)
+        client = AsyncMock()
+        client.set_trading_stop = AsyncMock(return_value={})
+
+        async def fake_mini_llm(**kwargs):
+            return "TIGHTEN momentum weakening"
+
+        ws = {"positions": [{"symbol": "BTCUSDT", "markPrice": "115", "_ws_updated_at": time.time()}]}
+        ts = TrailingState(
+            params=params, initial_sl=110.0, initial_tp=120.0, initial_atr=2.0,
+            ws_buffer=ws, get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
+            get_client_fn=AsyncMock(return_value=client),
+            mini_llm_fn=fake_mini_llm,
+        )
+        original_mult = ts._params.atr_multiplier
+        ts.start()
+        await asyncio.sleep(0.25)
+        ts.cancel()
+        # ATR multiplier should have been reduced (0.75x per TIGHTEN)
+        assert ts._params.atr_multiplier < original_mult
     @pytest.mark.asyncio
     async def test_trailing_full_cycle(self):
         """End-to-end: start trailing → SL moves up → ADX fades → exits."""
