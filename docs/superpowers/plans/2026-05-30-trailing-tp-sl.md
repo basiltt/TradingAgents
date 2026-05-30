@@ -825,6 +825,7 @@ Add after `_cancel_all_trailing`:
 
         self._active_trailing[symbol] = ts
         ts.start()
+        self._track_task(ts._task)  # Register with background task set for proper cleanup on account removal
         self._log.info("Started trailing for %s: SL=%.6f TP=%.6f ATR=%.6f", symbol, initial_sl, initial_tp, atr)
 ```
 
@@ -1161,8 +1162,10 @@ class TestFullIntegration:
             ws["positions"][0]["markPrice"] = str(prices[price_idx[0]])
             ws["positions"][0]["_ws_updated_at"] = time.time()
 
+        # Capture unbound method BEFORE patch replaces it on the class
         orig_tick = TrailingState._tick
         async def patched_tick(self_ts):
+            # self_ts is passed automatically by Python (instance.method() → method(instance))
             nonlocal tick
             update_price()
             tick += 1
