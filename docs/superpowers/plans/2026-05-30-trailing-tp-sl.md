@@ -358,6 +358,8 @@ class TrailingParams:
     tick_interval_s: float = 30.0
     mini_llm_every_n_ticks: int = 3
     staleness_threshold_s: float = 90.0
+    max_duration_s: float = 3600.0  # Max trailing duration (1 hour default)
+    max_api_failures: int = 5  # Cancel after N consecutive API failures
 
 
 class TrailingState:
@@ -371,7 +373,7 @@ class TrailingState:
         initial_atr: float,
         ws_buffer: Dict[str, Any],
         get_indicators_fn: Callable[[str], Dict[str, Any]],
-        bybit_client: "BybitClient",
+        get_client_fn: Callable[[], Any],  # Factory: returns fresh client each call (survives key rotation)
         mini_llm_fn: Optional[Callable] = None,
         on_done: Optional[Callable[[str], None]] = None,
     ):
@@ -381,7 +383,7 @@ class TrailingState:
         self._last_atr = initial_atr
         self._ws_buffer = ws_buffer
         self._get_indicators = get_indicators_fn
-        self._client = bybit_client
+        self._get_client = get_client_fn
         self._mini_llm_fn = mini_llm_fn
         self._on_done = on_done
 
@@ -389,6 +391,8 @@ class TrailingState:
         self._cancelled = False
         self._suspended = False  # sweep defense suspension
         self._mini_llm_failures = 0
+        self._consecutive_api_failures = 0
+        self._started_at = 0.0
         self._task: Optional[asyncio.Task] = None
         self._last_set_sl: Optional[float] = None
         self._last_set_tp: Optional[float] = None
@@ -422,10 +426,15 @@ class TrailingState:
         self._log.info("Resumed from sweep, SL reset to %.6f", current_exchange_sl)
 
     async def _run_loop(self) -> None:
+        self._started_at = time.monotonic()
         try:
             while not self._cancelled:
                 await asyncio.sleep(self._params.tick_interval_s)
                 if self._cancelled:
+                    break
+                # Max duration check
+                if (time.monotonic() - self._started_at) > self._params.max_duration_s:
+                    self._log.info("Max duration reached (%.0fs), exiting", self._params.max_duration_s)
                     break
                 await self._tick()
         except asyncio.CancelledError:
@@ -475,6 +484,9 @@ class TrailingState:
             self._cancelled = True
             return
 
+        # If ADX is None for too long (no indicator data), exit after max_duration handles it
+        # The max_duration_s in _run_loop is the ultimate backstop
+
         # Compute new SL/TP
         new_sl = self._compute_new_sl(
             self._params.side, self._current_sl, price, atr, self._params.atr_multiplier
@@ -485,25 +497,43 @@ class TrailingState:
         new_tp = self._compute_new_tp(
             self._params.side, price, new_sl, self._params.tp_extension_factor
         )
+        # TP never moves backwards (same principle as SL)
+        if self._params.side == "Buy":
+            new_tp = max(self._current_tp, new_tp)
+        else:
+            new_tp = min(self._current_tp, new_tp)
 
         # Only call API if values changed
         sl_changed = new_sl != self._last_set_sl
         tp_changed = new_tp != self._last_set_tp
         if sl_changed or tp_changed:
             try:
-                await self._client.set_trading_stop(
-                    symbol=self._params.symbol,
-                    stop_loss=str(new_sl) if sl_changed else None,
-                    take_profit=str(new_tp) if tp_changed else None,
-                    position_idx=self._params.position_idx,
-                )
-                self._current_sl = new_sl
-                self._current_tp = new_tp
-                self._last_set_sl = new_sl
-                self._last_set_tp = new_tp
-                self._log.debug("Updated SL=%.6f TP=%.6f", new_sl, new_tp)
+                client = await self._get_client()
+                if not client:
+                    self._consecutive_api_failures += 1
+                    self._log.warning("No client available (%d/%d)", self._consecutive_api_failures, self._params.max_api_failures)
+                else:
+                    await client.set_trading_stop(
+                        symbol=self._params.symbol,
+                        stop_loss=str(new_sl) if sl_changed else None,
+                        take_profit=str(new_tp) if tp_changed else None,
+                        position_idx=self._params.position_idx,
+                    )
+                    self._current_sl = new_sl
+                    self._current_tp = new_tp
+                    self._last_set_sl = new_sl
+                    self._last_set_tp = new_tp
+                    self._consecutive_api_failures = 0
+                    self._log.debug("Updated SL=%.6f TP=%.6f", new_sl, new_tp)
             except Exception:
-                self._log.warning("set_trading_stop failed, will retry next tick")
+                self._consecutive_api_failures += 1
+                self._log.warning("set_trading_stop failed (%d/%d), will retry",
+                                  self._consecutive_api_failures, self._params.max_api_failures)
+
+            if self._consecutive_api_failures >= self._params.max_api_failures:
+                self._log.error("Max API failures reached, cancelling trailing for %s", self._params.symbol)
+                self._cancelled = True
+                return
 
         # Mini-LLM check
         if (
@@ -598,11 +628,12 @@ class TestTrailingLifecycle:
     async def test_cancel_stops_loop(self):
         params = TrailingParams(symbol="BTCUSDT", side="Buy", entry_price=100.0, position_idx=0, tick_interval_s=0.1)
         done_called = []
+        client = AsyncMock()
         ts = TrailingState(
             params=params, initial_sl=99.0, initial_tp=110.0, initial_atr=2.0,
             ws_buffer={"positions": [{"symbol": "BTCUSDT", "markPrice": "105"}]},
             get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
-            bybit_client=AsyncMock(),
+            get_client_fn=AsyncMock(return_value=client),
             on_done=lambda s: done_called.append(s),
         )
         ts.start()
@@ -620,7 +651,7 @@ class TestTrailingLifecycle:
             params=params, initial_sl=99.0, initial_tp=110.0, initial_atr=2.0,
             ws_buffer=ws,
             get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
-            bybit_client=AsyncMock(),
+            get_client_fn=AsyncMock(return_value=AsyncMock()),
         )
         ts.start()
         await asyncio.sleep(0.25)
@@ -634,7 +665,7 @@ class TestTrailingLifecycle:
             params=params, initial_sl=99.0, initial_tp=110.0, initial_atr=2.0,
             ws_buffer={"positions": [{"symbol": "BTCUSDT", "markPrice": "115"}]},
             get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
-            bybit_client=client,
+            get_client_fn=AsyncMock(return_value=client),
         )
         ts.start()
         ts.suspend()
@@ -650,10 +681,40 @@ class TestTrailingLifecycle:
             params=params, initial_sl=99.0, initial_tp=110.0, initial_atr=2.0,
             ws_buffer={"positions": [{"symbol": "BTCUSDT", "markPrice": "105"}]},
             get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 15.0},  # below threshold
-            bybit_client=AsyncMock(),
+            get_client_fn=AsyncMock(return_value=AsyncMock()),
         )
         ts.start()
         await asyncio.sleep(0.25)
+        assert not ts.is_active
+
+    @pytest.mark.asyncio
+    async def test_max_duration_exits(self):
+        params = TrailingParams(symbol="BTCUSDT", side="Buy", entry_price=100.0, position_idx=0,
+                               tick_interval_s=0.1, max_duration_s=0.2)  # very short for test
+        ts = TrailingState(
+            params=params, initial_sl=99.0, initial_tp=110.0, initial_atr=2.0,
+            ws_buffer={"positions": [{"symbol": "BTCUSDT", "markPrice": "105"}]},
+            get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
+            get_client_fn=AsyncMock(return_value=AsyncMock()),
+        )
+        ts.start()
+        await asyncio.sleep(0.5)
+        assert not ts.is_active
+
+    @pytest.mark.asyncio
+    async def test_max_api_failures_exits(self):
+        params = TrailingParams(symbol="BTCUSDT", side="Buy", entry_price=100.0, position_idx=0,
+                               tick_interval_s=0.1, max_api_failures=2)
+        client = AsyncMock()
+        client.set_trading_stop = AsyncMock(side_effect=Exception("network error"))
+        ts = TrailingState(
+            params=params, initial_sl=99.0, initial_tp=110.0, initial_atr=2.0,
+            ws_buffer={"positions": [{"symbol": "BTCUSDT", "markPrice": "115"}]},
+            get_indicators_fn=lambda s: {"atr_14": 2.0, "adx_14": 30.0},
+            get_client_fn=AsyncMock(return_value=client),
+        )
+        ts.start()
+        await asyncio.sleep(0.5)
         assert not ts.is_active
 ```
 
@@ -793,12 +854,6 @@ Add after `_cancel_all_trailing`:
             self._active_trailing.pop(sym, None)
             self._log.info("Trailing ended for %s", sym)
 
-        # Get Bybit client (per-account, obtained dynamically)
-        client = await self._service._accounts_service.get_client(self._account_id)
-        if not client:
-            self._log.warning("Cannot start trailing for %s: no Bybit client", symbol)
-            return
-
         ts = TrailingState(
             params=params,
             initial_sl=initial_sl,
@@ -806,13 +861,17 @@ Add after `_cancel_all_trailing`:
             initial_atr=atr,
             ws_buffer=self._ws_buffer,
             get_indicators_fn=lambda s: (self._service._market_data_cache.get_indicators(s) if self._service._market_data_cache else {}),
-            bybit_client=client,
+            get_client_fn=lambda: self._service._accounts_service.get_client(self._account_id),
             mini_llm_fn=None,  # Task 8 wires this up
             on_done=_on_trailing_done,
         )
 
-        # Set initial TP/SL on exchange
+        # Set initial TP/SL on exchange (use fresh client via factory)
         try:
+            client = await self._service._accounts_service.get_client(self._account_id)
+            if not client:
+                self._log.warning("Cannot start trailing for %s: no Bybit client", symbol)
+                return
             await client.set_trading_stop(
                 symbol=symbol,
                 take_profit=str(initial_tp),
@@ -1176,7 +1235,7 @@ class TestFullIntegration:
             params=params, initial_sl=96.0, initial_tp=114.0, initial_atr=2.0,
             ws_buffer=ws,
             get_indicators_fn=fake_indicators,
-            bybit_client=client,
+            get_client_fn=AsyncMock(return_value=client),
             on_done=lambda s: done_events.append(s),
         )
 
