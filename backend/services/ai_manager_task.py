@@ -1243,7 +1243,7 @@ class AIManagerTask:
             ws_buffer=self._ws_buffer,
             get_indicators_fn=lambda s: (self._service._market_data_cache.get_indicators(s) if self._service._market_data_cache else {}),
             get_client_fn=lambda: self._service._accounts_service.get_client(self._account_id),
-            mini_llm_fn=None,  # Wired in Task 8
+            mini_llm_fn=self._trailing_mini_llm,
             on_done=_on_trailing_done,
         )
 
@@ -1267,6 +1267,29 @@ class AIManagerTask:
         ts.start()
         self._track_task(ts._task)
         self._log.info("Started trailing for %s: SL=%.6f TP=%.6f ATR=%.6f", symbol, initial_sl, initial_tp, atr)
+
+    async def _trailing_mini_llm(self, symbol: str, side: str, entry: float, price: float,
+                                  sl: float, tp: float, atr: float, adx: float, tick: int) -> str:
+        """Lightweight LLM check for trailing continuation."""
+        upnl = (price - entry) if side == "Buy" else (entry - price)
+
+        system_prompt = (
+            "You are a trailing stop-loss monitor. Given position state, decide: "
+            "KEEP (continue trailing), TIGHTEN (reduce ATR multiplier), or EXIT (stop trailing). "
+            "Reply with one word followed by a 10-word reason."
+        )
+        context_prompt = (
+            f"Symbol: {symbol} | Side: {side} | Entry: ${entry:.4f} | Current: ${price:.4f}\n"
+            f"SL: ${sl:.4f} | TP: ${tp:.4f} | ATR: ${atr:.4f} | ADX: {adx:.1f} | Tick: {tick}\n"
+            f"Unrealized PnL: ${upnl:.4f}\n\n"
+            "Decision: KEEP | TIGHTEN | EXIT"
+        )
+
+        llm = self._llm_callable or (self._service._llm_callable if self._service else None)
+        if not llm:
+            return "KEEP"
+        response = await llm(system_prompt, context_prompt)
+        return response.strip().split()[0] if response else "KEEP"
 
     def _get_urgency(self) -> str:
         tier = self._service._degradation.get_tier()
