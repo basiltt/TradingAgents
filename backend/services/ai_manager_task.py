@@ -375,7 +375,10 @@ class AIManagerTask:
             and not self._event_trigger_fired.is_set()
         ):
             try:
-                positions = self._ws_buffer.get("positions") or []
+                positions = [
+                    p for p in (self._ws_buffer.get("positions") or [])
+                    if p.get("symbol") not in self._active_trailing
+                ]
                 indicators = self._get_cached_indicators()
                 peak_pnl = self._ws_buffer.get("_peak_pnl") or {}
                 all_triggers = self._event_trigger.check_all_triggers(
