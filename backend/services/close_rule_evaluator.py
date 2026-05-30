@@ -7,7 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,11 @@ class CloseRuleEvaluator:
         self._ws_debounce_interval = 1.5
         self._ws_eval_locks: dict[str, asyncio.Lock] = {}
         self._rules_cache: dict[str, list] = {}
+        self._get_active_trailing: Callable[[], set] = lambda: set()
+
+    def set_trailing_checker(self, fn: Callable[[], set]) -> None:
+        """Set a callback that returns currently trailing symbols."""
+        self._get_active_trailing = fn
 
     def set_cycle_callback(self, callback: Any) -> None:
         """Set the callback invoked when a cycle-bound rule triggers."""
@@ -227,6 +232,12 @@ class CloseRuleEvaluator:
 
                     # BREAKEVEN_TIMEOUT: modify TP instead of closing
                     if rule["trigger_type"] == "BREAKEVEN_TIMEOUT":
+                        # Skip if symbol is actively trailing
+                        trailing_symbols = self._get_active_trailing()
+                        rule_symbol = rule.get("symbol", "")
+                        if rule_symbol in trailing_symbols:
+                            logger.info("Skipping BREAKEVEN_TIMEOUT rule %s — symbol %s actively trailing", rule["id"], rule_symbol)
+                            continue
                         try:
                             await self._handle_breakeven_timeout(account_id, rule)
                             await self._db.update_close_rule(rule["id"], status="executed")
