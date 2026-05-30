@@ -57,6 +57,17 @@ class AIManagerConfig(BaseModel):
     staleness_alarm_s: int = Field(default=600, ge=300, le=1800)
     event_funding_rate_threshold: float = Field(default=0.0005, ge=0.0001, le=0.005)
     event_rapid_cycle_debounce_s: float = Field(default=5.0, ge=2.0, le=15.0)
+    # Trailing TP/SL (dynamic trailing for profitable positions)
+    trailing_enabled: bool = False
+    trailing_tick_interval_s: float = Field(default=30.0, ge=10.0, le=120.0)
+    trailing_mini_llm_every_n_ticks: int = Field(default=3, ge=2, le=10)
+    trailing_default_atr_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
+    trailing_default_tp_extension_factor: float = Field(default=1.5, ge=1.0, le=3.0)
+    trailing_adx_exit_threshold: float = Field(default=20.0, ge=10.0, le=35.0)
+    trailing_min_profit_pct: float = Field(default=1.0, ge=0.5, le=10.0)
+    trailing_max_concurrent: int = Field(default=3, ge=1, le=10)
+    trailing_atr_period: int = Field(default=14, ge=7, le=21)
+    trailing_kline_refresh_s: float = Field(default=300.0, ge=60.0, le=600.0)
 
 
 class PositionAction(BaseModel):
@@ -69,7 +80,7 @@ class PositionAction(BaseModel):
 
 class AIManagerAction(BaseModel):
     action_type: Literal[
-        "HOLD", "FULL_CLOSE", "PARTIAL_CLOSE", "ADJUST_TP", "ADJUST_SL"
+        "HOLD", "FULL_CLOSE", "PARTIAL_CLOSE", "ADJUST_TP", "ADJUST_SL", "ADJUST_TP_SL"
     ]
     positions: List[PositionAction]
     confidence: float = Field(ge=0.0, le=1.0)
@@ -151,3 +162,14 @@ class AIManagerConfigPatch(BaseModel):
     staleness_alarm_s: Optional[int] = Field(default=None, ge=300, le=1800)
     event_funding_rate_threshold: Optional[float] = Field(default=None, ge=0.0001, le=0.005)
     event_rapid_cycle_debounce_s: Optional[float] = Field(default=None, ge=2.0, le=15.0)
+    # Trailing TP/SL
+    trailing_enabled: Optional[bool] = None
+    trailing_tick_interval_s: Optional[float] = Field(default=None, ge=10.0, le=120.0)
+    trailing_mini_llm_every_n_ticks: Optional[int] = Field(default=None, ge=2, le=10)
+    trailing_default_atr_multiplier: Optional[float] = Field(default=None, ge=1.0, le=5.0)
+    trailing_default_tp_extension_factor: Optional[float] = Field(default=None, ge=1.0, le=3.0)
+    trailing_adx_exit_threshold: Optional[float] = Field(default=None, ge=10.0, le=35.0)
+    trailing_min_profit_pct: Optional[float] = Field(default=None, ge=0.5, le=10.0)
+    trailing_max_concurrent: Optional[int] = Field(default=None, ge=1, le=10)
+    trailing_atr_period: Optional[int] = Field(default=None, ge=7, le=21)
+    trailing_kline_refresh_s: Optional[float] = Field(default=None, ge=60.0, le=600.0)
