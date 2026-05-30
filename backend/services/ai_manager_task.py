@@ -1162,7 +1162,7 @@ class AIManagerTask:
             "sweep": sweep_data if self._config.sweep_defense_enabled else None,
             "_sweep_blocked_symbols": list(self._sweep_blocked_symbols),
             "trailing_count": len(self._active_trailing),
-            "trailing_symbols": set(self._active_trailing.keys()),
+            "trailing_symbols": list(self._active_trailing.keys()),
             "trailing_config": {
                 "enabled": self._config.trailing_enabled,
                 "max_concurrent": self._config.trailing_max_concurrent,
@@ -1235,7 +1235,8 @@ class AIManagerTask:
         )
 
         def _on_trailing_done(sym: str) -> None:
-            self._active_trailing.pop(sym, None)
+            if self._active_trailing.get(sym) is ts:
+                self._active_trailing.pop(sym, None)
             self._log.info("Trailing ended for %s", sym)
 
         ts = TrailingState(
