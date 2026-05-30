@@ -145,3 +145,55 @@ class TestTrailingLifecycle:
         ts.start()
         await asyncio.sleep(0.5)
         assert not ts.is_active
+
+
+class TestFullIntegration:
+    @pytest.mark.asyncio
+    async def test_trailing_full_cycle(self):
+        """End-to-end: start trailing → SL moves up → ADX fades → exits."""
+        tick_count = [0]
+        adx_values = [30, 30, 30, 15]  # fades on 4th tick
+
+        def fake_indicators(symbol):
+            idx = min(tick_count[0], len(adx_values) - 1)
+            return {"atr_14": 2.0, "adx_14": adx_values[idx]}
+
+        client = AsyncMock()
+        client.set_trading_stop = AsyncMock(return_value={})
+
+        prices = ["105", "108", "112", "112"]
+        ws = {"positions": [{"symbol": "BTCUSDT", "markPrice": "105", "side": "Buy", "_ws_updated_at": time.time()}]}
+
+        params = TrailingParams(
+            symbol="BTCUSDT", side="Buy", entry_price=100.0,
+            position_idx=0, tick_interval_s=0.1, adx_exit_threshold=20.0,
+        )
+
+        done_events = []
+
+        # Patch _tick to increment counter and update price before real logic
+        original_tick = TrailingState._tick
+
+        async def counting_tick(self_ts):
+            tick_count[0] += 1
+            idx = min(tick_count[0], len(prices) - 1)
+            ws["positions"][0]["markPrice"] = prices[idx]
+            ws["positions"][0]["_ws_updated_at"] = time.time()
+            await original_tick(self_ts)
+
+        ts = TrailingState(
+            params=params, initial_sl=96.0, initial_tp=114.0, initial_atr=2.0,
+            ws_buffer=ws,
+            get_indicators_fn=fake_indicators,
+            get_client_fn=AsyncMock(return_value=client),
+            on_done=lambda s: done_events.append(s),
+        )
+
+        with patch.object(TrailingState, '_tick', counting_tick):
+            ts.start()
+            await asyncio.sleep(0.8)
+
+        assert not ts.is_active
+        assert done_events == ["BTCUSDT"]
+        # SL should have moved up — at least one set_trading_stop call made
+        assert client.set_trading_stop.call_count >= 1
