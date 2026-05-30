@@ -66,8 +66,8 @@ class TrailingState:
         self._consecutive_api_failures = 0
         self._started_at = 0.0
         self._task: Optional[asyncio.Task] = None
-        self._last_set_sl: Optional[float] = None
-        self._last_set_tp: Optional[float] = None
+        self._last_set_sl: Optional[float] = initial_sl
+        self._last_set_tp: Optional[float] = initial_tp
         self._log = logging.getLogger(f"trailing.{params.symbol}")
 
     @property

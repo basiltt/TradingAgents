@@ -330,6 +330,9 @@ class AIManagerTask:
                                 self._log.info("Exchange-side SL for trailing %s, est PnL: $%.2f", symbol, estimated_pnl)
                         except (TypeError, ValueError):
                             self._log.warning("Could not compute PnL for exchange-closed trailing %s", symbol)
+                        # Cancel trailing immediately — don't wait for next tick
+                        self._active_trailing[symbol].cancel()
+                        self._active_trailing.pop(symbol, None)
             except (ValueError, TypeError):
                 positions.append(data)
             self._ws_buffer["positions"] = positions

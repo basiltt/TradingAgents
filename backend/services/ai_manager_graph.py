@@ -33,7 +33,7 @@ def _get_log(state: Dict[str, Any]) -> logging.Logger:
     return state.get("_logger") or logger
 
 # Valid actions the LLM can return
-_VALID_ACTIONS = frozenset(["HOLD", "FULL_CLOSE", "PARTIAL_CLOSE"])
+_VALID_ACTIONS = frozenset(["HOLD", "FULL_CLOSE", "PARTIAL_CLOSE", "ADJUST_TP_SL"])
 
 # Cold-start threshold
 _COLD_START_DECISION_COUNT = 10
@@ -320,6 +320,7 @@ def _parse_llm_response(raw: str) -> Optional[Dict[str, Any]]:
         "symbol": symbol,
         "confidence": max(0.0, min(1.0, confidence)),
         "reason": reason,
+        "params": data.get("params") if isinstance(data.get("params"), dict) else None,
     }
 
 
