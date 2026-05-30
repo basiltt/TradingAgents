@@ -371,6 +371,52 @@ async def risk_validation_node(state: Dict[str, Any]) -> Dict[str, Any]:
             state["reason"] = f"sweep_block_active: {symbol}"
             return state
 
+    # Trailing-specific validation
+    action = state.get("action", "HOLD")
+    if action == "ADJUST_TP_SL":
+        trailing_config = state.get("trailing_config") or {}
+        if not trailing_config.get("enabled"):
+            state["_risk_rejected"] = True
+            state["action"] = "HOLD"
+            state["reason"] = "trailing_disabled"
+            return state
+
+        trailing_symbols = state.get("trailing_symbols") or set()
+        if symbol in trailing_symbols:
+            state["_risk_rejected"] = True
+            state["action"] = "HOLD"
+            state["reason"] = f"already_trailing: {symbol}"
+            return state
+
+        trailing_count = state.get("trailing_count", 0)
+        max_concurrent = trailing_config.get("max_concurrent", 3)
+        if trailing_count >= max_concurrent:
+            state["_risk_rejected"] = True
+            state["action"] = "HOLD"
+            state["reason"] = "trailing_max_concurrent_reached"
+            return state
+
+        # Profitability check
+        min_profit_pct = trailing_config.get("min_profit_pct", 1.0)
+        target_pos = next((p for p in positions if p.get("symbol") == symbol), None)
+        if target_pos:
+            try:
+                upnl = float(target_pos.get("unrealisedPnl", target_pos.get("unrealized_pnl", 0)))
+                entry = float(target_pos.get("avgPrice", target_pos.get("entryPrice", 0)))
+                size = float(target_pos.get("size", 0))
+                position_value = entry * size if entry and size else 0
+                profit_pct = (upnl / position_value * 100) if position_value > 0 else 0
+                if profit_pct < min_profit_pct:
+                    state["_risk_rejected"] = True
+                    state["action"] = "HOLD"
+                    state["reason"] = f"insufficient_profit: {profit_pct:.1f}% < {min_profit_pct}%"
+                    return state
+            except (TypeError, ValueError):
+                state["_risk_rejected"] = True
+                state["action"] = "HOLD"
+                state["reason"] = "trailing_profit_check_failed"
+                return state
+
     # Correlation portfolio heat warning — annotate (don't reject)
     correlation = state.get("correlation") or {}
     heat = correlation.get("portfolio_heat", 0.0)
