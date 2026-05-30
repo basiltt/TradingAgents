@@ -21,6 +21,7 @@ from backend.services.ai_manager_event_triggers import EventTriggerDetector
 from backend.services.ai_manager_mtf import MultiTimeframeAnalyzer
 from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_orderbook import OrderBookMonitor
+from backend.services.ai_manager_trailing import TrailingState, TrailingParams
 
 MAX_DAILY_TOKEN_BUDGET = 20_000_000
 
@@ -41,7 +42,7 @@ _SYMBOL_COOLDOWN_S = 15.0
 _EMERGENCY_CLOSE_SYMBOL_TTL_S = 30.0
 _MAX_REASONING_CHARS = 2000
 _CHAIN_KEY_VERSION = 1
-_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE"})
+_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE", "ADJUST_TP_SL"})
 
 
 class AIManagerTask:
@@ -103,6 +104,7 @@ class AIManagerTask:
         self._sweep_original_sl: Dict[str, float] = {}
         self._sweep_defense_started_at: Dict[str, float] = {}
         self._sweep_blocked_symbols: set = set()
+        self._active_trailing: Dict[str, TrailingState] = {}
         self._is_hedge_mode: bool = False
         self._cleanup_task: Optional[asyncio.Task] = None
         # Event-driven evaluation trigger
@@ -201,8 +203,15 @@ class AIManagerTask:
             asyncio.ensure_future(self._llm_close_fn())
             self._llm_close_fn = None
 
+    def _cancel_all_trailing(self) -> None:
+        """Cancel all active trailing states."""
+        for ts in list(self._active_trailing.values()):
+            ts.cancel()
+        self._active_trailing.clear()
+
     def pause(self) -> None:
         """Transition to PAUSED state; the run loop blocks until resume()."""
+        self._cancel_all_trailing()
         self.transition_to(PAUSED)
         self._pause_event.set()
         self._wake_event.set()
@@ -224,6 +233,7 @@ class AIManagerTask:
 
     def set_killed(self) -> None:
         """Activate kill switch — transitions to ERROR and signals cancellation."""
+        self._cancel_all_trailing()
         self._killed = True
         self.transition_to(ERROR)
         self._cancel_event.set()
@@ -901,6 +911,27 @@ class AIManagerTask:
                 self._log_async("warning", "budget", f"Action budget exhausted, skipping {action_type} on {symbol}", {"action": action_type, "symbol": symbol})
                 return
 
+            if action_type == "ADJUST_TP_SL":
+                now_utc = datetime.now(timezone.utc)
+                decision_data = {
+                    "timestamp": now_utc,
+                    "action_type": action_type,
+                    "evaluation_type": "standard",
+                    "urgency": self._get_urgency(),
+                    "state_snapshot": copy.deepcopy(self._ws_buffer),
+                    "action_taken": {"action": action_type, "symbol": symbol},
+                    "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
+                    "confidence": result.get("confidence", 0.0),
+                    "graph_path": result.get("graph_path"),
+                    "strategy_version": self._config.strategy_version,
+                    "chain_key_version": _CHAIN_KEY_VERSION,
+                }
+                await self._service._repo.insert_decision(
+                    self._account_id, decision_data, self._service._hmac_key
+                )
+                await self._start_trailing(symbol, result)
+                return
+
             now_utc = datetime.now(timezone.utc)
             decision_data = {
                 "timestamp": now_utc,
@@ -1095,7 +1126,7 @@ class AIManagerTask:
             "account_id": self._account_id,
             "_logger": self._log,
             "config": self._config.model_dump(),
-            "ws_snapshot": copy.deepcopy(self._ws_buffer),
+            "ws_snapshot": self._build_ws_snapshot_for_eval(),
             "market_data": self._get_market_data(),
             "peak_pnl": dict(self._ws_buffer.get("_peak_pnl", {})),
             "daily_realized_pnl": daily_realized_pnl,
@@ -1110,10 +1141,115 @@ class AIManagerTask:
             "orderbook": orderbook_data if self._config.orderbook_enabled else None,
             "sweep": sweep_data if self._config.sweep_defense_enabled else None,
             "_sweep_blocked_symbols": list(self._sweep_blocked_symbols),
+            "trailing_count": len(self._active_trailing),
+            "trailing_symbols": set(self._active_trailing.keys()),
+            "trailing_config": {
+                "enabled": self._config.trailing_enabled,
+                "max_concurrent": self._config.trailing_max_concurrent,
+                "min_profit_pct": self._config.trailing_min_profit_pct,
+            },
             "trigger_reason": self._last_trigger_reason or "scheduled",
             "trigger_symbol": self._trigger_symbol if self._config.event_driven_enabled else None,
             "queue_remaining": [{"symbol": sym, "reason": reason} for _, sym, reason in self._trigger_queue[:4]] if self._config.event_driven_enabled else None,
         }
+
+    def _build_ws_snapshot_for_eval(self) -> dict:
+        """Build WS snapshot for graph evaluation, excluding trailing symbols."""
+        snapshot = copy.deepcopy(self._ws_buffer)
+        if self._active_trailing:
+            snapshot["positions"] = [
+                p for p in (snapshot.get("positions") or [])
+                if p.get("symbol") not in self._active_trailing
+            ]
+        return snapshot
+
+    async def _start_trailing(self, symbol: str, result: dict) -> None:
+        """Create and start a TrailingState for a symbol."""
+        position = next(
+            (p for p in (self._ws_buffer.get("positions") or []) if p.get("symbol") == symbol),
+            None,
+        )
+        if not position:
+            self._log.warning("Cannot start trailing for %s: position not found", symbol)
+            return
+
+        cache = self._service._market_data_cache
+        indicators = cache.get_indicators(symbol) if cache else {}
+        atr = indicators.get("atr_14")
+        if atr is None or atr <= 0:
+            if cache:
+                cache.track_symbols({symbol})
+                all_ind = cache.get_all_indicators()
+                indicators = all_ind.get(symbol, {})
+                atr = indicators.get("atr_14")
+            if atr is None or atr <= 0:
+                self._log.warning("Cannot start trailing for %s: ATR unavailable", symbol)
+                return
+
+        side = position.get("side", "Buy")
+        entry_price = float(position.get("avgPrice", position.get("entryPrice", 0)))
+        position_idx = int(position.get("positionIdx", 0))
+        mark_price = float(position.get("markPrice", position.get("mark_price", 0)))
+
+        params_from_llm = result.get("params") or {}
+        atr_mult = float(params_from_llm.get("atr_multiplier", self._config.trailing_default_atr_multiplier))
+        tp_ext = float(params_from_llm.get("tp_extension_factor", self._config.trailing_default_tp_extension_factor))
+
+        if side == "Buy":
+            initial_sl = max(entry_price * 1.001, mark_price - atr_mult * atr)
+        else:
+            initial_sl = min(entry_price * 0.999, mark_price + atr_mult * atr)
+
+        initial_tp = TrailingState._compute_new_tp(side, mark_price, initial_sl, tp_ext)
+
+        params = TrailingParams(
+            symbol=symbol,
+            side=side,
+            entry_price=entry_price,
+            position_idx=position_idx,
+            atr_multiplier=atr_mult,
+            tp_extension_factor=tp_ext,
+            adx_exit_threshold=self._config.trailing_adx_exit_threshold,
+            tick_interval_s=self._config.trailing_tick_interval_s,
+            mini_llm_every_n_ticks=self._config.trailing_mini_llm_every_n_ticks,
+        )
+
+        def _on_trailing_done(sym: str) -> None:
+            self._active_trailing.pop(sym, None)
+            self._log.info("Trailing ended for %s", sym)
+
+        ts = TrailingState(
+            params=params,
+            initial_sl=initial_sl,
+            initial_tp=initial_tp,
+            initial_atr=atr,
+            ws_buffer=self._ws_buffer,
+            get_indicators_fn=lambda s: (self._service._market_data_cache.get_indicators(s) if self._service._market_data_cache else {}),
+            get_client_fn=lambda: self._service._accounts_service.get_client(self._account_id),
+            mini_llm_fn=None,  # Wired in Task 8
+            on_done=_on_trailing_done,
+        )
+
+        # Set initial TP/SL on exchange
+        try:
+            client = await self._service._accounts_service.get_client(self._account_id)
+            if not client:
+                self._log.warning("Cannot start trailing for %s: no Bybit client", symbol)
+                return
+            await client.set_trading_stop(
+                symbol=symbol,
+                take_profit=str(initial_tp),
+                stop_loss=str(initial_sl),
+                position_idx=position_idx,
+            )
+        except Exception:
+            self._log.exception("Failed to set initial trailing TP/SL for %s", symbol)
+            return
+
+        self._active_trailing[symbol] = ts
+        ts.start()
+        self._track_task(ts._task)
+        self._log.info("Started trailing for %s: SL=%.6f TP=%.6f ATR=%.6f", symbol, initial_sl, initial_tp, atr)
 
     def _get_urgency(self) -> str:
         tier = self._service._degradation.get_tier()
