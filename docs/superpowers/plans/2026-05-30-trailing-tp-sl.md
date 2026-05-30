@@ -211,13 +211,6 @@ Insert after the sweep block check (after line 372, before the correlation check
                 state["action"] = "HOLD"
                 state["reason"] = "trailing_profit_check_failed"
                 return state
-
-        # Sweep block for trailing (explicit, separate from close sweep block)
-        if symbol in sweep_blocked:
-            state["_risk_rejected"] = True
-            state["action"] = "HOLD"
-            state["reason"] = f"sweep_active_no_trailing: {symbol}"
-            return state
 ```
 
 - [ ] **Step 2: Run tests**
@@ -751,17 +744,18 @@ Add after `_cancel_all_trailing`:
             self._log.warning("Cannot start trailing for %s: position not found", symbol)
             return
 
-        indicators = self._service._market_data.get_indicators(symbol) if self._service._market_data else {}
+        # Get ATR from MarketDataCache (correct attribute name: _market_data_cache)
+        cache = self._service._market_data_cache
+        indicators = cache.get_indicators(symbol) if cache else {}
         atr = indicators.get("atr_14")
         if atr is None or atr <= 0:
-            # Try synchronous fetch
-            try:
-                if self._service._market_data:
-                    await self._service._market_data.refresh_klines_for_symbol(symbol)
-                    indicators = self._service._market_data.get_indicators(symbol)
-                    atr = indicators.get("atr_14")
-            except Exception:
-                pass
+            # Ensure symbol is tracked, wait for next refresh cycle won't work here
+            # Try get_all_indicators in case symbol data exists under different key
+            if cache:
+                cache.track_symbols({symbol})
+                all_ind = cache.get_all_indicators()
+                indicators = all_ind.get(symbol, {})
+                atr = indicators.get("atr_14")
             if atr is None or atr <= 0:
                 self._log.warning("Cannot start trailing for %s: ATR unavailable", symbol)
                 return
@@ -799,21 +793,27 @@ Add after `_cancel_all_trailing`:
             self._active_trailing.pop(sym, None)
             self._log.info("Trailing ended for %s", sym)
 
+        # Get Bybit client (per-account, obtained dynamically)
+        client = await self._service._accounts_service.get_client(self._account_id)
+        if not client:
+            self._log.warning("Cannot start trailing for %s: no Bybit client", symbol)
+            return
+
         ts = TrailingState(
             params=params,
             initial_sl=initial_sl,
             initial_tp=initial_tp,
             initial_atr=atr,
             ws_buffer=self._ws_buffer,
-            get_indicators_fn=lambda s: (self._service._market_data.get_indicators(s) if self._service._market_data else {}),
-            bybit_client=self._service._bybit_client,
-            mini_llm_fn=None,  # Task 6 wires this up
+            get_indicators_fn=lambda s: (self._service._market_data_cache.get_indicators(s) if self._service._market_data_cache else {}),
+            bybit_client=client,
+            mini_llm_fn=None,  # Task 8 wires this up
             on_done=_on_trailing_done,
         )
 
         # Set initial TP/SL on exchange
         try:
-            await self._service._bybit_client.set_trading_stop(
+            await client.set_trading_stop(
                 symbol=symbol,
                 take_profit=str(initial_tp),
                 stop_loss=str(initial_sl),
@@ -830,11 +830,11 @@ Add after `_cancel_all_trailing`:
 
 - [ ] **Step 5: Bifurcate _execute_action for ADJUST_TP_SL**
 
-In `_execute_action()` (around line 795), after the action_type validation (`if action_type not in _ALLOWED_ACTIONS`), add before the existing close logic:
+In `_execute_action()`, the bifurcation must happen AFTER the lock is acquired and budget is consumed (around line 898, after `budget_ok` check). This ensures ADJUST_TP_SL respects per-symbol cooldown, position locking, kill-switch recheck, and action budget — same safety as closes. Insert BEFORE the decision recording and close logic:
 
 ```python
         if action_type == "ADJUST_TP_SL":
-            # Record decision
+            # Record decision (same as close path)
             now_utc = datetime.now(timezone.utc)
             decision_data = {
                 "timestamp": now_utc,
@@ -853,34 +853,52 @@ In `_execute_action()` (around line 795), after the action_type validation (`if 
                 self._account_id, decision_data, self._service._hmac_key
             )
             await self._start_trailing(symbol, result)
-            return
+            return  # Skip close logic below
 ```
+
+**Important:** This must be INSIDE the `try:` block that holds the lock, so the `finally:` clause at the end releases the lock properly.
 
 - [ ] **Step 6: Pass trailing state into graph evaluation**
 
-In the `_evaluate()` method, where the graph state dict is built (find where `state["positions"]` is set), add:
+In the `_evaluate()` method, the graph state dict is built at lines 1094-1116 as a dict literal returned from a helper. Add these entries to that dict (after the `"_sweep_blocked_symbols"` entry at line 1112):
 ```python
-        state["trailing_count"] = len(self._active_trailing)
-        state["trailing_symbols"] = set(self._active_trailing.keys())
-        state["sweep_blocked_symbols"] = self._sweep_blocked_symbols
-        state["trailing_config"] = {
-            "enabled": self._config.trailing_enabled,
-            "max_concurrent": self._config.trailing_max_concurrent,
-            "min_profit_pct": self._config.trailing_min_profit_pct,
-        }
+            "trailing_count": len(self._active_trailing),
+            "trailing_symbols": set(self._active_trailing.keys()),
+            "trailing_config": {
+                "enabled": self._config.trailing_enabled,
+                "max_concurrent": self._config.trailing_max_concurrent,
+                "min_profit_pct": self._config.trailing_min_profit_pct,
+            },
 ```
 
-- [ ] **Step 7: Filter trailing symbols from event triggers and LLM positions**
-
-In `_monitoring_cycle()`, before `check_triggers()` is called, filter trailing symbols:
+Also, filter trailing symbols out of the positions passed to the LLM. In `_get_market_data()` (line 1124) or more precisely in the graph state's `"ws_snapshot"`, the positions list should exclude trailing symbols. Add filtering where `ws_snapshot` is built:
 ```python
-        positions_for_eval = [
-            p for p in (self._ws_buffer.get("positions") or [])
-            if p.get("symbol") not in self._active_trailing
-        ]
+            # Filter trailing symbols from LLM evaluation
+            ws_copy = copy.deepcopy(self._ws_buffer)
+            ws_copy["positions"] = [
+                p for p in (ws_copy.get("positions") or [])
+                if p.get("symbol") not in self._active_trailing
+            ]
+```
+Use `ws_copy` instead of `copy.deepcopy(self._ws_buffer)` for the `"ws_snapshot"` value.
+
+- [ ] **Step 7: Suppress event triggers for trailing symbols**
+
+The `EventTriggerDetector` is fed position data via `_handle_ws_event` callbacks, NOT via a `check_triggers()` call in `_monitoring_cycle`. The trigger fires by setting `_event_trigger_fired` asyncio.Event.
+
+The correct approach: in the event trigger's evaluation (inside `_handle_ws_event` or where `_event_trigger.update()` is called), skip symbols in `_active_trailing`. Find where `_event_trigger` processes position data and add:
+```python
+        # Skip trigger evaluation for actively trailing symbols
+        if symbol in self._active_trailing:
+            return
 ```
 
-Use `positions_for_eval` instead of raw positions when passing to the trigger detector and to the LLM graph.
+Alternatively, in the `EventTriggerDetector.check()` method's position loop, pass an exclusion set:
+```python
+        self._event_trigger.set_excluded_symbols(set(self._active_trailing.keys()))
+```
+
+The exact insertion point depends on where `_event_trigger` processes position updates — grep for `_event_trigger` usage and add the exclusion at that call site.
 
 - [ ] **Step 8: Cancel trailing on emergency close**
 
@@ -964,24 +982,34 @@ In the evaluation loop (around line 228-238), before handling `BREAKEVEN_TIMEOUT
                             continue
 ```
 
-- [ ] **Step 3: Wire up in AIAccountManagerService**
+- [ ] **Step 3: Wire up in main.py (where CloseRuleEvaluator is instantiated)**
 
-Where the `CloseRuleEvaluator` is instantiated (in `ai_account_manager_service.py`), after creating the task:
+The `CloseRuleEvaluator` is instantiated in `backend/main.py` (around line 283), NOT in `ai_account_manager_service.py`. The wiring must aggregate trailing symbols across ALL active tasks (multi-account):
+
+In `backend/main.py`, after the evaluator is created:
 ```python
-        self._close_rule_evaluator.set_trailing_checker(
-            lambda: set(task._active_trailing.keys()) if task else set()
-        )
+        # Wire trailing awareness into close rule evaluator
+        def _get_all_trailing_symbols() -> set:
+            """Aggregate trailing symbols across all account tasks."""
+            trailing = set()
+            ai_service = app.state.ai_manager_service
+            if ai_service and hasattr(ai_service, '_tasks'):
+                for task in ai_service._tasks.values():
+                    trailing.update(task._active_trailing.keys())
+            return trailing
+
+        app.state.rule_evaluator.set_trailing_checker(_get_all_trailing_symbols)
 ```
 
 - [ ] **Step 4: Run tests**
 
-Run: `python -m pytest tests/backend/test_ai_manager_task.py tests/backend/test_ai_account_manager_service.py -v -x`
+Run: `python -m pytest tests/backend/test_ai_manager_task.py -v -x`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/services/close_rule_evaluator.py backend/services/ai_account_manager_service.py
+git add backend/services/close_rule_evaluator.py backend/main.py
 git commit -m "feat(trailing): suppress close rule TP/SL mods on trailing symbols"
 ```
 
@@ -994,28 +1022,36 @@ git commit -m "feat(trailing): suppress close rule TP/SL mods on trailing symbol
 
 - [ ] **Step 1: Detect trailing position closure in WS handler**
 
-In the WS handler where positions are updated (where size goes to 0 and position is removed), add:
+In `_handle_ws_event` (line 292-308), the position update handler at line 296 filters out the position via list comprehension BEFORE checking if it closed. The `data` variable from the WS event contains the update (with size=0). We must capture the OLD position data BEFORE the filter removes it.
+
+Modify the position_update handler. Before line 296 (`positions = [p for p in positions if p.get("symbol") != symbol]`), add:
 
 ```python
-        # Track exchange-side SL execution for trailing symbols
-        if symbol in self._active_trailing and new_size == 0:
-            try:
-                entry = float(old_position.get("avgPrice", old_position.get("entryPrice", 0)))
-                last_mark = float(old_position.get("markPrice", 0))
-                size = float(old_position.get("size", 0))
-                side = old_position.get("side", "Buy")
-                if side == "Buy":
-                    estimated_pnl = (last_mark - entry) * size
-                else:
-                    estimated_pnl = (entry - last_mark) * size
-                if estimated_pnl < 0:
-                    asyncio.create_task(self._enforce_daily_limits(estimated_pnl))
-                    self._log.info(
-                        "Exchange-side SL execution for trailing %s, estimated PnL: $%.2f",
-                        symbol, estimated_pnl,
-                    )
-            except (TypeError, ValueError):
-                self._log.warning("Could not compute PnL for exchange-closed trailing %s", symbol)
+            # Capture old position before removal (for trailing PnL tracking)
+            old_position = next((p for p in positions if p.get("symbol") == symbol), None)
+```
+
+Then in the `else` branch (line 301, where size == 0), add:
+```python
+                    # Track exchange-side execution for trailing symbols
+                    if symbol in self._active_trailing and old_position:
+                        try:
+                            entry = float(old_position.get("avgPrice", old_position.get("entryPrice", 0)))
+                            last_mark = float(old_position.get("markPrice", 0))
+                            size = float(old_position.get("size", 0))
+                            pos_side = old_position.get("side", "Buy")
+                            if pos_side == "Buy":
+                                estimated_pnl = (last_mark - entry) * size
+                            else:
+                                estimated_pnl = (entry - last_mark) * size
+                            if estimated_pnl < 0:
+                                asyncio.create_task(self._enforce_daily_limits(estimated_pnl))
+                                self._log.info(
+                                    "Exchange-side SL execution for trailing %s, est PnL: $%.2f",
+                                    symbol, estimated_pnl,
+                                )
+                        except (TypeError, ValueError):
+                            self._log.warning("Could not compute PnL for exchange-closed trailing %s", symbol)
 ```
 
 - [ ] **Step 2: Run tests**
@@ -1039,23 +1075,30 @@ git commit -m "feat(trailing): track exchange-side SL execution for daily loss e
 
 - [ ] **Step 1: Create mini-LLM callable**
 
-Add a method to `AIManagerTask`:
+Add a method to `AIManagerTask`. **Important:** The `_llm_callable` signature is `(system_prompt: str, context_prompt: str) -> str` (two positional string args, no max_tokens). The mini-LLM must use this same interface:
 
 ```python
     async def _trailing_mini_llm(self, symbol: str, side: str, entry: float, price: float,
                                   sl: float, tp: float, atr: float, adx: float, tick: int) -> str:
         """Lightweight LLM check for trailing continuation."""
         upnl = (price - entry) if side == "Buy" else (entry - price)
-        prompt = (
+
+        system_prompt = (
+            "You are a trailing stop-loss monitor. Given position state, decide: "
+            "KEEP (continue trailing), TIGHTEN (reduce ATR multiplier), or EXIT (stop trailing). "
+            "Reply with one word followed by a 10-word reason."
+        )
+        context_prompt = (
             f"Symbol: {symbol} | Side: {side} | Entry: ${entry:.4f} | Current: ${price:.4f}\n"
             f"SL: ${sl:.4f} | TP: ${tp:.4f} | ATR: ${atr:.4f} | ADX: {adx:.1f} | Tick: {tick}\n"
             f"Unrealized PnL: ${upnl:.4f}\n\n"
-            "Decision: KEEP (continue trailing) | TIGHTEN (reduce ATR multiplier) | EXIT (stop trailing)\n"
-            "Reply with one word and a 10-word reason."
+            "Decision: KEEP | TIGHTEN | EXIT"
         )
-        if not self._llm_callable:
+
+        llm = self._llm_callable or (self._service._llm_callable if self._service else None)
+        if not llm:
             return "KEEP"
-        response = await self._llm_callable(prompt, max_tokens=50)
+        response = await llm(system_prompt, context_prompt)
         return response.strip().split()[0] if response else "KEEP"
 ```
 
