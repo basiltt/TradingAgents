@@ -1045,46 +1045,16 @@ class AIManagerTask:
             try:
                 await self._enforce_daily_limits(pnl)
             except Exception:
-                self._log.critical("Daily limit enforcement failed — pausing as fail-safe")
-                self.pause()
+                self._log.exception("Daily limit bookkeeping failed")
 
     async def _enforce_daily_limits(self, pnl: float) -> None:
-        """Task 3.5: Daily loss enforcement after every AI-initiated close."""
-        equity_start = await self._get_equity_at_day_start()
-
+        """Track realized PnL for reporting. No auto-pause on loss — AI manager
+        stays active as long as there are open positions on the account."""
         if pnl < 0:
-            loss_data = await self._service._repo.record_realized_loss(self._account_id, abs(pnl))
-            realized_loss = loss_data.get("realized_loss_today", 0.0)
-
-            if equity_start and equity_start > 0:
-                loss_pct = (realized_loss / equity_start) * 100
-                if loss_pct >= self._config.max_daily_loss_pct:
-                    self._log.warning(
-                        "Daily loss cap breached: %.2f%% >= %.2f%%",
-                        loss_pct, self._config.max_daily_loss_pct,
-                    )
-                    self.pause()
-                    return
-
-                unrealized_loss = self._get_unrealized_loss()
-                total_loss_pct = ((realized_loss + unrealized_loss) / equity_start) * 100
-                if total_loss_pct >= self._config.max_daily_loss_pct * 2:
-                    self._log.critical(
-                        "Kill switch triggered: total loss %.2f%%",
-                        total_loss_pct,
-                    )
-                    await self._service._repo.set_kill_switch(self._account_id, True)
-                    self.set_killed()
-                    return
+            await self._service._repo.record_realized_loss(self._account_id, abs(pnl))
 
         if pnl > 0:
-            profit_data = await self._service._repo.record_realized_profit(self._account_id, pnl)
-            if self._config.daily_profit_target_pct and equity_start and equity_start > 0:
-                realized_profit = profit_data.get("realized_profit_today", 0.0)
-                target = self._config.daily_profit_target_pct * equity_start / 100
-                if realized_profit >= target:
-                    self._log.info("Profit target reached")
-                    self.transition_to(SLEEPING)
+            await self._service._repo.record_realized_profit(self._account_id, pnl)
 
     async def _init_equity_at_day_start(self) -> Optional[float]:
         """Atomically initialize equity_at_day_start if NULL."""

@@ -294,7 +294,6 @@ class AIAccountManagerService:
         """Called when account equity changes externally (balance reset, withdrawal, deposit).
 
         Resets daily counters and equity reference to reflect the new baseline.
-        Auto-resumes if paused due to daily loss limits.
         """
         # Set in-memory state FIRST to prevent emergency close race on WS events
         task = self._tasks.get(account_id)
