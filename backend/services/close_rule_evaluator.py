@@ -285,6 +285,9 @@ class CloseRuleEvaluator:
                         if result.get("skipped"):
                             logger.info("Close skipped for rule %s (concurrent close), reverting to active", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="active")
+                        elif result.get("failed", 0) > 0 and result.get("closed", 0) == 0:
+                            logger.warning("Rule %s: all closes failed (%d), reverting to active for retry", rule["id"], result["failed"])
+                            await self._db.update_close_rule(rule["id"], status="active")
                         else:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")

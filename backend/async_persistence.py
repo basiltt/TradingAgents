@@ -2299,16 +2299,17 @@ class AsyncAnalysisDB:
             result = await conn.execute("DELETE FROM close_rules WHERE id = $1", rule_id)
         return int(result.split()[-1]) > 0
 
-    async def delete_all_rules_for_account(self, account_id: str) -> int:
+    async def delete_all_rules_for_account(self, account_id: str, *, preserve_pause: bool = False) -> int:
         """Delete all close rules (and their executions) for an account."""
+        type_filter = " AND trigger_type != 'PAUSE_TRADING'" if preserve_pause else ""
         async with self._transaction() as conn:
             await conn.execute(
                 "DELETE FROM close_executions WHERE rule_id IN "
-                "(SELECT id FROM close_rules WHERE account_id = $1)",
+                f"(SELECT id FROM close_rules WHERE account_id = $1{type_filter})",
                 account_id,
             )
             result = await conn.execute(
-                "DELETE FROM close_rules WHERE account_id = $1", account_id,
+                f"DELETE FROM close_rules WHERE account_id = $1{type_filter}", account_id,
             )
         return int(result.split()[-1])
 

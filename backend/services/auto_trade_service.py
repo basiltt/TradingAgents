@@ -851,22 +851,23 @@ class AutoTradeExecutor:
 
                 # Execute trades from scan results
                 traded: set = set()
-                for state in states:
-                    if state.stopped:
-                        continue
-                    for result in unique_results:
+                async with self._lock:
+                    for state in states:
                         if state.stopped:
-                            break
-                        ticker = result.get("ticker", "")
-                        symbol = _to_symbol(ticker)
-                        trade_key = (account_id, symbol)
-                        if trade_key in traded:
                             continue
-                        execution = await self._try_trade(state, result)
-                        if execution and execution.status == "success":
-                            traded.add(trade_key)
-                        if execution:
-                            executions.append(execution)
+                        for result in unique_results:
+                            if state.stopped:
+                                break
+                            ticker = result.get("ticker", "")
+                            symbol = _to_symbol(ticker)
+                            trade_key = (account_id, symbol)
+                            if trade_key in traded:
+                                continue
+                            execution = await self._try_trade(state, result)
+                            if execution and execution.status == "success":
+                                traded.add(trade_key)
+                            if execution:
+                                executions.append(execution)
 
                 # Clean up if 0 trades were successfully executed
                 total_executed = sum(state.trades_executed for state in states)

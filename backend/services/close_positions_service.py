@@ -66,7 +66,7 @@ class ClosePositionsService:
                     },
                 )
                 try:
-                    await self._db.delete_all_rules_for_account(account_id)
+                    await self._db.delete_all_rules_for_account(account_id, preserve_pause=True)
                 except Exception:
                     logger.warning("failed_to_cleanup_rules_after_close_all", extra={"account_id": account_id})
                 return {"total": 0, "closed": 0, "failed": 0, "results": [], "execution_id": execution["id"]}
@@ -363,8 +363,8 @@ class ClosePositionsService:
         return await self._db.deactivate_rules_for_account(account_id)
 
     async def delete_all_rules(self, account_id: str) -> int:
-        """Delete all rules for an account (active, expired, and executed). Returns count deleted."""
-        return await self._db.delete_all_rules_for_account(account_id)
+        """Delete all rules for an account (active, expired, and executed). Preserves PAUSE_TRADING."""
+        return await self._db.delete_all_rules_for_account(account_id, preserve_pause=True)
 
     async def _delete_non_executed_rules(self, account_id: str) -> int:
         """Delete all non-executed rules for an account. Keeps executed ones for audit."""
