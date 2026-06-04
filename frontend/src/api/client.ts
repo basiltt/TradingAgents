@@ -263,6 +263,12 @@ export interface AutoTradeConfig {
   smart_drawdown_close?: boolean;
   trailing_profit_pct?: number | null;
   max_same_direction?: number | null;
+  max_price_drift_pct?: number | null;
+  max_same_sector?: number | null;
+  adaptive_blacklist_enabled?: boolean;
+  adaptive_blacklist_min_trades?: number;
+  adaptive_blacklist_max_win_rate?: number;
+  adaptive_blacklist_lookback_hours?: number;
   ai_pause_cycles?: number | null;
 }
 

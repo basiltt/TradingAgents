@@ -565,6 +565,18 @@ CREATE TABLE IF NOT EXISTS decay_alerts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """),
+    (34, """
+CREATE TABLE IF NOT EXISTS symbol_sectors (
+    symbol VARCHAR(30) PRIMARY KEY,
+    sector VARCHAR(15) NOT NULL DEFAULT 'other',
+    source VARCHAR(10) NOT NULL DEFAULT 'static'
+        CHECK (source IN ('static', 'coingecko', 'llm', 'manual')),
+    coingecko_categories TEXT,
+    classified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ss_sector ON symbol_sectors(sector);
+CREATE INDEX IF NOT EXISTS idx_ss_classified ON symbol_sectors(classified_at)
+"""),
 ]
 def _default_dsn() -> str:
     dsn = os.environ.get("DATABASE_URL")

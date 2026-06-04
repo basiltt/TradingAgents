@@ -692,3 +692,15 @@ def get_coingecko_status() -> dict:
         "key_configured": bool(_API_KEY),
         "rate_limit_rpm": _limiter.rpm,
     }
+
+
+def get_coin_categories(symbol: str) -> list[str]:
+    """Return CoinGecko category strings for a trading symbol, or [] on failure."""
+    coin_id = _get_coin_id(symbol)
+    if not coin_id:
+        return []
+    try:
+        _, categories = _get_description_and_categories(coin_id)
+        return categories
+    except Exception:
+        return []

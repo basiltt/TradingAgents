@@ -317,13 +317,14 @@ class ScannerService:
 
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
         self._accounts = accounts_service
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
+        self._sector_service = sector_service
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -333,6 +334,40 @@ class ScannerService:
                 await self._ws.broadcast(self.SCAN_LIST_TOPIC, {"type": "scan_list_changed"})
             except Exception:
                 pass
+
+    async def _compute_adaptive_blacklist(self, auto_configs: List[Dict[str, Any]]) -> set:
+        """Query signal_performance to find symbols with consistently poor win rates."""
+        min_trades = 5
+        max_win_rate = 30.0
+        lookback_hours = 48
+        for cfg in auto_configs:
+            if cfg.get("adaptive_blacklist_enabled"):
+                min_trades = cfg.get("adaptive_blacklist_min_trades", 5)
+                max_win_rate = cfg.get("adaptive_blacklist_max_win_rate", 30.0)
+                lookback_hours = cfg.get("adaptive_blacklist_lookback_hours", 48)
+                break
+        else:
+            return set()
+        try:
+            rows = await self._db.pool.fetch(
+                "SELECT symbol, COUNT(*) as total, "
+                "SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins "
+                "FROM signal_performance "
+                "WHERE closed_at > NOW() - make_interval(hours => $1) "
+                "GROUP BY symbol HAVING COUNT(*) >= $2",
+                lookback_hours, min_trades,
+            )
+            blacklisted = set()
+            for row in rows:
+                win_rate = (row["wins"] / row["total"]) * 100 if row["total"] > 0 else 0
+                if win_rate < max_win_rate:
+                    blacklisted.add(row["symbol"])
+            if blacklisted:
+                logger.info("adaptive_blacklist_computed", extra={"count": len(blacklisted), "symbols": sorted(blacklisted)[:10]})
+            return blacklisted
+        except Exception:
+            logger.warning("adaptive_blacklist_query_failed", exc_info=True)
+            return set()
 
     async def start_scan(self, config: Dict[str, Any], schedule_id: str | None = None, triggered_by: str = "manual") -> str:
         async with self._lock:
@@ -370,7 +405,15 @@ class ScannerService:
         # Initialize auto-trade executor if configs provided
         auto_configs = config.get("auto_trade_configs")
         if auto_configs and self._accounts:
-            executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service)
+            # Compute adaptive blacklist from signal_performance (pre-inject into configs)
+            if self._db:
+                adaptive_bl = await self._compute_adaptive_blacklist(auto_configs)
+                if adaptive_bl:
+                    for cfg in auto_configs:
+                        if cfg.get("adaptive_blacklist_enabled"):
+                            existing = set(cfg.get("_computed_adaptive_blacklist") or [])
+                            cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
+            executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service, sector_service=self._sector_service)
             executor.init_configs(auto_configs)
             await executor.init_balances()
             scan["auto_trade_executor"] = executor
@@ -524,7 +567,13 @@ class ScannerService:
             # Restore auto-trade executor on resume — use prior results to restore trade counters
             auto_configs = config.get("auto_trade_configs")
             if auto_configs and self._accounts:
-                executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service)
+                # Pre-classify remaining symbols for sector service
+                if self._sector_service:
+                    try:
+                        await self._sector_service.ensure_classified(remaining)
+                    except Exception:
+                        pass
+                executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service, sector_service=self._sector_service)
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB
                 prior_auto_results = (db_results or {}).get("auto_trade_results", [])
@@ -677,6 +726,13 @@ class ScannerService:
                 pass
         else:
             logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
+
+        # Pre-classify symbols for sector concentration limit (only if auto-trade is active)
+        if self._sector_service and scan.get("auto_trade_executor"):
+            try:
+                await self._sector_service.ensure_classified(symbols)
+            except Exception:
+                logger.debug("sector_ensure_classified_failed", exc_info=True)
 
         # Raise the analysis service concurrency limit to match user's max_parallel
         self._analysis.set_max_concurrent(batch_size)
@@ -1046,6 +1102,19 @@ class ScannerService:
             if not decision_text:
                 decision_text = (run or {}).get("error", "") or ""
 
+        # Extract analysis_price from trader's entry_price for drift validation
+        analysis_price = None
+        if status == "completed" and reports:
+            try:
+                t_json = reports.get("_trader_signal")
+                if t_json:
+                    t_data = _json.loads(t_json) if isinstance(t_json, str) else t_json
+                    ep = t_data.get("entry_price")
+                    if ep and float(ep) > 0:
+                        analysis_price = float(ep)
+            except (TypeError, ValueError, _json.JSONDecodeError):
+                pass
+
         result = {
             "ticker": ticker,
             "run_id": run_id,
@@ -1057,6 +1126,8 @@ class ScannerService:
             "signal_source": signal_source,
             "completed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         }
+        if analysis_price:
+            result["analysis_price"] = analysis_price
 
         async with self._lock:
             scan = self._scans.get(scan_id)

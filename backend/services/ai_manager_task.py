@@ -990,7 +990,7 @@ class AIManagerTask:
                     "strategy_version": self._config.strategy_version,
                     "chain_key_version": _CHAIN_KEY_VERSION,
                 }
-                await self._service._repo.insert_decision(
+                decision_id, decision_ts = await self._service._repo.insert_decision(
                     self._account_id, decision_data, self._service._hmac_key
                 )
                 if self._config.dry_run:
@@ -998,6 +998,19 @@ class AIManagerTask:
                     return
                 self._log_async("info", "trailing", f"Starting trailing for {symbol}", {"action": action_type, "symbol": symbol, "params": result.get("params")})
                 await self._start_trailing(symbol, result)
+                # Record immediate outcome so execution_result is not null
+                try:
+                    await self._service._repo.update_decision_outcome(
+                        decision_id, decision_ts,
+                        {"status": "trailing_started", "symbol": symbol, "realized_pnl": 0.0},
+                    )
+                except Exception:
+                    pass
+                return
+
+            # Dry run: record decision but don't execute close
+            if self._config.dry_run:
+                self._log_async("info", "execution", f"[DRY RUN] Would execute {action_type} on {symbol}", {"action": action_type, "symbol": symbol})
                 return
 
             now_utc = datetime.now(timezone.utc)

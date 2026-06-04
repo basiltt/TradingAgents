@@ -453,6 +453,12 @@ class AutoTradeConfig(BaseModel):
     smart_drawdown_close: bool = False
     trailing_profit_pct: Optional[float] = Field(None, gt=0, le=50)
     max_same_direction: Optional[int] = Field(None, ge=1, le=20)
+    max_price_drift_pct: Optional[float] = Field(None, gt=0, le=50)
+    max_same_sector: Optional[int] = Field(None, ge=1, le=10)
+    adaptive_blacklist_enabled: bool = False
+    adaptive_blacklist_min_trades: int = Field(default=5, ge=2, le=50)
+    adaptive_blacklist_max_win_rate: float = Field(default=30.0, ge=0, le=100)
+    adaptive_blacklist_lookback_hours: int = Field(default=48, ge=1, le=720)
     ai_pause_cycles: Optional[int] = Field(None, ge=1, le=10)
 
     @model_validator(mode="after")

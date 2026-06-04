@@ -170,6 +170,14 @@ class AccountsService:
         self._trade_repo = trade_repo
         self._trade_service = trade_service
 
+    # ── Market Data ───────────────────────────────────────────────────────
+
+    async def get_mark_price(self, account_id: str, symbol: str) -> float:
+        """Fetch current mark price for a symbol via the account's Bybit client."""
+        client = await self._build_client(account_id)
+        price_str = await client.get_mark_price(symbol)
+        return float(price_str)
+
     # ── Trade Execution ──────────────────────────────────────────────────
 
     async def place_trade(

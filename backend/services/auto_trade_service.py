@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
+from backend.services.sector_map import get_sector as _static_get_sector
 
 
 logger = logging.getLogger(__name__)
@@ -33,10 +34,11 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None):
         self._accounts = accounts_service
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
+        self._sector_service = sector_service
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
         self._ai_manager_enabled_accounts: set = set()
@@ -398,7 +400,7 @@ class AutoTradeExecutor:
                     seen[ticker] = r
             unique_results = sorted(
                 list(seen.values()),
-                key=lambda r: abs(r.get("score", 0)),
+                key=lambda r: (abs(r.get("score", 0)), r.get("completed_at", "")),
                 reverse=True,
             )
 
@@ -957,6 +959,25 @@ class AutoTradeExecutor:
                 state.trades_skipped += 1
                 return None
 
+        # Sector concentration limit
+        max_same_sector = cfg.get("max_same_sector")
+        if max_same_sector:
+            _get_sec = self._sector_service.get_sector if self._sector_service else _static_get_sector
+            sector = _get_sec(symbol)
+            if sector != "other":
+                same_sector_count = sum(1 for s in state.existing_symbols if _get_sec(s) == sector)
+                if same_sector_count >= max_same_sector:
+                    state.trades_skipped += 1
+                    return None
+
+        # Adaptive blacklist check (pre-computed by scanner_service)
+        adaptive_bl = cfg.get("_computed_adaptive_blacklist")
+        if adaptive_bl:
+            bl_set = adaptive_bl if isinstance(adaptive_bl, set) else set(adaptive_bl)
+            if symbol in bl_set:
+                state.trades_skipped += 1
+                return None
+
         # Apply filters (skipped in relaxed/fill mode)
         signal_sides = cfg.get("signal_sides", "both")
         if signal_sides != "both":
@@ -1000,6 +1021,24 @@ class AutoTradeExecutor:
             state.stopped = True
             state.stopped_reason = "no_balance_captured"
             return None
+
+        # Price drift validation — skip if price already moved too far in signal direction
+        max_drift = cfg.get("max_price_drift_pct")
+        analysis_price = result.get("analysis_price")
+        if max_drift and analysis_price:
+            try:
+                current_price = await self._accounts.get_mark_price(account_id, symbol)
+                drift_pct = ((current_price - analysis_price) / analysis_price) * 100
+                # Buy signal: skip if price already went UP (move consumed)
+                # Sell signal: skip if price already went DOWN (move consumed)
+                if direction in ("buy", "long") and drift_pct > max_drift:
+                    state.trades_skipped += 1
+                    return None
+                if direction in ("sell", "short") and drift_pct < -max_drift:
+                    state.trades_skipped += 1
+                    return None
+            except Exception:
+                pass  # fail-open: proceed with trade if price check fails
 
         # Execute trade
         try:

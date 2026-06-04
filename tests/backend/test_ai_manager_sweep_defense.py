@@ -22,6 +22,7 @@ def mock_task():
     task._service._repo.insert_sweep_event = AsyncMock()
     task._modify_stop_loss = AsyncMock(return_value=True)
     task._persist_sweep_state = AsyncMock()
+    task._ws_buffer = {"positions": [{"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"}]}
     return task
 
 

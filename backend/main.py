@@ -221,6 +221,15 @@ def create_app() -> FastAPI:
             ws_manager=ws_manager,
         )
 
+        # Sector classification service (CoinGecko + LLM + DB cache)
+        from backend.services.sector_service import SectorService
+        from backend.services.ai_manager_llm_provider import create_llm_callable
+        _sector_llm, _ = create_llm_callable()
+        sector_service = SectorService(db.pool, llm_callable=_sector_llm)
+        await sector_service.load_cache()
+        app.state.sector_service = sector_service
+        app.state.scanner_service._sector_service = sector_service
+
         from backend.services.strategy_service import StrategyService
         app.state.strategy_service = StrategyService(db=db)
         await app.state.scanner_service.resume_incomplete_scans()
