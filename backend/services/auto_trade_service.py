@@ -890,7 +890,7 @@ class AutoTradeExecutor:
             return None
 
         max_age = cfg.get("max_signal_age_minutes")
-        if max_age and result.get("completed_at"):
+        if max_age and not relaxed and result.get("completed_at"):
             try:
                 completed = datetime.fromisoformat(result["completed_at"].replace("Z", "+00:00"))
                 age_minutes = (datetime.now(timezone.utc) - completed).total_seconds() / 60
