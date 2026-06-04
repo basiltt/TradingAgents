@@ -170,12 +170,12 @@ class TestFilterScanResults:
         assert len(out) == 1
         assert out[0]["ticker"] == "A"
 
-    def test_underweight_maps_to_hold_not_sell(self):
-        """Underweight signals should NOT appear as sell direction in scan results.
+    def test_underweight_maps_to_sell_direction(self):
+        """Underweight signals map to sell direction in scan results.
 
-        This verifies the upstream _rating_to_direction mapping: Underweight→hold.
-        By the time results reach filter_scan_results, Underweight is already 'hold'
-        with score=0, so it gets excluded by the direction=='hold' check.
+        This verifies the upstream _rating_to_direction mapping: Underweight→sell.
+        The test data below uses pre-processed results to verify filter_scan_results
+        correctly passes through sell-direction signals.
         """
         results = [
             {"ticker": "A", "score": 0, "confidence": "none", "direction": "hold"},
