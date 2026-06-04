@@ -177,7 +177,7 @@ def create_llm_callable_with_cleanup(
         url = backend_url or "https://api.openai.com"
         url = url.rstrip("/") + "/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        client = httpx.AsyncClient(timeout=28.0)
+        client = httpx.AsyncClient(timeout=60.0)
 
         async def _close():
             try:
@@ -214,7 +214,7 @@ def create_llm_callable_with_cleanup(
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
-        client = httpx.AsyncClient(timeout=28.0)
+        client = httpx.AsyncClient(timeout=60.0)
 
         async def _close():
             try:
@@ -260,7 +260,7 @@ def _create_openai_callable(
     url = backend_url or "https://api.openai.com"
     url = url.rstrip("/") + "/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    client = httpx.AsyncClient(timeout=28.0)
+    client = httpx.AsyncClient(timeout=60.0)
     _active_clients.append(client)
 
     async def call_openai(system_prompt: str, context_prompt: str) -> str:
@@ -296,7 +296,7 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
     }
-    client = httpx.AsyncClient(timeout=28.0)
+    client = httpx.AsyncClient(timeout=60.0)
     _active_clients.append(client)
 
     async def call_anthropic(system_prompt: str, context_prompt: str) -> str:
