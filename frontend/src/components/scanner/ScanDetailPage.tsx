@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { formatDurationBetween } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,7 +8,6 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/comp
 import { cn } from "@/lib/utils";
 import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
-import { TradingCycleDialog } from "@/components/cycles/TradingCycleDialog";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { NeuScoreBar } from "@/design-system/neumorphism";
 
@@ -240,7 +239,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const [tradeTarget, setTradeTarget] = useState<{ symbol: string; direction: "buy" | "sell" } | null>(null);
   const [tradedSymbols, setTradedSymbols] = useState<Set<string>>(new Set());
-  const [showCycleDialog, setShowCycleDialog] = useState(false);
+  const [isAutoTrading, setIsAutoTrading] = useState(false);
   const handleTradeSuccess = (symbol: string) => setTradedSymbols((prev) => new Set(prev).add(symbol));
 
   const { data: scan, isLoading, error } = useQuery({
@@ -248,7 +247,27 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
     queryFn: ({ signal }) => apiClient.getScan(scanId, signal),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "running" ? 3000 : false;
+      if (status === "running") return 3000;
+      if (isAutoTrading) return 3000;
+      return false;
+    },
+  });
+
+  // Stop polling once auto_trade_summaries arrive
+  const autoTradeSummaries = scan?.auto_trade_summaries;
+  useEffect(() => {
+    if (isAutoTrading && autoTradeSummaries && autoTradeSummaries.length > 0) {
+      setIsAutoTrading(false);
+    }
+  }, [isAutoTrading, autoTradeSummaries]);
+
+  const autoTradeMutation = useMutation({
+    mutationFn: () => apiClient.triggerAutoTrade(scanId),
+    onSuccess: () => {
+      setIsAutoTrading(true);
+    },
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ["scan", scanId] });
     },
   });
 
@@ -352,13 +371,21 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
           <div className="flex items-center gap-2">
             {isCrypto && scan.status === "completed" && (
               <button
-                onClick={() => setShowCycleDialog(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[var(--neu-radius-pill)] text-sm font-medium bg-[var(--neu-success)] text-white hover:brightness-110 shadow-[var(--neu-shadow-pill)] transition-all border-none cursor-pointer"
+                onClick={() => autoTradeMutation.mutate()}
+                disabled={isAutoTrading || autoTradeMutation.isPending || (scan.auto_trade_results && scan.auto_trade_results.length > 0)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[var(--neu-radius-pill)] text-sm font-medium bg-[var(--neu-success)] text-white hover:brightness-110 shadow-[var(--neu-shadow-pill)] transition-all border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Start Cycle
+                {isAutoTrading || autoTradeMutation.isPending ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                )}
+                {isAutoTrading ? "Executing Trades..." : scan.auto_trade_results && scan.auto_trade_results.length > 0 ? "Trades Executed" : "Auto Trade"}
               </button>
             )}
             <button
@@ -543,12 +570,6 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
         </div>
       )}
 
-      <TradingCycleDialog
-        open={showCycleDialog}
-        onOpenChange={setShowCycleDialog}
-        scanId={scanId}
-        scanLabel={`Scan ${scanId.slice(0, 8)}`}
-      />
     </div>
   );
 }

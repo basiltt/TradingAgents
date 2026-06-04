@@ -78,7 +78,7 @@ def main():
     print(f"\nUpdating Preethy AI Manager config (min_profit_to_close_ratio=0.3)...")
     payload = json.dumps({"min_profit_to_close_ratio": 0.3}).encode()
     req = urllib.request.Request(
-        f"{BASE_URL}/ai-manager/{PREETHY_ACCOUNT}/config",
+        f"{BASE_URL}/accounts/{PREETHY_ACCOUNT}/ai-manager/config",
         data=payload,
         method="PATCH",
         headers={

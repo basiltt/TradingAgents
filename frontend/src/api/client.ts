@@ -562,6 +562,9 @@ export const apiClient = {
   cancelScan: (scanId: string) =>
     mutate<{ status: string }>("POST", `/api/v1/scanner/${encodeURIComponent(scanId)}/cancel`),
 
+  triggerAutoTrade: (scanId: string) =>
+    mutate<{ status: string; scan_id: string }>("POST", `/api/v1/scanner/${encodeURIComponent(scanId)}/auto-trade`),
+
   deleteScanPreview: (scanId: string, signal?: AbortSignal) =>
     request<{ scan_id: string; analysis_count: number }>(
       `/api/v1/scanner/${encodeURIComponent(scanId)}/delete-preview`, undefined, signal,

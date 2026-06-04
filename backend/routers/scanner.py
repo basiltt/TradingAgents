@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json as _json
 import logging
 import os
 import uuid
@@ -14,6 +16,9 @@ from backend.services.scanner_service import ScannerBusyError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["scanner"])
+
+_background_tasks: set = set()
+_in_flight_auto_trades: set = set()
 
 
 def _validate_scan_id(scan_id: str) -> None:
@@ -131,3 +136,140 @@ async def filter_preview(
         symbols=[r["ticker"] for r in filtered],
         direction_breakdown=direction_breakdown,
     )
+
+
+@router.post("/scanner/{scan_id}/auto-trade")
+async def trigger_auto_trade(request: Request, scan_id: str):
+    """Trigger auto-trade execution on a completed scan using its stored auto_trade_configs."""
+    _validate_scan_id(scan_id)
+
+    if scan_id in _in_flight_auto_trades:
+        raise HTTPException(status_code=409, detail="Auto trade already in progress for this scan")
+
+    db = request.app.state.db
+    accounts_service = getattr(request.app.state, "accounts_service", None)
+    if not accounts_service:
+        raise HTTPException(status_code=503, detail="Accounts service not available")
+
+    close_svc = getattr(request.app.state, "close_positions_service", None)
+    ai_manager_service = getattr(request.app.state, "ai_manager_service", None)
+    sector_service = getattr(request.app.state, "sector_service", None)
+    scanner_service = request.app.state.scanner_service
+
+    # Load raw scan from DB (includes config with auto_trade_configs)
+    scan = await db.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    if scan.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Scan is not completed")
+
+    # Check existing auto_trade_results (prevent double-execution)
+    existing_results = scan.get("auto_trade_results")
+    if isinstance(existing_results, str):
+        try:
+            existing_results = _json.loads(existing_results)
+        except (ValueError, TypeError):
+            existing_results = []
+    if existing_results:
+        raise HTTPException(status_code=409, detail="Auto trade already executed for this scan")
+
+    # Extract auto_trade_configs from stored config
+    config = scan.get("config", {})
+    if isinstance(config, str):
+        config = _json.loads(config)
+    auto_configs = config.get("auto_trade_configs")
+    if not auto_configs:
+        raise HTTPException(status_code=422, detail="No auto_trade_configs found in scan config")
+
+    results = scan.get("results", [])
+    if not results:
+        raise HTTPException(status_code=400, detail="Scan has no results")
+
+    _in_flight_auto_trades.add(scan_id)
+
+    async def _run_auto_trade():
+        from backend.services.auto_trade_service import AutoTradeExecutor
+        try:
+            # Compute adaptive blacklist
+            adaptive_bl = await scanner_service._compute_adaptive_blacklist(auto_configs)
+            if adaptive_bl:
+                for cfg in auto_configs:
+                    if cfg.get("adaptive_blacklist_enabled"):
+                        existing = set(cfg.get("_computed_adaptive_blacklist") or [])
+                        cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
+
+            # Pre-classify symbols for sector service
+            if sector_service:
+                tickers = [r.get("ticker", "") for r in results if r.get("ticker")]
+                try:
+                    await sector_service.ensure_classified(tickers)
+                except Exception:
+                    pass
+
+            # Create executor and initialize
+            executor = AutoTradeExecutor(accounts_service, close_svc, ai_manager_service, sector_service=sector_service)
+            executor.init_configs(auto_configs)
+            await executor.init_balances()
+
+            all_executions = []
+
+            # Batch execution
+            try:
+                batch_execs = await executor.execute_batch(results)
+                if batch_execs:
+                    all_executions.extend(batch_execs)
+            except Exception as e:
+                logger.warning("auto_trade_manual_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+
+            # Fill remaining
+            try:
+                fill_execs = await executor.fill_immediate_remaining(results)
+                if fill_execs:
+                    all_executions.extend(fill_execs)
+            except Exception as e:
+                logger.warning("auto_trade_manual_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+
+            # Post-scan recheck
+            try:
+                recheck_execs = await executor.post_scan_recheck(results)
+                if recheck_execs:
+                    all_executions.extend(recheck_execs)
+            except Exception as e:
+                logger.warning("auto_trade_manual_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
+
+            # Cleanup unused rules
+            try:
+                await executor.cleanup_unused_rules()
+            except Exception:
+                pass
+
+            # Persist results to DB
+            trade_results = [
+                {"symbol": e.symbol, "side": e.side, "status": e.status,
+                 "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                for e in all_executions
+            ]
+            summaries = executor.get_summaries()
+
+            await db.update_scan(
+                scan_id,
+                auto_trade_results=_json.dumps(trade_results),
+                auto_trade_summaries=_json.dumps(summaries),
+            )
+
+            logger.info("auto_trade_manual_completed", extra={
+                "scan_id": scan_id,
+                "total_executions": len(all_executions),
+                "successful": sum(1 for e in all_executions if e.status == "success"),
+            })
+
+        except Exception:
+            logger.exception("auto_trade_manual_failed", extra={"scan_id": scan_id})
+        finally:
+            _in_flight_auto_trades.discard(scan_id)
+
+    task = asyncio.create_task(_run_auto_trade())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {"status": "started", "scan_id": scan_id}

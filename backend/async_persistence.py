@@ -975,6 +975,17 @@ CREATE TABLE IF NOT EXISTS symbol_sectors (
 CREATE INDEX IF NOT EXISTS idx_ss_sector ON symbol_sectors(sector);
 CREATE INDEX IF NOT EXISTS idx_ss_classified ON symbol_sectors(classified_at)
 """),
+    (37, """
+ALTER TABLE close_rules DROP CONSTRAINT IF EXISTS close_rules_trigger_type_check;
+ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
+    CHECK (trigger_type IN (
+        'BALANCE_BELOW', 'BALANCE_ABOVE',
+        'EQUITY_DROP_PCT', 'EQUITY_DROP_PCT_SMART', 'EQUITY_RISE_PCT',
+        'PNL_BELOW', 'PNL_ABOVE',
+        'BREAKEVEN_TIMEOUT', 'MAX_DURATION',
+        'TRAILING_PROFIT', 'PAUSE_TRADING'
+    ))
+"""),
 ]
 
 
@@ -1408,7 +1419,7 @@ class AsyncAnalysisDB:
             return None
         scan = dict(row)
         results = await self.pool.fetch(
-            "SELECT ticker, run_id, status, direction, confidence, score, "
+            "SELECT id, ticker, run_id, status, direction, confidence, score, "
             "decision_summary, signal_source "
             "FROM scan_results WHERE scan_id=$1 ORDER BY ABS(score) DESC",
             scan_id,
