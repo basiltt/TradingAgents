@@ -1060,6 +1060,7 @@ class ScannerService:
             "score": signal["score"],
             "decision_summary": decision_text[:500] if decision_text else "",
             "signal_source": signal_source,
+            "completed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         }
 
         async with self._lock:

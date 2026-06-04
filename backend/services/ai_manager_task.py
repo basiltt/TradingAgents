@@ -892,7 +892,29 @@ class AIManagerTask:
             except (TypeError, ValueError, ZeroDivisionError):
                 pass
 
-        # Per-symbol cooldown (checked before lock, recorded after lock)
+        # Min profit-to-close ratio: don't close profitable positions too early
+        if not _is_urgent and action_type in ("CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE"):
+            upnl = float(position.get("unrealisedPnl", position.get("unrealized_pnl", 0)) or 0)
+            if upnl > 0 and self._config.min_profit_to_close_ratio > 0:
+                tp_price = position.get("takeProfit")
+                entry_price_s = position.get("avgPrice")
+                size_s = position.get("size")
+                if tp_price and entry_price_s and size_s:
+                    try:
+                        tp_f = float(tp_price)
+                        if tp_f == 0:
+                            raise ValueError("no TP set")
+                        entry_f = float(entry_price_s)
+                        size_f = float(size_s)
+                        max_profit = abs(tp_f - entry_f) * size_f
+                        if max_profit > 0 and upnl < max_profit * self._config.min_profit_to_close_ratio:
+                            self._log.debug(
+                                "Skipping close for %s — profit $%.2f < %.0f%% of TP ($%.2f)",
+                                symbol, upnl, self._config.min_profit_to_close_ratio * 100, max_profit,
+                            )
+                            return
+                    except (ValueError, TypeError, ZeroDivisionError):
+                        pass
         now_mono = time.monotonic()
         last_eval = self._last_eval_symbols.get(symbol, 0.0)
         if now_mono - last_eval < _SYMBOL_COOLDOWN_S:

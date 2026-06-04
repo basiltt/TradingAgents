@@ -287,7 +287,7 @@ class ClosePositionsService:
         if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
             if not reference:
                 reference = datetime.now(timezone.utc).isoformat()
-        elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and not reference:
+        elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART", "EQUITY_RISE_PCT") and not reference:
             wallet = await self._accounts_service.get_wallet(account_id)
             reference = wallet.get("totalEquity", "0")
             if not reference or Decimal(reference) <= 0:
@@ -335,7 +335,7 @@ class ClosePositionsService:
             fields["status"] = data["status"]
 
         new_type = fields.get("trigger_type", rule["trigger_type"])
-        pct_types = {"EQUITY_DROP_PCT", "EQUITY_RISE_PCT"}
+        pct_types = {"EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART", "EQUITY_RISE_PCT"}
 
         effective_threshold = fields.get("threshold_value", rule["threshold_value"])
         if new_type in pct_types and Decimal(effective_threshold) > Decimal("100"):

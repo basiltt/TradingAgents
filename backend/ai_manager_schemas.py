@@ -36,6 +36,7 @@ class AIManagerConfig(BaseModel):
     emergency_equity_drop_pct: float = Field(default=10.0, ge=3.0, le=50.0)
     emergency_pnl_velocity_pct: float = Field(default=5.0, ge=2.0, le=20.0)
     auto_enabled: bool = False
+    min_profit_to_close_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
     # === Enhanced Capabilities ===
     regime_enhanced: bool = True
     mtf_enabled: bool = True
@@ -141,6 +142,7 @@ class AIManagerConfigPatch(BaseModel):
     emergency_equity_drop_pct: Optional[float] = Field(default=None, ge=3.0, le=50.0)
     emergency_pnl_velocity_pct: Optional[float] = Field(default=None, ge=2.0, le=20.0)
     auto_enabled: Optional[bool] = None
+    min_profit_to_close_ratio: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     # === Enhanced Capabilities ===
     regime_enhanced: Optional[bool] = None
     mtf_enabled: Optional[bool] = None

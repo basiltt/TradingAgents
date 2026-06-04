@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
@@ -232,10 +233,11 @@ class AutoTradeExecutor:
                 max_drawdown = state.config.get("max_drawdown_pct", 100)
                 if max_drawdown < 100 and self._close_svc:
                     try:
+                        _drawdown_type = "EQUITY_DROP_PCT_SMART" if state.config.get("smart_drawdown_close") else "EQUITY_DROP_PCT"
                         rule = await self._close_svc.create_rule(
                             account_id=account_id,
                             rule_data={
-                                "trigger_type": "EQUITY_DROP_PCT",
+                                "trigger_type": _drawdown_type,
                                 "threshold_value": str(max_drawdown),
                                 "reference_value": str(state.base_capital),
                             },
@@ -282,6 +284,22 @@ class AutoTradeExecutor:
                         logger.info("auto_trade_max_duration_rule_created", extra={"account_id": account_id, "hours": max_duration_hours})
                     except Exception as e:
                         logger.warning("auto_trade_max_duration_rule_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+                # Trailing profit rule (per-position trailing stop)
+                trailing_pct = state.config.get("trailing_profit_pct")
+                if trailing_pct and trailing_pct > 0 and self._close_svc:
+                    try:
+                        rule = await self._close_svc.create_rule(
+                            account_id=account_id,
+                            rule_data={
+                                "trigger_type": "TRAILING_PROFIT",
+                                "threshold_value": str(trailing_pct),
+                                "reference_value": "0",
+                            },
+                        )
+                        state.created_rule_ids.append(rule.get("id"))
+                        logger.info("auto_trade_trailing_profit_rule_created", extra={"account_id": account_id, "pct": trailing_pct})
+                    except Exception as e:
+                        logger.warning("auto_trade_trailing_profit_rule_failed", extra={"account_id": account_id, "error": str(e)[:200]})
                 rules_created_for.add(account_id)
 
         # Propagate rule IDs and base_capital to sibling configs sharing the same account
@@ -342,7 +360,11 @@ class AutoTradeExecutor:
                 ticker = r.get("ticker", "")
                 if ticker:
                     seen[ticker] = r
-            unique_results = list(seen.values())
+            unique_results = sorted(
+                list(seen.values()),
+                key=lambda r: abs(r.get("score", 0)),
+                reverse=True,
+            )
 
             executions: List[TradeExecution] = []
             traded: set = set()  # (account_id, ticker) pairs already traded
@@ -549,7 +571,11 @@ class AutoTradeExecutor:
             ticker = r.get("ticker", "")
             if ticker:
                 seen[ticker] = r
-        unique_results = list(seen.values())
+        unique_results = sorted(
+            list(seen.values()),
+            key=lambda r: abs(r.get("score", 0)),
+            reverse=True,
+        )
 
         # Snapshot state under lock
         async with self._lock:
@@ -704,10 +730,11 @@ class AutoTradeExecutor:
                         max_drawdown = state.config.get("max_drawdown_pct", 100)
                         if max_drawdown < 100:
                             try:
+                                _dd_type = "EQUITY_DROP_PCT_SMART" if state.config.get("smart_drawdown_close") else "EQUITY_DROP_PCT"
                                 rule = await self._close_svc.create_rule(
                                     account_id=account_id,
                                     rule_data={
-                                        "trigger_type": "EQUITY_DROP_PCT",
+                                        "trigger_type": _dd_type,
                                         "threshold_value": str(max_drawdown),
                                         "reference_value": str(new_balance),
                                     },
@@ -747,6 +774,23 @@ class AutoTradeExecutor:
                                         "trigger_type": "MAX_DURATION",
                                         "threshold_value": str(max_duration_hours),
                                         "reference_value": datetime.now(tz.utc).isoformat(),
+                                    },
+                                )
+                                async with self._lock:
+                                    for s in states:
+                                        s.created_rule_ids.append(rule.get("id"))
+                            except Exception:
+                                pass
+                        # Trailing profit rule
+                        trailing_pct = state.config.get("trailing_profit_pct")
+                        if trailing_pct and trailing_pct > 0:
+                            try:
+                                rule = await self._close_svc.create_rule(
+                                    account_id=account_id,
+                                    rule_data={
+                                        "trigger_type": "TRAILING_PROFIT",
+                                        "threshold_value": str(trailing_pct),
+                                        "reference_value": "0",
                                     },
                                 )
                                 async with self._lock:
@@ -808,9 +852,29 @@ class AutoTradeExecutor:
             return None
         symbol = f"{ticker}USDT" if not ticker.endswith("USDT") else ticker
 
+        blacklist = cfg.get("symbol_blacklist") or []
+        if blacklist and symbol in blacklist:
+            state.trades_skipped += 1
+            return None
+        whitelist = cfg.get("symbol_whitelist") or []
+        if whitelist and symbol not in whitelist:
+            state.trades_skipped += 1
+            return None
+
         if symbol in state.existing_symbols:
             state.trades_skipped += 1
             return None
+
+        max_age = cfg.get("max_signal_age_minutes")
+        if max_age and result.get("completed_at"):
+            try:
+                completed = datetime.fromisoformat(result["completed_at"].replace("Z", "+00:00"))
+                age_minutes = (datetime.now(timezone.utc) - completed).total_seconds() / 60
+                if age_minutes > max_age:
+                    state.trades_skipped += 1
+                    return None
+            except (ValueError, TypeError):
+                pass
 
         if direction == "hold":
             return None

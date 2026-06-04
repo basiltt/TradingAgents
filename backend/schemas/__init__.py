@@ -447,6 +447,11 @@ class AutoTradeConfig(BaseModel):
     breakeven_timeout_hours: Optional[float] = Field(None, gt=0, le=720)
     max_trade_duration_hours: Optional[float] = Field(None, gt=0, le=720)
     ai_manager_enabled: bool = False
+    symbol_blacklist: Optional[List[str]] = None
+    symbol_whitelist: Optional[List[str]] = None
+    max_signal_age_minutes: Optional[int] = Field(None, gt=0, le=1440)
+    smart_drawdown_close: bool = False
+    trailing_profit_pct: Optional[float] = Field(None, gt=0, le=50)
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":
@@ -1051,12 +1056,13 @@ class ScheduleExecutionResponse(BaseModel):
 
 VALID_TRIGGER_TYPES = frozenset([
     "BALANCE_BELOW", "BALANCE_ABOVE",
-    "EQUITY_DROP_PCT", "EQUITY_RISE_PCT",
+    "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART", "EQUITY_RISE_PCT",
     "PNL_BELOW", "PNL_ABOVE",
     "BREAKEVEN_TIMEOUT", "MAX_DURATION",
+    "TRAILING_PROFIT",
 ])
 
-PCT_TRIGGER_TYPES = frozenset(["EQUITY_DROP_PCT", "EQUITY_RISE_PCT"])
+PCT_TRIGGER_TYPES = frozenset(["EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART", "EQUITY_RISE_PCT"])
 
 
 class CreateCloseRuleRequest(BaseModel):

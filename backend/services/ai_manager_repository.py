@@ -164,7 +164,7 @@ class AIManagerRepository:
                 "execution_result = $3 WHERE id = $4 AND timestamp = $5",
                 json.dumps(outcome) if outcome is not None else None,
                 outcome_label,
-                json.dumps(outcome.get("execution_result")) if outcome and outcome.get("execution_result") is not None else None,
+                json.dumps(outcome) if outcome is not None else None,
                 decision_id,
                 decision_timestamp,
             )

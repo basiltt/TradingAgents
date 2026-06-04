@@ -42,6 +42,7 @@ class CloseRuleEvaluator:
         self._ws_eval_locks: dict[str, asyncio.Lock] = {}
         self._rules_cache: dict[str, list] = {}
         self._get_active_trailing: Callable[[], set] = lambda: set()
+        self._trailing_peaks: dict[str, dict[str, float]] = {}  # {account_id: {symbol: peak_pnl}}
 
     def set_trailing_checker(self, fn: Callable[[], set]) -> None:
         """Set a callback that returns currently trailing symbols."""
@@ -171,13 +172,13 @@ class CloseRuleEvaluator:
         if not rules:
             return
 
-        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION")]
+        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING_PROFIT")]
         if not equity_rules:
             return
 
         # Split: drawdown rules get zero debounce, others wait for debounce interval
-        drawdown_rules = [r for r in equity_rules if r["trigger_type"] == "EQUITY_DROP_PCT"]
-        other_rules = [r for r in equity_rules if r["trigger_type"] != "EQUITY_DROP_PCT"]
+        drawdown_rules = [r for r in equity_rules if r["trigger_type"] in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART")]
+        other_rules = [r for r in equity_rules if r["trigger_type"] not in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART")]
 
         # Evaluate drawdown rules immediately (no debounce, skip if lock held)
         if drawdown_rules:
@@ -194,6 +195,15 @@ class CloseRuleEvaluator:
                     await self._evaluate_account_rules_with_data(account_id, other_rules, equity, pnl, balance)
 
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
+        trailing_rules = [r for r in rules if r["trigger_type"] == "TRAILING_PROFIT"]
+        other_rules = [r for r in rules if r["trigger_type"] != "TRAILING_PROFIT"]
+
+        if trailing_rules:
+            await self._evaluate_trailing_profit(account_id, trailing_rules)
+
+        if not other_rules:
+            return
+
         try:
             wallet = await self._accounts_service.get_wallet(account_id)
         except Exception:
@@ -208,7 +218,7 @@ class CloseRuleEvaluator:
             logger.warning("Invalid wallet data for account %s, skipping rules", account_id)
             return
 
-        await self._evaluate_account_rules_with_data(account_id, rules, equity, pnl, balance)
+        await self._evaluate_account_rules_with_data(account_id, other_rules, equity, pnl, balance)
 
     async def _evaluate_account_rules_with_data(
         self, account_id: str, rules: list[dict], equity: Decimal, pnl: Decimal, balance: Decimal
@@ -254,6 +264,21 @@ class CloseRuleEvaluator:
                                 close_kwargs["symbols"] = await self._cycle_repo.get_cycle_trade_symbols(rule["cycle_id"])
                             except Exception:
                                 logger.warning("Failed to get cycle trade symbols for rule %s, closing all", rule["id"])
+                        if rule["trigger_type"] == "EQUITY_DROP_PCT_SMART":
+                            try:
+                                positions = await self._accounts_service.get_positions(account_id)
+                                losing_symbols = [
+                                    p.get("symbol") for p in (positions or [])
+                                    if p.get("symbol") and float(p.get("unrealisedPnl", p.get("unrealized_pnl", 0)) or 0) < 0
+                                ]
+                                if losing_symbols:
+                                    close_kwargs["symbols"] = losing_symbols
+                                else:
+                                    logger.info("Smart drawdown rule %s: no losing positions, resetting baseline", rule["id"])
+                                    await self._db.update_close_rule(rule["id"], status="active", reference_value=str(equity))
+                                    continue
+                            except Exception:
+                                logger.warning("Smart drawdown: failed to get positions for %s, closing all", account_id)
                         result = await self._close_service.close_all_for_rule(account_id, rule["id"], **close_kwargs)
                         if result.get("skipped"):
                             logger.info("Close skipped for rule %s (concurrent close), reverting to active", rule["id"])
@@ -262,15 +287,17 @@ class CloseRuleEvaluator:
                             logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")
                             self._rule_failures.pop(rule["id"], None)
-                            cleared = await self._db.deactivate_rules_for_account(account_id, exclude_rule_id=rule["id"])
-                            if cleared:
-                                logger.info("Deactivated %d remaining rules for account %s after rule %s executed", cleared, account_id, rule["id"])
+                            if rule["trigger_type"] != "EQUITY_DROP_PCT_SMART":
+                                cleared = await self._db.deactivate_rules_for_account(account_id, exclude_rule_id=rule["id"])
+                                if cleared:
+                                    logger.info("Deactivated %d remaining rules for account %s after rule %s executed", cleared, account_id, rule["id"])
                             if self._cycle_callback and rule.get("cycle_id"):
                                 try:
                                     await self._cycle_callback(rule)
                                 except Exception:
                                     logger.exception("Cycle callback failed for rule %s", rule["id"])
-                            break  # all other rules deactivated, stop evaluating this account
+                            if rule["trigger_type"] != "EQUITY_DROP_PCT_SMART":
+                                break  # all other rules deactivated, stop evaluating this account
                     except asyncio.CancelledError:
                         logger.warning("Close cancelled (timeout) for rule %s, reverting to active", rule["id"])
                         await self._db.update_close_rule(rule["id"], status="active")
@@ -301,6 +328,10 @@ class CloseRuleEvaluator:
         if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
             return self._check_time_elapsed(rule)
 
+        # TRAILING_PROFIT handled separately in _evaluate_trailing_profit
+        if trigger_type == "TRAILING_PROFIT":
+            return False
+
         threshold = Decimal(rule["threshold_value"])
         reference = Decimal(rule["reference_value"]) if rule.get("reference_value") else None
 
@@ -312,7 +343,7 @@ class CloseRuleEvaluator:
             return pnl <= -threshold
         elif trigger_type == "PNL_ABOVE":
             return pnl >= threshold
-        elif trigger_type == "EQUITY_DROP_PCT":
+        elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"):
             if not reference or reference == 0:
                 return False
             drop_pct = ((reference - equity) / reference) * Decimal("100")
@@ -325,6 +356,64 @@ class CloseRuleEvaluator:
 
         logger.warning("unknown_trigger_type", extra={"trigger_type": trigger_type, "rule_id": rule.get("id")})
         return False
+
+    async def _evaluate_trailing_profit(self, account_id: str, rules: list[dict]) -> None:
+        """Per-position trailing stop: close individual positions that drop from peak profit."""
+        try:
+            positions = await self._accounts_service.get_positions(account_id)
+        except Exception:
+            logger.debug("Cannot fetch positions for trailing profit eval, account %s", account_id)
+            return
+        if not positions:
+            return
+
+        account_peaks = self._trailing_peaks.setdefault(account_id, {})
+        _TRAIL_RATIO = 0.5  # Close when profit drops below 50% of peak
+        actively_trailing = self._get_active_trailing()
+
+        for rule in rules:
+            activation_pct = float(rule.get("threshold_value", 2.0))
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                if not symbol or symbol in actively_trailing:
+                    continue
+                upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)) or 0)
+                entry_price = float(pos.get("avgPrice", 0) or 0)
+                mark_price = float(pos.get("markPrice", 0) or 0)
+                if entry_price <= 0 or mark_price <= 0:
+                    continue
+
+                profit_pct = abs(mark_price - entry_price) / entry_price * 100
+                if upnl <= 0:
+                    account_peaks.pop(symbol, None)
+                    continue
+                if profit_pct < activation_pct:
+                    continue  # Profitable but below activation — don't clear peak
+
+                prev_peak = account_peaks.get(symbol, 0.0)
+                if upnl > prev_peak:
+                    account_peaks[symbol] = upnl
+                    continue
+
+                peak = account_peaks[symbol]
+                if peak > 0 and upnl < peak * _TRAIL_RATIO:
+                    logger.info(
+                        "Trailing profit triggered for %s on account %s: current=$%.2f, peak=$%.2f",
+                        symbol, account_id, upnl, peak,
+                    )
+                    try:
+                        await self._close_service.close_all_for_rule(
+                            account_id, rule["id"], symbols=[symbol]
+                        )
+                        account_peaks.pop(symbol, None)
+                    except Exception:
+                        logger.exception("Failed to close %s via trailing profit", symbol)
+
+        # Prune peaks for positions that no longer exist
+        current_symbols = {p.get("symbol") for p in positions}
+        stale = [s for s in account_peaks if s not in current_symbols]
+        for s in stale:
+            del account_peaks[s]
 
     def _check_time_elapsed(self, rule: dict) -> bool:
         """Check if elapsed time since reference_value exceeds threshold_value hours."""
