@@ -563,7 +563,8 @@ class AutoTradeExecutor:
             if state.drawdown_rule_id:
                 account_rules[aid].add(state.drawdown_rule_id)
             for rid in state.created_rule_ids:
-                account_rules[aid].add(rid)
+                if rid:
+                    account_rules[aid].add(rid)
 
         # Delete rules only for accounts with zero total trades
         for aid, has_trades in account_has_trades.items():
@@ -700,6 +701,30 @@ class AutoTradeExecutor:
                     continue
 
                 if new_balance <= 0:
+                    continue
+
+                # Check for AI PAUSE_TRADING rule before deleting rules
+                paused = False
+                if self._close_svc:
+                    try:
+                        active_rules = await self._close_svc.list_rules(account_id)
+                        for rule in active_rules:
+                            if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
+                                ref_str = rule.get("reference_value", "")
+                                hours = float(rule.get("threshold_value", 0))
+                                ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                                if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                                    paused = True
+                                    break
+                                else:
+                                    await self._close_svc.delete_rule(account_id, rule["id"])
+                    except Exception:
+                        pass
+                if paused:
+                    async with self._lock:
+                        for state in states:
+                            state.stopped = True
+                            state.stopped_reason = "ai_paused_trading"
                     continue
 
                 # Delete old rules and create fresh ones

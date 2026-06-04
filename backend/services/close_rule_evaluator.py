@@ -135,6 +135,7 @@ class CloseRuleEvaluator:
         self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
         self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids}
         self._rules_cache = {k: v for k, v in self._rules_cache.items() if k in active_account_ids}
+        self._trailing_peaks = {k: v for k, v in self._trailing_peaks.items() if k in active_account_ids}
 
     async def on_wallet_update(self, account_id: str, wallet_data: dict) -> None:
         """Evaluate equity-based rules instantly on WS wallet event.
@@ -242,11 +243,12 @@ class CloseRuleEvaluator:
 
                     # BREAKEVEN_TIMEOUT: modify TP instead of closing
                     if rule["trigger_type"] == "BREAKEVEN_TIMEOUT":
-                        # Skip if symbol is actively trailing
+                        # Skip if symbol is actively trailing — reset back to active
                         trailing_symbols = self._get_active_trailing()
                         rule_symbol = rule.get("symbol", "")
                         if rule_symbol in trailing_symbols:
-                            logger.info("Skipping BREAKEVEN_TIMEOUT rule %s — symbol %s actively trailing", rule["id"], rule_symbol)
+                            logger.info("Skipping BREAKEVEN_TIMEOUT rule %s — symbol %s actively trailing, resetting to active", rule["id"], rule_symbol)
+                            await self._db.update_close_rule(rule["id"], status="active")
                             continue
                         try:
                             await self._handle_breakeven_timeout(account_id, rule)

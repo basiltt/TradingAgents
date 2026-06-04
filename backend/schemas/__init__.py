@@ -1143,7 +1143,7 @@ class UpdateCloseRuleRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_pct_bounds(self) -> "UpdateCloseRuleRequest":
-        if self.trigger_type and self.trigger_type in ("EQUITY_DROP_PCT", "EQUITY_RISE_PCT") and self.threshold_value:
+        if self.trigger_type and self.trigger_type in PCT_TRIGGER_TYPES and self.threshold_value:
             from decimal import Decimal as D
             val = D(self.threshold_value)
             if val > D("100"):
