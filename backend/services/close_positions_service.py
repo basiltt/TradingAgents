@@ -195,6 +195,16 @@ class ClosePositionsService:
                     qty=pos["size"],
                     position_idx=pos.get("positionIdx", 0),
                 )
+                # Verify fill confirmation — if poll exhausted, cumExecQty will be None
+                if not result.get("cumExecQty"):
+                    logger.warning("close_position_unconfirmed", extra={"symbol": pos["symbol"], "orderId": result.get("orderId")})
+                    return {
+                        "symbol": pos["symbol"],
+                        "side": pos["side"],
+                        "status": "failed",
+                        "error": "Order submitted but fill not confirmed",
+                        "orderId": result.get("orderId", ""),
+                    }
                 return {
                     "symbol": pos["symbol"],
                     "side": pos["side"],

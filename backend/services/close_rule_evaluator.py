@@ -276,7 +276,11 @@ class CloseRuleEvaluator:
                                 if losing_symbols:
                                     close_kwargs["symbols"] = losing_symbols
                                 else:
-                                    logger.info("Smart drawdown rule %s: no losing positions, resetting baseline", rule["id"])
+                                    # No losers: reset reference to current equity to prevent
+                                    # immediate re-trigger. Note: this can only lower the reference
+                                    # when equity dropped without any single position being negative
+                                    # (e.g., after a previous SMART close realized losses).
+                                    logger.info("Smart drawdown rule %s: no losing positions, resetting baseline to %.2f", rule["id"], float(equity))
                                     await self._db.update_close_rule(rule["id"], status="active", reference_value=str(equity))
                                     continue
                             except Exception:
@@ -387,7 +391,8 @@ class CloseRuleEvaluator:
                 upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)) or 0)
                 entry_price = float(pos.get("avgPrice", 0) or 0)
                 mark_price = float(pos.get("markPrice", 0) or 0)
-                if entry_price <= 0 or mark_price <= 0:
+                size = float(pos.get("size", 0) or 0)
+                if entry_price <= 0 or mark_price <= 0 or size <= 0:
                     continue
 
                 profit_pct = abs(mark_price - entry_price) / entry_price * 100
@@ -397,16 +402,18 @@ class CloseRuleEvaluator:
                 if profit_pct < activation_pct:
                     continue  # Profitable but below activation — don't clear peak
 
+                # Track per-unit PnL to be immune to partial closes by user
+                per_unit_pnl = upnl / size
                 prev_peak = account_peaks.get(symbol, 0.0)
-                if upnl > prev_peak:
-                    account_peaks[symbol] = upnl
+                if per_unit_pnl > prev_peak:
+                    account_peaks[symbol] = per_unit_pnl
                     continue
 
                 peak = account_peaks[symbol]
-                if peak > 0 and upnl < peak * _TRAIL_RATIO:
+                if peak > 0 and per_unit_pnl < peak * _TRAIL_RATIO:
                     logger.info(
-                        "Trailing profit triggered for %s on account %s: current=$%.2f, peak=$%.2f",
-                        symbol, account_id, upnl, peak,
+                        "Trailing profit triggered for %s on account %s: per_unit=$%.4f, peak=$%.4f",
+                        symbol, account_id, per_unit_pnl, peak,
                     )
                     try:
                         await self._close_service.close_all_for_rule(
