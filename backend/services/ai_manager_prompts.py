@@ -175,6 +175,7 @@ def build_context_prompt(
     trigger_reason: Optional[str] = None,
     trigger_symbol: Optional[str] = None,
     queue_remaining: Optional[List[Dict[str, str]]] = None,
+    trailing_symbols: Optional[set] = None,
 ) -> str:
     """Build user context prompt with all available data."""
     regime = validate_regime(regime)
@@ -247,6 +248,9 @@ def build_context_prompt(
             pass
 
         parts.append(line)
+
+    if trailing_symbols:
+        parts.append(f"\nSymbols under trailing stop management (do NOT recommend ADJUST_TP_SL for these): {', '.join(sorted(trailing_symbols))}")
 
     # Indicators (enriched)
     if indicators:

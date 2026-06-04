@@ -23,6 +23,7 @@ POLL_INTERVAL_SECONDS = 30
 COOLDOWN_SECONDS = 60
 MAX_CONSECUTIVE_FAILURES = 3
 MISSED_ONCE_WINDOW_HOURS = 24
+SCAN_TIMEOUT_SECONDS = 7200
 MIN_INTERVAL_MINUTES = 15
 MIN_CRON_INTERVAL_SECONDS = 900
 SENTINEL_STALE_SECONDS = 120
@@ -452,6 +453,27 @@ class ScanSchedulerService:
                     await self._db.update_scheduled_scan(schedule_id, updates)
 
                 completed.append(schedule_id)
+            else:
+                # Timeout: cancel scan if running longer than SCAN_TIMEOUT_SECONDS
+                started_at = scan.get("started_at") or scan.get("created_at")
+                if started_at:
+                    try:
+                        start_dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+                        elapsed = (datetime.now(timezone.utc) - start_dt).total_seconds()
+                        if elapsed > SCAN_TIMEOUT_SECONDS:
+                            logger.warning("Scan %s timed out (%.0fs > %ds), cancelling", scan.get("id"), elapsed, SCAN_TIMEOUT_SECONDS)
+                            try:
+                                await self._scanner.cancel_scan(scan["id"])
+                            except Exception:
+                                pass
+                            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                            await self._db.update_schedule_execution(
+                                exec_id,
+                                {"status": "failed", "completed_at": now, "error_message": f"Scan timed out after {int(elapsed)}s"},
+                            )
+                            completed.append(schedule_id)
+                    except (ValueError, TypeError):
+                        pass
 
         for sid in completed:
             self._in_flight.pop(sid, None)
