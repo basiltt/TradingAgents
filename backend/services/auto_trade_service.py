@@ -1041,6 +1041,25 @@ class AutoTradeExecutor:
 
             return execution
 
+        except asyncio.TimeoutError:
+            # Order may have been submitted to exchange before timeout.
+            # Add to existing_symbols to prevent duplicate trade on same symbol.
+            state.existing_symbols.add(symbol)
+            execution = TradeExecution(
+                account_id=account_id,
+                symbol=symbol,
+                side=direction,
+                status="failed",
+                error="place_trade timeout (30s) — position may exist on exchange",
+            )
+            state.trades_failed += 1
+            state.executions.append(execution)
+            logger.error("auto_trade_timeout_phantom_risk", extra={
+                "account_id": account_id, "symbol": symbol,
+                "msg": "Trade may have opened on exchange without rules. Check positions.",
+            })
+            return execution
+
         except Exception as e:
             execution = TradeExecution(
                 account_id=account_id,

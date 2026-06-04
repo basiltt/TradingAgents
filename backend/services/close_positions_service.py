@@ -195,8 +195,9 @@ class ClosePositionsService:
                     qty=pos["size"],
                     position_idx=pos.get("positionIdx", 0),
                 )
-                # Verify fill confirmation — if poll exhausted, cumExecQty will be None
-                if not result.get("cumExecQty"):
+                # Verify fill confirmation — if poll exhausted, cumExecQty will be None or "0"
+                cum_qty = float(result.get("cumExecQty") or 0)
+                if cum_qty <= 0:
                     logger.warning("close_position_unconfirmed", extra={"symbol": pos["symbol"], "orderId": result.get("orderId")})
                     return {
                         "symbol": pos["symbol"],

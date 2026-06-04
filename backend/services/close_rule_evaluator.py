@@ -405,6 +405,11 @@ class CloseRuleEvaluator:
                 # Track per-unit PnL to be immune to partial closes by user
                 per_unit_pnl = upnl / size
                 prev_peak = account_peaks.get(symbol, 0.0)
+                # Guard against stale peaks from pre-migration data (absolute $ vs per-unit)
+                # If peak is >100x current per_unit, it's clearly stale data — reset
+                if prev_peak > 0 and per_unit_pnl > 0 and prev_peak > per_unit_pnl * 100:
+                    account_peaks[symbol] = per_unit_pnl
+                    continue
                 if per_unit_pnl > prev_peak:
                     account_peaks[symbol] = per_unit_pnl
                     continue
