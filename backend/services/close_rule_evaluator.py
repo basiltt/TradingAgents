@@ -134,6 +134,7 @@ class CloseRuleEvaluator:
         self._rule_failures = {k: v for k, v in self._rule_failures.items() if k in active_ids}
         active_account_ids = set(accounts.keys())
         self._last_ws_eval = {k: v for k, v in self._last_ws_eval.items() if k in active_account_ids}
+        self._last_ws_equity = {k: v for k, v in self._last_ws_equity.items() if k in active_account_ids}
         self._ws_eval_locks = {k: v for k, v in self._ws_eval_locks.items() if k in active_account_ids}
         self._rules_cache = {k: v for k, v in self._rules_cache.items() if k in active_account_ids}
         self._trailing_peaks = {k: v for k, v in self._trailing_peaks.items() if k in active_account_ids}
