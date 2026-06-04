@@ -161,7 +161,7 @@ class AutoTradeExecutor:
                 logger.warning("auto_trade_account_deleted", extra={"account_id": account_id})
                 continue
             # Check for AI PAUSE_TRADING rule
-            if self._close_svc and state.config.get("ai_manager_enabled"):
+            if self._close_svc:
                 try:
                     active_rules = await self._close_svc.list_rules(account_id)
                     for rule in active_rules:
@@ -174,9 +174,9 @@ class AutoTradeExecutor:
                                 state.stopped_reason = "ai_paused_trading"
                                 break
                             else:
-                                await self._close_svc._db.update_close_rule(rule["id"], status="expired")
-                except Exception:
-                    pass
+                                await self._close_svc.update_rule(account_id, rule["id"], {"status": "expired"})
+                except Exception as e:
+                    logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
             if state.stopped:
                 continue
             # Check positions if skip_if_positions_open is enabled
@@ -904,8 +904,10 @@ class AutoTradeExecutor:
 
         max_same_dir = cfg.get("max_same_direction")
         if max_same_dir:
-            norm_dir = "short" if direction in ("short", "sell") else "long"
-            same_dir_count = sum(1 for d in state.position_directions.values() if d == norm_dir)
+            is_reverse = cfg.get("direction") == "reverse"
+            signal_dir = "short" if direction in ("short", "sell") else "long"
+            actual_dir = ("long" if signal_dir == "short" else "short") if is_reverse else signal_dir
+            same_dir_count = sum(1 for d in state.position_directions.values() if d == actual_dir)
             if same_dir_count >= max_same_dir:
                 state.trades_skipped += 1
                 return None
@@ -976,7 +978,9 @@ class AutoTradeExecutor:
             state.trades_executed += 1
             state.executions.append(execution)
             state.existing_symbols.add(symbol)
-            state.position_directions[symbol] = "short" if direction in ("short", "sell") else "long"
+            _is_rev = cfg.get("direction") == "reverse"
+            _sig_dir = "short" if direction in ("short", "sell") else "long"
+            state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
             logger.info("auto_trade_executed", extra={
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
