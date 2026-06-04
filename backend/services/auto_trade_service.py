@@ -174,7 +174,7 @@ class AutoTradeExecutor:
                                 state.stopped_reason = "ai_paused_trading"
                                 break
                             else:
-                                await self._close_svc.update_rule(account_id, rule["id"], {"status": "expired"})
+                                await self._close_svc.delete_rule(account_id, rule["id"])
                 except Exception as e:
                     logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
             if state.stopped:
@@ -719,6 +719,7 @@ class AutoTradeExecutor:
                         state.trades_skipped = 0
                         state.base_capital = new_balance
                         state.existing_symbols = set()
+                        state.position_directions = {}
                         state.executions = []
                         state.close_rule_id = None
                         state.drawdown_rule_id = None
