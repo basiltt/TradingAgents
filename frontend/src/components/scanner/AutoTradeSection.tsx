@@ -33,6 +33,11 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   breakeven_timeout_hours: null,
   max_trade_duration_hours: null,
   ai_manager_enabled: false,
+  symbol_blacklist: null,
+  symbol_whitelist: null,
+  max_signal_age_minutes: null,
+  smart_drawdown_close: false,
+  trailing_profit_pct: null,
 };
 
 const SEGMENT_CONTAINER_CLASS = "grid grid-cols-2 gap-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 shadow-[var(--neu-shadow-inset)] border-none";
@@ -487,7 +492,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
 
         <div className={SECTION_CLASS}>
           <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Signal filters</div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Min score</Label>
               <Input
@@ -528,11 +533,52 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Max signal age</Label>
+              <Input
+                type="number"
+                min={1}
+                max={1440}
+                value={config.max_signal_age_minutes ?? ""}
+                onChange={(e) => onChange({ max_signal_age_minutes: e.target.value ? Math.min(1440, Math.max(1, parseInt(e.target.value))) : null })}
+                className="mt-2"
+                placeholder="e.g. 90"
+              />
+              <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Skip signals older than this (minutes). Blank = disabled.</p>
+            </div>
           </div>
 
           <p className="mt-4 text-[11px] leading-5 text-[var(--neu-text-muted)]">
             Higher thresholds reduce noise and route fewer, stronger trades.
           </p>
+        </div>
+
+        <div className={SECTION_CLASS}>
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--neu-text-muted)]">Symbol filters</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Blacklist</Label>
+              <Input
+                type="text"
+                value={(config.symbol_blacklist || []).join(", ")}
+                onChange={(e) => onChange({ symbol_blacklist: e.target.value ? e.target.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) : null })}
+                className="mt-2"
+                placeholder="e.g. BIGTIMEUSDT, SOXLUSDT"
+              />
+              <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Never trade these symbols. Comma-separated, full symbol (e.g. BTCUSDT).</p>
+            </div>
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Whitelist</Label>
+              <Input
+                type="text"
+                value={(config.symbol_whitelist || []).join(", ")}
+                onChange={(e) => onChange({ symbol_whitelist: e.target.value ? e.target.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) : null })}
+                className="mt-2"
+                placeholder="e.g. BTCUSDT, ETHUSDT"
+              />
+              <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Only trade these symbols. Leave blank for all.</p>
+            </div>
+          </div>
         </div>
 
         <div className={SECTION_CLASS}>
@@ -590,9 +636,17 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
 
           <div className="mt-4 space-y-3">
             {config.max_drawdown_pct < 100 ? (
-              <Notice tone="warning" icon={<TriangleAlert className="size-4 text-current" />}>
-                A {config.max_drawdown_pct}% equity drop rule is created on this account when the scan starts. Review it later in Account → Close Rules.
-              </Notice>
+              <>
+                <Notice tone="warning" icon={<TriangleAlert className="size-4 text-current" />}>
+                  A {config.max_drawdown_pct}% equity drop rule is created on this account when the scan starts. Review it later in Account → Close Rules.
+                </Notice>
+                <ToggleRow
+                  checked={config.smart_drawdown_close ?? false}
+                  onChange={(checked) => onChange({ smart_drawdown_close: checked })}
+                  title="Smart drawdown (close only losers)"
+                  description="When drawdown triggers, only close losing positions. Winners keep running."
+                />
+              </>
             ) : null}
             {config.target_goal_type === "profit_pct" && config.target_goal_value ? (
               <Notice tone="success" icon={<ShieldCheck className="size-4 text-current" />}>
@@ -647,6 +701,28 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
               })}
               title="Trade duration limits"
               description="Auto-adjust or close trades based on how long they've been open."
+            />
+            <ToggleRow
+              checked={config.trailing_profit_pct != null && config.trailing_profit_pct > 0}
+              onChange={(checked) => onChange({ trailing_profit_pct: checked ? 2.0 : null })}
+              title="Trailing profit stop"
+              description="Once a position gains the activation %, track peak profit and close if it drops 50% from peak."
+              trailing={
+                config.trailing_profit_pct != null && config.trailing_profit_pct > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={0.5}
+                      max={50}
+                      step={0.5}
+                      value={config.trailing_profit_pct}
+                      onChange={(e) => onChange({ trailing_profit_pct: parseFloat(e.target.value) || 2.0 })}
+                      className="h-10 w-20 text-center"
+                    />
+                    <span className="text-[11px] text-[var(--neu-text-muted)]">%</span>
+                  </div>
+                ) : null
+              }
             />
             <ToggleRow
               checked={config.ai_manager_enabled ?? false}

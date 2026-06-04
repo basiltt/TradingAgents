@@ -257,6 +257,11 @@ export interface AutoTradeConfig {
   breakeven_timeout_hours?: number | null;
   max_trade_duration_hours?: number | null;
   ai_manager_enabled?: boolean;
+  symbol_blacklist?: string[] | null;
+  symbol_whitelist?: string[] | null;
+  max_signal_age_minutes?: number | null;
+  smart_drawdown_close?: boolean;
+  trailing_profit_pct?: number | null;
 }
 
 export interface ScanRequest {
