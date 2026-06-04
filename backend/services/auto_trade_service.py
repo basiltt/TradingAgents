@@ -942,8 +942,10 @@ class AutoTradeExecutor:
         # Apply filters (skipped in relaxed/fill mode)
         signal_sides = cfg.get("signal_sides", "both")
         if signal_sides != "both":
-            normalized_side = {"long": "buy", "short": "sell"}.get(signal_sides, signal_sides)
-            if normalized_side != direction:
+            _norm = {"long": "buy", "short": "sell", "Long": "buy", "Short": "sell"}
+            normalized_side = _norm.get(signal_sides, signal_sides)
+            normalized_dir = _norm.get(direction, direction)
+            if normalized_side != normalized_dir:
                 return None
 
         if not relaxed:
@@ -1043,8 +1045,11 @@ class AutoTradeExecutor:
 
         except asyncio.TimeoutError:
             # Order may have been submitted to exchange before timeout.
-            # Add to existing_symbols to prevent duplicate trade on same symbol.
+            # Add to existing_symbols AND position_directions to prevent duplicate/excess trades.
             state.existing_symbols.add(symbol)
+            _is_rev = cfg.get("direction") == "reverse"
+            _sig_dir = "short" if direction in ("short", "sell") else "long"
+            state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
             execution = TradeExecution(
                 account_id=account_id,
                 symbol=symbol,

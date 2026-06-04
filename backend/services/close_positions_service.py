@@ -99,7 +99,7 @@ class ClosePositionsService:
 
             # Delete ALL close rules for this account (user explicitly closed everything)
             try:
-                await self._db.delete_all_rules_for_account(account_id)
+                await self._db.delete_all_rules_for_account(account_id, preserve_pause=True)
             except Exception:
                 logger.warning("failed_to_cleanup_rules_after_close_all", extra={"account_id": account_id})
 
