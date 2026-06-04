@@ -22,6 +22,13 @@ NEW_FIELDS = {
     "max_same_direction": 3,
     "symbol_blacklist": ["BIGTIMEUSDT", "PLAYSOUTUSDT", "SOXLUSDT", "SPXUSDT", "POWERUSDT"],
     "target_goal_value": 8,
+    # New fields from 2026-06-04 implementation session
+    "max_price_drift_pct": 3.0,
+    "max_same_sector": 2,
+    "adaptive_blacklist_enabled": True,
+    "adaptive_blacklist_min_trades": 5,
+    "adaptive_blacklist_max_win_rate": 30.0,
+    "adaptive_blacklist_lookback_hours": 48,
 }
 
 
@@ -60,6 +67,9 @@ def main():
         print(f"  smart_drawdown_close={sample.get('smart_drawdown_close')}")
         print(f"  trailing_profit_pct={sample.get('trailing_profit_pct')}")
         print(f"  max_signal_age_minutes={sample.get('max_signal_age_minutes')}")
+        print(f"  max_price_drift_pct={sample.get('max_price_drift_pct')}")
+        print(f"  max_same_sector={sample.get('max_same_sector')}")
+        print(f"  adaptive_blacklist_enabled={sample.get('adaptive_blacklist_enabled')}")
     else:
         print(f"FAILED: {json.dumps(result)[:500]}")
         sys.exit(1)
