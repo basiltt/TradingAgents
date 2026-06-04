@@ -151,6 +151,14 @@ class PositionReconciler:
                     "ORPHAN_POSITION_DETECTED: %s %s on account %s — %d exchange position(s) with no DB trade. Manual intervention required.",
                     side, symbol, account_id, orphan_count,
                 )
+                if self._ws:
+                    try:
+                        await self._ws.broadcast_to_account(account_id, "orphan_position_detected", {
+                            "symbol": symbol, "side": side, "count": orphan_count,
+                            "message": f"{orphan_count} {side} {symbol} position(s) on exchange with no DB trade record. Manual intervention required.",
+                        })
+                    except Exception:
+                        pass
 
         if not all_to_process:
             return
