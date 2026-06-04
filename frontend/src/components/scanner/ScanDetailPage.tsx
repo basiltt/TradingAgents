@@ -372,7 +372,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             {isCrypto && scan.status === "completed" && (
               <button
                 onClick={() => autoTradeMutation.mutate()}
-                disabled={isAutoTrading || autoTradeMutation.isPending || (scan.auto_trade_results && scan.auto_trade_results.length > 0)}
+                disabled={isAutoTrading || autoTradeMutation.isPending}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[var(--neu-radius-pill)] text-sm font-medium bg-[var(--neu-success)] text-white hover:brightness-110 shadow-[var(--neu-shadow-pill)] transition-all border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isAutoTrading || autoTradeMutation.isPending ? (
@@ -385,7 +385,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 )}
-                {isAutoTrading ? "Executing Trades..." : scan.auto_trade_results && scan.auto_trade_results.length > 0 ? "Trades Executed" : "Auto Trade"}
+                {isAutoTrading ? "Executing Trades..." : "Auto Trade"}
               </button>
             )}
             <button

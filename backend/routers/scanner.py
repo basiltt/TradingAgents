@@ -164,14 +164,9 @@ async def trigger_auto_trade(request: Request, scan_id: str):
         raise HTTPException(status_code=400, detail="Scan is not completed")
 
     # Check existing auto_trade_results (prevent double-execution)
-    existing_results = scan.get("auto_trade_results")
-    if isinstance(existing_results, str):
-        try:
-            existing_results = _json.loads(existing_results)
-        except (ValueError, TypeError):
-            existing_results = []
-    if existing_results:
-        raise HTTPException(status_code=409, detail="Auto trade already executed for this scan")
+    # Note: re-execution is allowed — the executor's built-in guards
+    # (existing_symbols, skip_if_positions_open) prevent actual duplicate trades.
+    # Results are overwritten with the latest execution.
 
     # Extract auto_trade_configs from stored config
     config = scan.get("config", {})
