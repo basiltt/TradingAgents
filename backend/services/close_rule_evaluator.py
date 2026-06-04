@@ -298,8 +298,15 @@ class CloseRuleEvaluator:
                             logger.info("Close skipped for rule %s (concurrent close), reverting to active", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="active")
                         elif result.get("failed", 0) > 0 and result.get("closed", 0) == 0:
-                            logger.warning("Rule %s: all closes failed (%d), reverting to active for retry", rule["id"], result["failed"])
-                            await self._db.update_close_rule(rule["id"], status="active")
+                            # All closes failed — increment failure counter, pause after MAX_RULE_FAILURES
+                            fail_count = self._rule_failures.get(rule["id"], 0) + 1
+                            self._rule_failures[rule["id"]] = fail_count
+                            if fail_count >= MAX_RULE_FAILURES:
+                                logger.error("Rule %s: %d consecutive all-fail results, pausing", rule["id"], fail_count)
+                                await self._db.update_close_rule(rule["id"], status="paused")
+                            else:
+                                logger.warning("Rule %s: all closes failed (%d), attempt %d/%d, reverting to active", rule["id"], result["failed"], fail_count, MAX_RULE_FAILURES)
+                                await self._db.update_close_rule(rule["id"], status="active")
                         else:
                             if result.get("failed", 0) > 0:
                                 logger.warning("Rule %s: partial close — %d closed, %d failed for account %s", rule["id"], result.get("closed", 0), result["failed"], account_id)

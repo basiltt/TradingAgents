@@ -64,6 +64,7 @@ class TrailingState:
         self._suspended = False
         self._mini_llm_failures = 0
         self._consecutive_api_failures = 0
+        self._consecutive_stale_ticks = 0
         self._started_at = 0.0
         self._task: Optional[asyncio.Task] = None
         self._last_set_sl: Optional[float] = initial_sl
@@ -130,8 +131,14 @@ class TrailingState:
 
         pos_updated_at = position.get("_ws_updated_at", 0.0)
         if pos_updated_at and (time.time() - pos_updated_at) > self._params.staleness_threshold_s:
-            self._log.warning("Stale WS data (%.0fs old), skipping tick", time.time() - pos_updated_at)
+            self._consecutive_stale_ticks += 1
+            if self._consecutive_stale_ticks >= 3:
+                self._log.error("3 consecutive stale ticks, cancelling trailing — handing back to rule evaluator")
+                self._cancelled = True
+                return
+            self._log.warning("Stale WS data (%.0fs old), skipping tick (%d/3)", time.time() - pos_updated_at, self._consecutive_stale_ticks)
             return
+        self._consecutive_stale_ticks = 0
 
         price = self._get_mark_price(position)
         if price is None or price <= 0:

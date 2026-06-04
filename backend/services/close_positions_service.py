@@ -216,6 +216,18 @@ class ClosePositionsService:
                     "cumExecQty": result.get("cumExecQty"),
                 }
             except BybitAPIError as e:
+                # 110025: position already closed — treat as success (desired outcome achieved)
+                if e.ret_code == 110025:
+                    logger.info("close_position_already_gone", extra={"symbol": pos["symbol"]})
+                    return {
+                        "symbol": pos["symbol"],
+                        "side": pos["side"],
+                        "status": "closed",
+                        "orderId": "",
+                        "avgPrice": None,
+                        "cumExecFee": None,
+                        "cumExecQty": pos["size"],
+                    }
                 logger.warning("close_position_failed", extra={"symbol": pos["symbol"], "ret_code": e.ret_code, "ret_msg": e.ret_msg})
                 return {
                     "symbol": pos["symbol"],

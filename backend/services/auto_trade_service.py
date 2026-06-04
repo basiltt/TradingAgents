@@ -168,13 +168,20 @@ class AutoTradeExecutor:
                         if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
                             ref_str = rule.get("reference_value", "")
                             hours = float(rule.get("threshold_value", 0))
-                            ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-                            if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                            try:
+                                ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                                if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                                    state.stopped = True
+                                    state.stopped_reason = "ai_paused_trading"
+                                    break
+                                else:
+                                    await self._close_svc.delete_rule(account_id, rule["id"])
+                            except (ValueError, TypeError):
+                                # Fail-closed: unparseable pause rule = stay paused (safety)
                                 state.stopped = True
                                 state.stopped_reason = "ai_paused_trading"
+                                logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id, "ref": ref_str[:50]})
                                 break
-                            else:
-                                await self._close_svc.delete_rule(account_id, rule["id"])
                 except Exception as e:
                     logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
             if state.stopped:
@@ -712,12 +719,17 @@ class AutoTradeExecutor:
                             if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
                                 ref_str = rule.get("reference_value", "")
                                 hours = float(rule.get("threshold_value", 0))
-                                ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-                                if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                                try:
+                                    ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                                    if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                                        paused = True
+                                        break
+                                    else:
+                                        await self._close_svc.delete_rule(account_id, rule["id"])
+                                except (ValueError, TypeError):
                                     paused = True
+                                    logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id})
                                     break
-                                else:
-                                    await self._close_svc.delete_rule(account_id, rule["id"])
                     except Exception:
                         pass
                 if paused:

@@ -141,6 +141,17 @@ class PositionReconciler:
         # Backfill trades are already closed but need PnL data
         all_to_process = stale_trades + backfill_trades
 
+        # Reverse pass: detect orphan positions (exchange position with no DB trade)
+        for key, count in position_counts.items():
+            db_count = len(trade_groups.get(key, []))
+            orphan_count = count - db_count
+            if orphan_count > 0:
+                symbol, side = key
+                logger.error(
+                    "ORPHAN_POSITION_DETECTED: %s %s on account %s — %d exchange position(s) with no DB trade. Manual intervention required.",
+                    side, symbol, account_id, orphan_count,
+                )
+
         if not all_to_process:
             return
 
