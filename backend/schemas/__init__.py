@@ -452,6 +452,8 @@ class AutoTradeConfig(BaseModel):
     max_signal_age_minutes: Optional[int] = Field(None, gt=0, le=1440)
     smart_drawdown_close: bool = False
     trailing_profit_pct: Optional[float] = Field(None, gt=0, le=50)
+    max_same_direction: Optional[int] = Field(None, ge=1, le=20)
+    ai_pause_cycles: Optional[int] = Field(None, ge=1, le=10)
 
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":
@@ -1059,7 +1061,7 @@ VALID_TRIGGER_TYPES = frozenset([
     "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART", "EQUITY_RISE_PCT",
     "PNL_BELOW", "PNL_ABOVE",
     "BREAKEVEN_TIMEOUT", "MAX_DURATION",
-    "TRAILING_PROFIT",
+    "TRAILING_PROFIT", "PAUSE_TRADING",
 ])
 
 PCT_TRIGGER_TYPES = frozenset(["EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART", "EQUITY_RISE_PCT"])

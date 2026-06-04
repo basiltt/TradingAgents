@@ -14,9 +14,12 @@ PREETHY_ACCOUNT = "a59250e3-9696-4399-9fe2-aeab8a0a8db6"
 # New fields to add to ALL auto_trade_configs
 NEW_FIELDS = {
     "min_score": 7,
+    "max_trades": 3,
+    "capital_pct": 18,
     "smart_drawdown_close": True,
     "trailing_profit_pct": 2.0,
     "max_signal_age_minutes": 90,
+    "max_same_direction": 3,
     "symbol_blacklist": ["BIGTIMEUSDT", "PLAYSOUTUSDT", "SOXLUSDT", "SPXUSDT", "POWERUSDT"],
     "target_goal_value": 8,
 }

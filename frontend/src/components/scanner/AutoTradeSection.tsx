@@ -38,6 +38,8 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   max_signal_age_minutes: null,
   smart_drawdown_close: false,
   trailing_profit_pct: null,
+  max_same_direction: null,
+  ai_pause_cycles: null,
 };
 
 const SEGMENT_CONTAINER_CLASS = "grid grid-cols-2 gap-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 shadow-[var(--neu-shadow-inset)] border-none";
@@ -735,6 +737,37 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 ) : null
               }
             />
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Max positions same direction</Label>
+              <p className="mt-1 text-[11px] text-[var(--neu-text-muted)]">Limit how many positions can be short (or long) simultaneously. Prevents concentration risk.</p>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={config.max_same_direction ?? ""}
+                onChange={(e) => onChange({ max_same_direction: e.target.value ? Math.min(20, Math.max(1, parseInt(e.target.value))) : null })}
+                placeholder="e.g. 3"
+                className="mt-2"
+              />
+            </div>
+            {config.ai_manager_enabled ? (
+              <div>
+                <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">AI pause cycles</Label>
+                <p className="mt-1 text-[11px] text-[var(--neu-text-muted)]">How many scan cycles AI can pause trading when it detects adverse conditions.</p>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={config.ai_pause_cycles ?? ""}
+                  onChange={(e) => onChange({ ai_pause_cycles: e.target.value ? Math.min(10, Math.max(1, parseInt(e.target.value))) : null })}
+                  placeholder="e.g. 1"
+                  className="mt-2"
+                />
+              </div>
+            ) : null}
           </div>
 
           {((config.breakeven_timeout_hours != null && config.breakeven_timeout_hours > 0) || (config.max_trade_duration_hours != null && config.max_trade_duration_hours > 0)) && (

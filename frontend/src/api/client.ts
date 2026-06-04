@@ -262,6 +262,8 @@ export interface AutoTradeConfig {
   max_signal_age_minutes?: number | null;
   smart_drawdown_close?: boolean;
   trailing_profit_pct?: number | null;
+  max_same_direction?: number | null;
+  ai_pause_cycles?: number | null;
 }
 
 export interface ScanRequest {

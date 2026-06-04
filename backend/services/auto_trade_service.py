@@ -160,6 +160,25 @@ class AutoTradeExecutor:
                 state.stopped_reason = "account_deleted"
                 logger.warning("auto_trade_account_deleted", extra={"account_id": account_id})
                 continue
+            # Check for AI PAUSE_TRADING rule
+            if self._close_svc and state.config.get("ai_manager_enabled"):
+                try:
+                    active_rules = await self._close_svc.list_rules(account_id)
+                    for rule in active_rules:
+                        if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
+                            ref_str = rule.get("reference_value", "")
+                            hours = float(rule.get("threshold_value", 0))
+                            ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                            if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                                state.stopped = True
+                                state.stopped_reason = "ai_paused_trading"
+                                break
+                            else:
+                                await self._close_svc._db.update_close_rule(rule["id"], status="expired")
+                except Exception:
+                    pass
+            if state.stopped:
+                continue
             # Check positions if skip_if_positions_open is enabled
             if state.config.get("skip_if_positions_open") and account_id not in force_closed_accounts:
                 if account_id in positions_cache:
@@ -198,6 +217,10 @@ class AutoTradeExecutor:
                     except Exception:
                         positions_cache[account_id] = []
                 state.existing_symbols = {p.get("symbol", "") for p in positions_cache[account_id]}
+                state.position_directions = {
+                    p.get("symbol", ""): ("short" if p.get("side", "").lower() == "sell" else "long")
+                    for p in positions_cache[account_id] if p.get("symbol")
+                }
             # Create close rules (only once per account per cycle)
             if account_id not in rules_created_for:
                 # Delete any leftover rules from previous scans before creating new ones
@@ -879,6 +902,14 @@ class AutoTradeExecutor:
         if direction == "hold":
             return None
 
+        max_same_dir = cfg.get("max_same_direction")
+        if max_same_dir:
+            norm_dir = "short" if direction in ("short", "sell") else "long"
+            same_dir_count = sum(1 for d in state.position_directions.values() if d == norm_dir)
+            if same_dir_count >= max_same_dir:
+                state.trades_skipped += 1
+                return None
+
         # Apply filters (skipped in relaxed/fill mode)
         signal_sides = cfg.get("signal_sides", "both")
         if signal_sides != "both" and signal_sides != direction:
@@ -945,6 +976,7 @@ class AutoTradeExecutor:
             state.trades_executed += 1
             state.executions.append(execution)
             state.existing_symbols.add(symbol)
+            state.position_directions[symbol] = "short" if direction in ("short", "sell") else "long"
             logger.info("auto_trade_executed", extra={
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
@@ -1003,4 +1035,5 @@ class _AccountState:
     drawdown_rule_id: Optional[str] = None
     executions: List[TradeExecution] = field(default_factory=list)
     existing_symbols: set = field(default_factory=set)
+    position_directions: Dict[str, str] = field(default_factory=dict)
     created_rule_ids: List[str] = field(default_factory=list)

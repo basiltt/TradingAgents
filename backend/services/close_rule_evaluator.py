@@ -172,7 +172,7 @@ class CloseRuleEvaluator:
         if not rules:
             return
 
-        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING_PROFIT")]
+        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING_PROFIT", "PAUSE_TRADING")]
         if not equity_rules:
             return
 
@@ -196,7 +196,7 @@ class CloseRuleEvaluator:
 
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         trailing_rules = [r for r in rules if r["trigger_type"] == "TRAILING_PROFIT"]
-        other_rules = [r for r in rules if r["trigger_type"] != "TRAILING_PROFIT"]
+        other_rules = [r for r in rules if r["trigger_type"] not in ("TRAILING_PROFIT", "PAUSE_TRADING")]
 
         if trailing_rules:
             await self._evaluate_trailing_profit(account_id, trailing_rules)

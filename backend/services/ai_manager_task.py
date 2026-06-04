@@ -42,7 +42,7 @@ _SYMBOL_COOLDOWN_S = 15.0
 _EMERGENCY_CLOSE_SYMBOL_TTL_S = 30.0
 _MAX_REASONING_CHARS = 2000
 _CHAIN_KEY_VERSION = 1
-_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE", "ADJUST_TP_SL"})
+_ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE", "ADJUST_TP_SL", "PAUSE_TRADING"})
 
 
 class AIManagerTask:
@@ -833,6 +833,25 @@ class AIManagerTask:
 
         if action_type not in _ALLOWED_ACTIONS:
             self._log.warning("Rejected invalid action_type '%s'", action_type)
+            return
+
+        # PAUSE_TRADING: create a rule that prevents next scan from trading
+        if action_type == "PAUSE_TRADING":
+            try:
+                pause_hours = 3.0  # 1 scan cycle
+                close_svc = getattr(self._service, "_close_svc", None) or getattr(self._service, "_close_positions_service", None)
+                if close_svc:
+                    await close_svc.create_rule(
+                        account_id=self._account_id,
+                        rule_data={
+                            "trigger_type": "PAUSE_TRADING",
+                            "threshold_value": str(pause_hours),
+                            "reference_value": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    self._log.info("PAUSE_TRADING rule created for %s hours", pause_hours)
+            except Exception:
+                self._log.exception("Failed to create PAUSE_TRADING rule")
             return
 
         # Sweep block check
