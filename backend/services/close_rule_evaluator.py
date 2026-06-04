@@ -289,7 +289,9 @@ class CloseRuleEvaluator:
                             logger.warning("Rule %s: all closes failed (%d), reverting to active for retry", rule["id"], result["failed"])
                             await self._db.update_close_rule(rule["id"], status="active")
                         else:
-                            logger.info("Rule %s executed successfully, transitioning to 'executed'", rule["id"])
+                            if result.get("failed", 0) > 0:
+                                logger.warning("Rule %s: partial close — %d closed, %d failed for account %s", rule["id"], result.get("closed", 0), result["failed"], account_id)
+                            logger.info("Rule %s executed, transitioning to 'executed'", rule["id"])
                             await self._db.update_close_rule(rule["id"], status="executed")
                             self._rule_failures.pop(rule["id"], None)
                             if rule["trigger_type"] != "EQUITY_DROP_PCT_SMART":

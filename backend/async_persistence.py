@@ -2278,17 +2278,21 @@ class AsyncAnalysisDB:
 
     async def deactivate_rules_for_account(self, account_id: str, exclude_rule_id: str | None = None) -> int:
         """Deactivate all active/paused rules for an account (e.g. after a rule triggers a close-all).
+        Preserves PAUSE_TRADING and TRAILING_PROFIT rules which have independent lifecycles.
         Returns the number of rules deactivated."""
+        type_exclusion = " AND trigger_type NOT IN ('PAUSE_TRADING', 'TRAILING_PROFIT')"
         if exclude_rule_id:
             result = await self.pool.execute(
                 "UPDATE close_rules SET status = 'expired', updated_at = now() "
-                "WHERE account_id = $1 AND id != $2 AND status IN ('active', 'paused', 'triggered')",
+                "WHERE account_id = $1 AND id != $2 AND status IN ('active', 'paused', 'triggered')"
+                + type_exclusion,
                 account_id, exclude_rule_id,
             )
         else:
             result = await self.pool.execute(
                 "UPDATE close_rules SET status = 'expired', updated_at = now() "
-                "WHERE account_id = $1 AND status IN ('active', 'paused', 'triggered')",
+                "WHERE account_id = $1 AND status IN ('active', 'paused', 'triggered')"
+                + type_exclusion,
                 account_id,
             )
         return int(result.split()[-1])

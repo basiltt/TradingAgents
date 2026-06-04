@@ -941,8 +941,10 @@ class AutoTradeExecutor:
 
         # Apply filters (skipped in relaxed/fill mode)
         signal_sides = cfg.get("signal_sides", "both")
-        if signal_sides != "both" and signal_sides != direction:
-            return None
+        if signal_sides != "both":
+            normalized_side = {"long": "buy", "short": "sell"}.get(signal_sides, signal_sides)
+            if normalized_side != direction:
+                return None
 
         if not relaxed:
             min_score = cfg.get("min_score", 0)
@@ -981,18 +983,21 @@ class AutoTradeExecutor:
 
         # Execute trade
         try:
-            result_data = await self._accounts.place_trade(
-                account_id=account_id,
-                symbol=symbol,
-                signal_direction=direction,
-                trade_direction=cfg.get("direction", "straight"),
-                leverage=cfg.get("leverage", 20),
-                take_profit_pct=cfg.get("take_profit_pct", 150),
-                stop_loss_pct=cfg.get("stop_loss_pct", 100),
-                capital_pct=cfg.get("capital_pct", 5),
-                base_capital=state.base_capital,
-                source="scanner",
-                scan_result_id=result.get("id"),
+            result_data = await asyncio.wait_for(
+                self._accounts.place_trade(
+                    account_id=account_id,
+                    symbol=symbol,
+                    signal_direction=direction,
+                    trade_direction=cfg.get("direction", "straight"),
+                    leverage=cfg.get("leverage", 20),
+                    take_profit_pct=cfg.get("take_profit_pct", 150),
+                    stop_loss_pct=cfg.get("stop_loss_pct", 100),
+                    capital_pct=cfg.get("capital_pct", 5),
+                    base_capital=state.base_capital,
+                    source="scanner",
+                    scan_result_id=result.get("id"),
+                ),
+                timeout=30.0,
             )
             execution = TradeExecution(
                 account_id=account_id,
