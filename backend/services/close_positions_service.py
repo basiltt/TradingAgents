@@ -247,9 +247,11 @@ class ClosePositionsService:
             return
         try:
             open_trades = await self._trade_service.get_open_trades(account_id, limit=500)
+            matched_keys: set = set()
             for trade in open_trades:
                 key = (trade["symbol"], trade["side"])
-                if key in closed_pairs:
+                if key in closed_pairs and key not in matched_keys:
+                    matched_keys.add(key)
                     exchange_result = closed_pairs[key]
                     try:
                         await self._trade_service.close_trade_record_only(

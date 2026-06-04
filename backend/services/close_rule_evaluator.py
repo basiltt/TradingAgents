@@ -38,11 +38,12 @@ class CloseRuleEvaluator:
         self._shutting_down = False
         self._rule_failures: dict[str, int] = {}
         self._last_ws_eval: dict[str, float] = {}
+        self._last_ws_equity: dict[str, str] = {}  # dedup: skip if equity unchanged
         self._ws_debounce_interval = 1.5
         self._ws_eval_locks: dict[str, asyncio.Lock] = {}
         self._rules_cache: dict[str, list] = {}
         self._get_active_trailing: Callable[[], set] = lambda: set()
-        self._trailing_peaks: dict[str, dict[str, float]] = {}  # {account_id: {symbol: peak_pnl}}
+        self._trailing_peaks: dict[str, dict[str, float]] = {}  # {account_id: {symbol: peak_per_unit_pnl}}
 
     def set_trailing_checker(self, fn: Callable[[], set]) -> None:
         """Set a callback that returns currently trailing symbols."""
@@ -159,6 +160,12 @@ class CloseRuleEvaluator:
         except Exception:
             logger.warning("Invalid WS wallet data for account %s", account_id)
             return
+
+        # Skip evaluation if equity unchanged from last processed event (dedup/ordering)
+        equity_str = str(equity)
+        if equity_str == self._last_ws_equity.get(account_id):
+            return
+        self._last_ws_equity[account_id] = equity_str
 
         # Debounce DB query: fetch rules at most once per 1.5s regardless of path
         now = time.monotonic()

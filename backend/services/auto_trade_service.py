@@ -222,7 +222,7 @@ class AutoTradeExecutor:
                     for p in positions_cache[account_id] if p.get("symbol")
                 }
             # Create close rules (only once per account per cycle)
-            if account_id not in rules_created_for:
+            if account_id not in rules_created_for and state.base_capital > 0:
                 # Delete any leftover rules from previous scans before creating new ones
                 if self._close_svc:
                     try:

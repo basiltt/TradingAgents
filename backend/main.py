@@ -262,6 +262,7 @@ def create_app() -> FastAPI:
             account_ws_mgr = AccountWSManager(db=db)
             app.state.account_ws_manager = account_ws_mgr
             app.state.accounts_service = AccountsService(db=db, ws_manager=account_ws_mgr)
+            account_ws_mgr.set_accounts_service(app.state.accounts_service)
             app.state.scanner_service._accounts = app.state.accounts_service
             await account_ws_mgr.start()
 

@@ -21,8 +21,13 @@ class AccountWSManager:
         self._clients: Dict[str, BybitWSClient] = {}
         self._frontend_queues: Set[asyncio.Queue] = set()
         self._wallet_listeners: list = []
+        self._accounts_service: Any = None
         self._lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[None]] = set()
+
+    def set_accounts_service(self, accounts_service: Any) -> None:
+        """Inject accounts service for wallet re-fetch on WS reconnect."""
+        self._accounts_service = accounts_service
 
     async def start(self) -> None:
         """Initialize WebSocket connections for all active accounts."""
@@ -78,7 +83,25 @@ class AccountWSManager:
             if event_type in ("wallet_update", "position_update") and self._wallet_listeners:
                 await self._notify_wallet_listeners(account_id, event)
 
-        client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id)
+        async def on_reconnect() -> None:
+            """After WS reconnects, fetch current wallet state to catch up on missed events."""
+            if not self._accounts_service:
+                return
+            try:
+                wallet = await self._accounts_service.get_wallet(account_id)
+                synthetic_event = {
+                    "type": "wallet_update",
+                    "account_id": account_id,
+                    "data": wallet,
+                    "_reconnect_sync": True,
+                }
+                if self._wallet_listeners:
+                    await self._notify_wallet_listeners(account_id, synthetic_event)
+                logger.debug("WS reconnect: synced wallet for %s", account_id)
+            except Exception:
+                logger.debug("WS reconnect: wallet sync failed for %s", account_id)
+
+        client = BybitWSClient(api_key, api_secret, creds["account_type"], on_event, account_id=account_id, on_reconnect=on_reconnect)
         try:
             await client.start()
         except Exception:

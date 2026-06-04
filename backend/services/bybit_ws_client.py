@@ -40,11 +40,13 @@ class BybitWSClient:
         account_type: str,
         on_event: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
         account_id: str = "",
+        on_reconnect: Callable[[], Coroutine[Any, Any, None]] | None = None,
     ):
         self._api_key = api_key
         self._api_secret = api_secret
         self._url = _WS_ENDPOINTS.get(account_type, _WS_ENDPOINTS["demo"])
         self._on_event = on_event
+        self._on_reconnect = on_reconnect
         self._account_id = account_id
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -52,6 +54,7 @@ class BybitWSClient:
         self._ping_task: asyncio.Task | None = None
         self._running = False
         self._reconnect_delay = _RECONNECT_BASE
+        self._connected_before = False
         self._last_msg_at: float = 0.0
 
     def _auth_payload(self) -> dict[str, Any]:
@@ -144,6 +147,14 @@ class BybitWSClient:
         self._reconnect_delay = _RECONNECT_BASE
         self._last_msg_at = time.monotonic()
         logger.info("Bybit WS authenticated and subscribed", extra={"account_id": self._account_id})
+
+        # On reconnect (not first connect), notify listeners to re-fetch state
+        if self._connected_before and self._on_reconnect:
+            try:
+                await self._on_reconnect()
+            except Exception:
+                logger.debug("on_reconnect callback failed", extra={"account_id": self._account_id})
+        self._connected_before = True
 
         self._ping_task = asyncio.create_task(self._ping_loop())
 
