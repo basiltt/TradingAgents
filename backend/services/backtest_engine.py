@@ -655,13 +655,20 @@ class BacktestEngine:
                         pos.max_adverse_price = max(pos.max_adverse_price, high)
 
                     # --- LIQUIDATION CHECK (Task 3.7) — before TP/SL ---
+                    # Priority: SL wins if closer to entry than liquidation price
                     if pos.side == "Buy" and low <= pos.liq_price:
-                        # Liquidation: full margin loss
-                        from backend.services.trading_rules import compute_liquidation_pnl
-                        positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
+                        # Check: is SL closer to entry? (SL above liq for long)
+                        if pos.sl_price > pos.liq_price and low <= pos.sl_price:
+                            # SL hit first (closer to entry) — controlled loss, not full liquidation
+                            positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
+                        else:
+                            positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
                         continue
                     elif pos.side == "Sell" and high >= pos.liq_price:
-                        positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
+                        if pos.sl_price < pos.liq_price and high >= pos.sl_price:
+                            positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
+                        else:
+                            positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
                         continue
 
                     # --- TP/SL EVALUATION (Task 3.3) ---
@@ -720,7 +727,7 @@ class BacktestEngine:
 
                 # --- TIME-BASED RULES (Task 3.6) ---
                 if state.open_positions:
-                    self._evaluate_time_rules(config, state, candle_time, fee_rate)
+                    self._evaluate_time_rules(config, state, candle_time, fee_rate, close_price)
 
     def _close_position(
         self,
@@ -938,6 +945,7 @@ class BacktestEngine:
         state: SimulationState,
         candle_time: datetime,
         fee_rate: float,
+        current_close_price: float = 0.0,
     ) -> None:
         """Evaluate time-based close rules: BREAKEVEN_TIMEOUT and MAX_DURATION.
 
@@ -975,4 +983,4 @@ class BacktestEngine:
         # Close MAX_DURATION positions at current candle close (approximation)
         for pos in positions_to_close:
             # Use entry_price as close approximation (will be refined when we have per-candle prices)
-            self._close_position(state, pos, "max_duration", pos.entry_price, candle_time, fee_rate)
+            self._close_position(state, pos, "max_duration", current_close_price or pos.entry_price, candle_time, fee_rate)
