@@ -423,8 +423,9 @@ class InstrumentInfoCache:
         return info.copy() if info is not None else None
 
     def get_or_default(self, symbol: str) -> dict[str, float]:
-        """Get instrument info with conservative defaults for unknown symbols."""
-        return self._cache.get(symbol, _DEFAULT_INSTRUMENT_INFO.copy())
+        """Get instrument info with conservative defaults for unknown symbols. Always returns a COPY."""
+        info = self._cache.get(symbol)
+        return info.copy() if info is not None else _DEFAULT_INSTRUMENT_INFO.copy()
 
     async def refresh(self) -> int:
         """Fetch all linear perpetual instrument info from Bybit.
