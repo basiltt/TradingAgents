@@ -82,33 +82,47 @@ class TestLiquidation:
 class TestFundingRate:
     """Test funding rate application (Task 3.8)."""
 
-    def test_long_pays_funding_at_8h_boundary(self):
-        """Long position pays funding at 8h boundary (positive rate)."""
+    def test_long_pays_funding_reduces_equity(self):
+        """Long position pays funding — final equity is LOWER with funding than without."""
         from backend.services.backtest_engine import BacktestEngine
 
         engine = BacktestEngine()
-        config = _make_config(
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        # Flat price so the ONLY difference between runs is funding
+        klines = {"BTCUSDT": [
+            {"open_time": base_time + timedelta(hours=h),
+             "open": 50000.0, "high": 50000.0, "low": 50000.0, "close": 50000.0, "volume": 100.0}
+            for h in range(11)  # 00:00 to 10:00 — crosses 08:00 funding boundary
+        ]}
+        signals = [_make_signal()]
+
+        # Run WITHOUT funding
+        config_no_funding = _make_config(
+            funding_rate_model="none",
+            take_profit_pct=500.0, stop_loss_pct=500.0,
+            max_trade_duration_hours=10.0,
+        )
+        result_none = engine.run(config_no_funding, [_make_signal()], klines)
+
+        # Run WITH funding (long pays at 08:00 boundary)
+        config_funding = _make_config(
             funding_rate_model="fixed_8h",
             funding_rate_fixed_pct=0.01,  # 0.01% per 8h
             take_profit_pct=500.0, stop_loss_pct=500.0,
-            max_trade_duration_hours=10.0,  # force close to capture funding effect
+            max_trade_duration_hours=10.0,
         )
-        signals = [_make_signal()]
+        result_funding = engine.run(config_funding, [_make_signal()], klines)
 
-        # Position opens at 00:00, held across 08:00 funding boundary
-        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        klines = {"BTCUSDT": [
-            {"open_time": base_time + timedelta(hours=h, minutes=0),
-             "open": 50000.0, "high": 50050.0, "low": 49950.0, "close": 50000.0, "volume": 100.0}
-            for h in range(11)  # 00:00 to 10:00 — crosses 08:00 boundary
-        ]}
+        # Final equity WITH funding must be LOWER (long pays positive funding)
+        equity_none = result_none.equity_curve[-1]["equity"]
+        equity_funding = result_funding.equity_curve[-1]["equity"]
+        assert equity_funding < equity_none, \
+            f"Funding should reduce equity: {equity_funding} should be < {equity_none}"
 
-        result = engine.run(config, signals, klines)
-        # Position should close (max_duration), with funding deducted
-        assert len(result.trades) == 1
-        # The trade closed; funding affected wallet (hard to assert exact without internals,
-        # but the run completes without error and funding logic executes)
-        assert result.trades[0]["close_reason"] == "max_duration"
+        # Expected funding ~= qty × price × 0.0001 at one 08:00 boundary
+        # qty = 10000*5%*20/50000 = 0.2 BTC; funding = 0.2*50000*0.0001 = $1.0
+        diff = equity_none - equity_funding
+        assert 0.5 < diff < 2.0, f"Funding diff {diff} not in expected range"
 
 
 class TestTimeBasedRules:
@@ -162,9 +176,39 @@ class TestTimeBasedRules:
         ]}
 
         result = engine.run(config, signals, klines)
-        # Position should close via TP (now at breakeven level)
+        # Position should close via TP at the BREAKEVEN level (~50025), NOT max_duration
+        # This proves the breakeven TP modification fired (original TP was 500% = ~75000)
         assert len(result.trades) == 1
-        assert result.trades[0]["close_reason"] in ("tp", "max_duration")
+        assert result.trades[0]["close_reason"] == "tp"
+        # Exit price should be near breakeven (50025), far below original wide TP
+        assert result.trades[0]["exit_price"] < 50100, \
+            f"Exit {result.trades[0]['exit_price']} should be near breakeven, proving TP was modified"
+
+    def test_breakeven_not_applied_without_timeout(self):
+        """Without breakeven_timeout, the same klines do NOT close via tp (control case)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        # NO breakeven_timeout — wide TP stays at 500%, won't be hit by small price rise
+        config = _make_config(
+            take_profit_pct=500.0, stop_loss_pct=500.0,
+            max_trade_duration_hours=5.0,
+        )
+        signals = [_make_signal()]
+
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=30), "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=90), "open": 50000.0, "high": 50010.0, "low": 50000.0, "close": 50005.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=120), "open": 50005.0, "high": 50100.0, "low": 50000.0, "close": 50050.0, "volume": 100.0},
+        ]}
+
+        result = engine.run(config, signals, klines)
+        # Without breakeven, wide TP not hit → closes via max_duration or backtest_end
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] != "tp", \
+            "Without breakeven_timeout, the small price rise should NOT hit the wide 500% TP"
 
 
 class TestMultiSymbolTimeline:
