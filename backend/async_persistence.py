@@ -568,6 +568,115 @@ CREATE INDEX IF NOT EXISTS idx_trades_ai_decision_id ON trades(ai_decision_id) W
 
 
 
+async def _create_backtest_tables(conn) -> None:
+    """Migration 38: Backtesting system tables (kline cache + backtest runs/results/trades)."""
+    # Kline cache — partitioned by month for fast range queries
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS kline_cache (
+    symbol       TEXT NOT NULL,
+    interval     TEXT NOT NULL,
+    open_time    TIMESTAMPTZ NOT NULL,
+    open         DOUBLE PRECISION NOT NULL,
+    high         DOUBLE PRECISION NOT NULL,
+    low          DOUBLE PRECISION NOT NULL,
+    close        DOUBLE PRECISION NOT NULL,
+    volume       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    PRIMARY KEY (symbol, interval, open_time)
+) PARTITION BY RANGE (open_time)
+""")
+    # Default partition (catch-all for unexpected dates)
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS kline_cache_default PARTITION OF kline_cache DEFAULT
+""")
+    # Create monthly partitions ±6 months from now
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    for offset in range(-6, 7):
+        month_start = (now.replace(day=1) + timedelta(days=32 * offset)).replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1)
+        part_name = f"kline_cache_{month_start.strftime('%Y_%m')}"
+        await conn.execute(f"""
+CREATE TABLE IF NOT EXISTS {part_name} PARTITION OF kline_cache
+    FOR VALUES FROM ('{month_start.strftime('%Y-%m-%d')}') TO ('{month_end.strftime('%Y-%m-%d')}')
+""")
+
+    # Coverage tracking for fast gap detection
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS kline_cache_coverage (
+    symbol       TEXT NOT NULL,
+    interval     TEXT NOT NULL,
+    date         DATE NOT NULL,
+    candle_count SMALLINT NOT NULL,
+    fetched_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, interval, date)
+)
+""")
+
+    # Backtest runs — lifecycle tracking
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending','running','completed','failed','cancelled')),
+    config          JSONB NOT NULL,
+    scan_source     JSONB NOT NULL,
+    progress_pct    SMALLINT NOT NULL DEFAULT 0,
+    error_message   TEXT,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+""")
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_status
+    ON backtest_runs(status) WHERE status IN ('pending','running')
+""")
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_created
+    ON backtest_runs(created_at DESC)
+""")
+
+    # Backtest results — 1:1 with runs
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS backtest_results (
+    run_id      UUID PRIMARY KEY REFERENCES backtest_runs(id) ON DELETE CASCADE,
+    metrics     JSONB NOT NULL,
+    equity_curve JSONB NOT NULL,
+    summary     JSONB NOT NULL DEFAULT '{}',
+    warnings    JSONB NOT NULL DEFAULT '[]'
+)
+""")
+
+    # Backtest trades — individual simulated trades
+    await conn.execute("""
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id          UUID NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL CHECK(side IN ('Buy','Sell')),
+    entry_price     NUMERIC(20,8) NOT NULL,
+    exit_price      NUMERIC(20,8),
+    qty             NUMERIC(20,8) NOT NULL,
+    leverage        SMALLINT NOT NULL,
+    entry_time      TIMESTAMPTZ NOT NULL,
+    exit_time       TIMESTAMPTZ,
+    pnl             NUMERIC(20,8),
+    pnl_pct         NUMERIC(8,4),
+    fees_paid       NUMERIC(20,8),
+    close_reason    TEXT,
+    mfe_pct         NUMERIC(8,4),
+    mae_pct         NUMERIC(8,4),
+    signal_score    SMALLINT,
+    signal_confidence TEXT,
+    scan_id         TEXT,
+    metadata        JSONB DEFAULT '{}'
+)
+""")
+    await conn.execute("""
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id)
+""")
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -986,6 +1095,8 @@ ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
         'TRAILING_PROFIT', 'PAUSE_TRADING'
     ))
 """),
+    (38, _create_backtest_tables),
+    (39, """ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS analysis_price NUMERIC(20,8)"""),
 ]
 
 
