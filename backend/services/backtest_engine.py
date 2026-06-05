@@ -218,10 +218,14 @@ class BacktestEngine:
         if on_progress:
             on_progress(100)
 
+        # Compute all metrics from trades + equity curve
+        from backend.services.backtest_metrics import compute_all_metrics
+        metrics = compute_all_metrics(state.closed_trades, state.equity_curve, config)
+
         return SimulationResult(
             trades=state.closed_trades,
             equity_curve=state.equity_curve,
-            metrics={},
+            metrics=metrics,
             warnings=warnings,
             filter_stats={
                 "signals_total": len(signals),
