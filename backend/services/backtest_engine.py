@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from backend.schemas.backtest_schemas import SimulationResult
@@ -127,13 +127,46 @@ class BacktestEngine:
         if cancel_event and cancel_event.is_set():
             raise BacktestCancelled("Cancelled before simulation start")
 
-        # TODO: Phase 3 Tasks 3.2-3.10 will implement the full simulation loop here
-        # For now (Task 3.1 skeleton), return empty result with starting capital
+        # --- SIGNAL PROCESSING (Task 3.2) ---
+        # Group signals by scan_id (each scan is a batch event)
+        from collections import defaultdict
+        scans: dict[str, list[dict]] = defaultdict(list)
+        for sig in signals:
+            scans[sig["scan_id"]].append(sig)
 
-        # Record initial equity point
+        # Sort scans chronologically by their first signal's timestamp
+        scan_order = sorted(scans.keys(), key=lambda sid: scans[sid][0]["signal_time"])
+
+        execution_mode = config.get("execution_mode", "batch")
+        candle_count = 0
+
+        for scan_idx, scan_id in enumerate(scan_order):
+            # Check cancellation every scan
+            if cancel_event and cancel_event.is_set():
+                raise BacktestCancelled("Cancelled during simulation")
+
+            scan_signals = scans[scan_id]
+            current_time = scan_signals[0]["signal_time"]
+
+            # Refresh sizing_capital at each scan (matches production init_balances per scan)
+            state.sizing_capital = state.wallet_balance
+
+            # Process signals through filter chain
+            if execution_mode == "batch":
+                self._process_batch_signals(config, scan_signals, klines, state, current_time)
+            else:
+                self._process_immediate_signals(config, scan_signals, klines, state, current_time)
+
+            # Report progress
+            if on_progress:
+                pct = int(((scan_idx + 1) / len(scan_order)) * 100)
+                on_progress(min(pct, 99))
+
+        # Record final equity point
+        final_equity = state.wallet_balance + self._compute_total_unrealized(state, state.wallet_balance)
         state.equity_curve.append({
-            "ts": signals[0]["signal_time"] if signals else None,
-            "equity": starting_capital,
+            "ts": signals[-1]["signal_time"] if signals else None,
+            "equity": final_equity,
             "drawdown_pct": 0.0,
         })
 
@@ -151,3 +184,333 @@ class BacktestEngine:
                 "signals_entered": state.signals_entered,
             },
         )
+
+    # --- Filter chain implementation ---
+
+    def _process_batch_signals(
+        self,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        current_time: datetime,
+    ) -> int:
+        """Process signals in batch mode: dedup → rank → filter → enter."""
+        # Step 1: Deduplicate by ticker (keep LAST occurrence — dict overwrite)
+        deduped: dict[str, dict] = {}
+        for sig in scan_signals:
+            deduped[sig["ticker"]] = sig
+        unique_signals = list(deduped.values())
+
+        # Step 2: Rank by abs(score) descending
+        unique_signals.sort(key=lambda s: abs(s.get("score", 0)), reverse=True)
+
+        # Step 3: Apply filter chain (strict pass)
+        entered = 0
+        for sig in unique_signals:
+            if self._apply_filter_chain(config, sig, state, current_time, relaxed=False):
+                if self._open_position(config, sig, klines, state, current_time):
+                    entered += 1
+
+        # Step 4: fill_to_max_trades relaxed pass
+        if config.get("fill_to_max_trades") and entered < config.get("max_trades", 999):
+            remaining = [s for s in unique_signals if s["ticker"] not in
+                         {p.symbol for p in state.open_positions}]
+            remaining.sort(key=lambda s: abs(s.get("score", 0)), reverse=True)
+            for sig in remaining:
+                if entered >= config.get("max_trades", 999):
+                    break
+                if self._apply_filter_chain(config, sig, state, current_time, relaxed=True):
+                    if self._open_position(config, sig, klines, state, current_time, relaxed=True):
+                        entered += 1
+
+        return entered
+
+    def _process_immediate_signals(
+        self,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        current_time: datetime,
+    ) -> int:
+        """Process signals in immediate mode: one-at-a-time, no dedup."""
+        entered = 0
+        for sig in scan_signals:
+            if self._apply_filter_chain(config, sig, state, current_time, relaxed=False):
+                if self._open_position(config, sig, klines, state, current_time):
+                    entered += 1
+        return entered
+
+    def _apply_filter_chain(
+        self,
+        config: dict[str, Any],
+        signal: dict[str, Any],
+        state: SimulationState,
+        current_time: datetime,
+        relaxed: bool = False,
+    ) -> bool:
+        """Apply 17-step filter chain. Returns True if signal passes all filters."""
+        from backend.services.trading_rules import determine_side
+
+        ticker = signal.get("ticker", "")
+        direction = signal.get("direction", "")
+        score = signal.get("score", 0)
+        confidence = signal.get("confidence", "none")
+
+        # 1. Status check (already filtered in _load_signals, but double-check)
+        # (Skipped — signals are pre-filtered to status='completed')
+
+        # 2. Ticker validity
+        if not ticker:
+            state.signals_filtered += 1
+            return False
+
+        # 3. Blacklist
+        blacklist = config.get("symbol_blacklist") or []
+        if ticker in blacklist or f"{ticker}USDT" in blacklist:
+            state.signals_filtered += 1
+            return False
+
+        # 4. Whitelist (if set, must be in it)
+        whitelist = config.get("symbol_whitelist")
+        if whitelist and ticker not in whitelist and f"{ticker}USDT" not in whitelist:
+            state.signals_filtered += 1
+            return False
+
+        # 5. Existing position (no duplicate positions on same symbol)
+        existing_symbols = {p.symbol for p in state.open_positions}
+        if ticker in existing_symbols:
+            state.signals_filtered += 1
+            return False
+
+        # 6. Signal age (strict only)
+        if not relaxed:
+            max_age = config.get("max_signal_age_minutes")
+            if max_age is not None:
+                signal_time = signal.get("signal_time")
+                if signal_time and current_time:
+                    age_minutes = (current_time - signal_time).total_seconds() / 60
+                    if age_minutes > max_age:
+                        state.signals_filtered += 1
+                        return False
+
+        # 7. Hold skip
+        if direction == "hold":
+            state.signals_filtered += 1
+            return False
+
+        # 8. Max same direction
+        max_same_dir = config.get("max_same_direction")
+        if max_same_dir is not None:
+            trade_side = determine_side(direction, config.get("direction", "straight"))
+            same_dir_count = sum(1 for p in state.open_positions if p.side == trade_side)
+            if same_dir_count >= max_same_dir:
+                state.signals_filtered += 1
+                return False
+
+        # 9. Sector concentration limit (simplified — no sector service in backtest)
+        # TODO: Could add sector lookup if needed. For now, skip.
+
+        # 10. Adaptive blacklist (computed from backtest's own trade history)
+        if config.get("adaptive_blacklist_enabled"):
+            if self._is_adaptively_blacklisted(config, ticker, state, current_time):
+                state.signals_filtered += 1
+                return False
+
+        # 11. Signal sides filter
+        signal_sides = config.get("signal_sides", "both")
+        if signal_sides != "both":
+            if signal_sides in ("buy", "long") and direction not in ("buy", "long"):
+                state.signals_filtered += 1
+                return False
+            if signal_sides in ("sell", "short") and direction not in ("sell", "short"):
+                state.signals_filtered += 1
+                return False
+
+        # 12. Min score (strict only)
+        if not relaxed:
+            min_score = config.get("min_score", 0.0)
+            if abs(score) < min_score:
+                state.signals_filtered += 1
+                return False
+
+        # 13. Confidence filter (strict only)
+        if not relaxed:
+            conf_filter = config.get("confidence_filter", "any")
+            if conf_filter != "any":
+                conf_levels = {"high": 3, "moderate": 2, "low": 1, "none": 0}
+                required = conf_levels.get(conf_filter, 0)
+                actual = conf_levels.get(confidence, 0)
+                if actual < required:
+                    state.signals_filtered += 1
+                    return False
+
+        # 14. Max trades limit
+        max_trades = config.get("max_trades", 999)
+        if state.signals_entered >= max_trades:
+            state.signals_filtered += 1
+            return False
+
+        # 15. Target goal (trade_count type)
+        target_type = config.get("target_goal_type")
+        target_value = config.get("target_goal_value")
+        if target_type == "trade_count" and target_value:
+            if state.signals_entered >= target_value:
+                state.signals_filtered += 1
+                return False
+
+        # 16. Balance check
+        if state.sizing_capital <= 0:
+            state.signals_filtered += 1
+            return False
+
+        # 17. Price drift validation
+        max_drift = config.get("max_price_drift_pct")
+        if max_drift is not None:
+            analysis_price = signal.get("analysis_price")
+            if analysis_price and analysis_price > 0:
+                # Get current price from klines
+                symbol_klines = klines.get(ticker, [])
+                if symbol_klines:
+                    current_price = symbol_klines[-1]["close"]  # approximate
+                    drift = abs(current_price - analysis_price) / analysis_price * 100
+                    if drift > max_drift:
+                        state.signals_filtered += 1
+                        return False
+
+        return True  # All 17 filters passed
+
+    def _open_position(
+        self,
+        config: dict[str, Any],
+        signal: dict[str, Any],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        current_time: datetime,
+        relaxed: bool = False,
+    ) -> bool:
+        """Open a new position from a qualifying signal. Returns True on success."""
+        from backend.services.trading_rules import (
+            determine_side, apply_slippage, compute_tp_sl,
+            compute_position_size, compute_liquidation_price,
+            compute_fee, compute_locked_margin,
+        )
+
+        ticker = signal["ticker"]
+        direction = signal["direction"]
+
+        # Get entry price from klines at signal time
+        symbol_klines = klines.get(ticker, [])
+        if not symbol_klines:
+            return False
+
+        # Find the kline at or near signal_time (use last available candle close)
+        entry_base_price = symbol_klines[-1]["close"]
+        for k in symbol_klines:
+            if k["open_time"] >= current_time:
+                entry_base_price = k["close"]
+                break
+
+        # Apply slippage
+        side = determine_side(direction, config.get("direction", "straight"))
+        entry_price = apply_slippage(entry_base_price, side, config.get("slippage_bps", 2))
+
+        # Compute position size
+        leverage = config.get("leverage", 20)
+        capital_pct = config.get("capital_pct", 5.0)
+
+        # Available balance = wallet - locked margins
+        locked = sum(p.locked_margin for p in state.open_positions)
+        available = state.wallet_balance - locked
+
+        qty = compute_position_size(
+            sizing_capital=state.sizing_capital,
+            capital_pct=capital_pct,
+            leverage=leverage,
+            price=entry_price,
+            qty_step=0.001,  # TODO: get from instrument cache
+            min_qty=0.001,   # TODO: get from instrument cache
+            available_balance=available,
+        )
+        if qty is None:
+            state.signals_filtered += 1
+            return False
+
+        # Compute TP/SL
+        tp_pct = config.get("take_profit_pct", 150.0)
+        sl_pct = config.get("stop_loss_pct", 100.0)
+        tp_price, sl_price = compute_tp_sl(entry_price, side, tp_pct, sl_pct, leverage)
+
+        # Compute liquidation price
+        liq_price = compute_liquidation_price(entry_price, side, leverage)
+
+        # Compute entry fee
+        fee_rate = config.get("fee_rate_pct", 0.055)
+        entry_fee = compute_fee(qty, entry_price, fee_rate)
+
+        # Compute locked margin
+        margin = compute_locked_margin(qty, entry_price, leverage)
+
+        # Deduct entry fee from wallet
+        state.wallet_balance -= entry_fee
+
+        # Create position
+        position = Position(
+            symbol=ticker,
+            side=side,
+            entry_price=entry_price,
+            qty=qty,
+            leverage=leverage,
+            entry_time=current_time,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            liq_price=liq_price,
+            entry_fee=entry_fee,
+            locked_margin=margin,
+            scan_id=signal.get("scan_id", ""),
+            signal_score=signal.get("score", 0),
+            signal_confidence=signal.get("confidence", ""),
+            max_favorable_price=entry_price,
+            max_adverse_price=entry_price,
+        )
+        state.open_positions.append(position)
+        state.signals_entered += 1  # Increment immediately so max_trades filter works
+
+        return True
+
+    def _is_adaptively_blacklisted(
+        self,
+        config: dict[str, Any],
+        ticker: str,
+        state: SimulationState,
+        current_time: datetime,
+    ) -> bool:
+        """Check if symbol is adaptively blacklisted based on backtest trade history."""
+        lookback_hours = config.get("adaptive_blacklist_lookback_hours", 48)
+        min_trades = config.get("adaptive_blacklist_min_trades", 5)
+        max_win_rate = config.get("adaptive_blacklist_max_win_rate", 30.0)
+
+        cutoff = current_time - timedelta(hours=lookback_hours)
+
+        # Count wins and total trades for this ticker in simulated time window
+        wins = 0
+        total = 0
+        for trade in state.closed_trades:
+            if trade.get("symbol") != ticker:
+                continue
+            exit_time = trade.get("exit_time")
+            if exit_time and exit_time >= cutoff:
+                total += 1
+                if (trade.get("pnl") or 0) > 0:
+                    wins += 1
+
+        if total < min_trades:
+            return False
+
+        win_rate = (wins / total) * 100.0
+        return win_rate < max_win_rate
+
+    def _compute_total_unrealized(self, state: SimulationState, current_price_unused: float) -> float:
+        """Compute total unrealized PnL across all open positions. Placeholder for candle-level eval."""
+        return 0.0  # Will be implemented with close rule evaluation (Task 3.3+)
