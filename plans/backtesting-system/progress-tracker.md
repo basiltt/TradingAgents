@@ -21,7 +21,7 @@
 | Step 9: Create Worktree | COMPLETED | worktree-backtesting-system |
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
-| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2 ALL GATES. P3: Tasks 3.1-3.5 DONE (skeleton+filter+TP/SL+equity+trailing). Task 3.6 NEXT (time rules). 98 tests, 19 commits. |
+| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2 ALL GATES. P3: ALL 10 tasks done. 12c DONE (R2 clean). 12d: R1 3H found, 2 fixed. 3.9b deferred. 98 tests, 23 commits. |
 | Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
 | Step 14: Final Review | PENDING | 20-25 rounds |
 | Step 15: Final Validation | PENDING | |
