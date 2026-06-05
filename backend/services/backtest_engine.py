@@ -148,6 +148,22 @@ class BacktestEngine:
             scan_signals = scans[scan_id]
             current_time = scan_signals[0]["signal_time"]
 
+            # --- CYCLE LOCK (Task 3.9) ---
+            # If skip_if_positions_open=True AND positions exist → skip entire scan
+            if config.get("skip_if_positions_open") and state.open_positions:
+                state.signals_filtered += len(scan_signals)
+                # Still evaluate close rules on existing positions
+                if state.open_positions:
+                    next_scan_time = None
+                    if scan_idx + 1 < len(scan_order):
+                        next_scan_id = scan_order[scan_idx + 1]
+                        next_scan_time = scans[next_scan_id][0]["signal_time"]
+                    self._evaluate_candles_until(config, klines, state, current_time, next_scan_time, cancel_event)
+                if on_progress:
+                    pct = int(((scan_idx + 1) / len(scan_order)) * 100)
+                    on_progress(min(pct, 99))
+                continue
+
             # Refresh sizing_capital at each scan (matches production init_balances per scan)
             state.sizing_capital = state.wallet_balance
 
@@ -177,8 +193,21 @@ class BacktestEngine:
                 pct = int(((scan_idx + 1) / len(scan_order)) * 100)
                 on_progress(min(pct, 99))
 
+        # --- FORCE-CLOSE AT BACKTEST END (Task 3.10) ---
+        fee_rate = config.get("fee_rate_pct", 0.055)
+        if state.open_positions:
+            # Close all remaining positions at last available price
+            for pos in list(state.open_positions):
+                # Find last kline close for this symbol
+                symbol_klines = klines.get(pos.symbol, [])
+                last_price = symbol_klines[-1]["close"] if symbol_klines else pos.entry_price
+                last_time = symbol_klines[-1]["open_time"] if symbol_klines else signals[-1]["signal_time"]
+                self._close_position(state, pos, "backtest_end", last_price, last_time, fee_rate)
+            if "backtest_end" not in [w for w in warnings]:
+                warnings.append(f"force_closed_{len([t for t in state.closed_trades if t.get('close_reason') == 'backtest_end'])}_positions_at_end")
+
         # Record final equity point
-        final_equity = state.wallet_balance + self._compute_total_unrealized(state, state.wallet_balance)
+        final_equity = state.wallet_balance
         state.equity_curve.append({
             "ts": signals[-1]["signal_time"] if signals else None,
             "equity": final_equity,
@@ -601,6 +630,26 @@ class BacktestEngine:
                     else:
                         pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
                         pos.max_adverse_price = max(pos.max_adverse_price, high)
+
+                    # --- FUNDING RATE (Task 3.8) — before liquidation ---
+                    # Apply at 8h boundaries (00:00, 08:00, 16:00 UTC)
+                    funding_model = config.get("funding_rate_model", "none")
+                    if funding_model == "fixed_8h" and state.open_positions:
+                        hour = candle_time.hour
+                        minute = candle_time.minute
+                        # Check if this candle crosses an 8h boundary
+                        if hour in (0, 8, 16) and minute < 5:  # within first 5-min candle of boundary
+                            funding_rate = config.get("funding_rate_fixed_pct", 0.01) / 100.0
+                            for fp in state.open_positions:
+                                if fp.symbol != symbol:
+                                    continue
+                                position_value = fp.qty * close
+                                payment = position_value * funding_rate
+                                # Positive rate: longs pay, shorts receive
+                                if fp.side == "Buy":
+                                    state.wallet_balance -= payment
+                                else:
+                                    state.wallet_balance += payment
 
                     # --- LIQUIDATION CHECK (Task 3.7) — before TP/SL ---
                     if pos.side == "Buy" and low <= pos.liq_price:
