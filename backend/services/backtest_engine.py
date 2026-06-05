@@ -591,6 +591,7 @@ class BacktestEngine:
         open_symbols = {p.symbol for p in state.open_positions}
         fee_rate = config.get("fee_rate_pct", 0.055)
         candle_count = 0
+        latest_prices: dict[str, float] = {}  # Track latest close per symbol for equity calc
 
         # For each symbol with an open position, iterate its candles
         for symbol in list(open_symbols):
@@ -613,6 +614,28 @@ class BacktestEngine:
                 if candle_count % 100 == 0 and cancel_event and cancel_event.is_set():
                     raise BacktestCancelled("Cancelled during candle evaluation")
 
+                close_price = candle["close"]
+                high = candle["high"]
+                low = candle["low"]
+                latest_prices[symbol] = close_price
+
+                # --- FUNDING RATE (Task 3.8) — ONCE per candle, not per position ---
+                funding_model = config.get("funding_rate_model", "none")
+                if funding_model == "fixed_8h":
+                    hour = candle_time.hour
+                    minute = candle_time.minute
+                    if hour in (0, 8, 16) and minute < 5:
+                        funding_rate = config.get("funding_rate_fixed_pct", 0.01) / 100.0
+                        for fp in state.open_positions:
+                            if fp.symbol != symbol:
+                                continue
+                            position_value = fp.qty * close_price
+                            payment = position_value * funding_rate
+                            if fp.side == "Buy":
+                                state.wallet_balance -= payment
+                            else:
+                                state.wallet_balance += payment
+
                 # Evaluate each open position on this symbol
                 positions_to_close = []
                 for pos in state.open_positions:
@@ -630,26 +653,6 @@ class BacktestEngine:
                     else:
                         pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
                         pos.max_adverse_price = max(pos.max_adverse_price, high)
-
-                    # --- FUNDING RATE (Task 3.8) — before liquidation ---
-                    # Apply at 8h boundaries (00:00, 08:00, 16:00 UTC)
-                    funding_model = config.get("funding_rate_model", "none")
-                    if funding_model == "fixed_8h" and state.open_positions:
-                        hour = candle_time.hour
-                        minute = candle_time.minute
-                        # Check if this candle crosses an 8h boundary
-                        if hour in (0, 8, 16) and minute < 5:  # within first 5-min candle of boundary
-                            funding_rate = config.get("funding_rate_fixed_pct", 0.01) / 100.0
-                            for fp in state.open_positions:
-                                if fp.symbol != symbol:
-                                    continue
-                                position_value = fp.qty * close
-                                payment = position_value * funding_rate
-                                # Positive rate: longs pay, shorts receive
-                                if fp.side == "Buy":
-                                    state.wallet_balance -= payment
-                                else:
-                                    state.wallet_balance += payment
 
                     # --- LIQUIDATION CHECK (Task 3.7) — before TP/SL ---
                     if pos.side == "Buy" and low <= pos.liq_price:
@@ -708,7 +711,7 @@ class BacktestEngine:
                 # Evaluate AFTER TP/SL closures (wallet updated) using candle CLOSE price
                 if state.open_positions and state.cycle_start_equity > 0:
                     close_price = candle["close"]
-                    self._evaluate_equity_rules(config, state, close_price, candle_time, fee_rate)
+                    self._evaluate_equity_rules(config, state, latest_prices, candle_time, fee_rate)
 
                 # --- TRAILING PROFIT (Task 3.5) ---
                 trailing_pct = config.get("trailing_profit_pct")
@@ -742,13 +745,13 @@ class BacktestEngine:
             net_pnl = pnl - exit_fee  # entry_fee already deducted at open
 
         # Update wallet
+        # Model: wallet_balance includes locked margin (never deducted on open, only entry_fee deducted)
+        # On normal close: add net_pnl (margin stays in wallet, PnL adjusts it)
+        # On liquidation: LOSE the locked margin (deduct it now)
         if close_reason == "liquidation":
-            # On liquidation, margin is lost entirely (already deducted at open as locked_margin)
-            # The wallet only gets back nothing — pnl is negative = -(margin + entry_fee)
-            # But entry_fee was already deducted, so net effect on wallet:
-            state.wallet_balance += 0  # margin already gone, nothing returned
+            state.wallet_balance -= position.locked_margin  # margin is lost
         else:
-            state.wallet_balance += net_pnl + position.locked_margin  # return margin + PnL - exit fee
+            state.wallet_balance += net_pnl  # PnL adjusts wallet (no margin return needed)
 
         # Compute MFE/MAE percentages
         if position.side == "Buy":
@@ -787,14 +790,14 @@ class BacktestEngine:
         self,
         config: dict[str, Any],
         state: SimulationState,
-        current_close_price: float,
+        latest_prices: dict[str, float],
         candle_time: datetime,
         fee_rate: float,
     ) -> None:
         """Evaluate equity-based close rules: EQUITY_DROP_PCT, SMART, close_on_profit.
 
         Called once per candle AFTER TP/SL closures (wallet already updated).
-        Uses candle CLOSE for unrealized PnL calculation.
+        Uses per-symbol latest close price for unrealized PnL calculation.
         """
         from backend.services.trading_rules import (
             compute_unrealized_pnl, check_equity_drop, check_close_on_profit,
@@ -807,10 +810,11 @@ class BacktestEngine:
         total_upnl = 0.0
         losing_positions = []
         for pos in state.open_positions:
-            # Get current price for this position's symbol
+            # Use per-symbol latest price (not a single symbol's close)
+            current_price = latest_prices.get(pos.symbol, pos.entry_price)
             # Approximation: use same close_price for simplicity in per-symbol loop
             # In production this uses actual mark price per symbol
-            upnl = compute_unrealized_pnl(pos.entry_price, current_close_price, pos.qty, pos.side)
+            upnl = compute_unrealized_pnl(pos.entry_price, current_price, pos.qty, pos.side)
             total_upnl += upnl
             if upnl < 0:
                 losing_positions.append(pos)
@@ -825,10 +829,10 @@ class BacktestEngine:
                     # SMART: close only LOSING positions, keep others active
                     if losing_positions:
                         for pos in list(losing_positions):
-                            self._close_position(state, pos, "equity_drop_smart", current_close_price, candle_time, fee_rate)
+                            self._close_position(state, pos, "equity_drop_smart", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
                         # Reset reference equity (prevents immediate re-trigger)
                         new_equity = state.wallet_balance + sum(
-                            compute_unrealized_pnl(p.entry_price, current_close_price, p.qty, p.side)
+                            compute_unrealized_pnl(p.entry_price, latest_prices.get(p.symbol, p.entry_price), p.qty, p.side)
                             for p in state.open_positions
                         )
                         state.cycle_start_equity = new_equity
@@ -838,7 +842,7 @@ class BacktestEngine:
                 else:
                     # Non-SMART: close ALL positions, deactivate cycle
                     for pos in list(state.open_positions):
-                        self._close_position(state, pos, "equity_drop", current_close_price, candle_time, fee_rate)
+                        self._close_position(state, pos, "equity_drop", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
                     state.cycle_start_equity = 0  # Cycle terminated
                 return  # Don't evaluate further rules after equity drop
 
@@ -848,7 +852,7 @@ class BacktestEngine:
         if close_on_profit and state.cycle_start_equity > 0:
             if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value or 100.0):
                 for pos in list(state.open_positions):
-                    self._close_position(state, pos, "close_on_profit", current_close_price, candle_time, fee_rate)
+                    self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
                 state.cycle_start_equity = 0  # Cycle terminated
 
     def _evaluate_trailing_profit(
