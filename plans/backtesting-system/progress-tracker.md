@@ -21,7 +21,7 @@
 | Step 9: Create Worktree | COMPLETED | worktree-backtesting-system |
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
-| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2+P3 ALL GATES PASSED. P4 (Metrics) ALL 4 GATES PASSED: 12c Phase Review (12 rounds), 12d Plan-Compliance (2 clean, plan reconciled), 12e Production Hardening (2 clean — perf/determinism/thread-safety/numerical/observability), 12f Testing (2 clean, mutation-resistant, oracle anchors, engine diagnostics→warnings tested). 84 metric tests, 194 backtest tests. NEXT: P5 Backend Service + API. |
+| Step 12: Per-Phase Implementation | IN_PROGRESS | P1-P5 ALL GATES PASSED. P4 committed b7cd140. P5 (Backend Service + API) ALL 4 GATES: 12c Phase Review (7r/2clean — async/data/API bugs), 12d Plan-Compliance (4r/2clean — buy&hold+excess_return wired, per_trade stripped from JSONB, coverage guard, warmup endpoint), 12e Production Hardening (5r/2clean APPROVED — OOM budget, UUID validation, error sanitization, observability, atomic completion invariant, persist retry), 12f Testing (4r/2clean mutation-resistant). 96 service tests, 383 backtest tests. NEXT: P5 12g commit, then P6 Frontend. |
 | Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
 | Step 14: Final Review | PENDING | 20-25 rounds |
 | Step 15: Final Validation | PENDING | |
@@ -69,6 +69,13 @@
 ---
 
 ## Phase 5 Carry-Forward (raised during P4 reviews — MUST address when wiring service)
+
+### Phase 7 Integration-Test Carry-Forward (raised during P5 12f testing review)
+- The Phase 5 unit suite (~96 tests) mocks `db.pool` and `_wire_transaction` (codebase norm). It does
+  NOT exercise real asyncpg SQL/rollback/concurrency. Phase 7 integration should add ~4 Postgres-backed
+  tests: (1) persist round-trip read-back, (2) transaction rollback on trade-insert failure leaves no
+  orphan results, (3) genuinely concurrent runs respecting the 3-slot cap, (4) the cross-thread
+  _on_progress → call_soon_threadsafe DB-write hop. Not a Phase 5 blocker (unit gate uses mocks).
 
 1. **excess_return + Buy & Hold wiring** — `compute_buy_hold_return(btc_klines, capital)` exists and is
    correct, but `compute_all_metrics(trades, equity, config)` takes no `btc_klines`, so it is NOT wired.

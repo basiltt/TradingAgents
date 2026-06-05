@@ -234,8 +234,17 @@ def create_app() -> FastAPI:
         app.state.strategy_service = StrategyService(db=db)
 
         # Backtesting service (always-on, no credentials needed)
+        from backend.services.kline_cache_service import KlineCacheService
         from backend.services.backtest_service import BacktestService
-        app.state.backtest_service = BacktestService(db=db)
+        app.state.kline_cache_service = KlineCacheService(db=db)
+        app.state.backtest_service = BacktestService(
+            db=db, kline_cache=app.state.kline_cache_service,
+        )
+        # Recover any backtests left 'running'/'pending' by a previous process.
+        try:
+            await app.state.backtest_service.recover_stale_runs()
+        except Exception:
+            logger.exception("backtest_stale_recovery_failed")
 
         await app.state.scanner_service.resume_incomplete_scans()
 
@@ -546,6 +555,7 @@ def create_app() -> FastAPI:
     from backend.routers.close_positions import router as close_positions_router
     from backend.routers.ai_manager import router as ai_manager_router
     from backend.routers.signal_analytics import router as signal_analytics_router
+    from backend.routers.backtest import router as backtest_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
@@ -563,6 +573,7 @@ def create_app() -> FastAPI:
     app.include_router(close_positions_router, prefix="/api/v1")
     app.include_router(ai_manager_router, prefix="/api/v1")
     app.include_router(signal_analytics_router, prefix="/api/v1")
+    app.include_router(backtest_router, prefix="/api/v1")
     from backend.routers.trading_cycles import router as trading_cycles_router
     app.include_router(trading_cycles_router, prefix="/api/v1")
     app.include_router(ws_router)
