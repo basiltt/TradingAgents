@@ -222,6 +222,19 @@ class BacktestEngine:
         from backend.services.backtest_metrics import compute_all_metrics
         metrics = compute_all_metrics(state.closed_trades, state.equity_curve, config)
 
+        # Surface any input sanitization the metrics layer had to perform as
+        # warnings — silent coercion of bad engine data would otherwise hide
+        # data-integrity problems behind plausible-but-wrong numbers.
+        diag = metrics.get("diagnostics") or {}
+        if diag.get("trades_dropped_non_dict"):
+            warnings.append(f"metrics_dropped_{diag['trades_dropped_non_dict']}_malformed_trades")
+        if diag.get("equity_points_dropped_non_dict"):
+            warnings.append(f"metrics_dropped_{diag['equity_points_dropped_non_dict']}_malformed_equity_points")
+        if diag.get("trade_pnls_sanitized"):
+            warnings.append(f"metrics_sanitized_{diag['trade_pnls_sanitized']}_non_finite_pnls")
+        if diag.get("equity_values_sanitized"):
+            warnings.append(f"metrics_sanitized_{diag['equity_values_sanitized']}_non_finite_equity_values")
+
         return SimulationResult(
             trades=state.closed_trades,
             equity_curve=state.equity_curve,

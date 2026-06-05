@@ -89,6 +89,74 @@ class TestEngineCreation:
         assert len(progress_values) >= 1
         assert progress_values[-1] == 100  # final progress = 100%
 
+    def test_diagnostics_surface_as_warnings(self, monkeypatch):
+        """The engine must translate metrics['diagnostics'] counts into warnings.
+
+        The engine builds closed_trades itself so bad data won't occur organically;
+        inject a diagnostics payload by patching compute_all_metrics at its source
+        module (the engine imports it lazily inside run()). A non-empty signal+kline
+        is required so the run reaches the metrics-computation path (the empty-signals
+        branch returns early before metrics are computed).
+        """
+        from backend.services import backtest_metrics
+        from backend.services.backtest_engine import BacktestEngine
+
+        monkeypatch.setattr(
+            backtest_metrics, "compute_all_metrics",
+            lambda trades, equity, config: {"diagnostics": {
+                "trades_dropped_non_dict": 2,
+                "equity_points_dropped_non_dict": 1,
+                "trade_pnls_sanitized": 3,
+                "equity_values_sanitized": 4,
+            }},
+        )
+        config = {"starting_capital": 10000.0, "leverage": 20, "capital_pct": 5.0,
+                  "take_profit_pct": 150.0, "stop_loss_pct": 100.0, "direction": "straight",
+                  "fee_rate_pct": 0.055, "slippage_bps": 0, "execution_mode": "batch",
+                  "max_trades": 999, "skip_if_positions_open": False}
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                    "score": 8, "signal_time": base, "scan_id": "s1",
+                    "signal_source": "structured", "analysis_price": 50000.0}]
+        klines = {"BTCUSDT": [
+            {"open_time": base, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+        ]}
+        result = BacktestEngine().run(config, signals, klines)
+        assert "metrics_dropped_2_malformed_trades" in result.warnings
+        assert "metrics_dropped_1_malformed_equity_points" in result.warnings
+        assert "metrics_sanitized_3_non_finite_pnls" in result.warnings
+        assert "metrics_sanitized_4_non_finite_equity_values" in result.warnings
+
+    def test_clean_run_has_no_diagnostics_warnings(self, monkeypatch):
+        """A clean metrics run (all-zero diagnostics) must NOT add any diagnostics warning."""
+        from backend.services import backtest_metrics
+        from backend.services.backtest_engine import BacktestEngine
+
+        monkeypatch.setattr(
+            backtest_metrics, "compute_all_metrics",
+            lambda trades, equity, config: {"diagnostics": {
+                "trades_dropped_non_dict": 0,
+                "equity_points_dropped_non_dict": 0,
+                "trade_pnls_sanitized": 0,
+                "equity_values_sanitized": 0,
+            }},
+        )
+        config = {"starting_capital": 10000.0, "leverage": 20, "capital_pct": 5.0,
+                  "take_profit_pct": 150.0, "stop_loss_pct": 100.0, "direction": "straight",
+                  "fee_rate_pct": 0.055, "slippage_bps": 0, "execution_mode": "batch",
+                  "max_trades": 999, "skip_if_positions_open": False}
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                    "score": 8, "signal_time": base, "scan_id": "s1",
+                    "signal_source": "structured", "analysis_price": 50000.0}]
+        klines = {"BTCUSDT": [
+            {"open_time": base, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+        ]}
+        result = BacktestEngine().run(config, signals, klines)
+        assert not any("metrics_dropped" in w or "metrics_sanitized" in w for w in result.warnings)
+
 
 class TestSimulationState:
     """Test the internal state management."""

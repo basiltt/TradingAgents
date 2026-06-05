@@ -241,11 +241,13 @@
 - **Functions:**
   - `compute_all_metrics(trades, equity_curve, config) -> dict` — returns ALL metrics below
   - `compute_sharpe(daily_returns) -> float | None` (√365 annualized, None if <2 data points)
-  - `compute_sortino(daily_returns) -> float | None` (downside deviation, floor 0.0001)
+  - `compute_sortino(daily_returns) -> float | None` (√365 annualized; None if <2 data points OR no downside periods — undefined deviation, consistent with profit_factor's no-loss → None)
   - `compute_max_drawdown(equity_curve) -> dict` ({max_dd_pct, max_dd_$, max_dd_duration_hours, avg_dd_pct})
   - `compute_streaks(trades) -> dict` (max_consecutive_wins/losses, count + $ amounts)
-  - `compute_mfe_mae(trades) -> list[dict]` (per-trade max favorable/adverse excursion)
-  - `split_by_direction(trades) -> dict` (All/Long/Short columns for ALL metrics)
+  - `compute_per_trade_series(trades) -> list[dict]` (per-trade detail: pnl, cumulative_pnl, MFE/MAE, close_reason, times — consolidates the per-trade MFE/MAE requirement into one series rather than a separate `compute_mfe_mae`, avoiding a near-duplicate function)
+  - `compute_run_up(equity_curve) -> dict` ({max_run_up_pct, max_run_up_usd}) — mirror of drawdown
+  - `compute_durations(trades) -> dict` (avg/winner/loser/max trade duration in hours)
+  - `split_by_direction(trades) -> dict` (All/Long/Short columns for the core P&L subset: total/winners/losers, net_profit, win_rate, avg_trade, avg_win, avg_loss — per-direction Sharpe/Sortino/drawdown are out of scope as they require per-direction equity curves the engine does not track)
 - **Full metrics list (must all be in output):**
   - Net profit ($ and %), gross profit, gross loss, profit factor, recovery factor
   - CAGR, Calmar ratio, expectancy ($), total commission paid
@@ -255,7 +257,7 @@
   - Max consecutive wins/losses (count and $), max run-up
   - Max drawdown ($ and %), avg drawdown %, max drawdown duration
   - Cumulative PnL per trade, MFE/MAE per trade
-- **Edge case tests:** `test_zero_trades` (all ratios=None, equity=flat), `test_one_trade` (Sharpe=None), `test_all_wins` (profit_factor=Infinity), `test_all_losses`
+- **Edge case tests:** `test_zero_trades` (all ratios=None, equity=flat), `test_one_trade` (Sharpe=None), `test_all_wins` (profit_factor=None — no losses → "∞"/"N/A" in UI; JSONB-safe), `test_all_losses`
 
 ### Task 4.2: Buy & Hold benchmark
 - **File:** `backend/services/backtest_metrics.py`

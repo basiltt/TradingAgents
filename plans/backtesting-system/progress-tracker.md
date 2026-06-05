@@ -21,7 +21,7 @@
 | Step 9: Create Worktree | COMPLETED | worktree-backtesting-system |
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
-| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2+P3 ALL GATES PASSED. P3 review: 12c(4 crit fixed), 12d(plan compliant), 12e(unified timeline refactor), 12f(108 tests adequate). Phase 4 NEXT (Metrics). 108 tests, 30 commits. |
+| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2+P3 ALL GATES PASSED. P4 (Metrics) ALL 4 GATES PASSED: 12c Phase Review (12 rounds), 12d Plan-Compliance (2 clean, plan reconciled), 12e Production Hardening (2 clean — perf/determinism/thread-safety/numerical/observability), 12f Testing (2 clean, mutation-resistant, oracle anchors, engine diagnostics→warnings tested). 84 metric tests, 194 backtest tests. NEXT: P5 Backend Service + API. |
 | Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
 | Step 14: Final Review | PENDING | 20-25 rounds |
 | Step 15: Final Validation | PENDING | |
@@ -65,3 +65,22 @@
 | specs/backtesting-system-architecture.md | 3 | Architecture + review fixes |
 | specs/backtesting-system-spec.md | 4-5 | Full specification (reviewed + clean) |
 | plans/backtesting-system/implementation-plan.md | 6-7 | Implementation plan (reviewed + clean) |
+
+---
+
+## Phase 5 Carry-Forward (raised during P4 reviews — MUST address when wiring service)
+
+1. **excess_return + Buy & Hold wiring** — `compute_buy_hold_return(btc_klines, capital)` exists and is
+   correct, but `compute_all_metrics(trades, equity, config)` takes no `btc_klines`, so it is NOT wired.
+   Spec FR-006 "Comparison" row requires Buy & Hold return AND `excess_return` (= net_profit_pct −
+   buy_hold.return_pct). Phase 5 service must: fetch BTCUSDT klines for the window, call
+   `compute_buy_hold_return`, and add both `buy_hold_return_pct` and `excess_return` to the results
+   payload. excess_return has ZERO implementation today — do not silently drop it.
+
+2. **per_trade persistence — avoid JSONB duplication** — `compute_all_metrics` output now includes a
+   `per_trade` list (one entry per closed trade) for the cumulative-PnL chart. Its fields are a near-exact
+   subset of the `backtest_trades` TABLE columns. Do NOT persist the 50k-entry `per_trade` array into the
+   `backtest_results.metrics` JSONB cell (multi-MB, TOASTed, shipped whole on every fetch). Instead:
+   persist per-trade rows to `backtest_trades`, and serve the cumulative-PnL series from that table
+   (compute `cumulative_pnl` on read, ordered by exit_time). Keep `metrics` JSONB to scalar aggregates.
+   Consider capping/downsampling `per_trade` in the API response like the equity curve (LTTB).

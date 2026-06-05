@@ -252,7 +252,7 @@ cycle_pnl_pct = ((equity - cycle_start_equity) / cycle_start_equity) × 100
 **Edge Cases:**
 - Zero trades: Return `status=completed` with `warnings=['no_trades_matched']`. All ratios = null. Equity = flat line.
 - One trade: Sharpe/Sortino = null (insufficient data). Other metrics computed normally.
-- All wins or all losses: Profit factor = infinity or 0. Sortino uses min downside of 0.0001.
+- All wins or all losses: Profit factor = null (no losses → "∞"/"N/A" in UI) or 0. Sortino = null when there are no downside periods (downside deviation undefined → "∞"/"N/A"), consistent with the profit-factor convention. *(Revised during Phase 4 review: returning null is JSONB-safe and avoids emitting a meaningless giant ratio from an arbitrary 0.0001 floor.)*
 
 ### FR-007: Kline Cache
 
