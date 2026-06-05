@@ -324,6 +324,9 @@ class RegimeClassifier:
         for symbol in symbols:
             try:
                 candles = await fetch_candles_fn(symbol, interval="240", limit=50)
+                if not candles or len(candles) < 30:
+                    logger.debug("regime_skip_insufficient_candles", extra={"symbol": symbol, "count": len(candles) if candles else 0})
+                    continue
                 result = await self.classify_symbol(symbol, candles)
                 results.append(result)
             except Exception:

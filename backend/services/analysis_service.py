@@ -13,6 +13,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from langgraph.errors import GraphRecursionError
+
 from backend.utils import mask_secrets
 from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
@@ -636,17 +638,27 @@ class AnalysisService:
             workflow_mode=config.get("workflow_mode", "deep_analysis"),
             asset_type=config.get("asset_type", "stock"),
         )
-        for chunk in graph.graph.stream(init_state, **args):
-            if cancel_event.is_set():
-                break
+        try:
+            for chunk in graph.graph.stream(init_state, **args):
+                if cancel_event.is_set():
+                    break
 
-            events = parse_stream_chunk(chunk, seq=seq, state=parser_state)
-            for event in events:
-                self._bus.emit_threadsafe(run_id, event)
-                if isinstance(event, ReportChunkEvent) and event.section:
-                    self._db.sync_save_report_section(run_id, event.section, event.content)
+                events = parse_stream_chunk(chunk, seq=seq, state=parser_state)
+                for event in events:
+                    self._bus.emit_threadsafe(run_id, event)
+                    if isinstance(event, ReportChunkEvent) and event.section:
+                        self._db.sync_save_report_section(run_id, event.section, event.content)
 
-            last_chunk = chunk
+                last_chunk = chunk
+        except GraphRecursionError:
+            logger.warning(
+                "Analysis %s hit recursion limit (%s) — returning partial results",
+                run_id, config.get("max_recur_limit", 100),
+            )
+            self._bus.emit_threadsafe(run_id, ProgressEvent(
+                phase="warning",
+                detail=f"Recursion limit ({config.get('max_recur_limit', 100)}) reached — returning partial results",
+            ))
 
         self._persist_signal_sections(run_id, last_chunk)
         return last_chunk
