@@ -21,7 +21,7 @@
 | Step 9: Create Worktree | COMPLETED | worktree-backtesting-system |
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
-| Step 12: Per-Phase Implementation | IN_PROGRESS | Phase 1 done+reviewed. Phase 2: Task 2.1 done, 2.2-2.3 pending |
+| Step 12: Per-Phase Implementation | IN_PROGRESS | Phase 1+2 done. Phase 1 review: 12c DONE (R3 clean), 12d DONE (R2 clean), 12e IN_PROGRESS (R1 fixed, R2 needed). Phase 2: 12c done (1 round clean), 12d/e/f pending |
 | Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
 | Step 14: Final Review | PENDING | 20-25 rounds |
 | Step 15: Final Validation | PENDING | |
