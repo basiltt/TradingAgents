@@ -257,9 +257,12 @@ class KlineCacheService:
                     FOR VALUES FROM ('{month_start.strftime('%Y-%m-%d')}')
                     TO ('{month_end.strftime('%Y-%m-%d')}')
             """)
-        except Exception:
-            # Partition may already exist or be handled by DEFAULT — not fatal
-            pass
+        except Exception as e:
+            # DuplicateTable is expected (race condition between concurrent backtests)
+            # Other errors are logged but non-fatal — INSERT will fail with clearer message
+            err_name = type(e).__name__
+            if "Duplicate" not in err_name and "already exists" not in str(e):
+                logger.warning("partition_create_failed", extra={"month_key": month_key, "error": str(e)[:200]})
 
     async def _fetch_klines_from_bybit(
         self,
@@ -337,7 +340,11 @@ class KlineCacheService:
                     logger.error("kline_fetch_failed", extra={"symbol": symbol, "interval": interval})
                     break
 
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except (ValueError, Exception):
+                    logger.error("kline_malformed_response", extra={"symbol": symbol, "body": resp.text[:200] if hasattr(resp, 'text') else ""})
+                    break
                 if data.get("retCode") != 0:
                     logger.error("kline_fetch_api_error", extra={"symbol": symbol, "retCode": data.get("retCode")})
                     break
@@ -349,7 +356,10 @@ class KlineCacheService:
                 all_candles.extend(candles)
 
                 # Pagination: move end pointer to oldest candle in batch - 1
-                oldest_ts = int(candles[-1][0])  # Last in descending = oldest
+                try:
+                    oldest_ts = int(candles[-1][0])  # Last in descending = oldest
+                except (ValueError, IndexError):
+                    break
                 if oldest_ts <= start_ms:
                     break
                 current_end = oldest_ts - 1
@@ -360,18 +370,24 @@ class KlineCacheService:
         # Parse string arrays → dicts, reverse to ascending
         klines: list[dict[str, Any]] = []
         for candle in reversed(all_candles):
-            ts_ms = int(candle[0])
-            # Filter: only include candles within requested range
-            if ts_ms < start_ms or ts_ms > end_ms:
+            try:
+                if len(candle) < 6:
+                    continue
+                ts_ms = int(candle[0])
+                # Filter: only include candles within requested range
+                if ts_ms < start_ms or ts_ms > end_ms:
+                    continue
+                klines.append({
+                    "open_time": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
+                    "open": float(candle[1]),
+                    "high": float(candle[2]),
+                    "low": float(candle[3]),
+                    "close": float(candle[4]),
+                    "volume": float(candle[5]),
+                })
+            except (ValueError, IndexError, TypeError):
+                logger.warning("kline_parse_skip", extra={"symbol": symbol, "candle": str(candle)[:100]})
                 continue
-            klines.append({
-                "open_time": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
-                "open": float(candle[1]),
-                "high": float(candle[2]),
-                "low": float(candle[3]),
-                "close": float(candle[4]),
-                "volume": float(candle[5]),
-            })
 
         logger.debug(
             "kline_fetch_complete",
@@ -402,8 +418,9 @@ class InstrumentInfoCache:
         self._last_refresh: Optional[datetime] = None
 
     def get(self, symbol: str) -> Optional[dict[str, float]]:
-        """Get instrument info for a symbol. Returns None if not cached."""
-        return self._cache.get(symbol)
+        """Get instrument info for a symbol. Returns None if not cached. Always returns a COPY."""
+        info = self._cache.get(symbol)
+        return info.copy() if info is not None else None
 
     def get_or_default(self, symbol: str) -> dict[str, float]:
         """Get instrument info with conservative defaults for unknown symbols."""

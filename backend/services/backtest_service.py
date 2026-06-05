@@ -12,6 +12,9 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Hard limit on signals loaded — prevents OOM on large date ranges
+_MAX_SIGNALS = 50_000
+
 
 class BacktestService:
     """Orchestration service for backtesting.
@@ -70,6 +73,7 @@ class BacktestService:
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
                 ORDER BY s.started_at::timestamptz, ABS(sr.score) DESC
+                LIMIT 50000
             """
             rows = await self._db.pool.fetch(query, schedule_id, start, end)
 
@@ -85,6 +89,7 @@ class BacktestService:
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
                 ORDER BY s.started_at::timestamptz, ABS(sr.score) DESC
+                LIMIT 50000
             """
             rows = await self._db.pool.fetch(query, scan_ids)
 
@@ -100,6 +105,7 @@ class BacktestService:
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
                 ORDER BY s.started_at::timestamptz, ABS(sr.score) DESC
+                LIMIT 50000
             """
             rows = await self._db.pool.fetch(query, start, end)
 
