@@ -165,7 +165,8 @@ class BacktestEngine:
                 continue
 
             # Refresh sizing_capital at each scan (matches production init_balances per scan)
-            state.sizing_capital = state.wallet_balance
+            # Clamp to >= 0 so a negative wallet doesn't produce negative position sizes
+            state.sizing_capital = max(0.0, state.wallet_balance)
 
             # Process signals through filter chain
             if execution_mode == "batch":
@@ -414,10 +415,14 @@ class BacktestEngine:
         if max_drift is not None:
             analysis_price = signal.get("analysis_price")
             if analysis_price and analysis_price > 0:
-                # Get current price from klines
+                # Get price at signal time (NOT end of dataset — avoid look-ahead bias)
                 symbol_klines = klines.get(ticker, [])
-                if symbol_klines:
-                    current_price = symbol_klines[-1]["close"]  # approximate
+                current_price = None
+                for k in symbol_klines:
+                    if k["open_time"] >= current_time:
+                        current_price = k["close"]
+                        break
+                if current_price is not None:
                     drift = abs(current_price - analysis_price) / analysis_price * 100
                     if drift > max_drift:
                         state.signals_filtered += 1
@@ -577,157 +582,144 @@ class BacktestEngine:
         end_time: Optional[datetime],
         cancel_event: Optional[threading.Event],
     ) -> None:
-        """Evaluate close rules on open positions candle-by-candle.
+        """Evaluate close rules using a UNIFIED chronological timeline.
 
-        Iterates through kline data from start_time until end_time (or end of data).
-        Checks TP/SL (wick-based) and other close rules at each candle.
+        Merges all open-position symbols' candles into one sorted-by-time stream.
+        At each timestamp, ALL symbols' prices are available so equity/trailing
+        rules compute correctly for multi-symbol backtests.
         """
-        from backend.services.trading_rules import compute_unrealized_pnl, compute_fee
-
         if not state.open_positions:
             return
 
-        # Collect all symbols with open positions
-        open_symbols = {p.symbol for p in state.open_positions}
         fee_rate = config.get("fee_rate_pct", 0.055)
-        candle_count = 0
-        latest_prices: dict[str, float] = {}  # Track latest close per symbol for equity calc
+        open_symbols = {p.symbol for p in state.open_positions}
 
-        # For each symbol with an open position, iterate its candles
-        for symbol in list(open_symbols):
-            symbol_klines = klines.get(symbol, [])
-            if not symbol_klines:
-                continue
-
-            for candle in symbol_klines:
-                candle_time = candle["open_time"]
-
-                # Only process candles AFTER positions were opened
-                if candle_time <= start_time:
+        # Build per-symbol filtered candle series (after start_time, before end_time)
+        symbol_time_idx: dict[str, dict[datetime, dict]] = {}
+        all_timestamps: set[datetime] = set()
+        for sym in open_symbols:
+            sym_klines = klines.get(sym, [])
+            idx: dict[datetime, dict] = {}
+            for k in sym_klines:
+                kt = k["open_time"]
+                if kt <= start_time:
                     continue
-                # Stop at next scan event (or end of data)
-                if end_time and candle_time >= end_time:
-                    break
+                if end_time and kt >= end_time:
+                    continue
+                idx[kt] = k
+                all_timestamps.add(kt)
+            if idx:
+                symbol_time_idx[sym] = idx
 
-                # Check cancellation every 100 candles
-                candle_count += 1
-                if candle_count % 100 == 0 and cancel_event and cancel_event.is_set():
-                    raise BacktestCancelled("Cancelled during candle evaluation")
+        if not all_timestamps:
+            return
 
-                close_price = candle["close"]
+        sorted_timestamps = sorted(all_timestamps)
+
+        # Track latest known close per symbol (seed with entry price)
+        latest_prices: dict[str, float] = {p.symbol: p.entry_price for p in state.open_positions}
+        candle_count = 0
+
+        # Process timestamps chronologically — unified timeline
+        for candle_time in sorted_timestamps:
+            if not state.open_positions:
+                break
+
+            candle_count += 1
+            if candle_count % 100 == 0 and cancel_event and cancel_event.is_set():
+                raise BacktestCancelled("Cancelled during candle evaluation")
+
+            # Gather candles for all symbols at this timestamp; update latest prices
+            candles_at_time: dict[str, dict] = {}
+            for sym in list(open_symbols):
+                candle = symbol_time_idx.get(sym, {}).get(candle_time)
+                if candle:
+                    latest_prices[sym] = candle["close"]
+                    candles_at_time[sym] = candle
+
+            # --- FUNDING RATE (once per timestamp) ---
+            funding_model = config.get("funding_rate_model", "none")
+            if funding_model == "fixed_8h":
+                if candle_time.hour in (0, 8, 16) and candle_time.minute < 5:
+                    funding_rate = config.get("funding_rate_fixed_pct", 0.01) / 100.0
+                    for fp in state.open_positions:
+                        price = latest_prices.get(fp.symbol, fp.entry_price)
+                        payment = fp.qty * price * funding_rate
+                        if fp.side == "Buy":
+                            state.wallet_balance -= payment
+                        else:
+                            state.wallet_balance += payment
+
+            # --- PER-POSITION: liquidation + TP/SL (only symbols with a candle now) ---
+            positions_to_close: list[tuple] = []
+            for pos in list(state.open_positions):
+                candle = candles_at_time.get(pos.symbol)
+                if not candle:
+                    continue
                 high = candle["high"]
                 low = candle["low"]
-                latest_prices[symbol] = close_price
 
-                # --- FUNDING RATE (Task 3.8) — ONCE per candle, not per position ---
-                funding_model = config.get("funding_rate_model", "none")
-                if funding_model == "fixed_8h":
-                    hour = candle_time.hour
-                    minute = candle_time.minute
-                    if hour in (0, 8, 16) and minute < 5:
-                        funding_rate = config.get("funding_rate_fixed_pct", 0.01) / 100.0
-                        for fp in state.open_positions:
-                            if fp.symbol != symbol:
-                                continue
-                            position_value = fp.qty * close_price
-                            payment = position_value * funding_rate
-                            if fp.side == "Buy":
-                                state.wallet_balance -= payment
-                            else:
-                                state.wallet_balance += payment
+                # Update MFE/MAE
+                if pos.side == "Buy":
+                    pos.max_favorable_price = max(pos.max_favorable_price, high)
+                    pos.max_adverse_price = min(pos.max_adverse_price, low) if pos.max_adverse_price > 0 else low
+                else:
+                    pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
+                    pos.max_adverse_price = max(pos.max_adverse_price, high)
 
-                # Evaluate each open position on this symbol
-                positions_to_close = []
-                for pos in state.open_positions:
-                    if pos.symbol != symbol:
-                        continue
-
-                    high = candle["high"]
-                    low = candle["low"]
-                    close_price = candle["close"]
-
-                    # Update MFE/MAE tracking
-                    if pos.side == "Buy":
-                        pos.max_favorable_price = max(pos.max_favorable_price, high)
-                        pos.max_adverse_price = min(pos.max_adverse_price, low) if pos.max_adverse_price > 0 else low
+                # LIQUIDATION (SL-wins-if-closer)
+                if pos.side == "Buy" and low <= pos.liq_price:
+                    if pos.sl_price > pos.liq_price and low <= pos.sl_price:
+                        positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
                     else:
-                        pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
-                        pos.max_adverse_price = max(pos.max_adverse_price, high)
-
-                    # --- LIQUIDATION CHECK (Task 3.7) — before TP/SL ---
-                    # Priority: SL wins if closer to entry than liquidation price
-                    if pos.side == "Buy" and low <= pos.liq_price:
-                        # Check: is SL closer to entry? (SL above liq for long)
-                        if pos.sl_price > pos.liq_price and low <= pos.sl_price:
-                            # SL hit first (closer to entry) — controlled loss, not full liquidation
-                            positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
-                        else:
-                            positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
-                        continue
-                    elif pos.side == "Sell" and high >= pos.liq_price:
-                        if pos.sl_price < pos.liq_price and high >= pos.sl_price:
-                            positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
-                        else:
-                            positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
-                        continue
-
-                    # --- TP/SL EVALUATION (Task 3.3) ---
-                    close_reason = None
-                    exit_price = None
-
-                    if pos.side == "Buy":
-                        # Long: SL hit when low <= sl_price
-                        sl_hit = low <= pos.sl_price
-                        # Long: TP hit when high >= tp_price
-                        tp_hit = high >= pos.tp_price
-
-                        if sl_hit and tp_hit:
-                            # Both hit same candle → PESSIMISTIC (SL wins)
-                            close_reason = "sl"
-                            exit_price = pos.sl_price
-                        elif sl_hit:
-                            close_reason = "sl"
-                            exit_price = pos.sl_price
-                        elif tp_hit:
-                            close_reason = "tp"
-                            exit_price = pos.tp_price
+                        positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
+                    continue
+                elif pos.side == "Sell" and high >= pos.liq_price:
+                    if pos.sl_price < pos.liq_price and high >= pos.sl_price:
+                        positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
                     else:
-                        # Short: SL hit when high >= sl_price
-                        sl_hit = high >= pos.sl_price
-                        # Short: TP hit when low <= tp_price
-                        tp_hit = low <= pos.tp_price
+                        positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
+                    continue
 
-                        if sl_hit and tp_hit:
-                            close_reason = "sl"
-                            exit_price = pos.sl_price
-                        elif sl_hit:
-                            close_reason = "sl"
-                            exit_price = pos.sl_price
-                        elif tp_hit:
-                            close_reason = "tp"
-                            exit_price = pos.tp_price
+                # TP/SL (pessimistic: SL wins when both hit)
+                close_reason = None
+                exit_price = None
+                if pos.side == "Buy":
+                    sl_hit = low <= pos.sl_price
+                    tp_hit = high >= pos.tp_price
+                    if sl_hit:
+                        close_reason, exit_price = "sl", pos.sl_price
+                    elif tp_hit:
+                        close_reason, exit_price = "tp", pos.tp_price
+                else:
+                    sl_hit = high >= pos.sl_price
+                    tp_hit = low <= pos.tp_price
+                    if sl_hit:
+                        close_reason, exit_price = "sl", pos.sl_price
+                    elif tp_hit:
+                        close_reason, exit_price = "tp", pos.tp_price
 
-                    if close_reason and exit_price:
-                        positions_to_close.append((pos, close_reason, exit_price, candle_time))
+                if close_reason and exit_price:
+                    positions_to_close.append((pos, close_reason, exit_price, candle_time))
 
-                # Close positions (process closures outside iteration to avoid mutation during loop)
-                for pos, reason, exit_price, exit_time in positions_to_close:
+            # Close TP/SL/liquidation positions
+            for pos, reason, exit_price, exit_time in positions_to_close:
+                if pos in state.open_positions:
                     self._close_position(state, pos, reason, exit_price, exit_time, fee_rate)
 
-                # --- EQUITY-BASED CLOSE RULES (Task 3.4) ---
-                # Evaluate AFTER TP/SL closures (wallet updated) using candle CLOSE price
-                if state.open_positions and state.cycle_start_equity > 0:
-                    close_price = candle["close"]
-                    self._evaluate_equity_rules(config, state, latest_prices, candle_time, fee_rate)
+            # --- EQUITY RULES (complete latest_prices for ALL symbols) ---
+            if state.open_positions and state.cycle_start_equity > 0:
+                self._evaluate_equity_rules(config, state, latest_prices, candle_time, fee_rate)
 
-                # --- TRAILING PROFIT (Task 3.5) ---
-                trailing_pct = config.get("trailing_profit_pct")
-                if trailing_pct and state.open_positions:
-                    self._evaluate_trailing_profit(config, state, candle, candle_time, fee_rate)
+            # --- TRAILING PROFIT (per symbol, using that symbol's candle) ---
+            trailing_pct = config.get("trailing_profit_pct")
+            if trailing_pct and state.open_positions:
+                for sym, candle in candles_at_time.items():
+                    self._evaluate_trailing_profit_for_symbol(config, state, sym, candle, candle_time, fee_rate)
 
-                # --- TIME-BASED RULES (Task 3.6) ---
-                if state.open_positions:
-                    self._evaluate_time_rules(config, state, candle_time, fee_rate, close_price)
+            # --- TIME RULES (use per-symbol latest price for exits) ---
+            if state.open_positions:
+                self._evaluate_time_rules(config, state, candle_time, fee_rate, latest_prices)
 
     def _close_position(
         self,
@@ -760,8 +752,11 @@ class BacktestEngine:
         else:
             state.wallet_balance += net_pnl  # PnL adjusts wallet (no margin return needed)
 
-        # Compute MFE/MAE percentages
-        if position.side == "Buy":
+        # Compute MFE/MAE percentages (guard against zero entry_price)
+        if position.entry_price <= 0:
+            mfe_pct = 0.0
+            mae_pct = 0.0
+        elif position.side == "Buy":
             mfe_pct = (position.max_favorable_price - position.entry_price) / position.entry_price * 100 * position.leverage
             mae_pct = (position.entry_price - position.max_adverse_price) / position.entry_price * 100 * position.leverage
         else:
@@ -862,15 +857,16 @@ class BacktestEngine:
                     self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
                 state.cycle_start_equity = 0  # Cycle terminated
 
-    def _evaluate_trailing_profit(
+    def _evaluate_trailing_profit_for_symbol(
         self,
         config: dict[str, Any],
         state: SimulationState,
+        symbol: str,
         candle: dict[str, Any],
         candle_time: datetime,
         fee_rate: float,
     ) -> None:
-        """Evaluate trailing profit state machine for all open positions.
+        """Evaluate trailing profit for positions on a SPECIFIC symbol.
 
         State machine (matches production _evaluate_trailing_profit):
         1. If upnl <= 0: clear peak, skip (position underwater)
@@ -888,9 +884,9 @@ class BacktestEngine:
         positions_to_close = []
 
         for pos in state.open_positions:
-            if pos.symbol != candle.get("_symbol", pos.symbol):
-                # In per-symbol loop, only evaluate matching symbol
-                pass  # evaluate all for now (simplified)
+            # ONLY evaluate positions on THIS symbol (uses THIS symbol's candle)
+            if pos.symbol != symbol:
+                continue
 
             # Compute unrealized PnL at candle close
             upnl = compute_unrealized_pnl(pos.entry_price, close_price, pos.qty, pos.side)
@@ -904,7 +900,7 @@ class BacktestEngine:
             # Step 2: Check activation (price move % >= threshold AND upnl > 0)
             if not check_trailing_activation(close_price, pos.entry_price, trailing_pct, upnl):
                 # Below activation — DO NOT clear peak (preserve from prior activation)
-                # BUT: if already trailing, still check trigger (position dropped below activation %)
+                # BUT: if already trailing, still check trigger (price retraced below activation)
                 if pos.trailing_active and pos.trailing_peak > 0:
                     per_unit_pnl = upnl / pos.qty if pos.qty > 0 else 0.0
                     if per_unit_pnl < pos.trailing_peak * 0.5:
@@ -914,7 +910,7 @@ class BacktestEngine:
             # Position is profitable and above activation threshold
             per_unit_pnl = upnl / pos.qty if pos.qty > 0 else 0.0
 
-            # Also check using candle high/low for peak (more accurate)
+            # Use candle high/low for peak (more accurate)
             if pos.side == "Buy":
                 peak_price = candle["high"]
                 peak_upnl = compute_unrealized_pnl(pos.entry_price, peak_price, pos.qty, pos.side)
@@ -945,13 +941,13 @@ class BacktestEngine:
         state: SimulationState,
         candle_time: datetime,
         fee_rate: float,
-        current_close_price: float = 0.0,
+        latest_prices: Optional[dict[str, float]] = None,
     ) -> None:
         """Evaluate time-based close rules: BREAKEVEN_TIMEOUT and MAX_DURATION.
 
         BREAKEVEN_TIMEOUT: modifies TP to breakeven (does NOT close).
             If position is actively trailing → SKIP (trailing takes priority).
-        MAX_DURATION: force-closes after elapsed hours.
+        MAX_DURATION: force-closes after elapsed hours at the symbol's latest price.
         """
         from backend.services.trading_rules import compute_breakeven_price
 
@@ -961,6 +957,7 @@ class BacktestEngine:
         if not breakeven_hours and not max_duration_hours:
             return
 
+        latest_prices = latest_prices or {}
         positions_to_close = []
 
         for pos in list(state.open_positions):
@@ -980,7 +977,7 @@ class BacktestEngine:
                 new_tp = compute_breakeven_price(pos.entry_price, pos.side, pos.leverage)
                 pos.tp_price = new_tp
 
-        # Close MAX_DURATION positions at current candle close (approximation)
+        # Close MAX_DURATION positions at the symbol's latest price
         for pos in positions_to_close:
-            # Use entry_price as close approximation (will be refined when we have per-candle prices)
-            self._close_position(state, pos, "max_duration", current_close_price or pos.entry_price, candle_time, fee_rate)
+            exit_price = latest_prices.get(pos.symbol, pos.entry_price)
+            self._close_position(state, pos, "max_duration", exit_price, candle_time, fee_rate)
