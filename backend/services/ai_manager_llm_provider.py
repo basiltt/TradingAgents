@@ -105,6 +105,59 @@ async def _close_stale_clients() -> None:
     _active_clients.clear()
 
 
+def _extract_openai_text(data: dict, model: str) -> str:
+    """Extract assistant text from an OpenAI-compatible chat response.
+
+    Degrades gracefully to "" when the response is degenerate (no choices, or
+    null content). The decision graph parses "" as no-decision → HOLD, so the
+    AI Manager stays safe instead of raising on a malformed/empty response.
+    """
+    choices = data.get("choices") or []
+    if not choices:
+        logger.warning(
+            "OpenAI-compatible empty response — no choices, model=%s; treating as HOLD",
+            model,
+        )
+        return ""
+    message = (choices[0] or {}).get("message") or {}
+    content = message.get("content")
+    if not content:
+        logger.warning(
+            "OpenAI-compatible empty response — null/empty content, model=%s; treating as HOLD",
+            model,
+        )
+        return ""
+    return content
+
+
+def _extract_anthropic_text(data: dict, model: str) -> str:
+    """Extract assistant text from an Anthropic /v1/messages response.
+
+    Degrades gracefully to "" when the response has an empty content array
+    (e.g. a proxy/model returned a degenerate response such as stop_reason=None).
+    The decision graph parses "" as no-decision → HOLD, so the AI Manager stays
+    safe instead of raising a noisy ERROR-level traceback for what is a
+    recoverable, expected upstream condition.
+
+    `model` is the request model (not data.get("model"), which a degenerate
+    proxy response may omit) so the warning log identifies the call reliably.
+    """
+    content = data.get("content") or []
+    if not content:
+        logger.warning(
+            "Anthropic empty response — stop_reason=%s, model=%s; treating as HOLD",
+            data.get("stop_reason"),
+            model,
+        )
+        return ""
+    # Prefer the first text block (skip thinking/tool_use blocks).
+    for block in content:
+        if block.get("type") == "text":
+            return block["text"]
+    # Fallback: return first block's text-like field.
+    return content[0].get("text") or content[0].get("thinking") or str(content[0])
+
+
 def create_llm_callable(
     provider: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -200,7 +253,7 @@ def create_llm_callable_with_cleanup(
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"]
+                return _extract_openai_text(data, model)
             finally:
                 _release_global_rate_limit(acquired)
 
@@ -235,15 +288,7 @@ def create_llm_callable_with_cleanup(
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                content = data.get("content") or []
-                if not content:
-                    raise ValueError(f"Anthropic returned empty content: stop_reason={data.get('stop_reason')}")
-                # Find the text block (skip thinking/tool_use blocks)
-                for block in content:
-                    if block.get("type") == "text":
-                        return block["text"]
-                # Fallback: return first block's text-like field
-                return content[0].get("text") or content[0].get("thinking") or str(content[0])
+                return _extract_anthropic_text(data, model)
             finally:
                 _release_global_rate_limit(acquired)
 
@@ -279,7 +324,7 @@ def _create_openai_callable(
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            return _extract_openai_text(data, model)
         finally:
             _release_global_rate_limit(acquired)
 
@@ -313,13 +358,7 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            content = data.get("content") or []
-            if not content:
-                raise ValueError(f"Anthropic returned empty content array: stop_reason={data.get('stop_reason')}")
-            for block in content:
-                if block.get("type") == "text":
-                    return block["text"]
-            return content[0].get("text") or content[0].get("thinking") or str(content[0])
+            return _extract_anthropic_text(data, model)
         finally:
             _release_global_rate_limit(acquired)
 

@@ -259,7 +259,7 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         state["confidence"] = 0.0
         return state
 
-    # Try up to 2 times (retry once on malformed)
+    # Try up to 2 times (retry once on malformed/empty with backoff)
     for attempt in range(2):
         try:
             raw_response = await asyncio.wait_for(
@@ -275,6 +275,10 @@ async def action_generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
             _get_log(state).warning("LLM timeout attempt %d", attempt + 1)
         except Exception:
             _get_log(state).exception("LLM call failed attempt %d", attempt + 1)
+
+        # Back off before retry to avoid hitting same transient condition
+        if attempt == 0:
+            await asyncio.sleep(2.0)
 
     # Both attempts failed or malformed → HOLD
     state["action"] = "HOLD"

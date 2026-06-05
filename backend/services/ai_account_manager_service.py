@@ -6,6 +6,7 @@ Orchestrates per-account AI manager tasks, health sweeps, and lifecycle manageme
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json as _json
 import logging
 import time as _time
@@ -664,10 +665,14 @@ class AIAccountManagerService:
             return
         async with self._reconcile_lock:
             try:
-                # Query all active, paused, or errored scheduled scans
+                # Query all active, paused, or errored scheduled scans.
+                # ORDER BY is deterministic so that when an account is enabled
+                # in more than one schedule, this path and _resolve_account_llm_callable
+                # pick the SAME schedule's LLM config — otherwise the change-detection
+                # identity would flip-flop between the two and thrash the callable.
                 async with self._repo._pool.acquire() as conn:
                     rows = await conn.fetch(
-                        "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
+                        "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error') ORDER BY created_at DESC"
                     )
 
                 # Parse all scan_configs once
@@ -741,8 +746,37 @@ class AIAccountManagerService:
                 logger.exception("Error during scheduled scans AI manager reconciliation")
 
     @staticmethod
+    def _build_llm_identity(
+        provider: str,
+        model: str,
+        backend_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> str:
+        """Build a change-detection identity for an account's LLM configuration.
+
+        The identity must change whenever ANY connection-relevant setting
+        changes, so a running AIManagerTask gets its callable refreshed.
+        Previously this was only "provider:model", which meant changing the
+        proxy backend_url (e.g. port 4141 → 3131) or rotating the api_key on a
+        running task was silently ignored until restart.
+
+        The api_key is hashed (never embedded raw) so the identity can be
+        logged/stored without leaking the secret.
+        """
+        url_part = backend_url or ""
+        if api_key:
+            key_part = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+        else:
+            key_part = ""
+        return f"{provider}:{model}|{url_part}|{key_part}"
+
+    @staticmethod
     def _extract_llm_identity(account_id: str, scan_configs: list) -> Optional[str]:
-        """Extract 'provider:model' from pre-parsed scan_configs without creating clients."""
+        """Extract a change-detection identity from pre-parsed scan_configs.
+
+        Includes provider, model, backend_url, and a hash of the api_key so any
+        connection-relevant change triggers a per-account LLM callable refresh.
+        """
         for scan_config in scan_configs:
             auto_configs = scan_config.get("auto_trade_configs") or []
             for cfg in auto_configs:
@@ -752,7 +786,12 @@ class AIAccountManagerService:
                     model = overrides.get("ai_account_manager") or scan_config.get("deep_think_llm")
                     if not model:
                         return None
-                    return f"{provider}:{model}"
+                    return AIAccountManagerService._build_llm_identity(
+                        provider,
+                        model,
+                        scan_config.get("backend_url"),
+                        scan_config.get("llm_api_key"),
+                    )
         return None
 
     @staticmethod
@@ -779,35 +818,6 @@ class AIAccountManagerService:
                     return callable_, close_fn
         return None, None
 
-    async def _resolve_account_llm_identity(self, account_id: str) -> Optional[str]:
-        """Return 'provider:model' for the account's scan_config without creating a client."""
-        if not self._repo._pool:
-            return None
-        try:
-            async with self._repo._pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
-                )
-            for row in rows:
-                try:
-                    scan_config = row["scan_config"]
-                    if isinstance(scan_config, str):
-                        scan_config = _json.loads(scan_config)
-                    auto_configs = scan_config.get("auto_trade_configs") or []
-                    for cfg in auto_configs:
-                        if cfg.get("account_id") == account_id and cfg.get("ai_manager_enabled"):
-                            provider = scan_config.get("provider", "openai")
-                            overrides = scan_config.get("agent_model_overrides") or {}
-                            model = overrides.get("ai_account_manager") or scan_config.get("deep_think_llm")
-                            if not model:
-                                return None
-                            return f"{provider}:{model}"
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return None
-
     async def _resolve_account_llm_callable(self, account_id: str):
         """Look up the scan_config for this account and create a per-account LLM callable.
 
@@ -823,7 +833,7 @@ class AIAccountManagerService:
         try:
             async with self._repo._pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error')"
+                    "SELECT scan_config FROM scheduled_scans WHERE status IN ('active', 'paused', 'error') ORDER BY created_at DESC"
                 )
             for row in rows:
                 try:
@@ -840,7 +850,9 @@ class AIAccountManagerService:
                             backend_url = scan_config.get("backend_url")
                             if not model:
                                 return None, None, None
-                            identity = f"{provider}:{model}"
+                            identity = self._build_llm_identity(
+                                provider, model, backend_url, api_key
+                            )
                             from backend.services.ai_manager_llm_provider import create_llm_callable_with_cleanup
                             callable_, resolved, close_fn = create_llm_callable_with_cleanup(
                                 provider=provider,
