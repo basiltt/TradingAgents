@@ -21,7 +21,7 @@
 | Step 9: Create Worktree | COMPLETED | worktree-backtesting-system |
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
-| Step 12: Per-Phase Implementation | IN_PROGRESS | P1-P5 ALL GATES PASSED. P4 committed b7cd140. P5 (Backend Service + API) ALL 4 GATES: 12c Phase Review (7r/2clean — async/data/API bugs), 12d Plan-Compliance (4r/2clean — buy&hold+excess_return wired, per_trade stripped from JSONB, coverage guard, warmup endpoint), 12e Production Hardening (5r/2clean APPROVED — OOM budget, UUID validation, error sanitization, observability, atomic completion invariant, persist retry), 12f Testing (4r/2clean mutation-resistant). 96 service tests, 383 backtest tests. NEXT: P5 12g commit, then P6 Frontend. |
+| Step 12: Per-Phase Implementation | IN_PROGRESS | P1-P5 ALL GATES PASSED. P4 committed b7cd140. P5 committed 7cbd9e5. **P6 Frontend ALL 4 GATES PASSED** — 12a/12b impl+validate (Tasks 6.1-6.8 + 6.5b, 210 tests), 12c-12f review cycle ran 12 rounds across correctness/a11y/contract/security/testing/plan-compliance/adversarial lenses, **2 consecutive clean rounds (R11+R12) → CONVERGED ship-ready**. tsc+build clean. NEXT: P6 12g commit, then P7 Integration. |
 | Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
 | Step 14: Final Review | PENDING | 20-25 rounds |
 | Step 15: Final Validation | PENDING | |
@@ -41,6 +41,10 @@
 | 2026-06-05 | 2 | Requirements brainstorm | COMPLETED — 5 rounds, 305 reqs, near-clean R5 |
 | 2026-06-05 | 3 | Architecture document | COMPLETED — reviewed, all critical fixes applied |
 | 2026-06-05 | 4 | Specification | IN_PROGRESS |
+| 2026-06-06 | 12 | P6 Frontend 12a impl (Tasks 6.1-6.8) | COMPLETED — 16 backtest source files, 12 test files, 102 tests |
+| 2026-06-06 | 12 | P6 Frontend 12b validate | COMPLETED — 102 tests pass, tsc clean, build clean |
+| 2026-06-06 | 12 | P6 Frontend 12c-12f review (12 rounds) | COMPLETED — 2 consecutive clean (R11+R12). 210 tests, tsc+build clean |
+| 2026-06-06 | 12 | P6 Frontend 12g commit | IN_PROGRESS |
 
 ---
 
@@ -69,6 +73,15 @@
 ---
 
 ## Phase 5 Carry-Forward (raised during P4 reviews — MUST address when wiring service)
+
+### Phase 6 Task 6.3 Carry-Forward (deferred UX polish — non-blocking)
+- Quick/Advanced mode toggle, preset save/load (localStorage import/export JSON), and dirty-form
+  navigation guard (useBlocker / beforeunload) from plan Task 6.3 are NOT implemented. All config
+  fields ARE reachable via the collapsible Section UI (functional parity), so this is UX polish, not
+  a correctness/feature gap. Product reviewer (R5) judged it defer-able. Track as a follow-up; the
+  form already accepts a `seed` prop so presets can be layered on later without refactor.
+- Equity chart crosshair/zoom (recharts Brush) from Task 6.5 also deferred (nice-to-have); Buy & Hold
+  line IS now implemented.
 
 ### Phase 7 Integration-Test Carry-Forward (raised during P5 12f testing review)
 - The Phase 5 unit suite (~96 tests) mocks `db.pool` and `_wire_transaction` (codebase norm). It does
