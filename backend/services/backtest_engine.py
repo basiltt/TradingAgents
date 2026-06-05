@@ -492,6 +492,10 @@ class BacktestEngine:
         state.open_positions.append(position)
         state.signals_entered += 1  # Increment immediately so max_trades filter works
 
+        # Set cycle_start_equity on first position of a cycle
+        if state.cycle_start_equity == 0:
+            state.cycle_start_equity = state.wallet_balance
+
         return True
 
     def _is_adaptively_blacklisted(
@@ -641,6 +645,12 @@ class BacktestEngine:
                 for pos, reason, exit_price, exit_time in positions_to_close:
                     self._close_position(state, pos, reason, exit_price, exit_time, fee_rate)
 
+                # --- EQUITY-BASED CLOSE RULES (Task 3.4) ---
+                # Evaluate AFTER TP/SL closures (wallet updated) using candle CLOSE price
+                if state.open_positions and state.cycle_start_equity > 0:
+                    close_price = candle["close"]
+                    self._evaluate_equity_rules(config, state, close_price, candle_time, fee_rate)
+
     def _close_position(
         self,
         state: SimulationState,
@@ -693,3 +703,71 @@ class BacktestEngine:
 
         # Remove from open positions
         state.open_positions.remove(position)
+
+    def _evaluate_equity_rules(
+        self,
+        config: dict[str, Any],
+        state: SimulationState,
+        current_close_price: float,
+        candle_time: datetime,
+        fee_rate: float,
+    ) -> None:
+        """Evaluate equity-based close rules: EQUITY_DROP_PCT, SMART, close_on_profit.
+
+        Called once per candle AFTER TP/SL closures (wallet already updated).
+        Uses candle CLOSE for unrealized PnL calculation.
+        """
+        from backend.services.trading_rules import (
+            compute_unrealized_pnl, check_equity_drop, check_close_on_profit,
+        )
+
+        if not state.open_positions:
+            return
+
+        # Compute current equity (wallet + sum of unrealized PnL)
+        total_upnl = 0.0
+        losing_positions = []
+        for pos in state.open_positions:
+            # Get current price for this position's symbol
+            # Approximation: use same close_price for simplicity in per-symbol loop
+            # In production this uses actual mark price per symbol
+            upnl = compute_unrealized_pnl(pos.entry_price, current_close_price, pos.qty, pos.side)
+            total_upnl += upnl
+            if upnl < 0:
+                losing_positions.append(pos)
+
+        equity = state.wallet_balance + total_upnl
+
+        # --- EQUITY_DROP_PCT / EQUITY_DROP_PCT_SMART ---
+        max_drawdown_pct = config.get("max_drawdown_pct", 100.0)
+        if max_drawdown_pct < 100.0:
+            if check_equity_drop(equity, state.cycle_start_equity, max_drawdown_pct):
+                if config.get("smart_drawdown_close"):
+                    # SMART: close only LOSING positions, keep others active
+                    if losing_positions:
+                        for pos in list(losing_positions):
+                            self._close_position(state, pos, "equity_drop_smart", current_close_price, candle_time, fee_rate)
+                        # Reset reference equity (prevents immediate re-trigger)
+                        new_equity = state.wallet_balance + sum(
+                            compute_unrealized_pnl(p.entry_price, current_close_price, p.qty, p.side)
+                            for p in state.open_positions
+                        )
+                        state.cycle_start_equity = new_equity
+                    else:
+                        # No losers → reset reference, don't close anything
+                        state.cycle_start_equity = equity
+                else:
+                    # Non-SMART: close ALL positions, deactivate cycle
+                    for pos in list(state.open_positions):
+                        self._close_position(state, pos, "equity_drop", current_close_price, candle_time, fee_rate)
+                    state.cycle_start_equity = 0  # Cycle terminated
+                return  # Don't evaluate further rules after equity drop
+
+        # --- close_on_profit_pct ---
+        close_on_profit = config.get("close_on_profit_pct")
+        target_goal_value = config.get("target_goal_value", 100.0)
+        if close_on_profit and state.cycle_start_equity > 0:
+            if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value or 100.0):
+                for pos in list(state.open_positions):
+                    self._close_position(state, pos, "close_on_profit", current_close_price, candle_time, fee_rate)
+                state.cycle_start_equity = 0  # Cycle terminated

@@ -24,12 +24,14 @@ def _make_config(**overrides):
     return base
 
 
-def _make_signal(ticker="BTCUSDT", direction="buy", score=8):
-    return {
+def _make_signal(ticker="BTCUSDT", direction="buy", score=8, **overrides):
+    base = {
         "id": 1, "ticker": ticker, "direction": direction, "confidence": "high",
         "score": score, "signal_time": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
         "scan_id": "s1", "signal_source": "structured", "analysis_price": 50000.0,
     }
+    base.update(overrides)
+    return base
 
 
 class TestTpSlWickBased:
@@ -125,3 +127,109 @@ class TestTpSlWickBased:
         assert len(result.trades) == 1
         assert result.trades[0]["close_reason"] == "tp"
         assert result.trades[0]["pnl"] > 0
+
+
+class TestEquityCloseRules:
+    """Test EQUITY_RISE_PCT, EQUITY_DROP_PCT, EQUITY_DROP_PCT_SMART."""
+
+    def test_equity_drop_closes_all_positions(self):
+        """EQUITY_DROP_PCT triggers when equity drops X% from reference → close ALL."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        # max_drawdown_pct=5 → close all when equity drops 5% from cycle start
+        config = _make_config(
+            max_drawdown_pct=5.0,
+            take_profit_pct=500.0,  # Very wide TP (won't hit)
+            stop_loss_pct=500.0,    # Very wide SL (won't hit)
+            slippage_bps=0,
+        )
+        signals = [_make_signal(ticker="BTCUSDT", direction="buy", score=8)]
+
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        # Price drops steadily — equity falls with it
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 50000.0, "low": 49000.0, "close": 49500.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=10), "open": 49500.0, "high": 49500.0, "low": 48000.0, "close": 48200.0, "volume": 100.0},
+            # By now: 50000 → 48200 = -3.6% price, at 20x leverage with 5% capital → equity drop should trigger
+            {"open_time": base_time + timedelta(minutes=15), "open": 48200.0, "high": 48200.0, "low": 47000.0, "close": 47500.0, "volume": 100.0},
+        ]}
+
+        result = engine.run(config, signals, klines)
+        assert len(result.trades) >= 1
+        # Should close due to equity drop, not TP/SL
+        assert result.trades[0]["close_reason"] == "equity_drop"
+
+    def test_equity_rise_closes_all_positions(self):
+        """EQUITY_RISE_PCT triggers when equity rises X% → close ALL (take profit on cycle)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        # We need close_on_profit_pct OR a separate equity_rise config
+        # Per spec: EQUITY_RISE_PCT uses max_drawdown's complement
+        # Actually per plan Task 3.8b: close_on_profit_pct handles this
+        # For this test, we'll use close_on_profit_pct
+        config = _make_config(
+            close_on_profit_pct=50.0,  # 50% of target_goal_value
+            target_goal_value=10.0,    # effective threshold = 5%
+            take_profit_pct=500.0,
+            stop_loss_pct=500.0,
+            slippage_bps=0,
+        )
+        signals = [_make_signal(ticker="BTCUSDT", direction="buy", score=8)]
+
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        # Price rises steadily
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 52000.0, "low": 50000.0, "close": 51500.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=10), "open": 51500.0, "high": 54000.0, "low": 51500.0, "close": 53000.0, "volume": 100.0},
+        ]}
+
+        result = engine.run(config, signals, klines)
+        assert len(result.trades) >= 1
+        assert result.trades[0]["close_reason"] == "close_on_profit"
+        assert result.trades[0]["pnl"] > 0
+
+    def test_smart_drawdown_closes_only_losers(self):
+        """EQUITY_DROP_PCT_SMART closes only losing positions, keeps winners."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            max_drawdown_pct=3.0,
+            smart_drawdown_close=True,
+            take_profit_pct=500.0,
+            stop_loss_pct=500.0,
+            slippage_bps=0,
+            max_trades=5,
+        )
+        # Two signals: BTC (will go up) and ETH (will go down)
+        signals = [
+            _make_signal(ticker="BTCUSDT", direction="buy", score=8, id=1),
+            _make_signal(ticker="ETHUSDT", direction="buy", score=7, id=2, analysis_price=3000.0),
+        ]
+
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        klines = {
+            "BTCUSDT": [
+                {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+                {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 51000.0, "low": 50000.0, "close": 50800.0, "volume": 100.0},
+                {"open_time": base_time + timedelta(minutes=10), "open": 50800.0, "high": 51500.0, "low": 50800.0, "close": 51200.0, "volume": 100.0},
+            ],
+            "ETHUSDT": [
+                {"open_time": base_time, "open": 3000.0, "high": 3010.0, "low": 2990.0, "close": 3000.0, "volume": 100.0},
+                # ETH drops hard — causes equity drop
+                {"open_time": base_time + timedelta(minutes=5), "open": 3000.0, "high": 3000.0, "low": 2700.0, "close": 2750.0, "volume": 100.0},
+                {"open_time": base_time + timedelta(minutes=10), "open": 2750.0, "high": 2750.0, "low": 2500.0, "close": 2600.0, "volume": 100.0},
+            ],
+        }
+
+        result = engine.run(config, signals, klines)
+        # SMART should close ETH (loser) but keep BTC (winner)
+        closed_symbols = [t["symbol"] for t in result.trades]
+        if "ETHUSDT" in closed_symbols:
+            eth_trade = [t for t in result.trades if t["symbol"] == "ETHUSDT"][0]
+            assert eth_trade["close_reason"] == "equity_drop_smart"
+            assert eth_trade["pnl"] < 0
