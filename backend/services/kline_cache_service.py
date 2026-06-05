@@ -6,11 +6,19 @@ Fetches from Bybit public API on cache miss.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+_BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
+_PAGE_SIZE = 200
+_MAX_PAGES = 5
+_MAX_RETRIES = 3
 
 
 class KlineCacheService:
@@ -218,3 +226,121 @@ class KlineCacheService:
         """
         records = [(symbol, interval, d, count) for d, count in date_counts.items()]
         await self._db.pool.executemany(query, records)
+
+    async def _fetch_klines_from_bybit(
+        self,
+        symbol: str,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[dict[str, Any]]:
+        """Fetch klines from Bybit public API with pagination and retry.
+
+        Bybit returns candles in DESCENDING order (newest first).
+        We reverse to ascending before returning.
+
+        Response format: result.list → arrays of 7 STRING elements:
+        [timestamp_ms, open, high, low, close, volume, turnover]
+
+        Pagination: end-pointer based (set end = min_timestamp - 1 to get older).
+        Max 5 pages × 200 = 1000 candles per call.
+
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT").
+            interval: Candle interval (e.g., "5", "15", "60", "240", "D").
+            start: Start time (inclusive).
+            end: End time (inclusive).
+
+        Returns:
+            List of kline dicts sorted ascending by open_time.
+        """
+        # Convert interval format: "5m" → "5", "1h" → "60", "4h" → "240"
+        interval_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
+        bybit_interval = interval_map.get(interval, interval)
+
+        start_ms = int(start.timestamp() * 1000)
+        end_ms = int(end.timestamp() * 1000)
+
+        all_candles: list[list[str]] = []
+        current_end = end_ms
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for page in range(_MAX_PAGES):
+                if current_end <= start_ms:
+                    break
+
+                params = {
+                    "category": "linear",
+                    "symbol": symbol,
+                    "interval": bybit_interval,
+                    "start": str(start_ms),
+                    "end": str(current_end),
+                    "limit": str(_PAGE_SIZE),
+                }
+
+                # Retry loop
+                resp = None
+                for attempt in range(_MAX_RETRIES):
+                    try:
+                        resp = await client.get(_BYBIT_KLINE_URL, params=params)
+                        if resp.status_code == 200:
+                            break
+                        if resp.status_code in (429, 500, 502, 503, 504):
+                            delay = (attempt + 1) ** 2  # 1s, 4s, 9s
+                            logger.warning(
+                                "kline_fetch_retry",
+                                extra={"symbol": symbol, "status": resp.status_code, "attempt": attempt + 1},
+                            )
+                            await asyncio.sleep(delay)
+                        else:
+                            break  # Non-retryable error
+                    except (httpx.TimeoutException, httpx.ConnectError) as e:
+                        delay = (attempt + 1) ** 2
+                        logger.warning("kline_fetch_error", extra={"symbol": symbol, "error": str(e)[:100]})
+                        await asyncio.sleep(delay)
+
+                if resp is None or resp.status_code != 200:
+                    logger.error("kline_fetch_failed", extra={"symbol": symbol, "interval": interval})
+                    break
+
+                data = resp.json()
+                if data.get("retCode") != 0:
+                    logger.error("kline_fetch_api_error", extra={"symbol": symbol, "retCode": data.get("retCode")})
+                    break
+
+                candles = data.get("result", {}).get("list", [])
+                if not candles:
+                    break
+
+                all_candles.extend(candles)
+
+                # Pagination: move end pointer to oldest candle in batch - 1
+                oldest_ts = int(candles[-1][0])  # Last in descending = oldest
+                if oldest_ts <= start_ms:
+                    break
+                current_end = oldest_ts - 1
+
+        if not all_candles:
+            return []
+
+        # Parse string arrays → dicts, reverse to ascending
+        klines: list[dict[str, Any]] = []
+        for candle in reversed(all_candles):
+            ts_ms = int(candle[0])
+            # Filter: only include candles within requested range
+            if ts_ms < start_ms or ts_ms > end_ms:
+                continue
+            klines.append({
+                "open_time": datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
+                "open": float(candle[1]),
+                "high": float(candle[2]),
+                "low": float(candle[3]),
+                "close": float(candle[4]),
+                "volume": float(candle[5]),
+            })
+
+        logger.debug(
+            "kline_fetch_complete",
+            extra={"symbol": symbol, "interval": interval, "candles": len(klines)},
+        )
+        return klines
