@@ -295,3 +295,21 @@ class TestLttbDownsample:
         points = [{"x": i, "y": float(i)} for i in range(10)]
         result = lttb_downsample(points, target_n=100)
         assert len(result) == 10
+
+    def test_empty_list_returns_empty(self):
+        from backend.services.trading_rules import lttb_downsample
+        result = lttb_downsample([], target_n=100)
+        assert result == []
+
+    def test_single_point_returns_single(self):
+        from backend.services.trading_rules import lttb_downsample
+        points = [{"x": 0, "y": 42.0}]
+        result = lttb_downsample(points, target_n=100)
+        assert len(result) == 1
+        assert result[0]["y"] == 42.0
+
+    def test_two_points_returns_both(self):
+        from backend.services.trading_rules import lttb_downsample
+        points = [{"x": 0, "y": 1.0}, {"x": 1, "y": 2.0}]
+        result = lttb_downsample(points, target_n=100)
+        assert len(result) == 2

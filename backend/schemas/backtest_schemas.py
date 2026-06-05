@@ -23,6 +23,14 @@ class ScanSource(BaseModel):
             raise ValueError("Maximum 500 scan_ids allowed")
         return v
 
+    @model_validator(mode="after")
+    def validate_mode_fields(self) -> "ScanSource":
+        if self.mode == "schedule" and not self.schedule_id:
+            raise ValueError("schedule_id is required when mode='schedule'")
+        if self.mode == "explicit" and not self.scan_ids:
+            raise ValueError("scan_ids is required when mode='explicit'")
+        return self
+
 
 class BacktestCreateRequest(BaseModel):
     """Request schema for creating a new backtest run."""
@@ -53,8 +61,8 @@ class BacktestCreateRequest(BaseModel):
     skip_if_positions_open: bool = False
     max_same_direction: Optional[int] = Field(default=None, ge=1, le=100)
     max_same_sector: Optional[int] = Field(default=None, ge=1, le=50)
-    symbol_blacklist: Optional[list[str]] = None
-    symbol_whitelist: Optional[list[str]] = None
+    symbol_blacklist: Optional[list[str]] = Field(default=None, max_length=200)
+    symbol_whitelist: Optional[list[str]] = Field(default=None, max_length=200)
     max_signal_age_minutes: Optional[int] = Field(default=None, ge=1)
     max_price_drift_pct: Optional[float] = Field(default=None, ge=0.1, le=50)
 

@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime, timezone, timedelta
+from pydantic import ValidationError
 
 
 class TestBacktestCreateRequest:
@@ -22,7 +23,7 @@ class TestBacktestCreateRequest:
 
     def test_rejects_zero_capital(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BacktestCreateRequest(
                 starting_capital=0.0,
                 date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -32,7 +33,7 @@ class TestBacktestCreateRequest:
 
     def test_rejects_leverage_above_125(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BacktestCreateRequest(
                 starting_capital=10000.0,
                 date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -43,7 +44,7 @@ class TestBacktestCreateRequest:
 
     def test_rejects_date_range_over_365_days(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BacktestCreateRequest(
                 starting_capital=10000.0,
                 date_range_start=datetime(2024, 1, 1, tzinfo=timezone.utc),
@@ -53,7 +54,7 @@ class TestBacktestCreateRequest:
 
     def test_rejects_end_before_start(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             BacktestCreateRequest(
                 starting_capital=10000.0,
                 date_range_start=datetime(2026, 2, 1, tzinfo=timezone.utc),
@@ -106,8 +107,18 @@ class TestScanSource:
 
     def test_explicit_mode_rejects_too_many_ids(self):
         from backend.schemas.backtest_schemas import ScanSource
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ScanSource(mode="explicit", scan_ids=[f"id-{i}" for i in range(501)])
+
+    def test_schedule_mode_requires_schedule_id(self):
+        from backend.schemas.backtest_schemas import ScanSource
+        with pytest.raises(ValidationError):
+            ScanSource(mode="schedule")  # no schedule_id
+
+    def test_explicit_mode_requires_scan_ids(self):
+        from backend.schemas.backtest_schemas import ScanSource
+        with pytest.raises(ValidationError):
+            ScanSource(mode="explicit")  # no scan_ids
 
 
 class TestSimulationResult:

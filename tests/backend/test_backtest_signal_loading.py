@@ -40,9 +40,10 @@ class TestLoadSignals:
         assert signals[0]["ticker"] == "BTCUSDT"
         assert signals[0]["direction"] == "buy"
 
-        # Verify query was called with schedule_id
+        # Verify query contains schedule_id filter
         call_args = mock_db.pool.fetch.call_args
-        assert "schedule_id" in call_args[0][0] or "$1" in call_args[0][0]
+        query = call_args[0][0]
+        assert "schedule_id" in query and "$1" in query
 
     @pytest.mark.asyncio
     async def test_date_range_mode_no_schedule_filter(self, mock_db):
@@ -60,10 +61,10 @@ class TestLoadSignals:
         signals = await service._load_signals(scan_source, date_range)
         assert signals == []
 
-        # Verify schedule_id NOT in query
+        # Verify schedule_id NOT in the query (date_range mode has no schedule filter)
         call_args = mock_db.pool.fetch.call_args
         query = call_args[0][0]
-        assert "schedule_id" not in query or "schedule_id IS NOT NULL" not in query
+        assert "schedule_id" not in query
 
     @pytest.mark.asyncio
     async def test_explicit_mode_uses_scan_ids(self, mock_db):
