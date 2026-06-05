@@ -233,3 +233,69 @@ class TestEquityCloseRules:
             eth_trade = [t for t in result.trades if t["symbol"] == "ETHUSDT"][0]
             assert eth_trade["close_reason"] == "equity_drop_smart"
             assert eth_trade["pnl"] < 0
+
+
+class TestTrailingProfit:
+    """Test TRAILING_PROFIT close rule state machine."""
+
+    def test_trailing_activates_and_closes_on_pullback(self):
+        """Trailing activates at threshold, then closes when profit drops 50% from peak."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        # trailing_profit_pct=3 → activates at 3% price move
+        config = _make_config(
+            trailing_profit_pct=3.0,
+            take_profit_pct=500.0,  # wide TP (won't hit)
+            stop_loss_pct=500.0,   # wide SL (won't hit)
+            slippage_bps=0,
+        )
+        signals = [_make_signal()]
+
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        # Price rises past 3% (activates trailing), peaks, then drops 50% from peak
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            # +2% (not yet activated)
+            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 51100.0, "low": 50000.0, "close": 51000.0, "volume": 100.0},
+            # +4% (activated! profit_pct=4 > threshold=3)
+            {"open_time": base_time + timedelta(minutes=10), "open": 51000.0, "high": 52100.0, "low": 51000.0, "close": 52000.0, "volume": 100.0},
+            # +6% peak
+            {"open_time": base_time + timedelta(minutes=15), "open": 52000.0, "high": 53100.0, "low": 52000.0, "close": 53000.0, "volume": 100.0},
+            # Pullback — profit drops but not yet 50% from peak
+            {"open_time": base_time + timedelta(minutes=20), "open": 53000.0, "high": 53000.0, "low": 51800.0, "close": 52000.0, "volume": 100.0},
+            # Further pullback — per_unit_pnl drops below 50% of peak → CLOSE
+            {"open_time": base_time + timedelta(minutes=25), "open": 52000.0, "high": 52000.0, "low": 50800.0, "close": 51000.0, "volume": 100.0},
+        ]}
+
+        result = engine.run(config, signals, klines)
+        assert len(result.trades) >= 1
+        assert result.trades[0]["close_reason"] == "trailing_profit"
+        assert result.trades[0]["pnl"] > 0  # still profitable (just less than peak)
+
+    def test_trailing_not_activated_when_in_loss(self):
+        """Trailing does NOT activate when upnl <= 0 (even if price moved far in abs terms)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            trailing_profit_pct=3.0,
+            take_profit_pct=500.0,
+            stop_loss_pct=500.0,
+            slippage_bps=0,
+        )
+        # Buy signal but price drops immediately
+        signals = [_make_signal(direction="buy")]
+
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            # Price drops 5% (>3% threshold in abs terms, but upnl is NEGATIVE)
+            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 50000.0, "low": 47400.0, "close": 47500.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=10), "open": 47500.0, "high": 47600.0, "low": 47400.0, "close": 47500.0, "volume": 100.0},
+        ]}
+
+        result = engine.run(config, signals, klines)
+        # Should NOT have closed via trailing (upnl <= 0 guard prevents activation)
+        trailing_closes = [t for t in result.trades if t.get("close_reason") == "trailing_profit"]
+        assert len(trailing_closes) == 0

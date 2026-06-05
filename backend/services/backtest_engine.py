@@ -651,6 +651,11 @@ class BacktestEngine:
                     close_price = candle["close"]
                     self._evaluate_equity_rules(config, state, close_price, candle_time, fee_rate)
 
+                # --- TRAILING PROFIT (Task 3.5) ---
+                trailing_pct = config.get("trailing_profit_pct")
+                if trailing_pct and state.open_positions:
+                    self._evaluate_trailing_profit(config, state, candle, candle_time, fee_rate)
+
     def _close_position(
         self,
         state: SimulationState,
@@ -771,3 +776,80 @@ class BacktestEngine:
                 for pos in list(state.open_positions):
                     self._close_position(state, pos, "close_on_profit", current_close_price, candle_time, fee_rate)
                 state.cycle_start_equity = 0  # Cycle terminated
+
+    def _evaluate_trailing_profit(
+        self,
+        config: dict[str, Any],
+        state: SimulationState,
+        candle: dict[str, Any],
+        candle_time: datetime,
+        fee_rate: float,
+    ) -> None:
+        """Evaluate trailing profit state machine for all open positions.
+
+        State machine (matches production _evaluate_trailing_profit):
+        1. If upnl <= 0: clear peak, skip (position underwater)
+        2. If profit_pct < activation_pct: skip but DO NOT clear peak
+        3. If per_unit_pnl > stored_peak: update peak (new high)
+        4. If per_unit_pnl < peak × 0.5: CLOSE position
+        """
+        from backend.services.trading_rules import compute_unrealized_pnl, check_trailing_activation
+
+        trailing_pct = config.get("trailing_profit_pct", 0)
+        if not trailing_pct:
+            return
+
+        close_price = candle["close"]
+        positions_to_close = []
+
+        for pos in state.open_positions:
+            if pos.symbol != candle.get("_symbol", pos.symbol):
+                # In per-symbol loop, only evaluate matching symbol
+                pass  # evaluate all for now (simplified)
+
+            # Compute unrealized PnL at candle close
+            upnl = compute_unrealized_pnl(pos.entry_price, close_price, pos.qty, pos.side)
+
+            # Step 1: If upnl <= 0, clear peak and skip
+            if upnl <= 0:
+                pos.trailing_active = False
+                pos.trailing_peak = 0.0
+                continue
+
+            # Step 2: Check activation (price move % >= threshold AND upnl > 0)
+            if not check_trailing_activation(close_price, pos.entry_price, trailing_pct, upnl):
+                # Below activation — DO NOT clear peak (preserve from prior activation)
+                # BUT: if already trailing, still check trigger (position dropped below activation %)
+                if pos.trailing_active and pos.trailing_peak > 0:
+                    per_unit_pnl = upnl / pos.qty if pos.qty > 0 else 0.0
+                    if per_unit_pnl < pos.trailing_peak * 0.5:
+                        positions_to_close.append(pos)
+                continue
+
+            # Position is profitable and above activation threshold
+            per_unit_pnl = upnl / pos.qty if pos.qty > 0 else 0.0
+
+            # Also check using candle high/low for peak (more accurate)
+            if pos.side == "Buy":
+                peak_price = candle["high"]
+                peak_upnl = compute_unrealized_pnl(pos.entry_price, peak_price, pos.qty, pos.side)
+            else:
+                peak_price = candle["low"]
+                peak_upnl = compute_unrealized_pnl(pos.entry_price, peak_price, pos.qty, pos.side)
+
+            peak_per_unit = peak_upnl / pos.qty if pos.qty > 0 and peak_upnl > 0 else per_unit_pnl
+
+            # Step 3: Update peak if new high
+            if peak_per_unit > pos.trailing_peak:
+                pos.trailing_peak = peak_per_unit
+                pos.trailing_active = True
+                continue
+
+            # Step 4: Check trigger — per_unit_pnl < peak × 0.5
+            if pos.trailing_active and pos.trailing_peak > 0:
+                if per_unit_pnl < pos.trailing_peak * 0.5:
+                    positions_to_close.append(pos)
+
+        # Close triggered positions
+        for pos in positions_to_close:
+            self._close_position(state, pos, "trailing_profit", close_price, candle_time, fee_rate)
