@@ -232,6 +232,11 @@ def create_app() -> FastAPI:
 
         from backend.services.strategy_service import StrategyService
         app.state.strategy_service = StrategyService(db=db)
+
+        # Backtesting service (always-on, no credentials needed)
+        from backend.services.backtest_service import BacktestService
+        app.state.backtest_service = BacktestService(db=db)
+
         await app.state.scanner_service.resume_incomplete_scans()
 
         from backend.services.scan_scheduler_service import ScanSchedulerService
@@ -497,6 +502,7 @@ def create_app() -> FastAPI:
             await _safe_shutdown("accounts_service", app.state.accounts_service.shutdown())
         await _safe_shutdown("scanner_service", app.state.scanner_service.shutdown())
         await _safe_shutdown("analysis_service", app.state.analysis_service.shutdown())
+        await _safe_shutdown("backtest_service", app.state.backtest_service.shutdown())
         await _safe_shutdown("ws_manager", ws_manager.shutdown())
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()

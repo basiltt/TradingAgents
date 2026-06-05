@@ -22,6 +22,17 @@ class BacktestService:
 
     def __init__(self, db: Any) -> None:
         self._db = db
+        self._running_tasks: set = set()
+
+    async def shutdown(self) -> None:
+        """Graceful shutdown — cancel any running backtest tasks."""
+        for task in list(self._running_tasks):
+            task.cancel()
+        if self._running_tasks:
+            import asyncio
+            await asyncio.gather(*self._running_tasks, return_exceptions=True)
+        self._running_tasks.clear()
+        logger.info("backtest_service_shutdown")
 
     async def _load_signals(
         self,

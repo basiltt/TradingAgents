@@ -88,6 +88,15 @@ class KlineCacheService:
         if not klines:
             return 0
 
+        # Ensure partitions exist for all months in this batch
+        months_seen: set[str] = set()
+        for k in klines:
+            open_time = k["open_time"]
+            month_key = open_time.strftime("%Y_%m") if isinstance(open_time, datetime) else str(open_time)[:7].replace("-", "_")
+            months_seen.add(month_key)
+        for month_key in months_seen:
+            await self._ensure_partition_exists(month_key)
+
         query = """
             INSERT INTO kline_cache (symbol, interval, open_time, open, high, low, close, volume)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -226,6 +235,31 @@ class KlineCacheService:
         """
         records = [(symbol, interval, d, count) for d, count in date_counts.items()]
         await self._db.pool.executemany(query, records)
+
+    async def _ensure_partition_exists(self, month_key: str) -> None:
+        """Create a monthly partition for kline_cache if it doesn't exist.
+
+        Args:
+            month_key: Format "YYYY_MM" (e.g., "2026_01").
+        """
+        try:
+            parts = month_key.split("_")
+            year, month = int(parts[0]), int(parts[1])
+            month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+            if month == 12:
+                month_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            else:
+                month_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+
+            part_name = f"kline_cache_{month_key}"
+            await self._db.pool.execute(f"""
+                CREATE TABLE IF NOT EXISTS {part_name} PARTITION OF kline_cache
+                    FOR VALUES FROM ('{month_start.strftime('%Y-%m-%d')}')
+                    TO ('{month_end.strftime('%Y-%m-%d')}')
+            """)
+        except Exception:
+            # Partition may already exist or be handled by DEFAULT — not fatal
+            pass
 
     async def _fetch_klines_from_bybit(
         self,
