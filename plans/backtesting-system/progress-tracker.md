@@ -21,7 +21,7 @@
 | Step 9: Create Worktree | COMPLETED | worktree-backtesting-system |
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
-| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2 ALL GATES. P3: ALL 10 tasks done. 12c DONE (R2 clean). 12d: R1 3H found, 2 fixed. 3.9b deferred. 98 tests, 23 commits. |
+| Step 12: Per-Phase Implementation | IN_PROGRESS | P1+P2 ALL GATES. P3: ALL tasks done, 12c+12d passed. 12e R1 found ARCHITECTURAL FLAW: per-symbol sequential loop must be refactored to unified chronological timeline for multi-symbol correctness. FIX REQUIRED before 12e R2. Also: H1 wallet negative guard, H2 MFE div-by-zero, H3 timezone, H4 price drift look-ahead. 98 tests, 24 commits. |
 | Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
 | Step 14: Final Review | PENDING | 20-25 rounds |
 | Step 15: Final Validation | PENDING | |
