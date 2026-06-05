@@ -157,6 +157,21 @@ class BacktestEngine:
             else:
                 self._process_immediate_signals(config, scan_signals, klines, state, current_time)
 
+            # --- CANDLE-BY-CANDLE CLOSE RULE EVALUATION (Task 3.3+) ---
+            # After opening positions, evaluate close rules on subsequent candles
+            # until next scan event (or end of data)
+            next_scan_time = None
+            if scan_idx + 1 < len(scan_order):
+                next_scan_id = scan_order[scan_idx + 1]
+                next_scan_time = scans[next_scan_id][0]["signal_time"]
+
+            # Evaluate open positions against candles
+            if state.open_positions:
+                self._evaluate_candles_until(
+                    config, klines, state, current_time, next_scan_time, cancel_event
+                )
+                candle_count += 1
+
             # Report progress
             if on_progress:
                 pct = int(((scan_idx + 1) / len(scan_order)) * 100)
@@ -512,5 +527,169 @@ class BacktestEngine:
         return win_rate < max_win_rate
 
     def _compute_total_unrealized(self, state: SimulationState, current_price_unused: float) -> float:
-        """Compute total unrealized PnL across all open positions. Placeholder for candle-level eval."""
-        return 0.0  # Will be implemented with close rule evaluation (Task 3.3+)
+        """Compute total unrealized PnL across all open positions."""
+        from backend.services.trading_rules import compute_unrealized_pnl
+        total = 0.0
+        for pos in state.open_positions:
+            # Use entry_price as proxy when no current price available
+            total += compute_unrealized_pnl(pos.entry_price, pos.entry_price, pos.qty, pos.side)
+        return total
+
+    def _evaluate_candles_until(
+        self,
+        config: dict[str, Any],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        start_time: datetime,
+        end_time: Optional[datetime],
+        cancel_event: Optional[threading.Event],
+    ) -> None:
+        """Evaluate close rules on open positions candle-by-candle.
+
+        Iterates through kline data from start_time until end_time (or end of data).
+        Checks TP/SL (wick-based) and other close rules at each candle.
+        """
+        from backend.services.trading_rules import compute_unrealized_pnl, compute_fee
+
+        if not state.open_positions:
+            return
+
+        # Collect all symbols with open positions
+        open_symbols = {p.symbol for p in state.open_positions}
+        fee_rate = config.get("fee_rate_pct", 0.055)
+        candle_count = 0
+
+        # For each symbol with an open position, iterate its candles
+        for symbol in list(open_symbols):
+            symbol_klines = klines.get(symbol, [])
+            if not symbol_klines:
+                continue
+
+            for candle in symbol_klines:
+                candle_time = candle["open_time"]
+
+                # Only process candles AFTER positions were opened
+                if candle_time <= start_time:
+                    continue
+                # Stop at next scan event (or end of data)
+                if end_time and candle_time >= end_time:
+                    break
+
+                # Check cancellation every 100 candles
+                candle_count += 1
+                if candle_count % 100 == 0 and cancel_event and cancel_event.is_set():
+                    raise BacktestCancelled("Cancelled during candle evaluation")
+
+                # Evaluate each open position on this symbol
+                positions_to_close = []
+                for pos in state.open_positions:
+                    if pos.symbol != symbol:
+                        continue
+
+                    high = candle["high"]
+                    low = candle["low"]
+                    close_price = candle["close"]
+
+                    # Update MFE/MAE tracking
+                    if pos.side == "Buy":
+                        pos.max_favorable_price = max(pos.max_favorable_price, high)
+                        pos.max_adverse_price = min(pos.max_adverse_price, low) if pos.max_adverse_price > 0 else low
+                    else:
+                        pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
+                        pos.max_adverse_price = max(pos.max_adverse_price, high)
+
+                    # --- TP/SL EVALUATION (Task 3.3) ---
+                    close_reason = None
+                    exit_price = None
+
+                    if pos.side == "Buy":
+                        # Long: SL hit when low <= sl_price
+                        sl_hit = low <= pos.sl_price
+                        # Long: TP hit when high >= tp_price
+                        tp_hit = high >= pos.tp_price
+
+                        if sl_hit and tp_hit:
+                            # Both hit same candle → PESSIMISTIC (SL wins)
+                            close_reason = "sl"
+                            exit_price = pos.sl_price
+                        elif sl_hit:
+                            close_reason = "sl"
+                            exit_price = pos.sl_price
+                        elif tp_hit:
+                            close_reason = "tp"
+                            exit_price = pos.tp_price
+                    else:
+                        # Short: SL hit when high >= sl_price
+                        sl_hit = high >= pos.sl_price
+                        # Short: TP hit when low <= tp_price
+                        tp_hit = low <= pos.tp_price
+
+                        if sl_hit and tp_hit:
+                            close_reason = "sl"
+                            exit_price = pos.sl_price
+                        elif sl_hit:
+                            close_reason = "sl"
+                            exit_price = pos.sl_price
+                        elif tp_hit:
+                            close_reason = "tp"
+                            exit_price = pos.tp_price
+
+                    if close_reason and exit_price:
+                        positions_to_close.append((pos, close_reason, exit_price, candle_time))
+
+                # Close positions (process closures outside iteration to avoid mutation during loop)
+                for pos, reason, exit_price, exit_time in positions_to_close:
+                    self._close_position(state, pos, reason, exit_price, exit_time, fee_rate)
+
+    def _close_position(
+        self,
+        state: SimulationState,
+        position: Position,
+        close_reason: str,
+        exit_price: float,
+        exit_time: datetime,
+        fee_rate: float,
+    ) -> None:
+        """Close a position: compute PnL, update wallet, record trade."""
+        from backend.services.trading_rules import compute_unrealized_pnl, compute_fee
+
+        # Compute realized PnL
+        pnl = compute_unrealized_pnl(position.entry_price, exit_price, position.qty, position.side)
+        exit_fee = compute_fee(position.qty, exit_price, fee_rate)
+        net_pnl = pnl - exit_fee  # entry_fee already deducted at open
+
+        # Update wallet
+        state.wallet_balance += net_pnl + position.locked_margin  # return margin + PnL - exit fee
+
+        # Compute MFE/MAE percentages
+        if position.side == "Buy":
+            mfe_pct = (position.max_favorable_price - position.entry_price) / position.entry_price * 100 * position.leverage
+            mae_pct = (position.entry_price - position.max_adverse_price) / position.entry_price * 100 * position.leverage
+        else:
+            mfe_pct = (position.entry_price - position.max_favorable_price) / position.entry_price * 100 * position.leverage
+            mae_pct = (position.max_adverse_price - position.entry_price) / position.entry_price * 100 * position.leverage
+
+        # Record closed trade
+        trade_record = {
+            "symbol": position.symbol,
+            "side": position.side,
+            "entry_price": position.entry_price,
+            "exit_price": exit_price,
+            "qty": position.qty,
+            "leverage": position.leverage,
+            "entry_time": position.entry_time,
+            "exit_time": exit_time,
+            "pnl": net_pnl,
+            "pnl_pct": (net_pnl / position.locked_margin) * 100 if position.locked_margin else 0,
+            "fees_paid": position.entry_fee + exit_fee,
+            "close_reason": close_reason,
+            "mfe_pct": mfe_pct,
+            "mae_pct": mae_pct,
+            "signal_score": position.signal_score,
+            "signal_confidence": position.signal_confidence,
+            "scan_id": position.scan_id,
+        }
+        state.closed_trades.append(trade_record)
+
+        # Remove from open positions
+        state.open_positions.remove(position)
