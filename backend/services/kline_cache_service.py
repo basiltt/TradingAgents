@@ -344,3 +344,78 @@ class KlineCacheService:
             extra={"symbol": symbol, "interval": interval, "candles": len(klines)},
         )
         return klines
+
+
+_BYBIT_INSTRUMENTS_URL = "https://api.bybit.com/v5/market/instruments-info"
+
+_DEFAULT_INSTRUMENT_INFO = {
+    "qty_step": 0.001,
+    "min_qty": 0.001,
+    "tick_size": 0.01,
+    "max_leverage": 25,  # conservative default for unknown symbols
+}
+
+
+class InstrumentInfoCache:
+    """In-memory cache of per-symbol instrument parameters.
+
+    Refreshed from Bybit public API. Used by the backtest engine
+    to enforce qty_step, min_qty, tick_size, and max_leverage per symbol.
+    """
+
+    def __init__(self) -> None:
+        self._cache: dict[str, dict[str, float]] = {}
+        self._last_refresh: Optional[datetime] = None
+
+    def get(self, symbol: str) -> Optional[dict[str, float]]:
+        """Get instrument info for a symbol. Returns None if not cached."""
+        return self._cache.get(symbol)
+
+    def get_or_default(self, symbol: str) -> dict[str, float]:
+        """Get instrument info with conservative defaults for unknown symbols."""
+        return self._cache.get(symbol, _DEFAULT_INSTRUMENT_INFO.copy())
+
+    async def refresh(self) -> int:
+        """Fetch all linear perpetual instrument info from Bybit.
+
+        Returns:
+            Number of instruments cached.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(
+                    _BYBIT_INSTRUMENTS_URL,
+                    params={"category": "linear", "limit": "1000"},
+                )
+                if resp.status_code != 200:
+                    logger.warning("instrument_fetch_failed", extra={"status": resp.status_code})
+                    return 0
+
+                data = resp.json()
+                if data.get("retCode") != 0:
+                    return 0
+
+                instruments = data.get("result", {}).get("list", [])
+                for inst in instruments:
+                    symbol = inst.get("symbol", "")
+                    if not symbol:
+                        continue
+
+                    lot_filter = inst.get("lotSizeFilter", {})
+                    price_filter = inst.get("priceFilter", {})
+                    lev_filter = inst.get("leverageFilter", {})
+
+                    self._cache[symbol] = {
+                        "qty_step": float(lot_filter.get("qtyStep", "0.001")),
+                        "min_qty": float(lot_filter.get("minOrderQty", "0.001")),
+                        "tick_size": float(price_filter.get("tickSize", "0.01")),
+                        "max_leverage": int(float(lev_filter.get("maxLeverage", "25"))),
+                    }
+
+                self._last_refresh = datetime.now(tz=timezone.utc)
+                logger.info("instrument_cache_refreshed", extra={"count": len(self._cache)})
+                return len(self._cache)
+
+        except Exception:
+            logger.exception("instrument_cache_refresh_error")
+            return 0
