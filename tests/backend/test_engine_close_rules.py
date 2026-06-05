@@ -138,8 +138,13 @@ class TestEquityCloseRules:
 
         engine = BacktestEngine()
         # max_drawdown_pct=5 → close all when equity drops 5% from cycle start
+        # Use leverage=10, capital_pct=20 so position is 0.4 BTC
+        # 5% of 10000 = $500 equity drop. 0.4 BTC needs $1250 price drop (2.5%)
+        # Liq at 10x = 50000*0.905 = 45250 — well below test prices
         config = _make_config(
             max_drawdown_pct=5.0,
+            leverage=10,
+            capital_pct=20.0,
             take_profit_pct=500.0,  # Very wide TP (won't hit)
             stop_loss_pct=500.0,    # Very wide SL (won't hit)
             slippage_bps=0,
@@ -200,6 +205,7 @@ class TestEquityCloseRules:
         config = _make_config(
             max_drawdown_pct=3.0,
             smart_drawdown_close=True,
+            leverage=10,  # 10x so liq is far (45250 for BTC, 2715 for ETH)
             take_profit_pct=500.0,
             stop_loss_pct=500.0,
             slippage_bps=0,
@@ -221,8 +227,8 @@ class TestEquityCloseRules:
             "ETHUSDT": [
                 {"open_time": base_time, "open": 3000.0, "high": 3010.0, "low": 2990.0, "close": 3000.0, "volume": 100.0},
                 # ETH drops hard — causes equity drop
-                {"open_time": base_time + timedelta(minutes=5), "open": 3000.0, "high": 3000.0, "low": 2700.0, "close": 2750.0, "volume": 100.0},
-                {"open_time": base_time + timedelta(minutes=10), "open": 2750.0, "high": 2750.0, "low": 2500.0, "close": 2600.0, "volume": 100.0},
+                {"open_time": base_time + timedelta(minutes=5), "open": 3000.0, "high": 3000.0, "low": 2730.0, "close": 2750.0, "volume": 100.0},
+                {"open_time": base_time + timedelta(minutes=10), "open": 2750.0, "high": 2750.0, "low": 2720.0, "close": 2730.0, "volume": 100.0},
             ],
         }
 

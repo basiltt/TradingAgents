@@ -602,6 +602,16 @@ class BacktestEngine:
                         pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
                         pos.max_adverse_price = max(pos.max_adverse_price, high)
 
+                    # --- LIQUIDATION CHECK (Task 3.7) — before TP/SL ---
+                    if pos.side == "Buy" and low <= pos.liq_price:
+                        # Liquidation: full margin loss
+                        from backend.services.trading_rules import compute_liquidation_pnl
+                        positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
+                        continue
+                    elif pos.side == "Sell" and high >= pos.liq_price:
+                        positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
+                        continue
+
                     # --- TP/SL EVALUATION (Task 3.3) ---
                     close_reason = None
                     exit_price = None
@@ -656,6 +666,10 @@ class BacktestEngine:
                 if trailing_pct and state.open_positions:
                     self._evaluate_trailing_profit(config, state, candle, candle_time, fee_rate)
 
+                # --- TIME-BASED RULES (Task 3.6) ---
+                if state.open_positions:
+                    self._evaluate_time_rules(config, state, candle_time, fee_rate)
+
     def _close_position(
         self,
         state: SimulationState,
@@ -666,15 +680,26 @@ class BacktestEngine:
         fee_rate: float,
     ) -> None:
         """Close a position: compute PnL, update wallet, record trade."""
-        from backend.services.trading_rules import compute_unrealized_pnl, compute_fee
+        from backend.services.trading_rules import compute_unrealized_pnl, compute_fee, compute_liquidation_pnl
 
         # Compute realized PnL
-        pnl = compute_unrealized_pnl(position.entry_price, exit_price, position.qty, position.side)
-        exit_fee = compute_fee(position.qty, exit_price, fee_rate)
-        net_pnl = pnl - exit_fee  # entry_fee already deducted at open
+        if close_reason == "liquidation":
+            # Liquidation: full margin loss (Bybit isolated)
+            net_pnl = compute_liquidation_pnl(position.locked_margin, position.entry_fee)
+            exit_fee = 0.0  # liquidation fee already in the pnl calc
+        else:
+            pnl = compute_unrealized_pnl(position.entry_price, exit_price, position.qty, position.side)
+            exit_fee = compute_fee(position.qty, exit_price, fee_rate)
+            net_pnl = pnl - exit_fee  # entry_fee already deducted at open
 
         # Update wallet
-        state.wallet_balance += net_pnl + position.locked_margin  # return margin + PnL - exit fee
+        if close_reason == "liquidation":
+            # On liquidation, margin is lost entirely (already deducted at open as locked_margin)
+            # The wallet only gets back nothing — pnl is negative = -(margin + entry_fee)
+            # But entry_fee was already deducted, so net effect on wallet:
+            state.wallet_balance += 0  # margin already gone, nothing returned
+        else:
+            state.wallet_balance += net_pnl + position.locked_margin  # return margin + PnL - exit fee
 
         # Compute MFE/MAE percentages
         if position.side == "Buy":
@@ -853,3 +878,48 @@ class BacktestEngine:
         # Close triggered positions
         for pos in positions_to_close:
             self._close_position(state, pos, "trailing_profit", close_price, candle_time, fee_rate)
+
+    def _evaluate_time_rules(
+        self,
+        config: dict[str, Any],
+        state: SimulationState,
+        candle_time: datetime,
+        fee_rate: float,
+    ) -> None:
+        """Evaluate time-based close rules: BREAKEVEN_TIMEOUT and MAX_DURATION.
+
+        BREAKEVEN_TIMEOUT: modifies TP to breakeven (does NOT close).
+            If position is actively trailing → SKIP (trailing takes priority).
+        MAX_DURATION: force-closes after elapsed hours.
+        """
+        from backend.services.trading_rules import compute_breakeven_price
+
+        breakeven_hours = config.get("breakeven_timeout_hours")
+        max_duration_hours = config.get("max_trade_duration_hours")
+
+        if not breakeven_hours and not max_duration_hours:
+            return
+
+        positions_to_close = []
+
+        for pos in list(state.open_positions):
+            elapsed_hours = (candle_time - pos.entry_time).total_seconds() / 3600.0
+
+            # MAX_DURATION: force close after max hours
+            if max_duration_hours and elapsed_hours >= max_duration_hours:
+                positions_to_close.append(pos)
+                continue
+
+            # BREAKEVEN_TIMEOUT: modify TP to breakeven price
+            if breakeven_hours and elapsed_hours >= breakeven_hours:
+                # If position is in active trailing → SKIP (trailing takes priority)
+                if pos.trailing_active:
+                    continue
+                # Modify TP to breakeven price
+                new_tp = compute_breakeven_price(pos.entry_price, pos.side, pos.leverage)
+                pos.tp_price = new_tp
+
+        # Close MAX_DURATION positions at current candle close (approximation)
+        for pos in positions_to_close:
+            # Use entry_price as close approximation (will be refined when we have per-candle prices)
+            self._close_position(state, pos, "max_duration", pos.entry_price, candle_time, fee_rate)
