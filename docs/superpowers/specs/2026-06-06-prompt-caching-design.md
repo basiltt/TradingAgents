@@ -12,8 +12,9 @@ The TradingAgents app makes a high volume of LLM calls against **9 providers**
 (openai, anthropic, azure, deepseek, xai, google, openrouter, qwen, glm) through
 two distinct transports:
 
-1. **Trading graph** (`tradingagents/`) — LangChain client wrappers, ~20 agent
-   prompt sites with large, stable system prompts.
+1. **Trading graph** (`tradingagents/`) — LangChain client wrappers, ~24 agent
+   call sites, of which only **~9–12 have a cacheable leading system message**
+   (Patterns A/B; the rest are bare-f-string prompts — see §4 taxonomy).
 2. **AI Manager** (`backend/services/ai_manager_llm_provider.py`) — raw httpx to
    `/v1/messages` (Anthropic) and `/v1/chat/completions` (OpenAI-compatible),
    looping over open positions with one stable system prompt per cycle.
@@ -133,9 +134,11 @@ do **not** inject it — they rely on automatic caching only (see §2 routing no
 
 ```
 P0  Deps        reconcile uv.lock, pin langchain-anthropic range          (no deps)
-P1  Recon       enumerate sites + exact count; token-count every stable   (P0)
-    [GO/NO-GO]   prefix vs 1024/4096; measure AI Manager cadence + prefix.
-                 → decides which sites/paths get cache_control at all.
+P1  Recon       classify all ~24 sites into Pattern A/B/C/D (§4); token-   (P0)
+    [GO/NO-GO]   count every Pattern A/B stable prefix vs 1024/4096; measure
+                 AI Manager cadence + prefix. → decides which (few) sites/
+                 paths get cache_control. May conclude "Sonnet-only, handful
+                 of sites" or "not worth the Anthropic injection at all."
 P2  Param fix   conditional temperature/max_tokens in the 4 httpx sites    (P0)
                  (§6c) + litellm effort→thinking deprecated-API fix
                  (litellm_client.py:184-189). UNBLOCKS Anthropic testing on
@@ -172,28 +175,30 @@ P7  Ops flag    global TRADINGAGENTS_PROMPT_CACHE_ENABLED, default OFF      (P3,
 
 ## 3. Architecture
 
-**Core principle: reorder, don't rewrite.** Volatile content moves out of the
-system-prompt tail into the first human/message turn, leaving the system prompt
-byte-identical across all 575 coins and all dates. The same words reach the model;
-only their position changes.
+**Core principle: reorder, don't rewrite.** For sites that *have* a stable system
+prefix (Pattern A/B, §4), volatile content moves out of the system message into the
+first human turn, leaving the system prefix byte-identical across all coins/dates.
+Same words, different position. (Pattern C/D sites have no system message and are not
+cache candidates.)
 
 ```
 ┌─ Agents (tradingagents/agents/...) ──────────────────────┐
-│  Build prompt as STABLE system block + VOLATILE message   │
-│  segment via a shared helper. Provider-NEUTRAL.           │
+│  Pattern A/B sites: STABLE system msg + VOLATILE human    │
+│  turn via shared helper. Pattern C/D: untouched (no sys). │
 └───────────────────────────┬───────────────────────────────┘
-                            │ provider-neutral prompt
-        ┌───────────────────┴───────────────────┐
-        ▼                                         ▼
-┌─ AnthropicClient ─────────┐      ┌─ OpenAI/Gemini/DeepSeek/… ─┐
-│ Inject cache_control on   │      │ No-op: automatic prefix     │
-│ stable block (5-min TTL)  │      │ caching now works           │
-└───────────────────────────┘      └─────────────────────────────┘
+                            │ rendered prompt
+                            ▼
+┌─ NormalizedChatLiteLLM.invoke (PRODUCTION path) ─────────┐
+│  if cache_enabled AND model startswith "anthropic/":      │
+│    rewrite first system msg → block w/ cache_control       │
+│  else (openai/gemini/…): no-op → automatic prefix caching │
+│  (litellm forwards cache_control to Anthropic — verified) │
+└───────────────────────────────────────────────────────────┘
 
 ┌─ AI Manager (ai_manager_llm_provider.py) ────────────────┐
 │  Raw httpx. Anthropic branch: system as cache_control     │
-│  block. OpenAI-compat branch: already prefix-clean.       │
-│  + fix hardcoded temperature:0.2 (400s on Opus 4.7/4.8)   │
+│  block (if P1 clears prefix+cadence). OpenAI-compat:      │
+│  already prefix-clean. + P2 sampling-param/effort fixes.  │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -203,7 +208,7 @@ only their position changes.
 
 ### Transformation
 
-Before (`market_analyst.py` + ~17 siblings):
+Before (`market_analyst.py` + the 8 other Pattern A analysts — §4):
 ```
 system = "...You have access to {tool_names}.{system_message}For your reference,
           the current date is {current_date}. {instrument_context}"   ← volatile tail
@@ -226,7 +231,8 @@ messages = [ HumanMessage("Context for this analysis — current date:
 - The stable system text still contains `{tool_names}` / `{system_message}`
   template vars filled by `.partial()` exactly as today — so the helper returns a
   **template**, not a pre-built `SystemMessage`. (See §5 for why this matters.)
-- Keeps all ~20 sites uniform (one-line change each, not hand-rolled).
+- Keeps the **Pattern A/B sites** uniform (one-line change each, not hand-rolled).
+  Pattern C/D sites have no system message and are not touched by this helper (§4).
 
 > ⚠️ **Rejected approach — the `additional_kwargs` sentinel does NOT work.**
 > An earlier draft marked the stable `SystemMessage` with
@@ -240,13 +246,49 @@ messages = [ HumanMessage("Context for this analysis — current date:
 > design below (§5) uses langchain-anthropic's **native `cache_control` mechanism**
 > instead, which needs no sentinel.
 
-### Sites in scope (~20)
+### Sites in scope — REAL taxonomy (iteration-4: verified all ~24 call sites)
 
-4 stock analysts, 5 crypto analyst nodes (`crypto_analysts.py`), bull/bear
-researchers (2), 3 risk debators, research + portfolio managers (2), trader,
-risk_manager, 2 compliance (`compliance_officer`, `execution_monitor`).
-Exact count to be confirmed during Phase 1 enumeration; "~20" is the working
-estimate.
+> **Iteration-4 correction.** Iters 1–3 assumed "~20 sites, each a single leading
+> `SystemMessage` with a volatile tail to hoist." **Verified false.** Only ~9 of ~24
+> sites have a clean leading `SystemMessage`; the majority build prompts as **bare
+> f-strings with NO system message**, often with stable and volatile content
+> **interleaved in one string**. The transform attaches `cache_control` to the *first
+> `SystemMessage`* — sites without one cache **nothing**. Four shapes:
+
+| Pattern | Sites | Cacheable? |
+|---|---|---|
+| **A — clean leading `SystemMessage`** via `ChatPromptTemplate.from_messages([("system",…), MessagesPlaceholder])`, invoked `prompt \| llm.bind_tools()` | 4 stock analysts + 5 crypto analysts (`crypto_analysts.py:112/177/224/277/326`) = **9** | ✅ after §4 hoist |
+| **B — `list[dict]` with leading `{"role":"system"}`** | trader (`trader.py`), risk_manager, compliance_officer = **3** | ✅ if transform handles dict-shaped system + content hoisted |
+| **C — bare f-string, NO system message** (becomes one `HumanMessage`; stable+volatile interleaved) | portfolio_manager, research_manager, crypto research-mgr/PM/confluence (`crypto_analysts.py:564/894/382`), stock bull/bear, crypto bull/bear, 3 stock debators, 2 crypto risk debators = **~14** | ❌ not without a real rewrite |
+| **D — `list[dict]` USER-only, no system** (crypto_trader `crypto_analysts.py:692`) | **1** | ❌ |
+
+**Consequence for scope:** the clean win is **Pattern A (9 sites)** + Pattern B (3
+sites, with dict handling). **Pattern C/D (~15 sites) are effectively out of scope for
+`cache_control`** — converting an interleaved f-string into a cacheable
+stable-system + volatile-user split is a **content-restructuring** of each prompt
+(not a mechanical hoist), which risks exactly the behavior drift §4 guards against,
+for prompts (debate/research) that are also frequently **below the cache minimum**
+anyway. **P1 must classify every site into A/B/C/D and token-count it**; the plan
+should target A (and B if cheap), and explicitly **defer C/D** rather than pretend
+they cache. The reflection path (`reflection.py`) is Pattern A but ~150 tok →
+sub-minimum, won't cache.
+
+> This sharply narrows the realistic Anthropic-`cache_control` win to ~9–12 sites,
+> several of which may still miss Opus's 4096 floor (§ minimum-prefix). The
+> **provider-agnostic hygiene benefit also only applies where there's a stable
+> prefix to expose** — so Pattern C/D sites don't benefit from automatic caching
+> either, until/unless someone restructures those prompts. Be honest about this in
+> the plan; don't carry "~20 sites" as if all cache.
+
+### Input-shape normalization (the transform must handle 4 shapes)
+
+`NormalizedChatLiteLLM.invoke` receives different input types per site:
+`ChatPromptValue` (Pattern A), `list[BaseMessage]`, `list[dict]` (Pattern B/D),
+`list[tuple]` (reflection), and bare `str` (Pattern C). The transform's
+message-normalization must handle all of these and **locate a leading system message
+in both `SystemMessage` and `{"role":"system"}` dict forms**, else Pattern B silently
+misses. Where no system message exists (C/D), the transform is a **no-op** (correct —
+nothing to cache).
 
 ### CONTENT-PRESERVATION INVARIANT (hard requirement)
 
@@ -277,11 +319,11 @@ identical inputs, normalizes whitespace, asserts **old-content ⊆ new-content**
 >    resolved. This is the real safety net; the ⊆ test is necessary but not
 >    sufficient.
 
-### Two site shapes
+### Within Pattern A/B: volatile placement
 
-- **Tail-volatile (analysts):** volatile token at the end → clean hoist to the
-  human turn. The whole system message is stable → caches.
-- **Mid-volatile (compliance/managers/trader — 6 sites):** `{instrument_context}`
+- **Tail-volatile (analysts, Pattern A):** volatile token at the end of the system
+  text → clean hoist to the human turn. The whole system message becomes stable → caches.
+- **Mid-volatile (Pattern B — trader/risk_manager/compliance):** `{instrument_context}`
   is embedded mid-prompt (e.g. `## Asset\n{instrument_context}\n\n## Rules...`).
   Our cache breakpoint covers the **entire system block** (§5), so a system message
   that still embeds volatile bytes **does not cache at all** — there is no way to
@@ -304,15 +346,18 @@ Opus 4.x / Haiku 4.5 = 4096 tok, older Haiku/Sonnet 3.x = 2048 tok**. A stable
 prefix below the threshold **silently won't cache** (no error, `cache_creation = 0`).
 
 `market_analyst`'s catalog (~1.5–2K tok) clears Sonnet but **likely misses Opus's
-4096**. Many of the ~20 agent prompts are short (researchers, debators, managers).
+4096**. Of the ~9–12 Pattern A/B candidate sites (§4), the analysts are the largest;
+researchers/debaters/managers are Pattern C (no system message, not candidates) and
+also tend to be short.
 
-> **ROI honesty (Phase 1 deliverable):** before implementing the Anthropic
-> injection, **count tokens for each of the ~20 stable prefixes** (via
-> `client.messages.count_tokens` or `tiktoken` estimate) and record how many clear
-> 1024 (Sonnet) and 4096 (Opus). If most sites are sub-4096, the **Opus cache win
-> is near-zero** and the value concentrates on Sonnet + the automatic-caching
-> providers. This number determines whether the Anthropic-injection work is worth
-> it at all — surface it, don't bury it.
+> **ROI honesty (P1 deliverable):** before implementing the Anthropic injection,
+> **classify every site A/B/C/D and token-count each Pattern A/B stable prefix** (via
+> `client.messages.count_tokens` or `tiktoken` estimate); record how many clear
+> 1024 (Sonnet) and 4096 (Opus). Combined with the §4 finding that only ~9–12 sites
+> are even candidates, the realistic outcome may be **a handful of sites caching on
+> Sonnet and near-zero on Opus.** This number decides whether the Anthropic-injection
+> work is worth doing at all — surface it, don't bury it. The provider-agnostic
+> hygiene benefit is likewise limited to sites that *have* a stable prefix to expose.
 
 ---
 
@@ -385,6 +430,19 @@ block is inert (`cache_creation = 0`); on any unexpected input shape or non-Anth
 model the override falls through to today's behavior. **Mid-volatile sites (§4):** the
 breakpoint covers the whole system block, so a system message that still embeds
 volatile bytes does **not** cache — see §4.
+
+> ✅ **Iteration-4 runtime confirmation (executed, not reasoned).** Ran the realistic
+> production payload through litellm 1.83.7's `AnthropicConfig.transform_request`
+> with **`drop_params=True`** and **tools bound** (the bind_tools path all analysts
+> use). Result: the final Anthropic request carried **exactly one `cache_control`
+> breakpoint, on the top-level `system` param**, with `tools` coexisting correctly.
+> So `drop_params` does **not** strip `cache_control`, and tools+system+cache compose
+> cleanly. The mechanism is verified end-to-end for Pattern A/B sites.
+>
+> **Input-shape handling (§4):** the transform must normalize `ChatPromptValue` /
+> `list[BaseMessage]` / `list[dict]` / `list[tuple]` / `str`, and detect a leading
+> system message in **both** `SystemMessage` and `{"role":"system"}` dict forms
+> (Pattern B uses dicts). No system message (Pattern C/D) → no-op.
 
 **Other providers via litellm** (openai, gemini, deepseek, xai, qwen, glm, openrouter)
 get **no** `cache_control` injection — they rely on automatic prefix caching, which
@@ -675,6 +733,13 @@ verified by test §8.8.
 8. **OFF-path identity** — with the global flag OFF, prompts/payloads are
    byte-identical to today (no `cache_control`, original prompt structure) — proving
    the design is dark until deliberately enabled.
+9. **Pattern coverage (§4) + no-op safety** — assert the transform attaches
+   `cache_control` for Pattern A (`ChatPromptValue`) and Pattern B (`list[dict]` with
+   leading `{"role":"system"}`), and is a **clean no-op** for Pattern C/D (bare `str`
+   / user-only — no system message). Guards against the iter-4 finding: a Pattern-B
+   dict-form system message must be detected, and a Pattern-C string must not crash or
+   wrongly wrap a human turn. Run the matrix across the real input shapes
+   (`ChatPromptValue` / `list[BaseMessage]` / `list[dict]` / `list[tuple]` / `str`).
 
 TDD: tests written before implementation per phase. The §5 transform reference to a
 wire-payload assertion is **§8.3** (iteration-1 mis-cited "§8.6").
@@ -723,7 +788,8 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
 |---|---|
 | Role move (system→user) shifts trading decisions (real money) | **Default OFF** until behavioral-parity eval (§8.6) passes; eval compares structured decisions w/ noise-floor + McNemar, not text; ops flag = rollout control |
 | Silent cache invalidation | Prefix-stability test (§8.2, per-shape) + real-binding presence test (§8.3) + offline engagement check (§8.7b) + all-provider cache-metric logging (§7) |
-| Anthropic injection delivers ~0 because prefixes < min tokens | **P1 go/no-go** token-count gate (§4, §6a); default-drop the injection per-site/path if sub-threshold; hygiene still helps automatic-caching providers |
+| Anthropic injection delivers ~0 (few cacheable sites AND/OR prefixes < min tokens) | **P1 go/no-go**: only ~9–12 of ~24 sites have a cacheable system message (§4 taxonomy), and several miss Opus's 4096 floor. Token-count + classify per-site; default-drop sub-threshold/Pattern-C-D sites. Realistic win may be a handful of Sonnet sites — surfaced, not buried. |
+| Pattern C/D sites (~15) silently assumed to cache | §4 taxonomy marks them **not candidates** (no system message / interleaved f-string); helper skips them; ⊆ test only runs on Pattern A/B. They benefit from neither injected nor automatic caching until someone restructures those prompts (separate future work). |
 | AI Manager path pays ≤0 (sub-1024 prefix AND/OR cadence > TTL) | P1 must show **both** conditions; 1-hr TTL only if reads/write ≥ 2 breakeven holds (§6a) — else drop caching on that path |
 | **Future** litellm / langchain-community upgrade silently moves/drops the breakpoint | Pin **tested ranges** for `litellm` (1.83.7) and `langchain-community` (0.4.1), not just floors (§2); **real-binding** payload test (§8.3) runs the actual converter chain → fails CI if `cache_control` stops reaching Anthropic's system param — mock tests would NOT catch this |
 | **Future** flip of `use_litellm` default to False | §5 transform would silently stop firing (legacy `NormalizedChatAnthropic` path). Tracked as a known coupling in §5; the §8.3 test (if run only against litellm) would not cover the legacy path |
