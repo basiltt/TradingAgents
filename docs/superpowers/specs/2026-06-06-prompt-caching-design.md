@@ -66,7 +66,7 @@ uninterrupted. `cache_control` is the native-Anthropic-only add-on.
 | 5 | TTL | **5-minute** for scanner/graph; AI Manager TTL **TBD by Phase 1 cadence check** (§6a) |
 | 6 | Adjacent bug | **Fix** hardcoded `temperature:0.2` **and `max_tokens:1024`** (400s/param-mismatch on Opus 4.7/4.8); separate revertable commit |
 | 7 | Architecture | **Neutral split** (agents) + **native `cache_control` kwarg** in the Anthropic client (sentinel approach rejected — §5) |
-| 8 | Kill-switch | **Open decision (§11.1)** — recommend `PROMPT_CACHE_ENABLED` (default on); was "no flag" |
+| 8 | Kill-switch | **User-facing toggle** in New Analysis + Market Scan + Scheduled Market Scan, default **on** (§7.5) — adds frontend+schema scope |
 
 ### TTL rationale (5-minute wins decisively)
 
@@ -419,28 +419,47 @@ wrappers reach**:
 
 ---
 
-## 7.5 Kill-Switch (revisits decision — was "no flag")
+## 7.5 Kill-Switch — user-facing toggle (revises "no flag")
 
-> **This reverses the earlier "no flag" choice and needs user sign-off.** The
-> original spec deliberately had no toggle. The review surfaced that this change
-> touches **~20 live trading prompts** whose role-restructuring *could* shift
-> decisions (§4 caveat), and "no flag" means **any regression requires a code
-> redeploy to revert**. For a money-handling path, a one-line env guard is cheap
-> insurance and makes the behavioral-parity gate (§8.6) and rollback trivial.
+> **Decision (confirmed):** add a **user-facing toggle**, not just an env var. It
+> appears wherever users already see LLM provider/model settings — **New Analysis,
+> Market Scan, and Scheduled Market Scan** — labelled e.g. *"Prompt caching"*,
+> **default enabled**. This gates the prompt restructuring + `cache_control`
+> together (they're behaviorally coupled).
 
-**Proposed:** a single env var `PROMPT_CACHE_ENABLED` (default **on**), read once at
-client/prompt construction:
-- **ON:** new prompt structure + `cache_control` (the design).
-- **OFF:** original prompt assembly, no `cache_control` — **byte-identical to
-  today**, verified by test §8.8.
+**Backend (schema) — mirrors the existing `checkpoint_enabled: Optional[bool]`:**
+- Add `prompt_cache_enabled: Optional[bool] = None` to **`AnalysisRequest`**
+  (`backend/schemas/__init__.py:110`) and **`AutoTradeConfig`** (`:425`, used by both
+  Market Scan and Scheduled Market Scan).
+- `None` → fall back to config/env default (**on**); explicit `False` → disable.
+- Thread the resolved value into the config dict that reaches **both** call sites
+  (trading graph via `analysis_service` / `scanner_service`; AI Manager via its
+  config resolution). When OFF: original prompt assembly + no `cache_control`.
 
-One flag gates **both** the prompt-hygiene restructuring and the `cache_control`
-injection together (they're behaviorally coupled — the restructure is what makes
-the cache breakpoint meaningful). The AI Manager `temperature`/`max_tokens` fix
-(§6c) is **not** gated — it's a straight bug fix that should always apply.
+**Env default:** `DEFAULT_CONFIG["prompt_cache_enabled"] = True` in
+`tradingagents/default_config.py`, overridable by env
+`TRADINGAGENTS_PROMPT_CACHE_ENABLED` (matches the existing config-field pattern).
 
-> If the user prefers to keep "no flag," delete this section and accept redeploy-to-
-> revert; the rest of the design stands. Flagged as an open decision in §11.
+**Frontend — three forms, same LLM/Engine section the provider selector lives in:**
+
+| Form | File | Insertion point |
+|---|---|---|
+| New Analysis | `frontend/src/components/analysis/ConfigForm.tsx` | Engine section (~`:880`, near "Default LLM Provider" `:885`); add to the `react-hook-form` schema + payload (`:426`) |
+| Market Scan | `frontend/src/components/scanner/ScannerPage.tsx` | LLM block (~`:1117`); add state like `deepModel`/`quickModel` (`:325`) + payload (`:494`) |
+| Scheduled Market Scan | `frontend/src/components/scanner/ScheduledScansPage.tsx` | "LLM Provider" block (~`:1178`); state (`:791`) + payload (`:1009`) |
+
+- A boolean control (checkbox/switch), default **checked**, sent as
+  `prompt_cache_enabled` through `frontend/src/api/client.ts` request bodies.
+- TS types updated wherever `deep_think_llm` etc. are declared (e.g.
+  `ConfigForm` `EngineConfig`, `WatchlistPanel`, scanner form types).
+
+**Not gated by the toggle:** the AI Manager `temperature`/`max_tokens` bug fix
+(§6c) — it's a correctness fix that always applies.
+
+> **Scope acknowledgement:** this turns the kill-switch from a 1-line env read into
+> a **frontend + schema + plumbing** addition across 3 forms and 2 Pydantic models.
+> It gets its **own implementation phase** (Phase 6) with its own tests (schema
+> round-trip, each form renders + submits the flag, OFF path byte-identical §8.8).
 
 ---
 
@@ -503,26 +522,23 @@ TDD: tests written before implementation per phase.
 | langchain-anthropic native kwarg API differs in 1.4.2 | Wire-payload test (§8.3) gates it; pin `>=1.4` and reconcile `uv.lock` drift (§2) |
 | `cache_control` leaks to non-Anthropic provider | Injected only via the Anthropic client's native kwarg; presence test (§8.3) guards |
 | Sampling-param fix changes behavior on models that accepted 0.2 | Omit only where the provider/model rejects it; existing models keep current params; separate revertable commit (Phase 4) |
-| Regression in any of 20 live prompts | `PROMPT_CACHE_ENABLED` kill-switch (§7.5) → instant revert without redeploy |
+| Regression in any of 20 live prompts | `prompt_cache_enabled` user toggle (§7.5, default on) → instant per-run disable without redeploy |
 
 ---
 
-## 11. Open Decisions (need user sign-off)
+## 11. Resolved Decisions (was "open")
 
-These surfaced during the verification/review pass and **change two earlier
-choices** — confirm before planning:
+Both reversals from the verification pass are now **confirmed by the user**:
 
-1. **Kill-switch (§7.5):** earlier decision was "no flag." Recommend **adding**
-   `PROMPT_CACHE_ENABLED` (default on) given 20 live trading prompts. Keep, or stay
-   no-flag?
-2. **"Preserve behavior exactly" (§4):** cannot be *guaranteed* across the
-   system→user role move. Recommend reframing to "preserve **content**; verify
-   behavior via a parity gate (§8.6) before rollout." Accept the reframe + the eval
-   gate?
-3. **Per-path TTL (§6a):** scanner/graph = 5-min (settled); AI Manager TTL deferred
-   to a Phase 1 cadence measurement. OK to decide that empirically rather than now?
-4. **Scope of `cache_control`:** confirmed it reaches **native Anthropic only** in
-   this app (not OpenRouter→Claude). Accept that the broad win for the other 7
-   providers is **prefix hygiene → automatic caching**, with explicit `cache_control`
-   limited to native Anthropic + the AI Manager Anthropic branch?
+1. **Kill-switch (§7.5): CONFIRMED — user-facing toggle.** Not just an env var —
+   a control in **New Analysis, Market Scan, and Scheduled Market Scan**, beside the
+   existing LLM provider/model settings, **default enabled**. Adds frontend + schema
+   scope (own phase, Phase 6).
+2. **Behavior guarantee (§4): CONFIRMED — reframe + eval gate.** Goal is "preserve
+   **content** exactly + **behavioral-parity eval** before rollout" (§8.6), not a
+   byte-identical decision guarantee.
+3. **Per-path TTL (§6a): accepted** — scanner/graph = 5-min; AI Manager TTL decided
+   empirically in Phase 1.
+4. **`cache_control` scope: accepted** — native Anthropic (+ AI Manager Anthropic
+   branch) only; the other providers get prefix-hygiene → automatic caching.
 
