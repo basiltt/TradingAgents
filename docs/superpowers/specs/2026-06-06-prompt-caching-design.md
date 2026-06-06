@@ -24,19 +24,21 @@ anti-pattern that defeats caching on *every* provider: volatile content
 system prompt**, which sits in the cacheable prefix and invalidates it on every
 call (every date, every symbol).
 
-**Goal:** Enable prompt caching across all providers via two complementary
-mechanisms, covering both call sites, **preserving the model's content exactly and
-verifying behavioral parity before rollout** (see §4 — a strict byte-identical
-*decision* guarantee is not achievable across the system→user role move, so we gate
-on an eval instead), with cache-metric logging to verify hits and catch silent
-invalidation.
+**Goal:** **Prefix hygiene across all providers** (helps each provider's automatic
+caching) plus **`cache_control` injection for native Anthropic only**, covering both
+call sites, **preserving the model's content exactly and gating rollout on a
+behavioral-parity eval** (see §4, §8.6 — a byte-identical *decision* guarantee is not
+achievable across the system→user role move), with cache-metric logging to verify
+hits and catch silent invalidation. **The broad, reliable win is the hygiene
+refactor; the Anthropic `cache_control` win is conditional on Phase-1 token counts
+and may be near-zero (§4, §6a).**
 
 ### Two mechanisms (do not conflate)
 
 | Mechanism | Scope | Requires code |
 |---|---|---|
 | **Prefix hygiene** (stable-first, volatile-last) | All 9 providers' automatic caching | Prompt restructuring (provider-agnostic) |
-| **`cache_control` injection** | **Native Anthropic provider only** (see routing note) | Anthropic-specific, via langchain-anthropic native kwarg |
+| **`cache_control` injection** | **Native Anthropic provider only** (see routing note) | Anthropic-specific — system-block transform in the invoke override (§5) |
 
 Prefix hygiene is the broad win — OpenAI (the default provider), Azure, DeepSeek,
 xAI, Gemini, Qwen, and GLM all cache **automatically** once the prefix is
@@ -63,10 +65,10 @@ uninterrupted. `cache_control` is the native-Anthropic-only add-on.
 | 2 | Call sites | **Both** — trading graph + AI Manager |
 | 3 | Behavior risk | **Preserve content exactly** (reorder/never drop) + **behavioral-parity eval gate** before rollout (see §4, §11.2) |
 | 4 | Observability | **Log cache metrics** across **all** graph wrappers + AI Manager (no DB/UI) |
-| 5 | TTL | **5-minute** for scanner/graph; AI Manager TTL **TBD by Phase 1 cadence check** (§6a) |
-| 6 | Adjacent bug | **Fix** hardcoded `temperature:0.2` **and `max_tokens:1024`** (400s/param-mismatch on Opus 4.7/4.8); separate revertable commit |
-| 7 | Architecture | **Neutral split** (agents) + **native `cache_control` kwarg** in the Anthropic client (sentinel approach rejected — §5) |
-| 8 | Kill-switch | **User-facing toggle** in New Analysis + Market Scan + Scheduled Market Scan, default **on** (§7.5) — adds frontend+schema scope |
+| 5 | TTL | **5-minute** for scanner/graph; AI Manager TTL **TBD by Phase 1 cadence check** with explicit 1-hr breakeven rule (§6a) |
+| 6 | Adjacent bug | **Fix** hardcoded `temperature:0.2` **and `max_tokens:1024`** at 4 httpx sites; separate phase (P2), ordered **before** Anthropic injection |
+| 7 | Architecture | **Neutral split** (agents) + **system-block transform in the invoke override** (NOT the native last-block kwarg — wrong block; NOT the sentinel — §5) |
+| 8 | Enablement | **Global ops flag, default OFF** until eval passes (safety); **optional** UI toggle is a separate product feature (§7.5, §11) |
 
 ### TTL rationale (5-minute wins decisively)
 
@@ -109,11 +111,57 @@ do **not** inject it — they rely on automatic caching only (see §2 routing no
 | `langchain-openai` | — | 1.2.x | Hosts `NormalizedChatOpenAI` cache-token path |
 | `anthropic` | — | 0.97.0 | Underlying SDK |
 
-> ⚠️ **Lockfile drift is a real risk.** The implementation must pin/verify
-> `langchain-anthropic >= 1.4` (the native `cache_control` kwarg and the
-> `usage_metadata['input_token_details']['cache_read']` path both depend on it).
-> A `uv sync` that honors the stale 0.3.15 pin would break the design. **Phase 0
-> task: reconcile `uv.lock` with the installed version and pin a floor.**
+> ⚠️ **Lockfile drift + future-upgrade risk.** The implementation must reconcile
+> `uv.lock` (stale 0.3.15) with the installed **1.4.2** and pin a **tested range**
+> (floor **and** known-good ceiling, e.g. `>=1.4,<2`), not just a floor — a future
+> `uv sync` to a major bump could change message serialization. Our §5 mechanism is
+> a **system-block transform we write** (not the library's private
+> `_apply_cache_control_to_last_eligible_block`, which targets the wrong block), so
+> the coupling is to langchain-anthropic's **payload/serialization shape**, caught by
+> the real-binding test (§8.3). **Phase 0 task: reconcile the lock + pin a range.**
+
+---
+
+## 2.5 Implementation Phases (explicit DAG — prerequisites, not just numbers)
+
+> Iteration-2 fix (C3): phases were scattered as prose and didn't form a valid
+> dependency graph (e.g. the temp fix that *unblocks* Anthropic testing came
+> *after* it; the eval that *gates* rollout came after the toggle). Corrected order:
+
+```
+P0  Deps        reconcile uv.lock, pin langchain-anthropic range          (no deps)
+P1  Recon       enumerate sites + exact count; token-count every stable   (P0)
+    [GO/NO-GO]   prefix vs 1024/4096; measure AI Manager cadence + prefix.
+                 → decides which sites/paths get cache_control at all.
+P2  Param fix   conditional temperature/max_tokens in the 4 httpx sites    (P0)
+                 (§6c) — UNBLOCKS Anthropic testing on Opus 4.7/4.8 (else 400).
+P3  Restructure §4 prompt hygiene, OLD builder RETAINED behind ops flag    (P1)
+                 — provider-agnostic; helps automatic caching immediately.
+P4  Inject      §5 system-block transform (graph) + §6a AI Manager         (P1,P2,P3)
+                 Anthropic branch — ONLY for sites P1 cleared.
+P5  Logging     §7 cache-metric normalizer, all wrappers + AI Manager      (P3)
+P6  EVAL GATE   §8.6 behavioral-parity, old-vs-new, offline spend-capped   (P3,P4)
+    [GATE]       → MUST PASS before the global flag may default ON.
+P7  Ops flag    global TRADINGAGENTS_PROMPT_CACHE_ENABLED, default OFF      (P3,P4)
+                 → flip to ON is a separate PR justified by P6 evidence.
+P8  UI toggle   OPTIONAL product feature (3 forms + schema), default        (P7)
+    (optional)   follows global flag — build only if user wants per-run control.
+```
+
+**Key dependency facts the numbering must respect:**
+
+> Section prose may say "Phase 1/2/3…" loosely — the **canonical ordering is the
+> P0–P8 DAG above**; map any loose "Phase N" to it (recon = P1, param fix = P2,
+> restructure = P3, injection = P4, logging = P5, eval = P6, ops flag = P7, UI = P8).
+- **P2 before P4** — §6c states the Anthropic injection is *untestable* on current
+  Opus until the sampling-param fix lands (the call 400s before a cache forms).
+- **P3 retains the old prompt builder behind the flag** — required so **P6** can run
+  old-vs-new, and so the OFF path (§8.8) is byte-identical.
+- **P6 gates the default-ON flip**, not the merge. Code can land dark (flag OFF) any
+  time; only enabling it for users waits on the eval.
+- **P1 is a go/no-go** — if token counts show prefixes below threshold and cadence
+  exceeds TTL, P4's Anthropic injection may be **cancelled** while P3 (hygiene) still
+  ships for automatic-caching providers.
 
 ---
 
@@ -216,7 +264,7 @@ identical inputs, normalizes whitespace, asserts **old-content ⊆ new-content**
 > 1. **Reframe the guarantee:** the design preserves **content**, and *aims* to
 >    preserve behavior, but cannot *guarantee* byte-identical decisions across the
 >    role move. The spec should not over-claim "exactly."
-> 2. **Add a behavioral-parity gate (Phase 5, pre-rollout):** run N fixed
+> 2. **Add a behavioral-parity gate (P6, pre-rollout):** run N fixed
 >    (symbol, date, market-state) fixtures through representative agents **old prompt
 >    vs new prompt**, and assert the **decision/score output matches** (e.g. same
 >    BUY/HOLD/SELL, same indicator selection, or score within tolerance). If parity
@@ -226,15 +274,23 @@ identical inputs, normalizes whitespace, asserts **old-content ⊆ new-content**
 
 ### Two site shapes
 
-- **Tail-volatile (analysts):** volatile token at the end → clean hoist to message
-  turn. Full stable prefix caches.
+- **Tail-volatile (analysts):** volatile token at the end → clean hoist to the
+  human turn. The whole system message is stable → caches.
 - **Mid-volatile (compliance/managers/trader — 6 sites):** `{instrument_context}`
   is embedded mid-prompt (e.g. `## Asset\n{instrument_context}\n\n## Rules...`).
-  **Do NOT reorder stable content around it** (would risk behavior drift). Per-site:
-  either (a) keep content order exactly and cache only the stable span *before* the
-  insertion, or (b) hoist the volatile block to the message turn **only if** the
-  remaining stable text reads identically without it. Content never dropped;
-  order never scrambled. **Correctness wins over cache coverage.**
+  Our cache breakpoint covers the **entire system block** (§5), so a system message
+  that still embeds volatile bytes **does not cache at all** — there is no way to
+  cache "only the span before the insertion" with this mechanism (that would need a
+  hand-placed mid-content breakpoint, which we rejected). Therefore, per site:
+  - **(b) hoist** the volatile block out to the human turn **only if** the remaining
+    stable text reads identically without it → then it caches like a tail-volatile site.
+  - **otherwise accept no caching** for that site (keep content order exactly; never
+    reorder stable text around the insertion). **Correctness wins over cache coverage.**
+
+  > Iteration-1 listed an "option (a): cache only the stable span before the
+  > insertion." **Removed** — it's impossible with the §5 single-block breakpoint and
+  > would silently yield `cache_read = 0`. Don't imply a sub-span cache the mechanism
+  > can't produce.
 
 ### Minimum-prefix caveat (and honest ROI)
 
@@ -257,34 +313,68 @@ prefix below the threshold **silently won't cache** (no error, `cache_creation =
 
 ## 5. Component: Anthropic `cache_control` Injection (LangChain path)
 
-**Mechanism: langchain-anthropic's native `cache_control` (verified in 1.4.2).**
-No sentinel, no manual block rewriting. `langchain-anthropic >= 1.4` accepts
-`cache_control={"type": "ephemeral"}` and auto-applies it to the last eligible
-content block (`_apply_cache_control_to_last_eligible_block`), promoting a string
-system prompt to a text block automatically.
+> **CORRECTION (iteration 2 — the iteration-1 "native kwarg" fix was ALSO wrong).**
+> Iteration 1 replaced the rejected sentinel with langchain-anthropic's native
+> `cache_control` kwarg. **Verified against installed 1.4.2 source, that is wrong for
+> our use case.** `_apply_cache_control_to_last_eligible_block` walks messages
+> **newest-to-oldest** and puts the breakpoint on the **last eligible block** — i.e.
+> the **conversation tail**, not the stable system prefix. Our prompt shape is
+> `stable system → volatile human turn → growing MessagesPlaceholder`, so the native
+> kwarg would mark the **volatile tail** → `cache_read = 0` forever. The native kwarg
+> is designed for "cache everything up to the latest turn" (multi-turn prefix
+> growth), **not** "cache the system prefix while the tail varies."
 
-**Where it's applied:** in `AnthropicClient.get_llm()`
-(`tradingagents/llm_clients/anthropic_client.py`), bind the cache kwarg so every
-invoke through `NormalizedChatAnthropic` carries it. Because the volatile content
-now lives in the human turn (§4), the system block is the stable prefix and is the
-correct cache breakpoint. The `NormalizedChatAnthropic.invoke` override
-(confirmed to fire on every agent call — all agent nodes use sync `chain.invoke`,
-zero `ainvoke`) needs no change for *injection*; it only gains metric logging (§7).
+**Correct mechanism: transform the *system* message to block-form with
+`cache_control` inside the `NormalizedChatAnthropic.invoke` override — AFTER
+langchain has rendered the template.** The override already wraps `super().invoke`;
+it receives the fully-rendered input (a `list[BaseMessage]` or a `ChatPromptValue`).
+The transform:
+
+1. Normalize input to messages (the codebase already has this exact helper pattern —
+   `_input_to_messages` in `openai_client.py:42`, used by DeepSeek).
+2. Find the **first `SystemMessage`** (it now holds only stable text, per §4).
+3. Rewrite its `.content` from a string to a single text block with
+   `cache_control: {"type": "ephemeral"}`:
+   `[{"type": "text", "text": <stable>, "cache_control": {"type": "ephemeral"}}]`.
+4. Delegate to `super().invoke` with the modified message list.
+
+This places the breakpoint **exactly on the stable system prefix**, regardless of
+how many turns follow. No sentinel needed — the override operates on rendered
+messages where `{tool_names}`/`{system_message}` are already interpolated, sidestepping
+the templating trap entirely (the iteration-1 reason the sentinel failed).
 
 ```python
-# In AnthropicClient.get_llm(), conceptually:
-llm = NormalizedChatAnthropic(model=..., cache_control={"type": "ephemeral"})
-# langchain-anthropic applies it to the last eligible (stable system) block.
+# In NormalizedChatAnthropic.invoke, conceptually (gated by prompt_cache_enabled):
+def invoke(self, input, config=None, **kwargs):
+    if self._cache_enabled:
+        msgs = _input_to_messages(input)            # reuse existing helper pattern
+        for m in msgs:
+            if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                m = m.model_copy(update={"content": [
+                    {"type": "text", "text": m.content,
+                     "cache_control": {"type": "ephemeral"}}]})
+                # replace in list; break after first system message
+        input = msgs
+    return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
 ```
 
-> The exact binding surface (constructor kwarg vs `.bind()` vs per-call) will be
-> confirmed against the installed 1.4.2 API during Phase 2 and asserted by the
-> wire-payload test (§8.6). The design commitment is: **use the native kwarg, not a
-> hand-rolled block rewrite, and not the rejected sentinel.**
+> Exact construction (mutate vs `model_copy`, `ChatPromptValue` handling, where the
+> `_cache_enabled` flag is set from config — see §7.5) is confirmed in Phase 3 and
+> asserted by the **real-binding wire-payload test (§8.3)** — which must run against
+> the actual `langchain_anthropic` serializer, not a mock, so the block reaches the
+> wire as `cache_control` on the system message.
 
 **TTL:** 5-minute ephemeral (§2 rationale). **Beta header:** none — `cache_control`
-is GA on current Claude models. **Failure safety:** the kwarg is inert on
-non-cacheable prompts (just `cache_creation = 0`); no behavior change.
+is GA on current Claude models. **Failure safety:** on a non-cacheable/sub-threshold
+prompt the block is inert (`cache_creation = 0`); on any unexpected input shape the
+override falls through to today's behavior. **Mid-volatile sites (§4):** because the
+breakpoint sits on the whole system block, a system message that *embeds* volatile
+content does **not** cache at all (the volatile bytes are inside the cached span) —
+see §4 corrected handling.
+
+**Non-Anthropic clients** (`NormalizedChatOpenAI`, `DeepSeekChatOpenAI`,
+`NormalizedChatGoogleGenerativeAI`) get **no** `cache_control` — they rely on
+automatic prefix caching, which the §4 hygiene refactor unlocks.
 
 **Non-Anthropic clients** (`NormalizedChatOpenAI`, `DeepSeekChatOpenAI`,
 `NormalizedChatGoogleGenerativeAI`) get **no** `cache_control` — they rely on
@@ -323,19 +413,22 @@ and `create_llm_callable_with_cleanup`. **All four builders** get the treatment.
 > **across cycles** (consecutive evaluations of the same account reuse the cached
 > system prefix), governed by the 5-min TTL and the cycle cadence.
 >
-> ⚠️ **Two caveats that decide whether this is worth doing:**
-> 1. **Prefix size:** the system prompt is ~600–900 tokens — **likely below
->    Anthropic's 1024-token minimum**, so it may **never cache**. Phase 1 must
->    token-count it; if sub-1024, the AI Manager Anthropic-injection delivers
->    nothing and should be dropped (prefix hygiene on the user turn still helps
->    automatic-caching providers).
-> 2. **Cycle cadence vs 5-min TTL:** caching only pays off if consecutive cycles
->    for an account land **within 5 minutes**. The AI Manager is event-driven with a
->    `safety_net_interval_s` fallback and an emergency fast-path; cadence is
->    variable. Phase 1 must check typical inter-cycle spacing — if cycles are
->    routinely >5 min apart, the 5-min TTL expires between them and the 1-hour TTL
->    (2× write) may be the better choice **for this path specifically** (distinct
->    from the scanner, where 5-min is correct).
+> ⚠️ **This path needs BOTH independent conditions true, or it pays ≤0 — do the
+> math, don't ship on vibes (M2):**
+> 1. **Prefix size ≥ minimum for the configured model:** system prompt is ~600–900
+>    tok — **likely below the 1024 (Sonnet) / 4096 (Opus) minimum**, so it may
+>    **never cache**. Phase 1 token-counts it for the *actual models in use*.
+> 2. **Median inter-cycle spacing < chosen TTL:** caching only pays if consecutive
+>    cycles for an account land inside the TTL. The AI Manager is event-driven
+>    (`safety_net_interval_s` fallback + emergency fast-path) — cadence is variable.
+>
+> **Decision rule (default-drop unless proven):** implement the AI Manager Anthropic
+> injection **only if Phase 1 shows (1) AND (2)**. For the TTL choice, the 1-hour
+> option costs a **2× write premium**, so it breaks even only at **reads/write ≥ 2** —
+> i.e. ≥2 cache *hits* per *write*. If cadence is sparse enough to *need* 1-hour, hits
+> are rare and the inequality likely fails → **don't use 1-hour; drop caching on this
+> path instead.** Pick 5-min, 1-hour, or none on this inequality, not intuition.
+> Prefix hygiene on the user turn still helps automatic-caching providers regardless.
 
 **(b) OpenAI-compat branch — already prefix-clean.** `system_prompt` and
 `context_prompt` are separate messages (system first). Stable system message
@@ -360,8 +453,8 @@ models, since the call 400s before any cache can form.
 > from caching. It is **kept in scope** because (1) it lives in the exact same 4
 > call-construction sites the caching change edits, and (2) the Anthropic
 > `cache_control` path is **untestable on Opus 4.7/4.8 without it** (the request
-> 400s first). It will be a **separate phase/commit** (Phase 4) so it can be
-> reviewed and reverted independently.
+> 400s first). It will be **phase P2**, ordered **before** the Anthropic injection
+> (P4), so it can be reviewed and reverted independently.
 
 ---
 
@@ -419,77 +512,141 @@ wrappers reach**:
 
 ---
 
-## 7.5 Kill-Switch — user-facing toggle (revises "no flag")
+## 7.5 Enablement controls — ops flag (safety) + optional UI toggle (product)
 
-> **Decision (confirmed):** add a **user-facing toggle**, not just an env var. It
-> appears wherever users already see LLM provider/model settings — **New Analysis,
-> Market Scan, and Scheduled Market Scan** — labelled e.g. *"Prompt caching"*,
-> **default enabled**. This gates the prompt restructuring + `cache_control`
-> together (they're behaviorally coupled).
+> **Iteration-2 split (was: one user-facing toggle, default on).** The review
+> showed these are **two different concerns** that iteration 1 conflated:
+> 1. **A global ops flag** — the actual *safety* mechanism. Cheap, no UI.
+> 2. **A per-run UI toggle** — a *product* choice. Larger (3 forms + schema + types
+>    + plumbing), and arguably bigger than the caching change it guards.
+>
+> They are now specified separately, and the **default is OFF** until the behavioral-
+> parity eval (§8.6) records a pass (see C1 rationale in §6/§8). This makes the eval
+> a *real* rollout gate instead of decoration.
 
-**Backend (schema) — mirrors the existing `checkpoint_enabled: Optional[bool]`:**
-- Add `prompt_cache_enabled: Optional[bool] = None` to **`AnalysisRequest`**
-  (`backend/schemas/__init__.py:110`) and **`AutoTradeConfig`** (`:425`, used by both
-  Market Scan and Scheduled Market Scan).
-- `None` → fall back to config/env default (**on**); explicit `False` → disable.
-- Thread the resolved value into the config dict that reaches **both** call sites
-  (trading graph via `analysis_service` / `scanner_service`; AI Manager via its
-  config resolution). When OFF: original prompt assembly + no `cache_control`.
+### (1) Global ops flag — the safety mechanism (ships with the feature)
 
-**Env default:** `DEFAULT_CONFIG["prompt_cache_enabled"] = True` in
-`tradingagents/default_config.py`, overridable by env
-`TRADINGAGENTS_PROMPT_CACHE_ENABLED` (matches the existing config-field pattern).
+- `DEFAULT_CONFIG["prompt_cache_enabled"] = False` in
+  `tradingagents/default_config.py`, env-overridable via
+  `TRADINGAGENTS_PROMPT_CACHE_ENABLED` (mirror the `os.getenv` pattern used by
+  `llm_provider` at `default_config.py:15` — **not** the hardcoded
+  `checkpoint_enabled` at `:30`, which has no env override).
+- **Default OFF** until §8.6 passes; flipping to ON is a one-line follow-up PR
+  justified by recorded eval evidence. This is the gate.
+- Read once where the config dict is assembled; threaded to both call sites (below).
+- Gates **both** the §4 restructuring and the §5 `cache_control` together
+  (behaviorally coupled). The §6c sampling-param bug fix is **not** gated.
 
-**Frontend — three forms, same LLM/Engine section the provider selector lives in:**
+### (2) Optional per-run UI toggle — product choice (own phase, can be deferred)
 
-| Form | File | Insertion point |
+> **This is a product decision, not a safety requirement — the ops flag already
+> provides safety.** Recommend building it **only if** there's a user story for
+> per-run control; otherwise ship the ops flag alone and defer the UI. Flagged for
+> user decision in §11.
+
+If built, it surfaces in the LLM/Engine section of three forms, default following
+the global flag. **Schema — corrected models (iteration-1 named the wrong one):**
+
+| Form | Submits to | Add field to |
 |---|---|---|
-| New Analysis | `frontend/src/components/analysis/ConfigForm.tsx` | Engine section (~`:880`, near "Default LLM Provider" `:885`); add to the `react-hook-form` schema + payload (`:426`) |
-| Market Scan | `frontend/src/components/scanner/ScannerPage.tsx` | LLM block (~`:1117`); add state like `deepModel`/`quickModel` (`:325`) + payload (`:494`) |
-| Scheduled Market Scan | `frontend/src/components/scanner/ScheduledScansPage.tsx` | "LLM Provider" block (~`:1178`); state (`:791`) + payload (`:1009`) |
+| New Analysis | `AnalysisRequest` (`schemas/__init__.py:110`) | `prompt_cache_enabled: Optional[bool] = None` (✓ iteration-1 correct) |
+| Market Scan | **`ScanRequest`** (`:475`) | same — **iteration-1 wrongly said `AutoTradeConfig`** |
+| Scheduled Market Scan | `CreateScheduledScanRequest.scan_config: Dict` (`:898`, freeform) | sibling key in `scan_config` (frontend already places `checkpoint_enabled` there, `ScheduledScansPage.tsx:1022`) |
 
-- A boolean control (checkbox/switch), default **checked**, sent as
-  `prompt_cache_enabled` through `frontend/src/api/client.ts` request bodies.
-- TS types updated wherever `deep_think_llm` etc. are declared (e.g.
-  `ConfigForm` `EngineConfig`, `WatchlistPanel`, scanner form types).
+> ⚠️ **Do NOT add it to `AutoTradeConfig` (`:425`)** — it has
+> `model_config = ConfigDict(extra="forbid")` and would **reject** the field, and
+> it's the wrong layer (per-account trade config, not LLM settings). This was a
+> concrete error in iteration 1.
 
-**Not gated by the toggle:** the AI Manager `temperature`/`max_tokens` bug fix
-(§6c) — it's a correctness fix that always applies.
+`checkpoint_enabled` is the faithful end-to-end template (verified wired in all 3
+forms): ConfigForm RHF schema + payload `:434`; ScannerPage state→payload `:503`;
+ScheduledScansPage state→payload `:1022`. (Iteration-1's cited payload lines
+426/494/1009 pointed at `deep_think_llm`, not the boolean — correct rows are
+**434 / 503 / 1022**.) TS interfaces in `client.ts:194` (`StartAnalysisRequest`)
+and the scan request type (`:290`) take an extra boolean with no runtime allowlist.
 
-> **Scope acknowledgement:** this turns the kill-switch from a 1-line env read into
-> a **frontend + schema + plumbing** addition across 3 forms and 2 Pydantic models.
-> It gets its **own implementation phase** (Phase 6) with its own tests (schema
-> round-trip, each form renders + submits the flag, OFF path byte-identical §8.8).
+### Backend plumbing — every link (verified; iteration-1 under-specified)
+
+- **Trading-graph read site:** `analysis_service._build_config` (`:319`) — single
+  chokepoint copying request→config, used by New Analysis **and** Market Scan.
+- **Scan→analysis hop:** `scanner_service._run_single` re-assembles the per-ticker
+  request field-by-field (`~:887-911`, mirror the `checkpoint_enabled` relay at
+  `:903`) — **an unlisted field is dropped here**, so the flag must be added.
+- **Config→client→`cache_control`:** the graph is built fresh per run
+  (`analysis_service.py:596` `TradingAgentsGraph(config=…)`), so a per-run flag is
+  feasible — but the value currently stops at `self.config`. `AnthropicClient.get_llm`
+  only forwards `_PASSTHROUGH_KWARGS` (`anthropic_client.py:48`); **new plumbing is
+  required** from config → `NormalizedChatAnthropic._cache_enabled` (§5).
+- **AI Manager trio (separate path, fully unplumbed today):**
+  `create_llm_callable_with_cleanup` (`ai_manager_llm_provider.py:199`) accepts only
+  `provider/api_key/model/backend_url` — add a `cache_enabled` param;
+  `_create_llm_from_scan_configs` (`ai_account_manager_service.py:798`) passes it;
+  `_extract_llm_identity` (`:774`) must include it in the identity hash so a toggle
+  change rebuilds the callable. The httpx Anthropic payload (`:281-287`) reads it.
+
+**OFF path = byte-identical to today** (original prompt assembly, no `cache_control`),
+verified by test §8.8.
+
+> **Scope honesty (M1):** the **UI toggle plumbing is plausibly larger than the
+> caching change itself** — 3 React forms, schema on 2–3 models, TS types, 2 backend
+> read sites, and the AI Manager trio. The *safety* goal needs only control (1). The
+> UI toggle is optional product polish; size it as its own feature, don't smuggle it
+> in as "the kill-switch."
 
 ---
 
 ## 8. Testing Strategy
 
 1. **Content-preservation** (§4) — old-content ⊆ new-content per site (necessary,
-   not sufficient — see #6).
-2. **Prefix-stability** — assemble the stable system block for two (date, symbol)
-   pairs → assert **byte-identical**. Proves the prefix *is reusable*; does **not**
-   by itself prove caching engages (see #7).
-3. **`cache_control` presence** — Anthropic client binds the native cache kwarg;
-   the **outgoing wire payload** carries `cache_control` on the system block.
-   Non-Anthropic clients emit **no** `cache_control`.
+   not sufficient — see #6). For **mid-volatile** sites where text legitimately
+   moves, compare the *union of system + first-human-turn* content, not the system
+   block alone.
+2. **Prefix-stability (per site SHAPE)** — for **tail-volatile** sites, assemble the
+   stable system block for two (date, symbol) pairs → assert byte-identical. For
+   **mid-volatile** sites that don't hoist, the system block is **not** byte-stable
+   (it embeds volatile bytes) — assert instead that those sites are **flagged
+   non-caching** and skipped, not silently expected to cache. Proves reusability of
+   the prefix where one exists; does not by itself prove engagement (see #7).
+3. **`cache_control` presence — REAL binding, not a mock.** Assert the
+   `NormalizedChatAnthropic.invoke` transform produces a serialized request whose
+   **system message** carries `cache_control` — exercised through the **actual
+   installed `langchain_anthropic` payload builder** (`_get_request_payload` /
+   transport-capture), **not** a hand-rolled mock. This is what catches a future
+   library upgrade silently moving/dropping the breakpoint (M3). Non-Anthropic
+   clients emit **no** `cache_control`.
 4. **Sampling-param omission** — Opus 4.7/4.8 payload carries no `temperature`
-   (and the `max_tokens`/`max_completion_tokens` handling is correct); older
-   models/providers keep their current params.
-5. **Metric-normalizer** — each provider's usage JSON/`usage_metadata` maps to the
-   unified record; covers Anthropic **and** OpenAI/Google paths.
-6. **Behavioral parity (pre-rollout gate, §4)** — N fixed fixtures through
-   representative agents, old vs new prompt, assert decision/score parity. This is
-   the real behavior guard, not the ⊆ test.
-7. **End-to-end cache engagement** — one integration test that runs a real (mocked-
-   transport) graph invoke and asserts (a) the override fires and (b) on a repeat
-   call with an identical prefix the parsed usage shows `cache_read > 0` (or, against
-   a recorded fixture, that the wire payload would produce a hit). Byte-stability
-   (#2) proves *reusability*; this proves *engagement*.
-8. **Kill-switch** — with the cache flag OFF, prompts/payloads are byte-identical to
-   today (no `cache_control`, original prompt structure) — proving instant rollback.
+   (and `max_tokens`/`max_completion_tokens` handling is correct); older
+   models/providers keep their current params. Covers all 4 httpx call sites.
+5. **Metric-normalizer** — each provider's usage maps to the unified record; covers
+   Anthropic **and** OpenAI/Google paths. **Distinguish `None` (field absent →
+   provider didn't report) from `0` (reported zero)** so a missing
+   `prompt_tokens_details` on xAI/GLM/Qwen doesn't false-alarm as invalidation (m4).
+6. **Behavioral-parity eval (pre-rollout GATE, §4) — concrete protocol:**
+   - **Noise floor first:** run the *old* prompt against itself K≈5 times per fixture;
+     record intrinsic decision-label disagreement rate + score variance (these are
+     stochastic LLM calls — `temperature=0` does **not** make Opus 4.7/4.8
+     deterministic, and those models reject the param anyway).
+   - **Compare structured decisions, not text:** the BUY/HOLD/SELL label and the
+     selected-indicator set (text moves legitimately; never diff raw text).
+   - **Pre-registered pass rule:** over **N=30–50 fixtures** spanning bull/bear/chop,
+     new-vs-old label agreement ≥ (1 − noise_floor), **and** McNemar's test p>0.05
+     (no *systematic/directional* drift, not just net agreement). Score tolerance =
+     f(measured variance), not an arbitrary epsilon.
+   - **Execution:** a **spend-capped offline job** with recorded transcripts, run with
+     real keys against the actual configured model(s). **Not in CI** (non-deterministic,
+     costs money). State the budget; archive the transcript as the gate's evidence.
+   - This eval **must run and pass before the global flag (§7.5) defaults ON.**
+7. **End-to-end cache engagement** — split into two: (a) **CI**: assert the outgoing
+   wire payload *structure* would produce a hit (mock transport) — structural only;
+   (b) **once, offline**: against recorded live `usage`, confirm `cache_read > 0` on a
+   repeat call. Do **not** claim CI proves `cache_read > 0` (it can't — that needs a
+   live second call).
+8. **OFF-path identity** — with the global flag OFF, prompts/payloads are
+   byte-identical to today (no `cache_control`, original prompt structure) — proving
+   the design is dark until deliberately enabled.
 
-TDD: tests written before implementation per phase.
+TDD: tests written before implementation per phase. The §5 transform reference to a
+wire-payload assertion is **§8.3** (iteration-1 mis-cited "§8.6").
 
 ---
 
@@ -509,36 +666,66 @@ TDD: tests written before implementation per phase.
   (§6a caveat 2) — decided in Phase 1, not pre-judged here.
 - Prompt wording/cleanup beyond reordering (content-preservation constraint).
 
+### Schema-persistence note (not "no migration" — that claim covered only logging)
+
+The §7 "no DB schema / no migration" statement is about **logging**. The optional UI
+toggle (§7.5) *does* touch persistence: `AutoTradeConfig`/scan config serializes into
+the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
+`json.loads(d["config"])`). Two consequences to handle in P8:
+- **Existing scheduled scans** have no `prompt_cache_enabled` key → resolve to the
+  global default. With the **default OFF** (C1), they correctly stay on the old
+  behavior post-deploy — they do **not** silently adopt the new path. (This is
+  another reason default-OFF is the safe choice.)
+- **Rollback:** an orphaned `prompt_cache_enabled` key in persisted JSON is harmless
+  **only if** the reverted model ignores unknown keys. The freeform `scan_config:
+  Dict` does; **do not** route the field through a model with `extra="forbid"`.
+
 ---
 
 ## 10. Risks & Mitigations
 
 | Risk | Mitigation |
 |---|---|
-| Role move (system→user) shifts trading decisions (real money) | Behavioral-parity gate (§8.6) before rollout + kill-switch (§7.5); ⊆ test alone is **not** sufficient — acknowledged in §4 |
-| Silent cache invalidation | Prefix-stability test (§8.2) + end-to-end engagement test (§8.7) + all-provider cache-metric logging (§7) |
-| Anthropic injection delivers ~0 because prefixes < min tokens | Phase 1 token-count gate (§4, §6a); drop Anthropic injection per-site/path if sub-threshold; automatic-caching providers still benefit from hygiene |
-| AI Manager cycles spaced > 5-min TTL → no cross-cycle reuse | Phase 1 cadence check (§6a caveat 2); choose 5-min vs 1-hour TTL for that path on evidence |
-| langchain-anthropic native kwarg API differs in 1.4.2 | Wire-payload test (§8.3) gates it; pin `>=1.4` and reconcile `uv.lock` drift (§2) |
-| `cache_control` leaks to non-Anthropic provider | Injected only via the Anthropic client's native kwarg; presence test (§8.3) guards |
-| Sampling-param fix changes behavior on models that accepted 0.2 | Omit only where the provider/model rejects it; existing models keep current params; separate revertable commit (Phase 4) |
-| Regression in any of 20 live prompts | `prompt_cache_enabled` user toggle (§7.5, default on) → instant per-run disable without redeploy |
+| Role move (system→user) shifts trading decisions (real money) | **Default OFF** until behavioral-parity eval (§8.6) passes; eval compares structured decisions w/ noise-floor + McNemar, not text; ops flag = rollout control |
+| Silent cache invalidation | Prefix-stability test (§8.2, per-shape) + real-binding presence test (§8.3) + offline engagement check (§8.7b) + all-provider cache-metric logging (§7) |
+| Anthropic injection delivers ~0 because prefixes < min tokens | **P1 go/no-go** token-count gate (§4, §6a); default-drop the injection per-site/path if sub-threshold; hygiene still helps automatic-caching providers |
+| AI Manager path pays ≤0 (sub-1024 prefix AND/OR cadence > TTL) | P1 must show **both** conditions; 1-hr TTL only if reads/write ≥ 2 breakeven holds (§6a) — else drop caching on that path |
+| **Future** langchain-anthropic upgrade silently moves/drops the breakpoint | Pin a **tested range** (`>=1.4,<2`), not just a floor (§2); **real-binding** payload test (§8.3) fails CI if `cache_control` stops reaching the system block — mock tests would NOT catch this |
+| **Third-party** auto-cache threshold drift (OpenAI/Gemini raise min prefix) | Unpinnable; **cache-metric logging (§7) is the sole detector** — add an alert on sustained `cache_read==0` rate rather than manual grep; distinguish absent-field from zero (§8.5) |
+| `cache_control` leaks to a non-Anthropic provider | Injected only inside `NormalizedChatAnthropic.invoke`; real-binding presence test (§8.3) asserts non-Anthropic clients emit none |
+| Sampling-param fix changes behavior on models that accepted 0.2 | Omit only where the provider/model rejects it; existing models keep current params; separate phase **P2**, ordered before injection |
+| Regression once enabled | Global ops flag (§7.5, default OFF) → instant disable without redeploy; optional per-run UI toggle for finer control |
+| Schema field orphaned on rollback | Field lives only in freeform `scan_config`/non-`forbid` models (§9 note) |
 
 ---
 
-## 11. Resolved Decisions (was "open")
+## 11. Decisions — confirmed + two NEW reversals needing sign-off
 
-Both reversals from the verification pass are now **confirmed by the user**:
+**Confirmed earlier:**
+2. **Behavior guarantee (§4):** preserve **content** exactly + **behavioral-parity
+   eval gate** (§8.6), not a byte-identical decision guarantee.
+3. **Per-path TTL (§6a):** scanner/graph = 5-min; AI Manager TTL decided in P1 on the
+   breakeven inequality.
+4. **`cache_control` scope:** native Anthropic (+ AI Manager Anthropic branch) only;
+   others get prefix-hygiene → automatic caching.
 
-1. **Kill-switch (§7.5): CONFIRMED — user-facing toggle.** Not just an env var —
-   a control in **New Analysis, Market Scan, and Scheduled Market Scan**, beside the
-   existing LLM provider/model settings, **default enabled**. Adds frontend + schema
-   scope (own phase, Phase 6).
-2. **Behavior guarantee (§4): CONFIRMED — reframe + eval gate.** Goal is "preserve
-   **content** exactly + **behavioral-parity eval** before rollout" (§8.6), not a
-   byte-identical decision guarantee.
-3. **Per-path TTL (§6a): accepted** — scanner/graph = 5-min; AI Manager TTL decided
-   empirically in Phase 1.
-4. **`cache_control` scope: accepted** — native Anthropic (+ AI Manager Anthropic
-   branch) only; the other providers get prefix-hygiene → automatic caching.
+**Iteration-2 raised TWO reversals of your earlier "toggle, default on" choice —
+please confirm:**
+
+1. **Default OFF, not ON (C1).** You chose default-on. The review showed default-on
+   ships the unvalidated role-move to every user *before* the eval (§8.6) can gate
+   it — the gate would gate nothing. **Recommend `DEFAULT … = False`** until the eval
+   records a pass; flipping ON becomes a one-line PR backed by evidence. Keep
+   default-on, or accept default-OFF-until-eval?
+2. **Split safety flag from product toggle (M1).** You asked for a user-facing
+   toggle in 3 forms. The review showed the *safety* need is fully met by a **global
+   ops flag** (no UI), and the **3-form UI toggle is plausibly larger than the
+   caching change itself**. **Recommend:** ship the **ops flag** with the feature
+   (required), and treat the **UI toggle as optional product work** (build now,
+   later, or never). Still want the full 3-form UI toggle in this scope, or ship the
+   ops flag now and decide the UI separately?
+
+> These aren't me overriding you — the verification surfaced that "default-on
+> user-toggle" undercuts the very safety gate you also approved. Flagging so you
+> decide with the conflict visible.
 
