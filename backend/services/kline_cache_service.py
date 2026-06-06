@@ -398,11 +398,16 @@ class KlineCacheService:
 
 _BYBIT_INSTRUMENTS_URL = "https://api.bybit.com/v5/market/instruments-info"
 
+# Fallback for symbols we couldn't resolve (refresh failure, or a symbol beyond the
+# instruments page). Chosen to be NO-OPs in the backtest engine: tick_size=0 disables
+# TP/SL rounding and max_leverage=0 disables the leverage cap, so an unknown symbol
+# behaves exactly as if no instrument info were supplied (rather than imposing a
+# possibly-wrong tick/cap). qty_step/min_qty keep the engine's prior 0.001 behaviour.
 _DEFAULT_INSTRUMENT_INFO = {
     "qty_step": 0.001,
     "min_qty": 0.001,
-    "tick_size": 0.01,
-    "max_leverage": 25,  # conservative default for unknown symbols
+    "tick_size": 0.0,       # 0 → no TP/SL rounding for unresolved symbols
+    "max_leverage": 0,      # 0 → no leverage cap for unresolved symbols
 }
 
 

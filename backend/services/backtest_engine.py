@@ -898,15 +898,19 @@ class BacktestEngine:
                     pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
                     pos.max_adverse_price = max(pos.max_adverse_price, high)
 
-                # LIQUIDATION (SL-wins-if-closer)
+                # LIQUIDATION (SL-wins-if-closer). The `sl_price > 0` guards are
+                # defence-in-depth: a non-positive SL (should never happen now that
+                # tick-rounding can't zero a price) must NEVER be treated as a closer
+                # stop — that would fabricate a near-100% PnL. A 0 SL falls through to
+                # liquidation, the correct outcome.
                 if pos.side == "Buy" and low <= pos.liq_price:
-                    if pos.sl_price > pos.liq_price and low <= pos.sl_price:
+                    if pos.sl_price > 0 and pos.sl_price > pos.liq_price and low <= pos.sl_price:
                         positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
                     else:
                         positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
                     continue
                 elif pos.side == "Sell" and high >= pos.liq_price:
-                    if pos.sl_price < pos.liq_price and high >= pos.sl_price:
+                    if pos.sl_price > 0 and pos.sl_price < pos.liq_price and high >= pos.sl_price:
                         positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
                     else:
                         positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))

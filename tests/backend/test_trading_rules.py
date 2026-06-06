@@ -85,8 +85,35 @@ class TestComputePositionSize:
         assert qty == 0.2
 
 
+class TestRoundPriceToTick:
+    """round_price_to_tick rounds DOWN to the tick, mirroring production, but must
+    NEVER return a non-positive price (which would fabricate a ~100% PnL)."""
+
+    def test_rounds_down_to_tick(self):
+        from backend.services.trading_rules import round_price_to_tick
+        assert round_price_to_tick(52503.15, 5.0) == pytest.approx(52500.0)
+        assert round_price_to_tick(52500.0, 5.0) == pytest.approx(52500.0)
+        assert round_price_to_tick(0.012345, 0.0001) == pytest.approx(0.0123, abs=1e-9)
+
+    def test_non_positive_tick_returns_unchanged(self):
+        from backend.services.trading_rules import round_price_to_tick
+        assert round_price_to_tick(123.45, 0.0) == 123.45
+        assert round_price_to_tick(123.45, -1.0) == 123.45
+
+    def test_tick_coarser_than_price_keeps_exact_price_not_zero(self):
+        """A sub-tick price (e.g. a 0.005 perp with a 0.01 tick) must NOT floor to 0 —
+        a 0 TP/SL would be treated as a real trigger and fabricate near-100% PnL.
+        Regression guard: round returns the exact price instead of 0."""
+        from backend.services.trading_rules import round_price_to_tick
+        assert round_price_to_tick(0.00525, 0.01) == pytest.approx(0.00525)
+        assert round_price_to_tick(0.005, 0.01) == pytest.approx(0.005)
+        # Result is always strictly positive for a positive input.
+        assert round_price_to_tick(0.00525, 0.01) > 0
+
+
 class TestComputeLiquidationPrice:
     """Test liquidation price for isolated margin."""
+
 
     def test_long_20x(self):
         from backend.services.trading_rules import compute_liquidation_price

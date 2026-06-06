@@ -78,5 +78,8 @@ class TestInstrumentCache:
         info = cache.get_or_default("UNKNOWNUSDT")
         assert info["qty_step"] == 0.001
         assert info["min_qty"] == 0.001
-        assert info["tick_size"] == 0.01
-        assert info["max_leverage"] == 25  # conservative default
+        # No-op fallbacks for an unresolved symbol: tick_size=0 disables TP/SL
+        # rounding and max_leverage=0 disables the cap, so an unknown symbol behaves
+        # exactly as if no instrument info were supplied (no possibly-wrong tick/cap).
+        assert info["tick_size"] == 0.0
+        assert info["max_leverage"] == 0

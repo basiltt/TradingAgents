@@ -114,11 +114,21 @@ def round_price_to_tick(price: float, tick_size: float) -> float:
     Decimal ROUND_DOWN to tick_size) so backtest TP/SL trigger prices land on the
     same grid the exchange would accept. A non-positive tick_size returns the price
     unchanged (no rounding).
+
+    Guard: never returns a non-positive price. When the tick is coarser than the
+    price itself (e.g. a sub-tick-priced perp, or a too-coarse fallback tick),
+    flooring would yield 0 — which downstream would treat as a real trigger and
+    fabricate a ~100% PnL. In that case the price is returned UNROUNDED, matching
+    production's own round_price (which raises rather than emit a ≤0 price; here we
+    degrade to the exact price so the trade still simulates faithfully).
     """
     if tick_size <= 0:
         return price
     ticks = math.floor(price / tick_size)
     rounded = ticks * tick_size
+    if rounded <= 0:
+        # Tick coarser than the price → flooring zeroes it; keep the exact price.
+        return price
     # Snap away float artifacts to the tick's decimal precision.
     decimals = max(0, -int(math.floor(math.log10(tick_size)))) if tick_size < 1 else 0
     return round(rounded, decimals)

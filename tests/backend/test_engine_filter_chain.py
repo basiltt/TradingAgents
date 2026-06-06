@@ -535,3 +535,32 @@ class TestInstrumentInfo:
         exit_price = result.trades[0]["exit_price"]
         assert exit_price == pytest.approx(52500.0, abs=1e-6)
         assert exit_price % 5.0 == pytest.approx(0.0, abs=1e-6), f"exit {exit_price} not on the 5.0 tick"
+
+    def test_subcent_short_does_not_fabricate_profit_from_zeroed_sl(self):
+        """A sub-cent symbol with a coarse fallback tick (0.01) must NOT have its SL
+        rounded to 0 — a 0 SL was wrongly treated as the closest stop on a short,
+        fabricating a ~100% win. With the round_price_to_tick zero-guard + the
+        sl_price>0 liquidation guard, an adverse short closes via LIQUIDATION (a real
+        loss), and reconciliation holds."""
+        from backend.services.backtest_engine import BacktestEngine
+        from datetime import datetime, timezone, timedelta
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        config = _make_config(leverage=20, capital_pct=20.0,
+                              take_profit_pct=150.0, stop_loss_pct=100.0, slippage_bps=0)
+        signals = [_make_signal(ticker="TINYUSDT", direction="sell", score=-8,
+                                analysis_price=0.005, signal_time=base)]
+        # Price RISES (adverse for a short) toward the liquidation level.
+        klines = {"TINYUSDT": [{"open_time": base + timedelta(minutes=i * 5),
+                               "open": 0.005 + i * 0.0001, "high": 0.005 + i * 0.0001 + 0.0002,
+                               "low": 0.005 + i * 0.0001 - 0.0001, "close": 0.005 + i * 0.0001, "volume": 1e9}
+                              for i in range(40)]}
+        info = {"TINYUSDT": {"qty_step": 1.0, "min_qty": 1.0, "tick_size": 0.01, "max_leverage": 25}}
+        result = BacktestEngine().run(config, signals, klines, instrument_info=info)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        # Must NOT be an SL at a zeroed price (which would be a huge fabricated profit).
+        assert trade["close_reason"] == "liquidation"
+        assert trade["pnl"] < 0  # an adverse short is a loss, never a fabricated win
+        # Reconciliation invariant holds.
+        assert result.metrics["net_profit"] == pytest.approx(
+            result.metrics["final_equity"] - config["starting_capital"], abs=1e-6)
