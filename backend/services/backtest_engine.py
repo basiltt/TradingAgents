@@ -158,7 +158,11 @@ class BacktestEngine:
                 "drawdown_pct": 0.0,
             })
 
-        execution_mode = config.get("execution_mode", "batch")
+        # Fallback default matches the contract default (BacktestCreateRequest /
+        # production AutoTradeConfig both default execution_mode to "immediate"). The
+        # API always sends the key explicitly, so this only governs internal/partial
+        # config dicts — but it must agree with the schema so they can't silently diverge.
+        execution_mode = config.get("execution_mode", "immediate")
         candle_count = 0
 
         for scan_idx, scan_id in enumerate(scan_order):

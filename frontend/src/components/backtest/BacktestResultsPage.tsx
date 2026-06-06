@@ -88,9 +88,11 @@ function HeroMetrics({
   );
 }
 
-/** Trades fetched into the table at once. The backend reports `total`, so we can
- * warn the user when a run exceeds this and the table is showing a subset. */
-const TRADES_PAGE_LIMIT = 1000;
+/** Trades fetched into the table at once. MUST stay within the backend's cap —
+ * the router rejects limit > 500 (Query le=500) and the service clamps to 500, so
+ * requesting more would 422 the whole Trades/Analysis fetch. The backend reports
+ * `total`, so when a run exceeds this we warn the user the table shows a subset. */
+const TRADES_PAGE_LIMIT = 500;
 
 function RunningState({ progress }: { progress: number }) {
   const pct = Math.min(100, Math.max(0, progress));

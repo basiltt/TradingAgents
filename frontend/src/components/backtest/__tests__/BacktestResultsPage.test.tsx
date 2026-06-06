@@ -308,6 +308,27 @@ describe("BacktestResultsPage", () => {
     await waitFor(() => expect(screen.getByText(/Showing first 1 of 5,000 trades/i)).toBeInTheDocument());
   });
 
+  it("requests trades with a limit within the backend cap (<=500)", async () => {
+    // Cross-layer contract guard: the backend router rejects limit > 500 (Query
+    // le=500) and the service clamps to 500, so requesting more 422s the whole
+    // Trades/Analysis fetch. This asserts the page never sends an over-cap limit —
+    // the real failure mode that mocked getTrades tests can't see.
+    let capturedLimit: string | null = "unset";
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
+      http.get("/api/v1/backtest/run-123/trades", ({ request }) => {
+        capturedLimit = new URL(request.url).searchParams.get("limit");
+        return HttpResponse.json({ trades: [], total: 0, page: 1 });
+      }),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /trades/i }));
+    await waitFor(() => expect(capturedLimit).not.toBe("unset"));
+    expect(capturedLimit).not.toBeNull();
+    expect(Number(capturedLimit)).toBeLessThanOrEqual(500);
+    expect(Number(capturedLimit)).toBeGreaterThanOrEqual(1);
+  });
+
   it("does NOT toast when opening an already-completed run (no active→terminal transition)", async () => {
     server.use(
       http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
