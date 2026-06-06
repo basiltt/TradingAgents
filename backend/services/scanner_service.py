@@ -317,7 +317,7 @@ class ScannerService:
 
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, debug_recorder: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
@@ -325,6 +325,7 @@ class ScannerService:
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
+        self._debug_recorder = debug_recorder
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -413,10 +414,30 @@ class ScannerService:
                         if cfg.get("adaptive_blacklist_enabled"):
                             existing = set(cfg.get("_computed_adaptive_blacklist") or [])
                             cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
-            executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service, sector_service=self._sector_service)
+            # trigger_source: scan_scheduler calls start_scan(triggered_by="scheduled");
+            # the API run-now path uses triggered_by="run_now"; manual default is "manual".
+            _trigger = triggered_by if triggered_by in ("scheduled", "manual", "run_now") else "manual"
+            debug_ctx = None
+            if self._debug_recorder is not None:
+                debug_ctx = self._debug_recorder.new_run_context(
+                    scan_id=scan_id,
+                    trigger_source=_trigger,
+                    schedule_id=schedule_id,
+                )
+            executor = AutoTradeExecutor(
+                self._accounts, self._close_svc, self._ai_manager_service,
+                sector_service=self._sector_service,
+                recorder=self._debug_recorder, debug_ctx=debug_ctx,
+            )
+            if self._debug_recorder is not None and debug_ctx is not None:
+                await self._debug_recorder.open_run(
+                    debug_ctx,
+                    config_snapshot={"num_configs": len(auto_configs)},
+                )
             executor.init_configs(auto_configs)
             await executor.init_balances()
             scan["auto_trade_executor"] = executor
+            scan["debug_ctx"] = debug_ctx
         elif auto_configs and not self._accounts:
             logger.warning("auto_trade_configs provided but accounts service unavailable — ignoring")
 
@@ -573,14 +594,26 @@ class ScannerService:
                         await self._sector_service.ensure_classified(remaining)
                     except Exception:
                         pass
-                executor = AutoTradeExecutor(self._accounts, self._close_svc, self._ai_manager_service, sector_service=self._sector_service)
+                debug_ctx = None
+                if self._debug_recorder is not None:
+                    debug_ctx = self._debug_recorder.new_run_context(
+                        scan_id=scan_id, trigger_source="scheduled", schedule_id=None,
+                    )
+                executor = AutoTradeExecutor(
+                    self._accounts, self._close_svc, self._ai_manager_service,
+                    sector_service=self._sector_service,
+                    recorder=self._debug_recorder, debug_ctx=debug_ctx,
+                )
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB
                 prior_auto_results = (db_results or {}).get("auto_trade_results", [])
                 if prior_auto_results:
                     executor.restore_state(prior_auto_results)
+                if self._debug_recorder is not None and debug_ctx is not None:
+                    await self._debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "resumed": True})
                 await executor.init_balances()
                 scan["auto_trade_executor"] = executor
+                scan["debug_ctx"] = debug_ctx
                 scan["auto_trade_results"] = list(prior_auto_results)
                 logger.info("auto_trade_restored_on_resume", extra={
                     "scan_id": scan_id, "prior_trades": len(prior_auto_results),
@@ -860,6 +893,25 @@ class ScannerService:
                 scan = self._scans.get(scan_id)
                 if scan:
                     scan["auto_trade_summaries"] = executor.get_summaries()
+
+            # Debug: emit account summaries and close the debug run.
+            # NOTE: OUTSIDE the `async with self._lock` above — emit_account_summaries
+            # does account-label DB lookups; must not run inside the scanner lock.
+            debug_ctx = scan.get("debug_ctx") if scan else None
+            if self._debug_recorder is not None and debug_ctx is not None:
+                num_accounts = 0
+                try:
+                    num_accounts = await executor.emit_account_summaries()
+                except Exception:
+                    pass
+                async with self._lock:
+                    _scan = self._scans.get(scan_id)
+                    _total = (_scan.get("total", 0) if _scan else 0)
+                await self._debug_recorder.close_run(
+                    debug_ctx, phase_reached=("failed" if scan_error else "finalized"),
+                    total_symbols=_total, completed_symbols=final_completed,
+                    failed_symbols=final_failed, num_accounts=num_accounts,
+                )
 
         if self._db:
             async with self._lock:

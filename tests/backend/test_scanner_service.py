@@ -1199,3 +1199,14 @@ class TestRemainingLines2:
             asyncio.Lock.__aenter__ = orig_aenter
 
         assert sid not in svc._scans
+
+
+@pytest.mark.asyncio
+async def test_scanner_passes_recorder_to_executor(monkeypatch):
+    """ScannerService stores a debug_recorder."""
+    from backend.services.scanner_service import ScannerService
+    rec = MagicMock()
+    rec.new_run_context = MagicMock(return_value=MagicMock(run_id=None))
+    rec.open_run = AsyncMock()
+    svc = ScannerService(analysis_service=MagicMock(), db=None, debug_recorder=rec)
+    assert svc._debug_recorder is rec

@@ -182,6 +182,8 @@ async def trigger_auto_trade(request: Request, scan_id: str):
 
     _in_flight_auto_trades.add(scan_id)
 
+    debug_recorder = getattr(request.app.state, "debug_trace_recorder", None)
+
     async def _run_auto_trade():
         from backend.services.auto_trade_service import AutoTradeExecutor
         try:
@@ -201,8 +203,19 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 except Exception:
                     pass
 
-            # Create executor and initialize
-            executor = AutoTradeExecutor(accounts_service, close_svc, ai_manager_service, sector_service=sector_service)
+            # Create executor and initialize (with debug tracing).
+            debug_ctx = None
+            if debug_recorder is not None:
+                debug_ctx = debug_recorder.new_run_context(
+                    scan_id=scan_id, trigger_source="manual", schedule_id=None,
+                )
+            executor = AutoTradeExecutor(
+                accounts_service, close_svc, ai_manager_service,
+                sector_service=sector_service,
+                recorder=debug_recorder, debug_ctx=debug_ctx,
+            )
+            if debug_recorder is not None and debug_ctx is not None:
+                await debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "manual": True})
             executor.init_configs(auto_configs)
             await executor.init_balances()
 
@@ -257,6 +270,22 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 "total_executions": len(all_executions),
                 "successful": sum(1 for e in all_executions if e.status == "success"),
             })
+
+            # Debug: emit account summaries and close the manual debug run.
+            if debug_recorder is not None and debug_ctx is not None:
+                num_accounts = 0
+                try:
+                    num_accounts = await executor.emit_account_summaries()
+                except Exception:
+                    pass
+                try:
+                    await debug_recorder.close_run(
+                        debug_ctx, phase_reached="finalized",
+                        total_symbols=len(results), completed_symbols=len(results),
+                        failed_symbols=0, num_accounts=num_accounts,
+                    )
+                except Exception:
+                    logger.warning("debug_manual_close_run_failed", extra={"scan_id": scan_id})
 
         except Exception:
             logger.exception("auto_trade_manual_failed", extra={"scan_id": scan_id})
