@@ -184,3 +184,47 @@ async def test_recover_orphaned_runs(pool):
     assert "server_restart" in o["phase_reached"]
     assert d["phase_reached"] == "finalized"
     assert await repo.recover_orphaned_runs() == 0
+
+
+@pytest.mark.asyncio
+async def test_get_latest_run_for_scan_and_tree(pool):
+    repo = DebugTraceRepository(pool)
+    run_id = await repo.create_run(scan_id="scan-tree", trigger_source="scheduled")
+    await repo.bulk_insert(
+        account_traces=[{"run_id": run_id, "account_id": "acc-1", "account_label": "Dad - Demo",
+                         "execution_mode": "batch", "rescued_by_recheck": True,
+                         "trades_executed": 3, "trades_failed": 0, "trades_skipped": 5,
+                         "rules_created": [], "config_snapshot": {}}],
+        lifecycle_events=[{"run_id": run_id, "account_id": "acc-1", "seq": 0,
+                           "phase": "post_scan_recheck", "event_type": "state_reset", "detail": {}}],
+        symbol_decisions=[{"run_id": run_id, "account_id": "acc-1", "phase": "post_scan_recheck",
+                           "symbol": "B3USDT", "decision": "placed", "reason_code": "placed_ok",
+                           "reason_detail": {}}],
+        exchange_snapshots=[{"run_id": run_id, "account_id": "acc-1", "gate": "scan_start",
+                             "positions": [], "position_count": 0, "wallet": {}}],
+    )
+    latest = await repo.get_latest_run_id_for_scan("scan-tree")
+    assert latest == run_id
+    tree = await repo.get_run_tree(run_id)
+    assert tree["run"]["scan_id"] == "scan-tree"
+    assert len(tree["accounts"]) == 1
+    acct = tree["accounts"][0]
+    assert acct["account_id"] == "acc-1"
+    assert len(acct["lifecycle_events"]) == 1
+    assert len(acct["symbol_decisions"]) == 1
+    assert len(acct["exchange_snapshots"]) == 1
+    assert "linked_trades" in acct
+    assert "linked_close_rules" in acct
+    assert "linked_close_executions" in acct
+
+
+@pytest.mark.asyncio
+async def test_list_runs_and_account_timeline(pool):
+    repo = DebugTraceRepository(pool)
+    r1 = await repo.create_run(scan_id="scan-x", trigger_source="scheduled")
+    await repo.bulk_insert(account_traces=[{"run_id": r1, "account_id": "acc-9",
+        "rules_created": [], "config_snapshot": {}}])
+    runs = await repo.list_runs(limit=10, offset=0)
+    assert any(r["id"] == r1 for r in runs["items"])
+    tl = await repo.get_account_timeline("acc-9", limit=10)
+    assert any(t["run_id"] == r1 for t in tl)
