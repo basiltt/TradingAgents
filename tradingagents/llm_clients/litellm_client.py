@@ -97,6 +97,11 @@ class NormalizedChatLiteLLM(ChatLiteLLM):
         return params
 
     def invoke(self, input, config=None, **kwargs):
+        # Cache injection fires only for DIRECT anthropic/ routing. Models routed via a
+        # slash-containing override (e.g. openrouter/anthropic/...) or a custom proxy with a
+        # bare model name won't match and silently skip caching — acceptable v1 limitation.
+        # Only sync invoke() is wrapped; async ainvoke/astream would bypass caching, but all
+        # current agent call sites use sync .invoke.
         if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
             input = self._inject_cache_control(input)
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))

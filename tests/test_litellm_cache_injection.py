@@ -44,6 +44,13 @@ class TestCacheInjection:
         pv = ChatPromptValue(messages=[SystemMessage(content="STABLE"), HumanMessage(content="v")])
         out = self._capture_input(llm, pv)
         assert isinstance(out[0].content, list)
+        assert out[1].content == "v"
+
+    def test_enabled_anthropic_no_system_message_noop(self):
+        from langchain_core.messages import HumanMessage
+        llm = _make("anthropic/claude-sonnet-4-6", cache_enabled=True)
+        out = self._capture_input(llm, [HumanMessage(content="only human")])
+        assert out[0].content == "only human"  # no system msg → clean no-op, no crash
 
     def test_handles_bare_string_noop(self):
         llm = _make("anthropic/claude-sonnet-4-6", cache_enabled=True)
