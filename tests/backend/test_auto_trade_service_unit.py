@@ -185,3 +185,36 @@ async def test_executor_accepts_recorder_and_context_optional():
     ex2 = AutoTradeExecutor(mock_accounts, None, recorder=rec, debug_ctx=ctx)
     assert ex2._recorder is rec
     assert ex2._debug_ctx is ctx
+
+
+@pytest.mark.asyncio
+async def test_try_trade_emits_min_score_skip_decision():
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    ctx = object()
+    ex = AutoTradeExecutor(AsyncMock(), None, recorder=rec, debug_ctx=ctx)
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 7, "confidence_filter": "any",
+        "execution_mode": "batch",
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -3}
+    out = await ex._try_trade(state, result, phase="batch")
+    assert out is None
+    rec.emit_symbol_decision.assert_called()
+    _, kwargs = rec.emit_symbol_decision.call_args
+    assert kwargs["reason_code"] == "min_score"
+    assert kwargs["decision"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_try_trade_emit_is_noop_without_recorder():
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    ex = AutoTradeExecutor(AsyncMock(), None)
+    state = _AccountState(config={"account_id": "acc_1", "min_score": 7, "execution_mode": "batch"})
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -3}
+    out = await ex._try_trade(state, result)
+    assert out is None

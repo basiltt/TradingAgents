@@ -408,7 +408,7 @@ class AutoTradeExecutor:
                 if account_id in traded_accounts:
                     state.trades_skipped += 1
                     continue
-                execution = await self._try_trade(state, result)
+                execution = await self._try_trade(state, result, phase="immediate")
                 if execution and execution.status == "success":
                     traded_accounts.add(account_id)
                 if execution:
@@ -444,7 +444,7 @@ class AutoTradeExecutor:
                     if trade_key in traded:
                         state.trades_skipped += 1
                         continue
-                    execution = await self._try_trade(state, result)
+                    execution = await self._try_trade(state, result, phase="batch")
                     if execution and execution.status == "success":
                         traded.add(trade_key)
                     if execution:
@@ -487,7 +487,7 @@ class AutoTradeExecutor:
                     trade_key = (account_id, ticker)
                     if trade_key in traded:
                         continue
-                    execution = await self._try_trade(state, result, relaxed=True)
+                    execution = await self._try_trade(state, result, relaxed=True, phase="fill")
                     if execution and execution.status == "success":
                         traded.add(trade_key)
                     if execution:
@@ -553,7 +553,7 @@ class AutoTradeExecutor:
                     symbol = _to_symbol(ticker)
                     if (account_id, symbol) in traded:
                         continue
-                    execution = await self._try_trade(state, result, relaxed=True)
+                    execution = await self._try_trade(state, result, relaxed=True, phase="fill")
                     if execution and execution.status == "success":
                         traded.add((account_id, symbol))
                     if execution:
@@ -909,7 +909,7 @@ class AutoTradeExecutor:
                             trade_key = (account_id, symbol)
                             if trade_key in traded:
                                 continue
-                            execution = await self._try_trade(state, result)
+                            execution = await self._try_trade(state, result, phase="post_scan_recheck")
                             if execution and execution.status == "success":
                                 traded.add(trade_key)
                             if execution:
@@ -936,8 +936,9 @@ class AutoTradeExecutor:
 
         return executions
 
-    async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False) -> Optional[TradeExecution]:
+    async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False, phase: str = "batch") -> Optional[TradeExecution]:
         cfg = state.config
+        account_id = cfg.get("account_id", "")
         if result.get("status") != "completed":
             return None
         direction = result.get("direction", "hold")
@@ -950,14 +951,17 @@ class AutoTradeExecutor:
 
         blacklist = cfg.get("symbol_blacklist") or []
         if blacklist and symbol in blacklist:
+            self._emit_decision(account_id, phase, symbol, "skipped", "blacklist", result)
             state.trades_skipped += 1
             return None
         whitelist = cfg.get("symbol_whitelist") or []
         if whitelist and symbol not in whitelist:
+            self._emit_decision(account_id, phase, symbol, "skipped", "whitelist", result)
             state.trades_skipped += 1
             return None
 
         if symbol in state.existing_symbols:
+            self._emit_decision(account_id, phase, symbol, "skipped", "already_held", result)
             state.trades_skipped += 1
             return None
 
@@ -967,12 +971,14 @@ class AutoTradeExecutor:
                 completed = datetime.fromisoformat(result["completed_at"].replace("Z", "+00:00"))
                 age_minutes = (datetime.now(timezone.utc) - completed).total_seconds() / 60
                 if age_minutes > max_age:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "max_signal_age", result, age=age_minutes, max=max_age)
                     state.trades_skipped += 1
                     return None
             except (ValueError, TypeError):
                 pass
 
         if direction == "hold":
+            self._emit_decision(account_id, phase, symbol, "skipped", "hold_signal", result)
             return None
 
         max_same_dir = cfg.get("max_same_direction")
@@ -982,6 +988,7 @@ class AutoTradeExecutor:
             actual_dir = ("long" if signal_dir == "short" else "short") if is_reverse else signal_dir
             same_dir_count = sum(1 for d in state.position_directions.values() if d == actual_dir)
             if same_dir_count >= max_same_dir:
+                self._emit_decision(account_id, phase, symbol, "skipped", "max_same_direction", result)
                 state.trades_skipped += 1
                 return None
 
@@ -993,6 +1000,7 @@ class AutoTradeExecutor:
             if sector != "other":
                 same_sector_count = sum(1 for s in state.existing_symbols if _get_sec(s) == sector)
                 if same_sector_count >= max_same_sector:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "max_same_sector", result, sector=sector)
                     state.trades_skipped += 1
                     return None
 
@@ -1001,6 +1009,7 @@ class AutoTradeExecutor:
         if adaptive_bl:
             bl_set = adaptive_bl if isinstance(adaptive_bl, set) else set(adaptive_bl)
             if symbol in bl_set:
+                self._emit_decision(account_id, phase, symbol, "skipped", "adaptive_blacklist", result)
                 state.trades_skipped += 1
                 return None
 
@@ -1011,11 +1020,13 @@ class AutoTradeExecutor:
             normalized_side = _norm.get(signal_sides, signal_sides)
             normalized_dir = _norm.get(direction, direction)
             if normalized_side != normalized_dir:
+                self._emit_decision(account_id, phase, symbol, "skipped", "signal_sides", result)
                 return None
 
         if not relaxed:
             min_score = cfg.get("min_score", 0)
             if score < min_score:
+                self._emit_decision(account_id, phase, symbol, "skipped", "min_score", result, score=score, min_score=min_score)
                 state.trades_skipped += 1
                 return None
 
@@ -1023,11 +1034,13 @@ class AutoTradeExecutor:
             if conf_filter != "any":
                 conf_order = {"high": 3, "moderate": 2, "low": 1, "none": 0}
                 if conf_order.get(confidence, 0) < conf_order.get(conf_filter, 0):
+                    self._emit_decision(account_id, phase, symbol, "skipped", "confidence_filter", result)
                     state.trades_skipped += 1
                     return None
 
         # Check limits
         if state.trades_executed >= cfg.get("max_trades", 999):
+            self._emit_decision(account_id, phase, symbol, "skipped", "max_trades", result)
             state.stopped = True
             state.stopped_reason = "max_trades_reached"
             return None
@@ -1037,6 +1050,7 @@ class AutoTradeExecutor:
         goal_value = cfg.get("target_goal_value")
         if goal_type and goal_value:
             if goal_type == "trade_count" and state.trades_executed >= goal_value:
+                self._emit_decision(account_id, phase, symbol, "skipped", "target_goal_reached", result)
                 state.stopped = True
                 state.stopped_reason = "target_goal_reached"
                 return None
@@ -1044,6 +1058,7 @@ class AutoTradeExecutor:
         account_id = cfg["account_id"]
 
         if state.base_capital is None or state.base_capital <= 0:
+            self._emit_decision(account_id, phase, symbol, "skipped", "no_balance", result)
             state.stopped = True
             state.stopped_reason = "no_balance_captured"
             return None
@@ -1058,9 +1073,11 @@ class AutoTradeExecutor:
                 # Buy signal: skip if price already went UP (move consumed)
                 # Sell signal: skip if price already went DOWN (move consumed)
                 if direction in ("buy", "long") and drift_pct > max_drift:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "price_drift", result, drift=drift_pct)
                     state.trades_skipped += 1
                     return None
                 if direction in ("sell", "short") and drift_pct < -max_drift:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "price_drift", result, drift=drift_pct)
                     state.trades_skipped += 1
                     return None
             except Exception:
@@ -1095,6 +1112,13 @@ class AutoTradeExecutor:
             state.trades_executed += 1
             state.executions.append(execution)
             state.existing_symbols.add(symbol)
+            if self._recorder is not None and self._debug_ctx is not None:
+                self._recorder.emit_symbol_decision(
+                    self._debug_ctx, account_id=account_id, phase=phase, symbol=symbol,
+                    decision="placed", reason_code="placed_ok", reason_detail={},
+                    scan_score=result.get("score"), scan_confidence=result.get("confidence"),
+                    scan_direction=result.get("direction"), order_id=execution.order_id,
+                )
             _is_rev = cfg.get("direction") == "reverse"
             _sig_dir = "short" if direction in ("short", "sell") else "long"
             state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
@@ -1146,6 +1170,7 @@ class AutoTradeExecutor:
                 "account_id": account_id, "symbol": symbol,
                 "msg": "Trade may have opened on exchange without rules. Check positions.",
             })
+            self._emit_decision(account_id, phase, symbol, "failed", "timeout", result)
             return execution
 
         except Exception as e:
@@ -1162,6 +1187,7 @@ class AutoTradeExecutor:
                 "account_id": account_id, "symbol": symbol, "error": str(e)[:512],
             })
 
+            self._emit_decision(account_id, phase, symbol, "failed", "place_error", result, error=str(e)[:200])
             return execution
 
 
