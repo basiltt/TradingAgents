@@ -490,6 +490,26 @@ async def test_delete_runs_older_than(pool):
     assert deleted >= 1
     async with pool.acquire() as conn:
         assert await conn.fetchval("SELECT count(*) FROM debug_runs WHERE id=$1", run_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_runs(pool):
+    repo = DebugTraceRepository(pool)
+    # An open-but-never-finalized run (crash mid-run): exec_completed_at stays NULL.
+    orphan = await repo.create_run(scan_id="scan-crash", trigger_source="scheduled")
+    # A properly finalized run must NOT be touched.
+    done = await repo.create_run(scan_id="scan-done", trigger_source="scheduled")
+    await repo.finalize_run(done, phase_reached="finalized", num_accounts=1)
+    recovered = await repo.recover_orphaned_runs()
+    assert recovered >= 1
+    async with pool.acquire() as conn:
+        o = await conn.fetchrow("SELECT exec_completed_at, phase_reached FROM debug_runs WHERE id=$1", orphan)
+        d = await conn.fetchrow("SELECT phase_reached FROM debug_runs WHERE id=$1", done)
+    assert o["exec_completed_at"] is not None
+    assert "server_restart" in o["phase_reached"]
+    assert d["phase_reached"] == "finalized"  # untouched
+    # Idempotent: a second run recovers nothing (all are now finalized).
+    assert await repo.recover_orphaned_runs() == 0
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -576,10 +596,12 @@ Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_
                 )
 
     # ── retention ─────────────────────────────────────────────
-    async def delete_runs_older_than(self, retention_days: int, *, batch_size: int = 500) -> int:
+    async def delete_runs_older_than(self, retention_days: int, *, batch_size: int = 50) -> int:
         """Delete expired runs (CASCADE removes child rows). Deletes in capped batches
         so a large backlog doesn't cascade millions of child rows in one statement
-        (which would hold locks / bloat WAL). Each batch is its own transaction."""
+        (which would hold locks / bloat WAL). batch_size is small because each run
+        cascade-deletes thousands of child rows — 50 runs ≈ a few hundred K children
+        per transaction. Each batch is its own transaction; loops until drained."""
         total_deleted = 0
         while True:
             async with self._pool.acquire() as conn:
@@ -601,18 +623,40 @@ Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_
             if n < batch_size:
                 break
         return total_deleted
+
+    async def recover_orphaned_runs(self) -> int:
+        """Mark runs left non-finalized by a crash/restart as 'server_restart'.
+
+        A run is orphaned when exec_completed_at IS NULL (open_run set exec_started_at
+        but close_run never ran). Without this, orphaned runs accumulate forever and
+        are indistinguishable from legitimately in-progress runs in the API. Mirrors
+        the existing TradingCycleEngine._startup_recovery pattern. Called once at
+        startup, before any new runs are opened."""
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE debug_runs
+                SET exec_completed_at = now(),
+                    phase_reached = COALESCE(NULLIF(phase_reached, ''), 'created') || '+server_restart'
+                WHERE exec_completed_at IS NULL
+                """,
+            )
+        try:
+            return int(result.split()[-1])  # "UPDATE N"
+        except (ValueError, IndexError):
+            return 0
 ```
 
 - [ ] **Step 4: Run to verify pass**
 
 Run: `python -m pytest tests/backend/test_debug_trace_repository.py -v`
-Expected: PASS (5 tests).
+Expected: PASS (6 tests, incl. `test_recover_orphaned_runs`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add backend/services/debug_trace_repository.py tests/backend/test_debug_trace_repository.py
-git commit -m "feat(debug): add bulk COPY insert + retention delete to repository"
+git commit -m "feat(debug): add bulk COPY insert, retention delete, orphan recovery"
 ```
 
 ---
@@ -655,6 +699,7 @@ def _recorder(enabled=True, buffer_max=1000):
         "tracing_enabled": enabled, "retention_days": 60, "symbol_decision_cap": 200,
     })
     repo.delete_runs_older_than = AsyncMock(return_value=0)
+    repo.recover_orphaned_runs = AsyncMock(return_value=0)
     rec = DebugTraceRecorder(repo, buffer_max=buffer_max)
     rec._enabled = enabled
     rec._symbol_decision_cap = 200
@@ -940,7 +985,7 @@ def _sanitize_wallet(wallet) -> dict:
 - [ ] **Step 4: Run to verify pass**
 
 Run: `python -m pytest tests/backend/test_debug_trace_recorder.py -v`
-Expected: PASS (5 tests).
+Expected: PASS (all Task-4 tests in the file — emit/disabled/bad-input/drop-on-pressure/cap/snapshot-sanitize/snapshot-copy).
 
 - [ ] **Step 5: Commit**
 
@@ -1030,6 +1075,17 @@ async def test_refresh_config_updates_enabled_flag():
     assert rec._enabled is False
     assert rec._retention_days == 30
     assert rec._symbol_decision_cap == 99
+
+
+@pytest.mark.asyncio
+async def test_start_recovers_orphaned_runs_then_shuts_down():
+    rec, repo = _recorder()
+    repo.recover_orphaned_runs = AsyncMock(return_value=3)
+    # Long intervals so the loops sleep and don't fire during the test.
+    await rec.start(drain_interval_s=999, cleanup_interval_s=999, initial_cleanup_delay_s=999)
+    repo.recover_orphaned_runs.assert_awaited_once()  # crash recovery ran at startup
+    assert rec._drain_lock is not None                # lock created on the running loop
+    await rec.shutdown()                              # must cancel loops + final drain cleanly
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1114,12 +1170,22 @@ Append to `DebugTraceRecorder` in `backend/services/debug_trace_recorder.py`:
             logger.warning("debug_refresh_config_failed", exc_info=True)
 
     # ── lifecycle (lifespan-managed) ──────────────────────────
-    async def start(self, *, drain_interval_s: float = 3.0, cleanup_interval_s: float = 86400.0) -> None:
+    async def start(self, *, drain_interval_s: float = 3.0, cleanup_interval_s: float = 86400.0,
+                    initial_cleanup_delay_s: float = 300.0) -> None:
         import asyncio
+        self._drain_lock = asyncio.Lock()   # create on the running loop (not __init__)
         await self.refresh_config()
+        # Reconcile runs orphaned by a previous crash/restart BEFORE any new run opens,
+        # so they don't masquerade as in-progress. Best-effort; never blocks startup.
+        try:
+            n = await self._repo.recover_orphaned_runs()
+            if n:
+                logger.info("debug_recovered_orphaned_runs", extra={"count": n})
+        except Exception:
+            logger.warning("debug_recover_orphaned_runs_failed", exc_info=True)
         self._running = True
         self._drainer_task = asyncio.create_task(self._drain_loop(drain_interval_s))
-        self._cleanup_task = asyncio.create_task(self._cleanup_loop(cleanup_interval_s))
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop(cleanup_interval_s, initial_cleanup_delay_s))
 
     async def shutdown(self) -> None:
         import asyncio
@@ -1151,11 +1217,16 @@ Append to `DebugTraceRecorder` in `backend/services/debug_trace_recorder.py`:
             except Exception:
                 logger.warning("debug_drain_loop_error", exc_info=True)
 
-    async def _cleanup_loop(self, interval_s: float) -> None:
+    async def _cleanup_loop(self, interval_s: float, initial_delay_s: float = 300.0) -> None:
         import asyncio
+        # Run an initial cleanup shortly after startup (not after a full interval).
+        # Otherwise a server that restarts more often than `interval_s` (e.g. daily
+        # deploys vs a 24h interval) would NEVER run retention → unbounded growth.
+        first = True
         while self._running:
             try:
-                await asyncio.sleep(interval_s)
+                await asyncio.sleep(initial_delay_s if first else interval_s)
+                first = False
                 deleted = await self._repo.delete_runs_older_than(self._retention_days)
                 if deleted:
                     logger.info("debug_retention_deleted", extra={"count": deleted})
@@ -1168,7 +1239,7 @@ Append to `DebugTraceRecorder` in `backend/services/debug_trace_recorder.py`:
 - [ ] **Step 4: Run to verify pass**
 
 Run: `python -m pytest tests/backend/test_debug_trace_recorder.py -v`
-Expected: PASS (9 tests).
+Expected: PASS (all recorder tests — Task-4 emit tests plus open_run/drain/drain-isolation/close_run/refresh_config/start-recovery).
 
 - [ ] **Step 5: Commit**
 
@@ -2694,6 +2765,7 @@ After deploying, validate the feature end-to-end:
 5. `PUT /api/v1/debug/config {"tracing_enabled": false}` → subsequent runs record nothing; set back to `true`.
 6. `PUT /api/v1/debug/config {"retention_days": 30}` → confirm cleanup respects the new window over time.
 7. Confirm trade latency/throughput is unchanged (compare order placement timings before/after).
+8. **Restart resilience:** restart the server while a scheduled scan's auto-trade phase is mid-run (or simulate by killing the process). On reboot, confirm the orphaned `debug_runs` row gets `exec_completed_at` set and `phase_reached` ending in `+server_restart` (via `GET /api/v1/debug/runs`), and that the resumed scan opens a fresh run — i.e. the orphan no longer masquerades as in-progress.
 
 ---
 
@@ -2734,7 +2806,15 @@ These are non-obvious correctness decisions made during a verification review ag
 17. **`num_accounts` comes from `emit_account_summaries()`'s return value**, not `executor._state` (Tasks 8, 11d, 11e). The method already iterates `_state` internally (legitimate, same class) and returns the distinct account count, eliminating cross-module private-attribute access from the scanner/manual route.
 18. **Router uses the public `recorder.repo` property**, not `recorder._repo` (Task 4 adds the property; Task 10 router + test use it). Removes a cross-module private access.
 19. **Finalize debug-close is explicitly placed OUTSIDE the scanner `self._lock`** (Task 11d). `emit_account_summaries` does account-label DB lookups; nesting it inside the lock that serializes scans would add network I/O to a hot lock. The plan shows the exact dedent and warns against indenting it in.
-20. **Retention DELETE is batched** (Task 3 `delete_runs_older_than`, `batch_size=500`). A 60-day backlog could otherwise cascade millions of child rows in a single statement, holding locks and bloating WAL. Each batch is its own transaction; loops until drained.
+20. **Retention DELETE is batched** (Task 3 `delete_runs_older_than`, `batch_size=50`). A 60-day backlog could otherwise cascade millions of child rows in a single statement, holding locks and bloating WAL. 50 runs/batch keeps each transaction's child-cascade to a few hundred K rows. Each batch is its own transaction; loops until drained.
+
+### Iteration-4 review additions (restart resilience)
+
+21. **Startup recovery for orphaned runs** (Task 3 `recover_orphaned_runs`, called in `start()`). A crash/restart mid-run leaves `debug_runs` with `exec_completed_at IS NULL` forever — indistinguishable from in-progress, accumulating. On startup the recorder marks them `…+server_restart` with `exec_completed_at=now()`, BEFORE any new run opens (so resume's new run is clean). Mirrors `TradingCycleEngine._startup_recovery`. Idempotent. Test: `test_recover_orphaned_runs`.
+22. **Retention cleanup runs soon after startup, not after a full 24h** (Task 5 `_cleanup_loop` `initial_delay_s=300`). The original loop slept a full interval before the first delete; a server restarting more often than the interval (daily deploys vs 24h) would NEVER run retention → unbounded growth. Now: initial cleanup ~5 min after start, then on interval.
+23. **`_drain_lock` is created in `start()`** on the running loop (Task 5), not just lazily in `drain_once`. The lazy fallback remains for tests that call `drain_once` without `start()`. (The lazy path is itself asyncio-safe — the None-check and assignment have no `await` between them — but creating it in `start()` is clearer.)
+24. **Recorder is created and `start()`-ed BEFORE `resume_incomplete_scans()`** (Task 12, lifespan ~line 203-218 vs resume at ~235). So a scan resumed on startup gets a recorder, and orphan recovery has already run. Verified against the real lifespan ordering.
+25. **Spec §8 says `DebugTraceRecorder(db=db)`; the plan uses `DebugTraceRecorder(repository)`** with a separate `DebugTraceRepository(db.pool)`. Deliberate: the repository owns SQL, the recorder owns buffering/lifecycle — cleaner separation than a single db-coupled class. The spec line is illustrative, not binding.
 
 
 
