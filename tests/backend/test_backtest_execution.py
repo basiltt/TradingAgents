@@ -613,19 +613,75 @@ class TestSlotManagement:
         assert service._active_slots == 0
 
     @pytest.mark.asyncio
-    async def test_create_no_double_release_when_record_fails_after_launch(self, mock_db):
-        """If a post-launch step raises, create's except must NOT release the slot
-        (the launched task owns it) — otherwise the counter under-counts."""
+    async def test_create_keeps_slot_and_token_after_successful_launch(self, mock_db):
+        """After a successful launch the background task owns the slot (stays at 1,
+        released later by its own finally, NOT by create), and the rate-limit token is
+        consumed — a successful create counts against the client's window."""
         from backend.services.backtest_service import BacktestService
         service = BacktestService(db=mock_db, kline_cache=None)
         mock_db.pool.fetchrow = AsyncMock(return_value={"id": "x"})
-        # _launch_background succeeds (task owns the slot), but _record_create raises
         with patch.object(service, "_launch_background", new=AsyncMock()):
-            with patch.object(service, "_record_create", side_effect=RuntimeError("boom")):
-                with pytest.raises(RuntimeError):
-                    await service.create_backtest(_make_config())
-        # Slot still reserved (1) — the task's finally will release it later, NOT create
+            await service.create_backtest(_make_config(), client_id="c1")
+        # Slot still reserved (1) — the task's finally will release it later, NOT create.
         assert service._active_slots == 1
+        # The successful create consumed exactly one rate-limit token.
+        assert len(service._create_history.get("c1", [])) == 1
+
+    @pytest.mark.asyncio
+    async def test_create_refunds_rate_token_on_insert_failure(self, mock_db):
+        """A create that fails before launch (DB error) must refund its rate-limit
+        token so the rejected attempt doesn't count against the client's window."""
+        from backend.services.backtest_service import BacktestService
+        service = BacktestService(db=mock_db, kline_cache=None)
+        mock_db.pool.fetchrow = AsyncMock(side_effect=RuntimeError("db down"))
+        with pytest.raises(RuntimeError):
+            await service.create_backtest(_make_config(), client_id="c1")
+        # Slot released AND token refunded — a failed attempt burns neither.
+        assert service._active_slots == 0
+        assert len(service._create_history.get("c1", [])) == 0
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_reserve_is_atomic_no_overshoot(self, mock_db):
+        """The rate-limit token is reserved+consumed SYNCHRONOUSLY (no await between
+        the window check and the record), so concurrent creates from one client can't
+        both pass a stale check and over-admit. Regression guard for the TOCTOU where
+        the window was checked before the INSERT await but recorded only after it.
+
+        Tested at the reserve primitive (slots are a separate, smaller cap that would
+        otherwise mask the rate limit): exactly _RATE_LIMIT_MAX reservations succeed,
+        the next is rejected, and a refund frees exactly one slot in the window.
+        """
+        from backend.services.backtest_service import (
+            BacktestService, _RATE_LIMIT_MAX, BacktestRateLimitError,
+        )
+        service = BacktestService(db=mock_db, kline_cache=None)
+
+        tokens = []
+        for _ in range(_RATE_LIMIT_MAX):
+            tokens.append(service._reserve_create_token("burst"))
+        assert len(service._create_history["burst"]) == _RATE_LIMIT_MAX
+        # The (_RATE_LIMIT_MAX + 1)-th reservation must be rejected — the window is full.
+        with pytest.raises(BacktestRateLimitError):
+            service._reserve_create_token("burst")
+        # Refunding one token frees exactly one slot; a new reservation then succeeds.
+        service._refund_create_token("burst", tokens[0])
+        assert len(service._create_history["burst"]) == _RATE_LIMIT_MAX - 1
+        service._reserve_create_token("burst")  # no raise
+        assert len(service._create_history["burst"]) == _RATE_LIMIT_MAX
+
+    @pytest.mark.asyncio
+    async def test_busy_create_refunds_rate_token(self, mock_db):
+        """A create rejected for BUSY slots (not rate) must refund its rate token so
+        the rejected attempt doesn't count against the client's window."""
+        from backend.services.backtest_service import (
+            BacktestService, _MAX_CONCURRENT, BacktestBusyError,
+        )
+        service = BacktestService(db=mock_db, kline_cache=None)
+        service._active_slots = _MAX_CONCURRENT  # all slots taken
+        with pytest.raises(BacktestBusyError):
+            await service.create_backtest(_make_config(), client_id="c1")
+        # Busy rejection refunded the token — only successful creates count.
+        assert len(service._create_history.get("c1", [])) == 0
 
 
 class TestPersistResults:

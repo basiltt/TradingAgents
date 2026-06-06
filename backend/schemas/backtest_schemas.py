@@ -56,7 +56,7 @@ class BacktestCreateRequest(BaseModel):
     confidence_filter: Literal["any", "high", "moderate", "low"] = "any"
     signal_sides: Literal["both", "buy", "sell"] = "both"
     max_trades: int = Field(default=999, ge=1, le=999)
-    execution_mode: Literal["immediate", "batch"] = "batch"
+    execution_mode: Literal["immediate", "batch"] = "immediate"
     fill_to_max_trades: bool = False
     skip_if_positions_open: bool = False
     max_same_direction: Optional[int] = Field(default=None, ge=1, le=100)

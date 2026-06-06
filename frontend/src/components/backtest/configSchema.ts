@@ -3,7 +3,11 @@
  * the component so validation rules are unit-testable and reusable.
  *
  * Mirrors BacktestCreateRequest (types.ts) and the backend validation in
- * backtest_schemas.py.
+ * backtest_schemas.py — BOTH the ranges AND the DEFAULTS must match the backend,
+ * which in turn inherits its defaults from the production AutoTradeConfig. This
+ * keeps the form (and any raw-API caller that omits a field) on real-world trading
+ * defaults, so backtest results reflect ~100% real trading rather than an
+ * arbitrary conservative form preset.
  */
 import { z } from "zod";
 import type { BacktestCreateRequest } from "./types";
@@ -28,7 +32,7 @@ export const scanSourceSchema = z
 
 export const backtestConfigSchema = z
   .object({
-    // Backtest-specific — ranges MUST match backend BacktestCreateRequest (backtest_schemas.py).
+    // Backtest-specific — ranges AND defaults MUST match backend BacktestCreateRequest.
     starting_capital: z.coerce
       .number()
       .positive("Must be > 0")
@@ -36,26 +40,26 @@ export const backtestConfigSchema = z
     date_range_start: isoDate,
     date_range_end: isoDate,
     scan_source: scanSourceSchema,
-    simulation_interval: z.enum(["5m", "15m", "1h", "4h"]).default("1h"),
+    simulation_interval: z.enum(["5m", "15m", "1h", "4h"]).default("5m"),
     fee_rate_pct: z.coerce.number().min(0).max(1).default(0.055),
-    slippage_bps: z.coerce.number().int().min(0).max(50).default(0),
+    slippage_bps: z.coerce.number().int().min(0).max(50).default(2),
     funding_rate_model: z.enum(["none", "fixed_8h"]).default("none"),
     funding_rate_fixed_pct: z.coerce.number().min(-0.5).max(0.5).default(0.01),
 
-    // Trade-decision params (AutoTradeConfig subset)
+    // Trade-decision params (AutoTradeConfig subset) — defaults mirror production.
     direction: z.enum(["straight", "reverse"]).default("straight"),
-    leverage: z.coerce.number().int().min(1).max(125).default(1),
-    capital_pct: z.coerce.number().positive().max(100).default(10),
-    take_profit_pct: z.coerce.number().positive().max(1000).default(10),
-    stop_loss_pct: z.coerce.number().positive().max(1000).default(5),
+    leverage: z.coerce.number().int().min(1).max(125).default(20),
+    capital_pct: z.coerce.number().positive().max(100).default(5),
+    take_profit_pct: z.coerce.number().positive().max(1000).default(150),
+    stop_loss_pct: z.coerce.number().positive().max(1000).default(100),
     // Backend signal score scale is -10..10 (NOT 0..100).
     min_score: z.coerce.number().min(-10).max(10).default(0),
     confidence_filter: z.enum(["any", "high", "moderate", "low"]).default("any"),
     signal_sides: z.enum(["both", "buy", "sell"]).default("both"),
-    max_trades: z.coerce.number().int().min(1).max(999).default(10),
+    max_trades: z.coerce.number().int().min(1).max(999).default(999),
     execution_mode: z.enum(["immediate", "batch"]).default("immediate"),
     fill_to_max_trades: z.boolean().default(false),
-    skip_if_positions_open: z.boolean().default(true),
+    skip_if_positions_open: z.boolean().default(false),
     max_same_direction: z.coerce.number().int().min(1).max(100).nullable().default(null),
     max_same_sector: z.coerce.number().int().min(1).max(50).nullable().default(null),
     symbol_blacklist: z.array(z.string()).max(200).nullable().default(null),
@@ -73,11 +77,11 @@ export const backtestConfigSchema = z
     target_goal_type: z.enum(["trade_count", "profit_pct"]).nullable().default(null),
     target_goal_value: z.coerce.number().positive().nullable().default(null),
 
-    // Adaptive blacklist
+    // Adaptive blacklist — defaults mirror production AutoTradeConfig.
     adaptive_blacklist_enabled: z.boolean().default(false),
-    adaptive_blacklist_min_trades: z.coerce.number().int().min(1).max(100).default(3),
+    adaptive_blacklist_min_trades: z.coerce.number().int().min(1).max(100).default(5),
     adaptive_blacklist_max_win_rate: z.coerce.number().min(0).max(100).default(30),
-    adaptive_blacklist_lookback_hours: z.coerce.number().int().min(1).max(720).default(168),
+    adaptive_blacklist_lookback_hours: z.coerce.number().int().min(1).max(720).default(48),
   })
   .refine(
     (c) => new Date(c.date_range_end).getTime() > new Date(c.date_range_start).getTime(),

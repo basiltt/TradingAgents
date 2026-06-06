@@ -110,12 +110,16 @@ class BacktestService:
         """True if a concurrency slot is available (no 503 needed)."""
         return self._active_slots < _MAX_CONCURRENT
 
-    def _check_rate_limit(self, client_id: str) -> None:
-        """Check the per-client sliding-window create limit WITHOUT consuming.
+    def _reserve_create_token(self, client_id: str) -> float:
+        """Atomically check the per-client sliding-window create limit AND consume a
+        token, returning the timestamp recorded so it can be refunded if the create
+        later fails.
 
-        Only inspects the window — call _record_create() to actually consume a
-        token, and only after a create genuinely succeeds, so failed/invalid
-        attempts (422/503/DB errors, retried "busy" 503s) don't burn the budget.
+        This MUST run synchronously (no await between the check and the append) so two
+        concurrent creates from the same client can't both pass a stale check and
+        over-admit past _RATE_LIMIT_MAX. Failed creates call _refund_create_token() to
+        avoid burning the budget on 422/503/DB errors — so only successful creates
+        count against the window, while the race is closed.
 
         Raises:
             BacktestRateLimitError: If the client is already at the limit (HTTP 429).
@@ -127,12 +131,6 @@ class BacktestService:
             raise BacktestRateLimitError(
                 f"Rate limit exceeded: max {_RATE_LIMIT_MAX} backtests per hour."
             )
-
-    def _record_create(self, client_id: str) -> None:
-        """Record a SUCCESSFUL create against the client's rate-limit window."""
-        now = time.monotonic()
-        cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
-        history = [t for t in self._create_history.get(client_id, []) if t > cutoff]
         history.append(now)
         self._create_history[client_id] = history
         # Opportunistic cleanup so the dict can't grow unbounded across clients.
@@ -142,6 +140,19 @@ class BacktestService:
                 for k, v in self._create_history.items()
                 if any(t > cutoff for t in v)
             }
+        return now
+
+    def _refund_create_token(self, client_id: str, token: float) -> None:
+        """Refund a reserved create token when the create fails before launch, so a
+        rejected attempt (422/503/DB error) doesn't count against the client."""
+        hist = self._create_history.get(client_id)
+        if not hist:
+            return
+        try:
+            hist.remove(token)
+        except ValueError:
+            # Already evicted by window cleanup — nothing to refund.
+            pass
 
 
     # ------------------------------------------------------------------ #
@@ -176,8 +187,8 @@ class BacktestService:
             BacktestValidationError: If the candle estimate exceeds the cap.
             BacktestBusyError: If all concurrency slots are taken.
         """
-        self._check_rate_limit(client_id)
-
+        # Validate the (cheap, stateless) candle estimate FIRST so an oversized config
+        # is rejected with 422 without consuming a rate-limit token or a slot.
         candles = self._estimate_candles(config)
         if candles > _MAX_CANDLES:
             raise BacktestValidationError(
@@ -185,9 +196,16 @@ class BacktestService:
                 f"Reduce the range or use a coarser interval."
             )
 
-        # Reserve a slot synchronously BEFORE the first await — atomic under
-        # single-threaded asyncio, so concurrent creates can't over-subscribe.
+        # Reserve a rate-limit token AND a concurrency slot SYNCHRONOUSLY, before the
+        # first await — both must be atomic under single-threaded asyncio so that
+        # concurrent creates from one client can't both pass a stale check and
+        # over-admit. The token is refunded on any failure before launch so rejected
+        # attempts (422 above is already past; DB errors / busy below) don't burn the
+        # client's budget.
+        rate_token = self._reserve_create_token(client_id)
         if self._active_slots >= _MAX_CONCURRENT:
+            # Refund the just-reserved token — this attempt is rejected, not consumed.
+            self._refund_create_token(client_id, rate_token)
             raise BacktestBusyError("All backtest slots are busy — try again shortly.")
         self._active_slots += 1
         launched = False  # True once the background task owns the slot
@@ -210,9 +228,6 @@ class BacktestService:
             # The task now owns the slot — its finally will release it, so create's
             # except must NOT release again (would double-decrement, over-subscribing).
             launched = True
-            # Record against the rate limit ONLY now that the create succeeded —
-            # failed/invalid attempts (422/503/DB errors) must not burn the budget.
-            self._record_create(client_id)
             logger.info("backtest_created", extra={"run_id": run_id, "candles_est": candles})
             return run_id
         except Exception:
@@ -221,6 +236,9 @@ class BacktestService:
             # decrementing here too would double-release and over-subscribe.
             if not launched:
                 self._active_slots = max(0, self._active_slots - 1)
+                # The create failed before launch — refund the rate-limit token so a
+                # DB/launch error doesn't count against the client.
+                self._refund_create_token(client_id, rate_token)
             raise
 
     async def get_backtest(self, run_id: str) -> Optional[dict[str, Any]]:

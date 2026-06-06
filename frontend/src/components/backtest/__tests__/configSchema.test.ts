@@ -25,7 +25,7 @@ describe("scanSourceSchema", () => {
 });
 
 describe("backtestConfigSchema", () => {
-  it("parses a minimal valid config and applies defaults", () => {
+  it("parses a minimal valid config and applies production-aligned defaults", () => {
     const result = backtestConfigSchema.safeParse({
       starting_capital: 10000,
       date_range_start: "2026-01-01T00:00",
@@ -34,9 +34,17 @@ describe("backtestConfigSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.simulation_interval).toBe("1h");
-      expect(result.data.leverage).toBe(1);
-      expect(result.data.skip_if_positions_open).toBe(true);
+      // Defaults mirror the backend BacktestCreateRequest / production AutoTradeConfig
+      // so omitted fields reflect real-world trading, not an arbitrary form preset.
+      expect(result.data.simulation_interval).toBe("5m");
+      expect(result.data.leverage).toBe(20);
+      expect(result.data.capital_pct).toBe(5);
+      expect(result.data.take_profit_pct).toBe(150);
+      expect(result.data.stop_loss_pct).toBe(100);
+      expect(result.data.max_trades).toBe(999);
+      expect(result.data.execution_mode).toBe("immediate");
+      expect(result.data.slippage_bps).toBe(2);
+      expect(result.data.skip_if_positions_open).toBe(false);
       expect(result.data.fee_rate_pct).toBeCloseTo(0.055);
     }
   });
