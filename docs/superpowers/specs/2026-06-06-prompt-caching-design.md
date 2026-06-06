@@ -44,16 +44,16 @@ Prefix hygiene is the broad win — OpenAI (the default provider), Azure, DeepSe
 xAI, Gemini, Qwen, and GLM all cache **automatically** once the prefix is
 uninterrupted. `cache_control` is the native-Anthropic-only add-on.
 
-> **Routing reality (verified against code).** In this app, `provider == "openrouter"`
-> (and `qwen`, `glm`, `xai`, `deepseek`) route through the **OpenAI-compatible
-> Chat Completions branch** — both in the LangChain layer (`OpenAIClient` →
-> `NormalizedChatOpenAI`, base `openrouter.ai/api/v1`) and in the AI Manager httpx
-> path (`call_openai`). They therefore **cannot receive Anthropic `cache_control`**.
-> OpenRouter→Claude users get whatever automatic caching OpenRouter applies, not our
-> injected breakpoints. The earlier draft's claim that "OpenRouter→Claude requires
-> `cache_control`" is true of the OpenRouter API in the abstract but **not reachable
-> through this codebase's routing** — so it is explicitly out of scope (§9), not a
-> silent gap.
+> **Routing reality (verified against code).** Our §5 transform fires **only for
+> `anthropic/`-prefixed models** in the production litellm path. `provider ==
+> openrouter / qwen / glm / xai / deepseek` get a non-Anthropic litellm prefix
+> (`openrouter/`, `openai/`, …) — so even an OpenRouter→Claude model **does not**
+> receive our `cache_control` injection (it goes out as `openrouter/…`, not
+> `anthropic/…`). In the AI Manager httpx path these same providers use the
+> `call_openai` branch. They rely on whatever **automatic** caching their endpoint
+> applies. The earlier draft's "OpenRouter→Claude requires `cache_control`" is true of
+> the OpenRouter API in the abstract but **not reachable through this codebase's
+> routing** — explicitly out of scope (§9), not a silent gap.
 
 ---
 
@@ -67,7 +67,7 @@ uninterrupted. `cache_control` is the native-Anthropic-only add-on.
 | 4 | Observability | **Log cache metrics** across **all** graph wrappers + AI Manager (no DB/UI) |
 | 5 | TTL | **5-minute** for scanner/graph; AI Manager TTL **TBD by Phase 1 cadence check** with explicit 1-hr breakeven rule (§6a) |
 | 6 | Adjacent bug | **Fix** hardcoded `temperature:0.2` **and `max_tokens:1024`** at 4 httpx sites; separate phase (P2), ordered **before** Anthropic injection |
-| 7 | Architecture | **Neutral split** (agents) + **system-block transform in the invoke override** (NOT the native last-block kwarg — wrong block; NOT the sentinel — §5) |
+| 7 | Architecture | **Neutral split** (agents) + **system-block transform in `NormalizedChatLiteLLM.invoke`** — the *production* path (NOT `NormalizedChatAnthropic`, which is test-only; NOT the native kwarg; NOT the sentinel — §5) |
 | 8 | Enablement | **Global ops flag, default OFF** until eval passes (in scope, P7); **3-form UI toggle deferred** out of scope (§9, §11) |
 
 ### TTL rationale (5-minute wins decisively)
@@ -106,19 +106,22 @@ do **not** inject it — they rely on automatic caching only (see §2 routing no
 
 | Package | `uv.lock` pin | **Actually installed** | Relevance |
 |---|---|---|---|
-| `langchain-anthropic` | 0.3.15 | **1.4.2** | 1.4.2 has a **native `cache_control` kwarg** — design relies on it (§5) |
-| `langchain-core` | — | 1.3.2 | Determines templating behavior that killed the sentinel approach (§5) |
-| `langchain-openai` | — | 1.2.x | Hosts `NormalizedChatOpenAI` cache-token path |
-| `anthropic` | — | 0.97.0 | Underlying SDK |
+| **`litellm`** | — | **1.83.7** | **The production cache path (§5).** Forwards `cache_control` to Anthropic (42 files, `anthropic_cache_control_hook.py`). |
+| **`langchain-community`** | — | **0.4.1** | Hosts `ChatLiteLLM`; its `_convert_message_to_dict` **preserves** block-form `cache_control` (verified). |
+| `langchain-anthropic` | 0.3.15 | 1.4.2 | Only used under `use_litellm=False` (tests). **Not** the production path. |
+| `langchain-core` | — | 1.3.2 | Templating behavior (killed the iter-1 sentinel). |
+| `langchain-openai` | — | 1.2.x | Hosts `NormalizedChatOpenAI`; Responses-API cache-token normalization (§7). |
+| `anthropic` | — | 0.97.0 | Underlying SDK. |
 
-> ⚠️ **Lockfile drift + future-upgrade risk.** The implementation must reconcile
-> `uv.lock` (stale 0.3.15) with the installed **1.4.2** and pin a **tested range**
-> (floor **and** known-good ceiling, e.g. `>=1.4,<2`), not just a floor — a future
-> `uv sync` to a major bump could change message serialization. Our §5 mechanism is
-> a **system-block transform we write** (not the library's private
-> `_apply_cache_control_to_last_eligible_block`, which targets the wrong block), so
-> the coupling is to langchain-anthropic's **payload/serialization shape**, caught by
-> the real-binding test (§8.3). **Phase 0 task: reconcile the lock + pin a range.**
+> ⚠️ **Lockfile drift + future-upgrade risk.** The production caching path couples to
+> **litellm 1.83.7 + langchain-community 0.4.1** (block-form `cache_control` survives
+> the converter and reaches Anthropic). P0 must reconcile `uv.lock` and pin **tested
+> ranges** (floor **and** known-good ceiling) for *these two* — a future major bump
+> could change litellm's Anthropic transform or community's message converter and
+> silently drop the breakpoint. The **real-binding test (§8.3)** runs the actual
+> converter (no mock) so such an upgrade fails CI. (`langchain-anthropic`'s lock drift
+> to 1.4.2 still matters only for the test-only legacy client.) **P0: reconcile lock +
+> pin ranges for litellm and langchain-community.**
 
 ---
 
@@ -313,72 +316,77 @@ prefix below the threshold **silently won't cache** (no error, `cache_creation =
 
 ## 5. Component: Anthropic `cache_control` Injection (LangChain path)
 
-> **CORRECTION (iteration 2 — the iteration-1 "native kwarg" fix was ALSO wrong).**
-> Iteration 1 replaced the rejected sentinel with langchain-anthropic's native
-> `cache_control` kwarg. **Verified against installed 1.4.2 source, that is wrong for
-> our use case.** `_apply_cache_control_to_last_eligible_block` walks messages
-> **newest-to-oldest** and puts the breakpoint on the **last eligible block** — i.e.
-> the **conversation tail**, not the stable system prefix. Our prompt shape is
-> `stable system → volatile human turn → growing MessagesPlaceholder`, so the native
-> kwarg would mark the **volatile tail** → `cache_read = 0` forever. The native kwarg
-> is designed for "cache everything up to the latest turn" (multi-turn prefix
-> growth), **not** "cache the system prefix while the tail varies."
+> **CRITICAL CORRECTION (iteration 3 — the target class was WRONG in iters 1 & 2).**
+> Iters 1–2 put the cache transform in `NormalizedChatAnthropic`. **Verified against
+> the code: that class is never instantiated in production.** `create_llm_client`
+> defaults to **`use_litellm=True`** (`factory.py:15`), and `trading_graph.py:179/186/421`
+> calls it **without** `use_litellm=False`. So every trading-graph Anthropic call runs
+> through **`NormalizedChatLiteLLM`** (`litellm_client.py:83`, wrapping
+> `langchain_community.ChatLiteLLM`). `NormalizedChatAnthropic` only instantiates in
+> tests (`use_litellm=False`). A transform in `NormalizedChatAnthropic.invoke` would
+> cache **nothing** for any agent.
+>
+> **Two earlier mechanism errors also resolved here:** the sentinel (iter 1, broke on
+> templating) and the native last-block kwarg (iter 2, marks the volatile tail). The
+> mechanism below is **empirically verified** against the installed libraries.
 
-**Correct mechanism: transform the *system* message to block-form with
-`cache_control` inside the `NormalizedChatAnthropic.invoke` override — AFTER
-langchain has rendered the template.** The override already wraps `super().invoke`;
-it receives the fully-rendered input (a `list[BaseMessage]` or a `ChatPromptValue`).
-The transform:
+**Correct mechanism: transform the *system* message to block-form with `cache_control`
+inside `NormalizedChatLiteLLM.invoke` (the production path) — AFTER langchain renders
+the template.** Verified end-to-end against installed **litellm 1.83.7** +
+**langchain-community 0.4.1**:
+- langchain-community's `_convert_message_to_dict` **preserves** block-form content
+  with `cache_control` on a `SystemMessage` (tested: emits
+  `{"role":"system","content":[{"type":"text","text":…,"cache_control":{"type":"ephemeral"}}]}`).
+- litellm 1.83.7 supports `cache_control` (42 files, incl. a dedicated
+  `anthropic_cache_control_hook.py`) and forwards it to Anthropic's `/v1/messages`.
 
-1. Normalize input to messages (the codebase already has this exact helper pattern —
-   `_input_to_messages` in `openai_client.py:42`, used by DeepSeek).
-2. Find the **first `SystemMessage`** (it now holds only stable text, per §4).
-3. Rewrite its `.content` from a string to a single text block with
-   `cache_control: {"type": "ephemeral"}`:
-   `[{"type": "text", "text": <stable>, "cache_control": {"type": "ephemeral"}}]`.
-4. Delegate to `super().invoke` with the modified message list.
+The transform (inside `NormalizedChatLiteLLM.invoke`, gated by `_cache_enabled` **and**
+provider == anthropic — litellm carries the provider in the model prefix
+`anthropic/…`, so the override can check `self.model`):
 
-This places the breakpoint **exactly on the stable system prefix**, regardless of
-how many turns follow. No sentinel needed — the override operates on rendered
-messages where `{tool_names}`/`{system_message}` are already interpolated, sidestepping
-the templating trap entirely (the iteration-1 reason the sentinel failed).
+1. Normalize input to messages (reuse the existing `_input_to_messages` pattern from
+   `openai_client.py:42`; handle `list[BaseMessage]` **and** `ChatPromptValue`).
+2. Find the **first `SystemMessage`** (now stable-only, per §4).
+3. Rewrite its string `.content` to a single text block with `cache_control:
+   {"type":"ephemeral"}`.
+4. Delegate to `super().invoke`.
 
 ```python
-# In NormalizedChatAnthropic.invoke, conceptually (gated by prompt_cache_enabled):
+# In NormalizedChatLiteLLM.invoke (litellm_client.py), conceptually:
 def invoke(self, input, config=None, **kwargs):
-    if self._cache_enabled:
-        msgs = _input_to_messages(input)            # reuse existing helper pattern
-        for m in msgs:
+    if self._cache_enabled and self.model.startswith("anthropic/"):
+        msgs = list(_input_to_messages(input))      # ChatPromptValue -> messages too
+        for i, m in enumerate(msgs):
             if isinstance(m, SystemMessage) and isinstance(m.content, str):
-                m = m.model_copy(update={"content": [
+                msgs[i] = m.model_copy(update={"content": [
                     {"type": "text", "text": m.content,
                      "cache_control": {"type": "ephemeral"}}]})
-                # replace in list; break after first system message
+                break                                 # first system message only
         input = msgs
     return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
 ```
 
-> Exact construction (mutate vs `model_copy`, `ChatPromptValue` handling, where the
-> `_cache_enabled` flag is set from config — see §7.5) is confirmed in Phase 3 and
-> asserted by the **real-binding wire-payload test (§8.3)** — which must run against
-> the actual `langchain_anthropic` serializer, not a mock, so the block reaches the
-> wire as `cache_control` on the system message.
+> **Confirmed empirically** (not "to be confirmed in a later phase"): the block reaches
+> the Anthropic `system` param with `cache_control` intact through the
+> langchain-community→litellm chain. The §8.3 test asserts this against the **real**
+> converter, not a mock.
+
+**Scope note:** because production is litellm-only, the legacy `NormalizedChatAnthropic`
+(used solely under `use_litellm=False`, i.e. tests / explicit opt-out) is **out of
+scope** — caching it would only help a path no production user takes. If a future
+change flips the default to `use_litellm=False`, this section must move to
+`NormalizedChatAnthropic` (track as a known coupling).
 
 **TTL:** 5-minute ephemeral (§2 rationale). **Beta header:** none — `cache_control`
-is GA on current Claude models. **Failure safety:** on a non-cacheable/sub-threshold
-prompt the block is inert (`cache_creation = 0`); on any unexpected input shape the
-override falls through to today's behavior. **Mid-volatile sites (§4):** because the
-breakpoint sits on the whole system block, a system message that *embeds* volatile
-content does **not** cache at all (the volatile bytes are inside the cached span) —
-see §4 corrected handling.
+is GA on current Claude models. **Failure safety:** on a sub-threshold prompt the
+block is inert (`cache_creation = 0`); on any unexpected input shape or non-Anthropic
+model the override falls through to today's behavior. **Mid-volatile sites (§4):** the
+breakpoint covers the whole system block, so a system message that still embeds
+volatile bytes does **not** cache — see §4.
 
-**Non-Anthropic clients** (`NormalizedChatOpenAI`, `DeepSeekChatOpenAI`,
-`NormalizedChatGoogleGenerativeAI`) get **no** `cache_control` — they rely on
-automatic prefix caching, which the §4 hygiene refactor unlocks.
-
-**Non-Anthropic clients** (`NormalizedChatOpenAI`, `DeepSeekChatOpenAI`,
-`NormalizedChatGoogleGenerativeAI`) get **no** `cache_control` — they rely on
-automatic prefix caching, which the §4 hygiene refactor unlocks.
+**Other providers via litellm** (openai, gemini, deepseek, xai, qwen, glm, openrouter)
+get **no** `cache_control` injection — they rely on automatic prefix caching, which
+the §4 hygiene refactor unlocks.
 
 ---
 
@@ -456,6 +464,19 @@ models, since the call 400s before any cache can form.
 > 400s first). It will be **phase P2**, ordered **before** the Anthropic injection
 > (P4), so it can be reviewed and reverted independently.
 
+> **Related latent bug found iter-3 (litellm path) — same P2 family, flag don't
+> silently inherit.** `litellm_client.py:184-189` maps `effort` →
+> `thinking: {"type": "enabled", "budget_tokens": N}` — the **deprecated** extended-
+> thinking API that **400s on Opus 4.7/4.8** (those models require adaptive thinking;
+> `budget_tokens` is removed). Since litellm is the **production** trading-graph path
+> (§5), any Anthropic-Opus-4.7/4.8 run with `anthropic_effort` set would 400 here too,
+> independently of caching. **Decision needed (§11):** fold this into P2 (it's the
+> same "current-Opus rejects the param" class and would otherwise block caching tests
+> on those models), or file separately. Recommend **fold into P2** — caching is
+> untestable on current Opus while either param 400s. `litellm.drop_params = True`
+> (`litellm_client.py:28`) drops *unsupported* params but does **not** rewrite a
+> deprecated-but-recognized `thinking` shape, so it won't save us here.
+
 ---
 
 ## 7. Component: Cache-Metric Logging
@@ -477,25 +498,31 @@ LLM cache | site=ai_manager provider=anthropic model=... input=312 cache_read=18
 ```
 `cache_read == 0` across a fan-out → silent invalidator; grep flags it.
 
-**Where logging lives (must cover ALL providers, not just Anthropic):**
+**Where logging lives — the single litellm chokepoint makes this simple:**
 
-The trading graph runs through **three** wrapper classes, each with its own
-`invoke` override. Logging only in the Anthropic wrapper would leave the **default
-provider (OpenAI)** and Google with zero cache visibility — half-defeating the
-"detect silent invalidation" goal. So the normalizer goes in a **shared place all
-wrappers reach**:
+Since production routes **all** providers through `NormalizedChatLiteLLM` (§5), and
+every wrapper funnels `super().invoke` through **`llm_rate_limited_invoke`**
+(`base_client.py:59`), that one helper is the natural insertion point — it covers
+Anthropic, OpenAI, Gemini, DeepSeek, etc. in a single place.
 
-- **Preferred:** a shared helper called from `llm_rate_limited_invoke`
-  (`base_client.py`) — every wrapper already funnels its `super().invoke` through it,
-  so one insertion point covers Anthropic, OpenAI, DeepSeek, and Google. The helper
-  reads `result.usage_metadata['input_token_details']` (langchain populates
-  `cache_read` / `cache_creation` uniformly across providers in current versions)
-  and logs the normalized record. **Verify** the `usage_metadata` shape per wrapper
-  during Phase 3 (Anthropic confirmed: `input_token_details.cache_read` /
-  `cache_creation`; OpenAI-compat exposes `cache_read`).
-- **AI Manager path:** read from the `resp.json()` `usage` object (currently **not
-  read at all** — must be added). Anthropic: `usage.cache_read_input_tokens` /
-  `cache_creation_input_tokens`. OpenAI-compat: `usage.prompt_tokens_details.cached_tokens`.
+- **Read langchain's normalized `usage_metadata`, not raw provider JSON.** Research
+  confirmed langchain normalizes all providers to the **same path**:
+  `result.usage_metadata['input_token_details']['cache_read']` (and `['cache_creation']`
+  where the provider reports it). This holds for **Anthropic**, **OpenAI Responses
+  API** (langchain's `_create_usage_metadata_responses` maps
+  `input_tokens_details.cached_tokens` → `cache_read`), and **Gemini** (maps
+  `cached_content_token_count` → `cache_read`). So a single read works across the board.
+  > ⚠️ **Do NOT read raw `prompt_tokens_details.cached_tokens`** — that path is **Chat
+  > Completions only**. The app's native OpenAI uses the **Responses API**
+  > (`use_responses_api=True`), whose raw field is `input_tokens_details.cached_tokens`.
+  > Reading the raw object would report 0 for OpenAI. Reading `usage_metadata` avoids
+  > this entirely.
+  > ⚠️ **Gemini caveat:** `cache_read` is best-effort — known langchain_google_genai
+  > issues leave `cached_content_token_count` unpopulated in a ~9K–17K token "dead
+  > zone." Treat Gemini `cache_read == 0` as *inconclusive*, not proof of invalidation.
+- **AI Manager path** (raw httpx, not litellm): read the `resp.json()` `usage` object
+  (currently **not read at all**). Anthropic: `usage.cache_read_input_tokens` /
+  `cache_creation_input_tokens`. OpenAI-compat (chat completions): `usage.prompt_tokens_details.cached_tokens`.
 
 > **Reconcile with existing logging infra.** `backend/services/ai_manager_llm_logger.py`
 > already exists (DB-backed, buffered flush) and `ai_manager_task.py` logs
@@ -574,9 +601,11 @@ and the scan request type (`:290`) take an extra boolean with no runtime allowli
   `:903`) — **an unlisted field is dropped here**, so the flag must be added.
 - **Config→client→`cache_control`:** the graph is built fresh per run
   (`analysis_service.py:596` `TradingAgentsGraph(config=…)`), so a per-run flag is
-  feasible — but the value currently stops at `self.config`. `AnthropicClient.get_llm`
-  only forwards `_PASSTHROUGH_KWARGS` (`anthropic_client.py:48`); **new plumbing is
-  required** from config → `NormalizedChatAnthropic._cache_enabled` (§5).
+  feasible — but the value currently stops at `self.config`. The production client is
+  `LiteLLMClient.get_llm` (`litellm_client.py:135`), which forwards only a fixed kwarg
+  allowlist (`:174-177`); **new plumbing is required** from config →
+  `NormalizedChatLiteLLM._cache_enabled` (§5). (The legacy `AnthropicClient` path is
+  test-only and out of scope.)
 - **AI Manager trio (separate path, fully unplumbed today):**
   `create_llm_callable_with_cleanup` (`ai_manager_llm_provider.py:199`) accepts only
   `provider/api_key/model/backend_url` — add a `cache_enabled` param;
@@ -608,12 +637,12 @@ verified by test §8.8.
    non-caching** and skipped, not silently expected to cache. Proves reusability of
    the prefix where one exists; does not by itself prove engagement (see #7).
 3. **`cache_control` presence — REAL binding, not a mock.** Assert the
-   `NormalizedChatAnthropic.invoke` transform produces a serialized request whose
-   **system message** carries `cache_control` — exercised through the **actual
-   installed `langchain_anthropic` payload builder** (`_get_request_payload` /
-   transport-capture), **not** a hand-rolled mock. This is what catches a future
-   library upgrade silently moving/dropping the breakpoint (M3). Non-Anthropic
-   clients emit **no** `cache_control`.
+   `NormalizedChatLiteLLM.invoke` transform produces a request whose **system
+   message** carries `cache_control` — exercised through the **actual installed
+   langchain-community→litellm chain** (`_convert_message_to_dict` →
+   litellm Anthropic transform), **not** a hand-rolled mock. This is what catches a
+   future library upgrade silently moving/dropping the breakpoint (M3). Non-Anthropic
+   models (`openai/…`, `gemini/…`, etc.) emit **no** `cache_control`.
 4. **Sampling-param omission** — Opus 4.7/4.8 payload carries no `temperature`
    (and `max_tokens`/`max_completion_tokens` handling is correct); older
    models/providers keep their current params. Covers all 4 httpx call sites.
@@ -694,9 +723,10 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
 | Silent cache invalidation | Prefix-stability test (§8.2, per-shape) + real-binding presence test (§8.3) + offline engagement check (§8.7b) + all-provider cache-metric logging (§7) |
 | Anthropic injection delivers ~0 because prefixes < min tokens | **P1 go/no-go** token-count gate (§4, §6a); default-drop the injection per-site/path if sub-threshold; hygiene still helps automatic-caching providers |
 | AI Manager path pays ≤0 (sub-1024 prefix AND/OR cadence > TTL) | P1 must show **both** conditions; 1-hr TTL only if reads/write ≥ 2 breakeven holds (§6a) — else drop caching on that path |
-| **Future** langchain-anthropic upgrade silently moves/drops the breakpoint | Pin a **tested range** (`>=1.4,<2`), not just a floor (§2); **real-binding** payload test (§8.3) fails CI if `cache_control` stops reaching the system block — mock tests would NOT catch this |
+| **Future** litellm / langchain-community upgrade silently moves/drops the breakpoint | Pin **tested ranges** for `litellm` (1.83.7) and `langchain-community` (0.4.1), not just floors (§2); **real-binding** payload test (§8.3) runs the actual converter chain → fails CI if `cache_control` stops reaching Anthropic's system param — mock tests would NOT catch this |
+| **Future** flip of `use_litellm` default to False | §5 transform would silently stop firing (legacy `NormalizedChatAnthropic` path). Tracked as a known coupling in §5; the §8.3 test (if run only against litellm) would not cover the legacy path |
 | **Third-party** auto-cache threshold drift (OpenAI/Gemini raise min prefix) | Unpinnable; **cache-metric logging (§7) is the sole detector** — add an alert on sustained `cache_read==0` rate rather than manual grep; distinguish absent-field from zero (§8.5) |
-| `cache_control` leaks to a non-Anthropic provider | Injected only inside `NormalizedChatAnthropic.invoke`; real-binding presence test (§8.3) asserts non-Anthropic clients emit none |
+| `cache_control` leaks to a non-Anthropic provider | Injected only inside `NormalizedChatLiteLLM.invoke`, gated on `model.startswith("anthropic/")`; real-binding presence test (§8.3) asserts non-Anthropic models emit none |
 | Sampling-param fix changes behavior on models that accepted 0.2 | Omit only where the provider/model rejects it; existing models keep current params; separate phase **P2**, ordered before injection |
 | Regression once enabled | Global ops flag (§7.5, default OFF) → instant disable without redeploy; optional per-run UI toggle for finer control |
 | Schema field orphaned on rollback | Field lives only in freeform `scan_config`/non-`forbid` models (§9 note) |
@@ -724,4 +754,15 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
    future product work. This removes P8 and all frontend/schema/TS plumbing from the
    critical path; §7.5(2)'s schema/frontend table is **reference for that future
    work**, not this implementation.
+
+**Iteration-3 — NEW decision needed (sign-off):**
+
+1. **litellm `effort→thinking` deprecated-API bug (§6c note).** Iter-3 found
+   `litellm_client.py:184-189` emits the deprecated `thinking:{type:"enabled",
+   budget_tokens}` that **400s on Opus 4.7/4.8** — the **production** trading-graph
+   path, independent of caching. Recommend **folding the fix into P2** (caching is
+   untestable on current Opus while this 400s). Fold into P2, or file as a separate
+   bug outside this spec? *(If out of scope, P2's "caching untestable on Opus" caveat
+   stands and Anthropic-Opus-4.7/4.8 caching can't be validated until it's fixed
+   somewhere.)*
 
