@@ -13,7 +13,7 @@
 | P4 Inject | DONE | litellm cache_control injection (4.1 85669f8), config→client flag wiring all 3 trading_graph sites (4.2 07aaa17), real-binding wire test (4.3 aa1bb63). Task 4.4 AI Manager SKIPPED per P1 (sub-threshold) — see blocker log. |
 | P5 Logging | DONE | extract_cache_metrics (base_client) + log in litellm invoke; _extract_cache_usage + 4 guarded log sites in AI Manager. Review passed + parity guard. (7e3426b, d6354f2, b586d52) |
 | P6 EVAL GATE | PENDING | behavioral-parity; must pass before default ON |
-| P7 Ops flag | PENDING | global flag, default OFF |
+| P7 Ops flag | DONE | prompt_cache_enabled in DEFAULT_CONFIG (default OFF, TRADINGAGENTS_PROMPT_CACHE_ENABLED override). End-to-end chain verified: flag→client→injection. |
 | P8 UI toggle | PENDING | 3-form per-run toggle |
 
 ## Decisions / blockers log
