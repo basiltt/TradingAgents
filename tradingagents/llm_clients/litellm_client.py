@@ -104,7 +104,16 @@ class NormalizedChatLiteLLM(ChatLiteLLM):
         # current agent call sites use sync .invoke.
         if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
             input = self._inject_cache_control(input)
-        return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+        result = normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+        try:
+            from tradingagents.llm_clients.base_client import extract_cache_metrics
+            m = extract_cache_metrics(result)
+            if m["cache_read"] is not None or m["cache_creation"] is not None:
+                logger.info("LLM cache | model=%s input=%s cache_read=%s cache_creation=%s",
+                            self.model, m["input_tokens"], m["cache_read"], m["cache_creation"])
+        except Exception:
+            pass  # never let metric logging break a call
+        return result
 
     def _inject_cache_control(self, input):
         """Rewrite the first system message to a cache_control block (Anthropic only).
