@@ -124,6 +124,7 @@ class AnalysisRequest(BaseModel):
     max_risk_discuss_rounds: Optional[int] = Field(None, ge=1, le=10)
     max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
     checkpoint_enabled: Optional[bool] = None
+    prompt_cache_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
     workflow_mode: Optional[str] = None
     agent_model_overrides: Optional[Dict[str, str]] = None
@@ -488,6 +489,7 @@ class ScanRequest(BaseModel):
     max_risk_discuss_rounds: Optional[int] = Field(None, ge=1, le=10)
     max_recur_limit: Optional[int] = Field(None, ge=1, le=500)
     checkpoint_enabled: Optional[bool] = None
+    prompt_cache_enabled: Optional[bool] = None
     data_vendors: Optional[Dict[str, str]] = None
     max_parallel: Optional[int] = Field(None, ge=1, le=15)
     workflow_mode: Optional[str] = None

@@ -540,3 +540,22 @@ def test_update_close_rule_request_valid():
     assert req.trigger_type == "BREAKEVEN_TIMEOUT"
 
 
+class TestPromptCacheField:
+    def test_analysis_request_accepts_flag(self):
+        from backend.schemas import AnalysisRequest
+        r = AnalysisRequest(ticker="BTC", analysis_date="2026-06-06",
+                            prompt_cache_enabled=True)
+        assert r.prompt_cache_enabled is True
+
+    def test_scan_request_accepts_flag(self):
+        from backend.schemas import ScanRequest
+        # ScanRequest requires analysis_date; everything else has defaults.
+        r = ScanRequest(analysis_date="2026-06-06", prompt_cache_enabled=False)
+        assert r.prompt_cache_enabled is False
+
+    def test_defaults_none(self):
+        from backend.schemas import AnalysisRequest
+        r = AnalysisRequest(ticker="BTC", analysis_date="2026-06-06")
+        assert r.prompt_cache_enabled is None
+
+
