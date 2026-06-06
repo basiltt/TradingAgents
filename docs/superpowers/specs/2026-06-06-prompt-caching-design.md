@@ -64,12 +64,12 @@ uninterrupted. `cache_control` is the native-Anthropic-only add-on.
 |---|---|---|
 | 1 | Scope | **Both** — prefix hygiene + `cache_control` |
 | 2 | Call sites | **Both** — trading graph + AI Manager |
-| 3 | Behavior risk | **Preserve content exactly** (reorder/never drop) + **behavioral-parity eval gate** before rollout (see §4, §11.2) |
+| 3 | Behavior risk | **Preserve content exactly** (reorder/never drop) + **behavioral-parity eval gate** before rollout (see §4, §8.6) |
 | 4 | Observability | **Log cache metrics** across **all** graph wrappers + AI Manager (no DB/UI) |
 | 5 | TTL | **5-minute** for scanner/graph; AI Manager TTL **TBD by Phase 1 cadence check** with explicit 1-hr breakeven rule (§6a) |
 | 6 | Adjacent bug | **Fix** hardcoded `temperature:0.2` **and `max_tokens:1024`** at 4 httpx sites; separate phase (P2), ordered **before** Anthropic injection |
 | 7 | Architecture | **Neutral split** (agents) + **system-block transform in `NormalizedChatLiteLLM.invoke`** — the *production* path (NOT `NormalizedChatAnthropic`, which is test-only; NOT the native kwarg; NOT the sentinel — §5) |
-| 8 | Enablement | **Global ops flag, default OFF** until eval passes (in scope, P7); **3-form UI toggle deferred** out of scope (§9, §11) |
+| 8 | Enablement | **Global ops flag (P7), default OFF** until eval passes (safety) **+ 3-form UI toggle (P8)** per-run control, default follows global flag (§7.5, §11) |
 
 ### TTL rationale (5-minute wins decisively)
 
@@ -152,8 +152,11 @@ P6  EVAL GATE   §8.6 behavioral-parity, old-vs-new, offline spend-capped   (P3,
     [GATE]       → MUST PASS before the global flag may default ON.
 P7  Ops flag    global TRADINGAGENTS_PROMPT_CACHE_ENABLED, default OFF      (P3,P4)
                  → flip to ON is a separate PR justified by P6 evidence.
-                 *** P7 is the last phase in THIS scope. ***
-[P8 UI toggle — DEFERRED out of scope (§9); reference table in §7.5(2)]
+P8  UI toggle   per-run prompt_cache_enabled in 3 forms (New Analysis,      (P7)
+                 Market Scan, Scheduled Market Scan) + schema + plumbing.
+                 Default follows the global flag (OFF until P6 passes), so
+                 the control is visible but caching stays dark until
+                 validated. Template: existing checkpoint_enabled wiring.
 ```
 
 **Key dependency facts the numbering must respect:**
@@ -624,15 +627,17 @@ Anthropic, OpenAI, Gemini, DeepSeek, etc. in a single place.
 - Gates **both** the §4 restructuring and the §5 `cache_control` together
   (behaviorally coupled). The §6c sampling-param bug fix is **not** gated.
 
-### (2) Optional per-run UI toggle — DEFERRED out of scope (§9, §11.2)
+### (2) Per-run UI toggle — IN SCOPE as P8 (user-confirmed)
 
-> **Confirmed deferred.** Not built in this scope — the global ops flag (1) is the
-> safety mechanism. The schema/frontend table below is **reference for future product
-> work**, retained so that effort doesn't have to re-derive the plumbing. Skip on a
-> first read of the implementation scope.
+> **In scope (reversed the iter-2 deferral per user, iter-4).** Built as **P8**, after
+> the ops flag (P7). It surfaces a per-run `prompt_cache_enabled` control in the three
+> forms. **Default follows the global flag** — so until P6 (eval) passes and the
+> global default flips ON, the toggle is *visible but caching stays dark*; it does not
+> let a user enable an unvalidated path ahead of the gate. Ordered last because it
+> depends on the backend flag (P7) existing first.
 
-If built, it surfaces in the LLM/Engine section of three forms, default following
-the global flag. **Schema — corrected models (iteration-1 named the wrong one):**
+It surfaces in the LLM/Engine section of three forms. **Schema — corrected models
+(iteration-1 named the wrong one):**
 
 | Form | Submits to | Add field to |
 |---|---|---|
@@ -676,11 +681,13 @@ and the scan request type (`:290`) take an extra boolean with no runtime allowli
 **OFF path = byte-identical to today** (original prompt assembly, no `cache_control`),
 verified by test §8.8.
 
-> **Scope honesty (M1):** the **UI toggle plumbing is plausibly larger than the
+> **Scope honesty (M1):** the **UI toggle plumbing (P8) is plausibly larger than the
 > caching change itself** — 3 React forms, schema on 2–3 models, TS types, 2 backend
-> read sites, and the AI Manager trio. The *safety* goal needs only control (1). The
-> UI toggle is optional product polish; size it as its own feature, don't smuggle it
-> in as "the kill-switch."
+> read sites, and the AI Manager trio. That's accepted (user wants per-run control),
+> but keep two things clear: (a) the *safety* mechanism is the **global ops flag (P7)**,
+> not the UI toggle — P8 is product convenience layered on top; and (b) P8 is the
+> **last** phase and is independently revertable, so if its size becomes a problem it
+> can be dropped without affecting the caching feature underneath.
 
 ---
 
@@ -748,12 +755,11 @@ wire-payload assertion is **§8.3** (iteration-1 mis-cited "§8.6").
 
 ## 9. Out of Scope (YAGNI)
 
-- **The 3-form user-facing UI toggle** (New Analysis / Market Scan / Scheduled
-  Market Scan) — **confirmed deferred (§11.2)**. Safety is met by the global ops
-  flag; the UI toggle is optional future product work. The schema/frontend/plumbing
-  table in §7.5(2) is **reference for that future effort**, not this implementation.
 - DB persistence / UI surfacing of cache savings (future "full metrics + UI").
 - Gemini explicit `CachedContent` objects (implicit caching covers the win).
+- **Pattern C/D sites (~15)** — bare-f-string / user-only prompts with no system
+  message (§4). Making them cacheable requires restructuring each interleaved prompt
+  (risky, behavior-sensitive) and most are sub-minimum anyway. Separate future work.
 - **`cache_control` injection for OpenRouter / Qwen / GLM / xAI / DeepSeek.** These
   route through the OpenAI-compatible branch in this app (§2 routing note), so we
   cannot attach Anthropic-style `cache_control` to them. They rely on their
@@ -816,12 +822,13 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
    until the behavioral-parity eval (§8.6/P6) records a pass. Flipping ON is a
    separate one-line PR backed by the recorded eval evidence. The eval is a **real
    rollout gate**, not decoration.
-2. **Ops flag now; UI toggle deferred (was: 3-form UI toggle in scope).** Ship the
-   **global ops flag** (`TRADINGAGENTS_PROMPT_CACHE_ENABLED`, no UI) as the safety
-   mechanism. The **3-form user-facing toggle is OUT of this scope** (§9) — optional
-   future product work. This removes P8 and all frontend/schema/TS plumbing from the
-   critical path; §7.5(2)'s schema/frontend table is **reference for that future
-   work**, not this implementation.
+2. **Ops flag (P7) + UI toggle (P8) — both in scope.** Ship the **global ops flag**
+   (`TRADINGAGENTS_PROMPT_CACHE_ENABLED`, default OFF) as the safety mechanism (P7),
+   **and** the 3-form per-run UI toggle as P8 (user-confirmed, iter-4 — reversed the
+   iter-2 deferral). P8 depends on P7; its default follows the global flag, so the
+   control is visible but caching stays dark until the P6 eval flips the default ON.
+   The UI toggle is product convenience; the **ops flag remains the safety control**,
+   and P8 is independently revertable if its size becomes a problem.
 
 **Iteration-3 — CONFIRMED:**
 
