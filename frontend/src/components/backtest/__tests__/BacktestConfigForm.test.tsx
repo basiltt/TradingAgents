@@ -18,7 +18,10 @@ describe("BacktestConfigForm", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const req = onSubmit.mock.calls[0][0];
     expect(req.starting_capital).toBe(10000);
-    expect(req.simulation_interval).toBe("1h");
+    // Defaults mirror the backend / production AutoTradeConfig (5m, leverage 20, …).
+    expect(req.simulation_interval).toBe("5m");
+    expect(req.leverage).toBe(20);
+    expect(req.execution_mode).toBe("immediate");
     // dates normalized to ISO Z
     expect(req.date_range_start).toMatch(/Z$/);
     expect(req.date_range_end).toMatch(/Z$/);

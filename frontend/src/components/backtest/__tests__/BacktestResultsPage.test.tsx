@@ -178,16 +178,25 @@ describe("BacktestResultsPage", () => {
     expect(sessionStorage.getItem("backtest_comparison_basket")).toContain("run-123");
   });
 
-  it("offers Retry on a failed run and calls onRetry with the config", async () => {
+  it("offers Retry on a failed run and calls onRetry with config + scan_source merged", async () => {
     const onRetry = vi.fn();
     server.use(
       http.get("/api/v1/backtest/run-123", () =>
-        HttpResponse.json(run({ status: "failed", error_message: "boom", results: null, config: { leverage: 7 } })),
+        HttpResponse.json(run({
+          status: "failed", error_message: "boom", results: null,
+          config: { leverage: 7 },
+          // scan_source is a SEPARATE column from config; retry must merge it back in
+          // so a schedule-sourced run doesn't reset to date_range on re-run.
+          scan_source: { mode: "schedule", schedule_id: "sched-9" },
+        })),
       ),
     );
     renderWithClient(<BacktestResultsPage runId="run-123" onRetry={onRetry} />);
     fireEvent.click(await screen.findByRole("button", { name: /retry with same settings/i }));
-    expect(onRetry).toHaveBeenCalledWith({ leverage: 7 });
+    expect(onRetry).toHaveBeenCalledWith({
+      leverage: 7,
+      scan_source: { mode: "schedule", schedule_id: "sched-9" },
+    });
   });
 
   it("calls cancel when the Cancel button is confirmed", async () => {
@@ -306,6 +315,34 @@ describe("BacktestResultsPage", () => {
     // Switch to the Trades tab (lazy fetch).
     fireEvent.click(await screen.findByRole("tab", { name: /trades/i }));
     await waitFor(() => expect(screen.getByText(/Showing first 1 of 5,000 trades/i)).toBeInTheDocument());
+  });
+
+  it("discloses truncation on the Analysis tab when a run exceeds the trade page", async () => {
+    // A >page run feeds the Analysis charts only the first N trades; the user must be
+    // told so the heatmap/histograms aren't silently misread as the full picture.
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({
+          trades: [
+            {
+              id: 1, symbol: "BTCUSDT", side: "buy", entry_price: 1, exit_price: 2, qty: 1, leverage: 1,
+              entry_time: "2026-01-01T00:00:00Z", exit_time: "2026-01-01T04:00:00Z", pnl: 100, pnl_pct: 5,
+              fees_paid: 0, close_reason: "take_profit", mfe_pct: 1, mae_pct: 0, signal_score: 50, signal_confidence: "high", scan_id: "s1",
+            },
+          ],
+          total: 5000,
+          page: 1,
+        }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /analysis/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Analysis covers the first 1 of 5,000 trades/i)).toBeInTheDocument(),
+    );
+    // The analysis charts still render (with the disclosed subset).
+    expect(await screen.findByTestId("backtest-analysis-tab")).toBeInTheDocument();
   });
 
   it("requests trades with a limit within the backend cap (<=500)", async () => {

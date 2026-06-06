@@ -236,6 +236,15 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
   const equityCurve = run.results?.equity_curve ?? [];
   const resultWarnings = run.results?.warnings ?? [];
 
+  // Retry/Re-run must reproduce the ORIGINAL run faithfully. The backend stores
+  // scan_source in a separate column from config, so run.config alone omits it —
+  // merging it back in keeps a schedule/explicit-sourced run from resetting to the
+  // date_range default on retry.
+  const retryConfig: Record<string, unknown> = {
+    ...run.config,
+    scan_source: run.scan_source,
+  };
+
   return (
     <div className="flex flex-col gap-5" data-testid="backtest-results-page">
       {/* Header */}
@@ -323,7 +332,7 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
             {run.error_message ?? "Unknown error."}
           </p>
           {onRetry ? (
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => onRetry(run.config)}>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => onRetry(retryConfig)}>
               Retry with same settings
             </Button>
           ) : null}
@@ -334,7 +343,7 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
         <div className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-6">
           <p className="text-sm text-[var(--neu-text-muted)]">This backtest was cancelled.</p>
           {onRetry ? (
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => onRetry(run.config)}>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => onRetry(retryConfig)}>
               Re-run with same settings
             </Button>
           ) : null}
@@ -391,7 +400,16 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
             ) : tradesQuery.isError ? (
               <TradesFetchError onRetry={() => tradesQuery.refetch()} />
             ) : (
-              <BacktestAnalysisTab trades={tradesQuery.data?.trades ?? []} />
+              <div className="flex flex-col gap-2">
+                {tradesQuery.data && tradesQuery.data.total > tradesQuery.data.trades.length ? (
+                  <p className="text-[0.78rem] text-[var(--neu-warning)]" role="status">
+                    Analysis covers the first {tradesQuery.data.trades.length.toLocaleString()} of{" "}
+                    {tradesQuery.data.total.toLocaleString()} trades — the charts below
+                    reflect only this subset, so they may not match the Overview totals.
+                  </p>
+                ) : null}
+                <BacktestAnalysisTab trades={tradesQuery.data?.trades ?? []} />
+              </div>
             )}
           </TabsContent>
         </Tabs>

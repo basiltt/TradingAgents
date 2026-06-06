@@ -140,6 +140,34 @@ describe("buildDefaults", () => {
     // Backend requires gt=0; a 0 default would 422 on every untouched submit.
     expect(buildDefaults().max_drawdown_pct).toBe(100);
   });
+
+  it("its non-seed fallbacks equal the schema's own defaults (no silent drift)", () => {
+    // buildDefaults() supplies EVERY field, so the zod .default()s never fire in the
+    // form. If these two drift, the form ships non-production presets while a raw-API
+    // caller gets the schema defaults — breaking the "~100% real trading" guarantee.
+    // Parsing an (almost) empty object surfaces the schema's own defaults; compare the
+    // production-relevant scalar fields field-by-field.
+    const schemaDefaults = backtestConfigSchema.parse({
+      starting_capital: 10000,
+      date_range_start: "2026-01-01T00:00",
+      date_range_end: "2026-02-01T00:00",
+      scan_source: { mode: "date_range" },
+    });
+    const formDefaults = buildDefaults();
+    const fields: Array<keyof typeof schemaDefaults> = [
+      "simulation_interval", "fee_rate_pct", "slippage_bps", "funding_rate_model",
+      "funding_rate_fixed_pct", "direction", "leverage", "capital_pct",
+      "take_profit_pct", "stop_loss_pct", "min_score", "confidence_filter",
+      "signal_sides", "max_trades", "execution_mode", "fill_to_max_trades",
+      "skip_if_positions_open", "max_drawdown_pct", "smart_drawdown_close",
+      "adaptive_blacklist_enabled", "adaptive_blacklist_min_trades",
+      "adaptive_blacklist_max_win_rate", "adaptive_blacklist_lookback_hours",
+    ];
+    for (const f of fields) {
+      expect(formDefaults[f], `buildDefaults.${String(f)} must equal the schema default`)
+        .toEqual(schemaDefaults[f]);
+    }
+  });
 });
 
 /**

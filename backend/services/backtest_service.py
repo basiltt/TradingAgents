@@ -76,9 +76,13 @@ class BacktestService:
         kline_cache: Optional KlineCacheService for warming/reading kline data.
     """
 
-    def __init__(self, db: Any, kline_cache: Any = None) -> None:
+    def __init__(self, db: Any, kline_cache: Any = None, instrument_cache: Any = None) -> None:
         self._db = db
         self._kline_cache = kline_cache
+        # Per-symbol instrument parameters (qty_step/min_qty/tick_size/max_leverage)
+        # used to make sizing/leverage/TP-SL rounding match the live exchange. Lazily
+        # created if not injected; refreshed best-effort before each run.
+        self._instrument_cache = instrument_cache
         self._running_tasks: set[asyncio.Task] = set()
         # run_id -> threading.Event (cooperative cancel signal to the engine).
         # Registered synchronously at create time (before the background task is
@@ -706,10 +710,16 @@ class BacktestService:
                 except RuntimeError:
                     pass  # loop closed — drop this progress update
 
+            # Resolve per-symbol instrument parameters (qty step, min qty, tick size,
+            # max leverage) so the engine sizes, caps leverage, and rounds TP/SL the
+            # way the live exchange does. Best-effort: if the cache/network is
+            # unavailable the engine falls back to no-op defaults (unchanged behaviour).
+            instrument_info = await self._resolve_instrument_info(signals)
+
             engine = BacktestEngine()
             result = await loop.run_in_executor(
                 self._executor,
-                lambda: engine.run(config, signals, klines, cancel_event, _on_progress),
+                lambda: engine.run(config, signals, klines, cancel_event, _on_progress, instrument_info),
             )
             engine_done = True
 
@@ -811,6 +821,41 @@ class BacktestService:
         for symbol in symbols:
             klines[symbol] = await self._kline_cache.get_klines(symbol, interval, start, end)
         return klines
+
+    async def _resolve_instrument_info(
+        self, signals: list[dict[str, Any]]
+    ) -> dict[str, dict[str, float]]:
+        """Resolve per-symbol instrument parameters for the scan's tickers.
+
+        Returns {ticker: {qty_step, min_qty, tick_size, max_leverage}} so the engine
+        can size positions to the real lot step, reject below min qty, cap leverage to
+        the symbol's max, and round TP/SL to the tick — matching live trading. The
+        symbol keys are the signal tickers (same keys the engine looks up).
+
+        Best-effort and fail-open: lazily creates the InstrumentInfoCache, refreshes it
+        once if empty, and on ANY error returns {} so the engine uses its no-op
+        defaults (unchanged behaviour) rather than failing the run.
+        """
+        try:
+            symbols = sorted({s["ticker"] for s in signals})
+            if not symbols:
+                return {}
+            if self._instrument_cache is None:
+                from backend.services.kline_cache_service import InstrumentInfoCache
+                self._instrument_cache = InstrumentInfoCache()
+            cache = self._instrument_cache
+            # Refresh once if the cache has never been populated. refresh() is itself
+            # guarded and returns 0 on failure; get_or_default then yields conservative
+            # defaults per symbol.
+            if getattr(cache, "_last_refresh", None) is None:
+                try:
+                    await cache.refresh()
+                except Exception:
+                    logger.warning("instrument_cache_refresh_failed", exc_info=False)
+            return {sym: cache.get_or_default(sym) for sym in symbols}
+        except Exception:
+            logger.warning("instrument_info_resolve_failed", exc_info=False)
+            return {}
 
     async def _attach_buy_hold(self, config: dict[str, Any], result: Any) -> None:
         """Compute the BTC Buy & Hold benchmark + excess return and merge into metrics.

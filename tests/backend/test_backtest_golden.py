@@ -511,6 +511,38 @@ class TestGoldenScenarios:
         assert result.trades[0]["pnl"] > 0  # closed BECAUSE the cycle rose into profit
         _assert_reconciles(result, cfg)
 
+    def test_golden_funding_charges_once_per_boundary_dense_candles(self):
+        """Funding must charge exactly ONCE per 0/8/16h boundary regardless of candle
+        density. Guards against the funding `minute < 5` window multi-charging if a
+        sub-5m interval is ever introduced: with 1-minute candles, the [hh:00, hh:05)
+        window holds 5 candles, but only the first may charge.
+
+        A long held ~10h over 1-minute candles crosses the 00:00 (fires at 00:01, the
+        00:00 entry candle is excluded) and 08:00 boundaries → exactly 2 charges, not
+        the ~9 the old per-candle logic would bill.
+        """
+        cfg = _config(
+            take_profit_pct=500.0, stop_loss_pct=500.0, max_trade_duration_hours=48.0,
+            funding_rate_model="fixed_8h", funding_rate_fixed_pct=0.01,
+            leverage=10, capital_pct=20.0, fee_rate_pct=0.0,
+        )
+        # 600 one-minute candles (00:00 → 09:59), flat price.
+        klines = {"BTCUSDT": [_candle(0, 50000.0, 50010.0, 49990.0, 50000.0)]}
+        klines["BTCUSDT"] = [
+            {**_candle(0, 50000.0, 50010.0, 49990.0, 50000.0), "open_time": BASE + timedelta(minutes=i)}
+            for i in range(600)
+        ]
+        result = BacktestEngine().run(cfg, [_signal()], klines)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        # qty = 20% × 10000 × 10 / 50000 = 0.4. Per-boundary funding = 0.4×50000×0.0001 = 2.0.
+        # Exactly 2 boundaries (00:00→fires 00:01, 08:00) → fees = 2 × 2.0 = 4.0 (fees off).
+        assert trade["fees_paid"] == pytest.approx(4.0, rel=1e-6), (
+            f"funding fees {trade['fees_paid']} — expected exactly 2 boundary charges; "
+            "the minute<5 window is multi-charging on dense candles"
+        )
+        _assert_reconciles(result, cfg)
+
     def test_golden_close_on_profit_close(self):
         """A cycle whose equity rises past the close_on_profit threshold closes via
         CLOSE_ON_PROFIT (the EQUITY_RISE-style take-profit-on-cycle rule) and

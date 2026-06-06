@@ -453,3 +453,85 @@ class TestImmediateModeFillToMaxTrades:
         assert sorted(t["symbol"] for t in result.trades) == ["BTCUSDT", "ETHUSDT"]
 
 
+
+
+class TestInstrumentInfo:
+    """Per-symbol instrument parameters (qty_step / min_qty / tick_size / max_leverage)
+    passed via instrument_info make sizing, leverage, and TP/SL rounding match the live
+    exchange — production sizes off real lot steps, caps leverage, and rounds TP/SL to
+    the tick. Without instrument_info the engine uses no-op defaults (unchanged)."""
+
+    @staticmethod
+    def _coarse_klines(symbol, start, n=40):
+        from datetime import datetime, timezone, timedelta
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        return [{"open_time": base + timedelta(minutes=i * 5),
+                 "open": start + i * 5, "high": start + i * 5 + 30,
+                 "low": start + i * 5 - 5, "close": start + i * 5, "volume": 1e6}
+                for i in range(n)]
+
+    def test_qty_step_min_qty_and_max_leverage_applied(self):
+        """A coarse-lot symbol (qty_step=10, min_qty=10, max_leverage=25): qty rounds
+        DOWN to the step and leverage is capped, vs the 0.001/uncapped default."""
+        from backend.services.backtest_engine import BacktestEngine
+        config = _make_config(leverage=100, capital_pct=20.0,
+                              take_profit_pct=50.0, stop_loss_pct=500.0, slippage_bps=0, fee_rate_pct=0.0)
+        signals = [_make_signal(ticker="PEPEUSDT", analysis_price=1000.0)]
+        klines = {"PEPEUSDT": self._coarse_klines("PEPEUSDT", 1000.0)}
+        info = {"PEPEUSDT": {"qty_step": 10.0, "min_qty": 10.0, "tick_size": 0.1, "max_leverage": 25}}
+
+        # Default (no info): full requested leverage 100, fine-grained qty (step 0.001).
+        base = BacktestEngine().run(config, signals, klines)
+        assert base.trades[0]["leverage"] == 100
+        base_qty = base.trades[0]["qty"]
+
+        # With info: leverage capped 100→25 and qty rounded to the 10-lot step. The
+        # entry price is the candle at/after signal time (≈ the analysis price); qty =
+        # capital_pct × sizing × lev / entry, floored to the 10 step.
+        withinfo = BacktestEngine().run(config, signals, klines, instrument_info=info)
+        assert withinfo.trades[0]["leverage"] == 25  # capped from 100
+        wqty = withinfo.trades[0]["qty"]
+        assert wqty % 10.0 == pytest.approx(0.0, abs=1e-6), f"qty {wqty} not on the 10 lot step"
+        # 25× leverage vs 100× → the capped position is ~1/4 the default size.
+        assert wqty < base_qty
+        assert wqty == pytest.approx(base_qty * 25.0 / 100.0, rel=0.05)
+
+    def test_min_qty_rejects_undersized_position(self):
+        """When the computed qty rounds below the symbol's min_qty, the signal is
+        rejected (no trade) — matching production, which raises below min order qty."""
+        from backend.services.backtest_engine import BacktestEngine
+        # Tiny capital + huge min_qty → rounded qty < min_qty → rejected.
+        config = _make_config(leverage=1, capital_pct=1.0,
+                              take_profit_pct=50.0, stop_loss_pct=500.0, slippage_bps=0, fee_rate_pct=0.0)
+        signals = [_make_signal(ticker="PEPEUSDT", analysis_price=1000.0)]
+        klines = {"PEPEUSDT": self._coarse_klines("PEPEUSDT", 1000.0)}
+        # qty raw = 1%*10000*1/1000 = 0.1, min_qty 1000 → rejected.
+        info = {"PEPEUSDT": {"qty_step": 1.0, "min_qty": 1000.0, "tick_size": 0.1, "max_leverage": 25}}
+        result = BacktestEngine().run(config, signals, klines, instrument_info=info)
+        assert result.trades == []
+        assert result.filter_stats["signals_filtered"] >= 1
+
+    def test_tp_sl_rounded_to_tick(self):
+        """TP/SL trigger prices are rounded DOWN to the instrument tick size, matching
+        production's round_price (ROUND_DOWN to tick)."""
+        from backend.services.backtest_engine import BacktestEngine
+        from datetime import datetime, timezone, timedelta
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        config = _make_config(leverage=10, capital_pct=20.0,
+                              take_profit_pct=50.0, stop_loss_pct=500.0, slippage_bps=0, fee_rate_pct=0.0)
+        # signal_time must match the kline start so the entry candle is found.
+        signals = [_make_signal(ticker="BTCUSDT", analysis_price=50003.0, signal_time=base)]
+        # Price path crosses TP. tick=5 → 50003-anchored TP (50003*1.05=52503.15) rounds
+        # DOWN to a multiple of 5 (52500).
+        klines = {"BTCUSDT": [{"open_time": base + timedelta(minutes=i * 5),
+                               "open": 50003.0 + i * 100, "high": 50003.0 + i * 100 + 300,
+                               "low": 50003.0 + i * 100 - 50, "close": 50003.0 + i * 100, "volume": 100.0}
+                              for i in range(40)]}
+        info = {"BTCUSDT": {"qty_step": 0.001, "min_qty": 0.001, "tick_size": 5.0, "max_leverage": 125}}
+        result = BacktestEngine().run(config, signals, klines, instrument_info=info)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "tp"
+        # TP trigger (52503.15) rounds DOWN to the 5.0 tick → 52500; exit fills there.
+        exit_price = result.trades[0]["exit_price"]
+        assert exit_price == pytest.approx(52500.0, abs=1e-6)
+        assert exit_price % 5.0 == pytest.approx(0.0, abs=1e-6), f"exit {exit_price} not on the 5.0 tick"

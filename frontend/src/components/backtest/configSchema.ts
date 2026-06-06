@@ -140,7 +140,15 @@ function seedDateToInput(value: string | undefined, fallback: Date): string {
 
 /** Build default form values, optionally seeded from a partial config.
  * Return type is Required<…> so omitting any field is a typecheck error — this
- * guards against the schema and these defaults silently drifting apart. */
+ * guards against the schema and these defaults silently drifting apart.
+ *
+ * The non-seed fallbacks MUST equal the zod `.default()`s in backtestConfigSchema
+ * (which in turn mirror the backend BacktestCreateRequest / production
+ * AutoTradeConfig). buildDefaults supplies EVERY field, so the zod defaults never
+ * fire here — if these literals drift from the schema, the form silently ships
+ * non-production presets and the "~100% real trading" guarantee breaks. The
+ * configSchema test asserts the schema's own minimal-parse defaults; keep these in
+ * lockstep with that. */
 export function buildDefaults(
   seed?: Partial<BacktestCreateRequest>,
 ): Required<BacktestConfigFormValues> {
@@ -151,23 +159,23 @@ export function buildDefaults(
     date_range_start: seedDateToInput(seed?.date_range_start, start),
     date_range_end: seedDateToInput(seed?.date_range_end, now),
     scan_source: seed?.scan_source ?? { mode: "date_range" },
-    simulation_interval: seed?.simulation_interval ?? "1h",
+    simulation_interval: seed?.simulation_interval ?? "5m",
     fee_rate_pct: seed?.fee_rate_pct ?? 0.055,
-    slippage_bps: seed?.slippage_bps ?? 0,
+    slippage_bps: seed?.slippage_bps ?? 2,
     funding_rate_model: seed?.funding_rate_model ?? "none",
     funding_rate_fixed_pct: seed?.funding_rate_fixed_pct ?? 0.01,
     direction: seed?.direction ?? "straight",
-    leverage: seed?.leverage ?? 1,
-    capital_pct: seed?.capital_pct ?? 10,
-    take_profit_pct: seed?.take_profit_pct ?? 10,
-    stop_loss_pct: seed?.stop_loss_pct ?? 5,
+    leverage: seed?.leverage ?? 20,
+    capital_pct: seed?.capital_pct ?? 5,
+    take_profit_pct: seed?.take_profit_pct ?? 150,
+    stop_loss_pct: seed?.stop_loss_pct ?? 100,
     min_score: seed?.min_score ?? 0,
     confidence_filter: seed?.confidence_filter ?? "any",
     signal_sides: seed?.signal_sides ?? "both",
-    max_trades: seed?.max_trades ?? 10,
+    max_trades: seed?.max_trades ?? 999,
     execution_mode: seed?.execution_mode ?? "immediate",
     fill_to_max_trades: seed?.fill_to_max_trades ?? false,
-    skip_if_positions_open: seed?.skip_if_positions_open ?? true,
+    skip_if_positions_open: seed?.skip_if_positions_open ?? false,
     max_same_direction: seed?.max_same_direction ?? null,
     max_same_sector: seed?.max_same_sector ?? null,
     symbol_blacklist: seed?.symbol_blacklist ?? null,
@@ -183,9 +191,9 @@ export function buildDefaults(
     target_goal_type: seed?.target_goal_type ?? null,
     target_goal_value: seed?.target_goal_value ?? null,
     adaptive_blacklist_enabled: seed?.adaptive_blacklist_enabled ?? false,
-    adaptive_blacklist_min_trades: seed?.adaptive_blacklist_min_trades ?? 3,
+    adaptive_blacklist_min_trades: seed?.adaptive_blacklist_min_trades ?? 5,
     adaptive_blacklist_max_win_rate: seed?.adaptive_blacklist_max_win_rate ?? 30,
-    adaptive_blacklist_lookback_hours: seed?.adaptive_blacklist_lookback_hours ?? 168,
+    adaptive_blacklist_lookback_hours: seed?.adaptive_blacklist_lookback_hours ?? 48,
   };
 }
 

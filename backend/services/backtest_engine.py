@@ -77,6 +77,10 @@ class SimulationState:
                            # (production creates a fresh executor per scan, so max_trades is per-cycle)
     slippage_bps: int = 0  # round-trip slippage; applied adversely on BOTH entry fill and exit fill
                            # (production closes via Bybit market reduce-only orders that slip)
+    # Last 8h funding boundary already charged, as (date, hour) — guards against
+    # charging funding more than once per 0/8/16h event regardless of candle density
+    # (so a finer interval than 5m can't multi-charge a single boundary).
+    last_funding_boundary: Optional[tuple] = None
 
 
 class BacktestEngine:
@@ -93,6 +97,7 @@ class BacktestEngine:
         klines: dict[str, list[dict[str, Any]]],
         cancel_event: Optional[threading.Event] = None,
         on_progress: Optional[Callable[[int], None]] = None,
+        instrument_info: Optional[dict[str, dict[str, float]]] = None,
     ) -> SimulationResult:
         """Execute the backtest simulation.
 
@@ -102,6 +107,12 @@ class BacktestEngine:
             klines: Dict mapping symbol → list of kline dicts (ascending by open_time).
             cancel_event: If set, engine raises BacktestCancelled at next check point.
             on_progress: Called with percentage (0-100) at regular intervals.
+            instrument_info: Optional {symbol: {qty_step, min_qty, tick_size,
+                max_leverage}} resolved by the service from the InstrumentInfoCache.
+                When provided, position sizing rounds qty to the symbol's real lot
+                step / rejects below min_qty, TP/SL are rounded to tick_size, and
+                leverage is capped to the symbol's max — matching live trading. When
+                None, conservative defaults (0.001 / 0.001 / 0.01 / no cap) are used.
 
         Returns:
             SimulationResult with trades, equity_curve, metrics, warnings, filter_stats.
@@ -109,6 +120,11 @@ class BacktestEngine:
         Raises:
             BacktestCancelled: If cancel_event is set during execution.
         """
+        # Per-symbol instrument parameters (lot step, min qty, tick size, max
+        # leverage). Stored on the instance so the pure sizing/_open_position path can
+        # read it without threading it through every call. Empty dict → defaults.
+        self._instrument_info: dict[str, dict[str, float]] = instrument_info or {}
+
         # Initialize state
         starting_capital = config["starting_capital"]
         state = SimulationState(
@@ -614,7 +630,7 @@ class BacktestEngine:
         from backend.services.trading_rules import (
             determine_side, apply_slippage, compute_tp_sl,
             compute_position_size, compute_liquidation_price,
-            compute_fee, compute_locked_margin,
+            compute_fee, compute_locked_margin, round_price_to_tick,
         )
 
         ticker = signal["ticker"]
@@ -637,8 +653,24 @@ class BacktestEngine:
         side = determine_side(direction, config.get("direction", "straight"))
         entry_price = apply_slippage(entry_base_price, side, config.get("slippage_bps", 2))
 
+        # Per-symbol instrument parameters (lot step, min qty, tick size, max
+        # leverage). When the service didn't resolve real values for this symbol the
+        # defaults are intentionally NO-OPs (qty_step/min_qty 0.001 as before; tick=0
+        # and max_leverage=0 mean "don't round / don't cap") so behaviour is unchanged
+        # for callers that pass no instrument_info — only REAL resolved values change
+        # sizing/rounding/leverage to match the exchange.
+        info = self._instrument_info.get(ticker) or {}
+        qty_step = float(info.get("qty_step", 0.001))
+        min_qty = float(info.get("min_qty", 0.001))
+        tick_size = float(info.get("tick_size", 0.0))  # 0 → no TP/SL rounding
+        max_leverage = int(info.get("max_leverage", 0) or 0)  # 0 → no cap
+
         # Compute position size
         leverage = config.get("leverage", 20)
+        # Cap leverage to the symbol's max, matching production (accounts_service caps
+        # to the instrument's maxLeverage). Over-leveraging would mis-price liq/margin.
+        if max_leverage > 0 and leverage > max_leverage:
+            leverage = max_leverage
         capital_pct = config.get("capital_pct", 5.0)
 
         # Available balance = wallet - locked margins
@@ -649,13 +681,16 @@ class BacktestEngine:
         # computes qty = usdt_amount × leverage / mark_price (accounts_service), NOT
         # off the slipped fill. Sizing off the slipped price would understate qty and
         # (combined with the TP/SL anchor below) bias every exit in the trader's favor.
+        # qty_step/min_qty come from the resolved instrument info so a coarse-lot symbol
+        # (e.g. 1000PEPE) rounds qty DOWN to its real step and rejects below min_qty,
+        # exactly as live trading — not the 0.001 placeholder.
         qty = compute_position_size(
             sizing_capital=state.sizing_capital,
             capital_pct=capital_pct,
             leverage=leverage,
             price=entry_base_price,
-            qty_step=0.001,  # TODO: get from instrument cache
-            min_qty=0.001,   # TODO: get from instrument cache
+            qty_step=qty_step,
+            min_qty=min_qty,
             available_balance=available,
         )
         if qty is None:
@@ -671,6 +706,13 @@ class BacktestEngine:
         tp_pct = config.get("take_profit_pct", 150.0)
         sl_pct = config.get("stop_loss_pct", 100.0)
         tp_price, sl_price = compute_tp_sl(entry_base_price, side, tp_pct, sl_pct, leverage)
+        # Round TP/SL DOWN to the instrument tick size, matching production
+        # (accounts_service round_price uses ROUND_DOWN to tick_size). Unrounded
+        # trigger prices would fill at levels the exchange can't represent, shifting
+        # exit PnL vs live.
+        if tick_size > 0:
+            tp_price = round_price_to_tick(tp_price, tick_size)
+            sl_price = round_price_to_tick(sl_price, tick_size)
 
         # Compute liquidation price — anchored to the SLIPPED entry_price (the fill),
         # because Bybit isolated-margin liquidation is computed off the average fill
@@ -817,10 +859,17 @@ class BacktestEngine:
                     latest_prices[sym] = candle["close"]
                     candles_at_time[sym] = candle
 
-            # --- FUNDING RATE (once per timestamp) ---
+            # --- FUNDING RATE (once per 8h boundary) ---
             funding_model = config.get("funding_rate_model", "none")
             if funding_model == "fixed_8h":
-                if candle_time.hour in (0, 8, 16) and candle_time.minute < 5:
+                # Charge once per 0/8/16h boundary. Gating on a per-boundary key
+                # (date, hour) — rather than only "minute < 5" — makes this correct
+                # regardless of candle granularity: a finer interval would land
+                # multiple candles inside [hh:00, hh:05), but only the FIRST charges.
+                in_window = candle_time.hour in (0, 8, 16) and candle_time.minute < 5
+                boundary_key = (candle_time.date(), candle_time.hour)
+                if in_window and state.last_funding_boundary != boundary_key:
+                    state.last_funding_boundary = boundary_key
                     funding_rate = config.get("funding_rate_fixed_pct", 0.01) / 100.0
                     for fp in state.open_positions:
                         price = latest_prices.get(fp.symbol, fp.entry_price)

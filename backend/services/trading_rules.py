@@ -107,6 +107,23 @@ def compute_position_size(
     return qty
 
 
+def round_price_to_tick(price: float, tick_size: float) -> float:
+    """Round a price DOWN to the instrument's tick size.
+
+    Mirrors production's accounts_service.place_trade round_price (which uses
+    Decimal ROUND_DOWN to tick_size) so backtest TP/SL trigger prices land on the
+    same grid the exchange would accept. A non-positive tick_size returns the price
+    unchanged (no rounding).
+    """
+    if tick_size <= 0:
+        return price
+    ticks = math.floor(price / tick_size)
+    rounded = ticks * tick_size
+    # Snap away float artifacts to the tick's decimal precision.
+    decimals = max(0, -int(math.floor(math.log10(tick_size)))) if tick_size < 1 else 0
+    return round(rounded, decimals)
+
+
 def compute_liquidation_price(
     entry: float, side: str, leverage: int, mmr: float = 0.005
 ) -> float:
