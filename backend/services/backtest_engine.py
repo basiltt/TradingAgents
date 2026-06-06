@@ -916,19 +916,22 @@ class BacktestEngine:
                         positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
                     continue
 
-                # TP/SL (pessimistic: SL wins when both hit)
+                # TP/SL (pessimistic: SL wins when both hit). The `> 0` guards ensure
+                # a non-positive trigger (which round_price_to_tick can no longer
+                # produce, but defend in depth) is never treated as hit — a 0 SL on a
+                # short would otherwise satisfy `high >= 0` and fabricate a ~100% win.
                 close_reason = None
                 exit_price = None
                 if pos.side == "Buy":
-                    sl_hit = low <= pos.sl_price
-                    tp_hit = high >= pos.tp_price
+                    sl_hit = pos.sl_price > 0 and low <= pos.sl_price
+                    tp_hit = pos.tp_price > 0 and high >= pos.tp_price
                     if sl_hit:
                         close_reason, exit_price = "sl", pos.sl_price
                     elif tp_hit:
                         close_reason, exit_price = "tp", pos.tp_price
                 else:
-                    sl_hit = high >= pos.sl_price
-                    tp_hit = low <= pos.tp_price
+                    sl_hit = pos.sl_price > 0 and high >= pos.sl_price
+                    tp_hit = pos.tp_price > 0 and low <= pos.tp_price
                     if sl_hit:
                         close_reason, exit_price = "sl", pos.sl_price
                     elif tp_hit:
