@@ -238,10 +238,11 @@ class AutoTradeExecutor:
                     logger.info("auto_trade_skipped_positions", extra={"account_id": account_id, "position_count": len(positions)})
                     if account_id not in marked_stopped_for:
                         marked_stopped_for.add(account_id)
-                        self._emit_snapshot(account_id, "scan_start", positions)
+                        if account_id not in emitted_scan_start:
+                            emitted_scan_start.add(account_id)
+                            self._emit_snapshot(account_id, "scan_start", positions)
                         self._emit_life(account_id, "init_balances", "marked_stopped",
                                         reason="positions_already_open", position_count=len(positions))
-                        emitted_scan_start.add(account_id)
                     continue
             # Fetch and lock balance for this cycle
             try:
@@ -1171,12 +1172,15 @@ class AutoTradeExecutor:
             state.executions.append(execution)
             state.existing_symbols.add(symbol)
             if self._recorder is not None and self._debug_ctx is not None:
-                self._recorder.emit_symbol_decision(
-                    self._debug_ctx, account_id=account_id, phase=phase, symbol=symbol,
-                    decision="placed", reason_code="placed_ok", reason_detail={},
-                    scan_score=result.get("score"), scan_confidence=result.get("confidence"),
-                    scan_direction=result.get("direction"), order_id=execution.order_id,
-                )
+                try:
+                    self._recorder.emit_symbol_decision(
+                        self._debug_ctx, account_id=account_id, phase=phase, symbol=symbol,
+                        decision="placed", reason_code="placed_ok", reason_detail={},
+                        scan_score=result.get("score"), scan_confidence=result.get("confidence"),
+                        scan_direction=result.get("direction"), order_id=execution.order_id,
+                    )
+                except Exception:
+                    pass
             _is_rev = cfg.get("direction") == "reverse"
             _sig_dir = "short" if direction in ("short", "sell") else "long"
             state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir

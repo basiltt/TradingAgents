@@ -251,3 +251,30 @@ async def test_emit_account_summaries_emits_one_per_state():
     _, kwargs = rec.emit_account_trace.call_args
     assert kwargs["account_label"] == "Dad - Demo"
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_try_trade_success_unaffected_by_raising_recorder():
+    """A raising recorder on the success-path emit must NOT corrupt trade accounting."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    # emit_symbol_decision raises — must be swallowed, trade must still count as success.
+    rec.emit_symbol_decision.side_effect = RuntimeError("boom")
+    ctx = object()
+    accounts = AsyncMock()
+    accounts.place_trade.return_value = {"trade_id": "t1", "side": "Sell"}
+    accounts.get_mark_price.return_value = 100.0
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
+    state = _AccountState(config={
+        "account_id": "acc_1", "min_score": 0, "confidence_filter": "any",
+        "execution_mode": "batch", "leverage": 5, "capital_pct": 10,
+        "take_profit_pct": 150, "stop_loss_pct": 100, "direction": "straight",
+    })
+    state.base_capital = 1000.0
+    result = {"status": "completed", "ticker": "FOO", "direction": "sell",
+              "confidence": "high", "score": -7, "id": 1}
+    out = await ex._try_trade(state, result, phase="batch")
+    assert out is not None
+    assert out.status == "success"
+    assert state.trades_executed == 1
+    assert state.trades_failed == 0   # the raising emit did NOT cause a double-count
