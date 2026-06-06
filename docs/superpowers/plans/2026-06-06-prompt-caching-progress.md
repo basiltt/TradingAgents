@@ -14,7 +14,7 @@
 | P5 Logging | DONE | extract_cache_metrics (base_client) + log in litellm invoke; _extract_cache_usage + 4 guarded log sites in AI Manager. Review passed + parity guard. (7e3426b, d6354f2, b586d52) |
 | P6 EVAL GATE | PENDING | behavioral-parity; must pass before default ON |
 | P7 Ops flag | DONE | prompt_cache_enabled in DEFAULT_CONFIG (default OFF, TRADINGAGENTS_PROMPT_CACHE_ENABLED override). End-to-end chain verified: flag→client→injection. |
-| P8 UI toggle | PENDING | 3-form per-run toggle |
+| P8 UI toggle | DONE | schema field (AnalysisRequest+ScanRequest), relay (analysis+scanner), 3-form toggle. Both reviews passed; fixed else-clobber bug (config-override). tsc+build clean. |
 
 ## Decisions / blockers log
 - **P0 (uv.lock):** The committed `uv.lock` was already stale (litellm absent from
