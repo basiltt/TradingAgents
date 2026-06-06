@@ -218,3 +218,36 @@ async def test_try_trade_emit_is_noop_without_recorder():
               "confidence": "high", "score": -3}
     out = await ex._try_trade(state, result)
     assert out is None
+
+
+@pytest.mark.asyncio
+async def test_init_balances_emits_snapshot_and_skip_when_positions_open():
+    from backend.services.auto_trade_service import AutoTradeExecutor
+    rec = MagicMock()
+    ctx = object()
+    accounts = AsyncMock()
+    accounts.get_account.return_value = {"id": "acc_1"}
+    accounts.get_positions.return_value = [{"symbol": "AAPLUSDT", "side": "Sell", "size": "1"}]
+    accounts.get_wallet.return_value = {"totalAvailableBalance": "1000", "totalWalletBalance": "1000"}
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
+    ex.init_configs([{"account_id": "acc_1", "skip_if_positions_open": True, "execution_mode": "batch"}])
+    await ex.init_balances()
+    assert rec.emit_exchange_snapshot.called
+    evs = [c.kwargs.get("event_type") for c in rec.emit_lifecycle.call_args_list]
+    assert "marked_stopped" in evs
+
+
+@pytest.mark.asyncio
+async def test_emit_account_summaries_emits_one_per_state():
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    rec = MagicMock()
+    ctx = object()
+    accounts = AsyncMock()
+    accounts.get_account.return_value = {"id": "acc_1", "label": "Dad - Demo"}
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
+    ex._state = {"acc_1_0": _AccountState(config={"account_id": "acc_1", "execution_mode": "batch"})}
+    count = await ex.emit_account_summaries()
+    rec.emit_account_trace.assert_called_once()
+    _, kwargs = rec.emit_account_trace.call_args
+    assert kwargs["account_label"] == "Dad - Demo"
+    assert count == 1

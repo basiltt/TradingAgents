@@ -20,6 +20,11 @@ def _to_symbol(ticker: str) -> str:
     return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
 
 
+def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    bad = ("key", "secret", "token", "password")
+    return {k: v for k, v in cfg.items() if not any(b in k.lower() for b in bad)}
+
+
 @dataclass
 class TradeExecution:
     account_id: str
@@ -105,6 +110,8 @@ class AutoTradeExecutor:
         rules_created_for: set = set()  # track accounts that already got close rules this cycle
         force_closed_accounts: set = set()  # track accounts already force-closed this cycle
         positions_cache: Dict[str, list] = {}  # account_id -> positions list (avoid re-fetching)
+        emitted_scan_start: set = set()  # accounts that already got a scan_start snapshot emit
+        marked_stopped_for: set = set()  # accounts already emitted a marked_stopped lifecycle
 
         # Pre-pass: force-close accounts where unrealized PnL has reached X% of the target goal
         # close_on_profit_pct = percentage of target_goal_value achieved (e.g., 50 means close at 50% of target)
@@ -229,6 +236,12 @@ class AutoTradeExecutor:
                     state.stopped = True
                     state.stopped_reason = "positions_already_open"
                     logger.info("auto_trade_skipped_positions", extra={"account_id": account_id, "position_count": len(positions)})
+                    if account_id not in marked_stopped_for:
+                        marked_stopped_for.add(account_id)
+                        self._emit_snapshot(account_id, "scan_start", positions)
+                        self._emit_life(account_id, "init_balances", "marked_stopped",
+                                        reason="positions_already_open", position_count=len(positions))
+                        emitted_scan_start.add(account_id)
                     continue
             # Fetch and lock balance for this cycle
             try:
@@ -256,6 +269,9 @@ class AutoTradeExecutor:
                     p.get("symbol", ""): ("short" if p.get("side", "").lower() == "sell" else "long")
                     for p in positions_cache[account_id] if p.get("symbol")
                 }
+                if account_id not in emitted_scan_start:
+                    emitted_scan_start.add(account_id)
+                    self._emit_snapshot(account_id, "scan_start", positions_cache[account_id], equity=state.base_capital)
             # Create close rules (only once per account per cycle)
             if account_id not in rules_created_for and state.base_capital > 0:
                 # Create new rules FIRST, then delete old ones (avoids unprotected window)
@@ -365,6 +381,7 @@ class AutoTradeExecutor:
                     except Exception:
                         logger.debug("auto_trade_cleanup_old_rules_failed", extra={"account_id": account_id})
                 rules_created_for.add(account_id)
+                self._emit_life(account_id, "init_balances", "rules_created", rule_ids=list(state.created_rule_ids))
 
         # Propagate rule IDs and base_capital to sibling configs sharing the same account
         account_rule_map: Dict[str, tuple] = {}
@@ -580,6 +597,39 @@ class AutoTradeExecutor:
             })
         return summaries
 
+    async def emit_account_summaries(self) -> int:
+        """Emit one account-trace per state. Returns the distinct account count.
+        Safe to call even when tracing is off (returns the count without emitting)."""
+        seen_accounts = {s.config.get("account_id", "") for s in self._state.values()}
+        rec, ctx = self._recorder, self._debug_ctx
+        if rec is None or ctx is None:
+            return len(seen_accounts)
+        label_cache: Dict[str, Optional[str]] = {}
+        for state in self._state.values():
+            aid = state.config.get("account_id", "")
+            if aid and aid not in label_cache:
+                try:
+                    acct = await self._accounts.get_account(aid)
+                    label_cache[aid] = (acct or {}).get("label")
+                except Exception:
+                    label_cache[aid] = None
+            rec.emit_account_trace(
+                ctx, account_id=aid,
+                account_label=label_cache.get(aid),
+                execution_mode=state.config.get("execution_mode"),
+                final_stopped_reason=state.stopped_reason,
+                gate_that_stopped=state.stopped_reason,
+                rescued_by_recheck=getattr(state, "rescued_by_recheck", False),
+                base_capital=state.base_capital,
+                positions_at_start_count=len(state.existing_symbols),
+                trades_executed=state.trades_executed,
+                trades_failed=state.trades_failed,
+                trades_skipped=state.trades_skipped,
+                rules_created=[{"rule_id": r} for r in state.created_rule_ids],
+                config_snapshot=_sanitize_config(state.config),
+            )
+        return len(seen_accounts)
+
     async def cleanup_unused_rules(self) -> None:
         """Delete close rules for accounts that had zero successful trades across ALL configs."""
         if not self._close_svc:
@@ -675,6 +725,8 @@ class AutoTradeExecutor:
                 # Check current positions
                 positions = await self._accounts.get_positions(account_id)
                 has_positions = bool(positions)
+                self._emit_snapshot(account_id, "recheck", positions)
+                self._emit_life(account_id, "post_scan_recheck", "recheck_entered", position_count=len(positions))
 
                 # For accounts with close_on_profit_pct: check if threshold is met NOW
                 force_closed = False
@@ -725,6 +777,7 @@ class AutoTradeExecutor:
 
                 # If account still has positions and wasn't force-closed, skip
                 if has_positions and not force_closed:
+                    self._emit_life(account_id, "post_scan_recheck", "recheck_positions_still_open")
                     continue
 
                 # Account is now clear — reset states and place trades
@@ -795,6 +848,7 @@ class AutoTradeExecutor:
                         state.close_rule_id = None
                         state.drawdown_rule_id = None
                         state.created_rule_ids = []
+                self._emit_life(account_id, "post_scan_recheck", "state_reset", new_balance=new_balance)
 
                 # Re-create rules (only once per account, using first state with each config)
                 rules_created = False
@@ -917,6 +971,10 @@ class AutoTradeExecutor:
 
                 # Clean up if 0 trades were successfully executed
                 total_executed = sum(state.trades_executed for state in states)
+                if total_executed > 0:
+                    async with self._lock:
+                        for state in states:
+                            state.rescued_by_recheck = True
                 if total_executed == 0 and self._close_svc:
                     to_delete = set()
                     async with self._lock:
@@ -1200,6 +1258,7 @@ class _AccountState:
     base_capital: Optional[float] = None
     stopped: bool = False
     stopped_reason: Optional[str] = None
+    rescued_by_recheck: bool = False
     close_rule_id: Optional[str] = None
     drawdown_rule_id: Optional[str] = None
     executions: List[TradeExecution] = field(default_factory=list)
