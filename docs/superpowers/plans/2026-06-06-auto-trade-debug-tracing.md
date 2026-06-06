@@ -1223,6 +1223,13 @@ Then add `self._emit_decision(account_id, phase, symbol, ...)` lines per the tab
 
 > Implementer guidance: do NOT alter any existing control flow, counters, or return values — only insert emit calls. Keep each insert on its own line directly above the return it documents.
 
+**Update all five `_try_trade` call sites to pass the correct `phase`** (the new kwarg defaults to `"batch"`, so unlabeled callers would mislabel decisions). Exact sites in `auto_trade_service.py`:
+- Line ~385 (`evaluate_result`, immediate mode): `await self._try_trade(state, result, phase="immediate")`
+- Line ~421 (`execute_batch`, strict pass): `await self._try_trade(state, result, phase="batch")`
+- Line ~464 (`execute_batch` fill pass): `await self._try_trade(state, result, relaxed=True, phase="fill")`
+- Line ~530 (`fill_immediate_remaining`): `await self._try_trade(state, result, relaxed=True, phase="fill")`
+- Line ~886 (`post_scan_recheck`): `await self._try_trade(state, result, phase="post_scan_recheck")`
+
 - [ ] **Step 4: Run to verify pass**
 
 Run: `python -m pytest tests/backend/test_auto_trade_service_unit.py -v`
@@ -1797,7 +1804,7 @@ and after `self._sector_service = sector_service` (line 327) add:
             if self._debug_recorder is not None and debug_ctx is not None:
                 await self._debug_recorder.open_run(
                     debug_ctx,
-                    config_snapshot={"auto_trade_configs": [_san for _san in []]},  # placeholder; replaced below
+                    config_snapshot={"num_configs": len(auto_configs)},
                 )
             executor.init_configs(auto_configs)
             await executor.init_balances()
@@ -1805,10 +1812,7 @@ and after `self._sector_service = sector_service` (line 327) add:
             scan["debug_ctx"] = debug_ctx
 ```
 
-Replace the placeholder `config_snapshot` with a sanitized snapshot of `auto_configs`:
-```python
-                    config_snapshot={"num_configs": len(auto_configs)},
-```
+The `config_snapshot` deliberately stores only `{"num_configs": ...}` (a count, not the raw configs) to avoid persisting any per-account config containing potentially sensitive fields; per-account sanitized config is captured separately by `emit_account_summaries` in Task 8.
 
 (c) The second executor construction (line 576, resume path) — apply the same pattern (create ctx, pass recorder+ctx, open_run before init_balances, store `scan["debug_ctx"]`).
 
