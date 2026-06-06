@@ -74,7 +74,7 @@ class DebugTraceRepository:
                 """,
                 scan_id, trigger_source, schedule_id, schedule_execution_id,
                 scan_started_at, scan_completed_at, datetime.now(timezone.utc),
-                json.dumps(config_snapshot or {}),
+                json.dumps(config_snapshot or {}, default=str),
             )
 
     async def finalize_run(
@@ -122,8 +122,8 @@ class DebugTraceRepository:
                         r.get("positions_at_start_count"),
                         int(r.get("trades_executed", 0)), int(r.get("trades_failed", 0)),
                         int(r.get("trades_skipped", 0)),
-                        json.dumps(r.get("rules_created", [])),
-                        json.dumps(r.get("config_snapshot", {})),
+                        json.dumps(r.get("rules_created", []), default=str),
+                        json.dumps(r.get("config_snapshot", {}), default=str),
                     ) for r in account_traces],
                 )
             if lifecycle_events:
@@ -133,7 +133,7 @@ class DebugTraceRepository:
                     records=[(
                         r["run_id"], r["account_id"], int(r.get("seq", 0)),
                         r.get("phase", "unknown"), r["event_type"],
-                        json.dumps(r.get("detail", {})),
+                        json.dumps(r.get("detail", {}), default=str),
                         r.get("ts") or datetime.now(timezone.utc),
                     ) for r in lifecycle_events],
                 )
@@ -148,7 +148,7 @@ class DebugTraceRepository:
                     records=[(
                         r["run_id"], r["account_id"], r.get("phase", "unknown"), r["symbol"],
                         r.get("scan_score"), r.get("scan_confidence"), r.get("scan_direction"),
-                        r["decision"], r["reason_code"], json.dumps(r.get("reason_detail", {})),
+                        r["decision"], r["reason_code"], json.dumps(r.get("reason_detail", {}), default=str),
                         r.get("order_id"), r.get("ts") or datetime.now(timezone.utc),
                     ) for r in symbol_decisions],
                 )
@@ -158,8 +158,8 @@ class DebugTraceRepository:
                     columns=["run_id", "account_id", "gate", "positions", "position_count", "wallet", "equity", "ts"],
                     records=[(
                         r["run_id"], r["account_id"], r["gate"],
-                        json.dumps(r.get("positions", [])), int(r.get("position_count", 0)),
-                        json.dumps(r.get("wallet", {})), _num(r.get("equity")),
+                        json.dumps(r.get("positions", []), default=str), int(r.get("position_count", 0)),
+                        json.dumps(r.get("wallet", {}), default=str), _num(r.get("equity")),
                         r.get("ts") or datetime.now(timezone.utc),
                     ) for r in exchange_snapshots],
                 )
@@ -170,6 +170,8 @@ class DebugTraceRepository:
         so a large backlog doesn't cascade millions of child rows in one statement
         (which would hold locks / bloat WAL). batch_size is small because each run
         cascade-deletes thousands of child rows. Each batch is its own transaction."""
+        if batch_size < 1:
+            batch_size = 50
         total_deleted = 0
         while True:
             async with self._pool.acquire() as conn:

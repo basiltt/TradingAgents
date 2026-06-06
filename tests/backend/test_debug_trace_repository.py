@@ -13,6 +13,19 @@ _TEST_DSN = os.environ.get(
 )
 
 
+def test_num_coerces_float_exactly_via_str():
+    from backend.services.debug_trace_repository import _num
+    from decimal import Decimal
+    # The whole point of _num: Decimal(str(0.1)) == Decimal("0.1"),
+    # whereas the naive Decimal(0.1) == Decimal("0.1000000000000000055511151231257827021181583404541015625").
+    assert _num(0.1) == Decimal("0.1")
+    assert str(_num(0.1)) == "0.1"
+    assert _num(500.1) == Decimal("500.1")
+    assert _num(None) is None
+    d = Decimal("123.45")
+    assert _num(d) is d  # Decimal passes through unchanged (identity)
+
+
 @pytest_asyncio.fixture
 async def pool():
     try:
