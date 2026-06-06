@@ -901,6 +901,7 @@ class ScannerService:
             "max_risk_discuss_rounds": config.get("max_risk_discuss_rounds"),
             "max_recur_limit": config.get("max_recur_limit"),
             "checkpoint_enabled": config.get("checkpoint_enabled"),
+            "prompt_cache_enabled": config.get("prompt_cache_enabled"),
             "data_vendors": config.get("data_vendors"),
             "workflow_mode": config.get("workflow_mode"),
             "agent_model_overrides": config.get("agent_model_overrides"),

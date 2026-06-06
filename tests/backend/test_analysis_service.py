@@ -401,6 +401,23 @@ def test_build_config_overrides(service):
     assert config["checkpoint_enabled"] is False
 
 
+def test_build_config_prompt_cache_enabled_override(service):
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+        "prompt_cache_enabled": True,
+    })
+    assert config["prompt_cache_enabled"] is True
+
+
+def test_build_config_prompt_cache_defaults_to_default_config(service):
+    from tradingagents.default_config import DEFAULT_CONFIG
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+    })
+    assert config["prompt_cache_enabled"] == DEFAULT_CONFIG["prompt_cache_enabled"]
+    assert config["prompt_cache_enabled"] is False
+
+
 def test_build_config_backend_url(service):
     with patch("backend.services.analysis_service.validate_backend_url", return_value="http://ollama:11434") as mock_val:
         config = service._build_config({
