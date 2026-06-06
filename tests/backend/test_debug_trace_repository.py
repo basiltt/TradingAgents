@@ -26,6 +26,17 @@ def test_num_coerces_float_exactly_via_str():
     assert _num(d) is d  # Decimal passes through unchanged (identity)
 
 
+def test_strip_secret_keys_drops_credential_shaped_keys():
+    from backend.services.debug_trace_repository import _strip_secret_keys
+    out = _strip_secret_keys({
+        "max_trades": 3, "llm_api_key": "x", "apiSecret": "y",
+        "authToken": "z", "db_password": "p", "credentials": "c", "leverage": 5,
+    })
+    assert out == {"max_trades": 3, "leverage": 5}  # only non-secret keys retained
+    assert _strip_secret_keys(None) == {}
+    assert _strip_secret_keys("notadict") == {}
+
+
 @pytest_asyncio.fixture
 async def pool():
     try:
@@ -183,6 +194,30 @@ async def test_bulk_insert_coerces_float_scan_score_to_int(pool):
     assert by_symbol["FLOATUSDT"] == 7
     assert isinstance(by_symbol["FLOATUSDT"], int)
     assert by_symbol["NONEUSDT"] is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_insert_strips_secrets_from_config_snapshot(pool):
+    """Defense-in-depth: even if a caller passes raw config with credential-shaped
+    keys, the persistence boundary strips them before they hit the DB."""
+    import json as _json
+    repo = DebugTraceRepository(pool)
+    run_id = await repo.create_run(scan_id="scan-secret", trigger_source="manual",
+                                   config_snapshot={"num_configs": 1, "llm_api_key": "LEAK"})
+    await repo.bulk_insert(account_traces=[{
+        "run_id": run_id, "account_id": "acc-s", "rules_created": [],
+        "config_snapshot": {"max_trades": 3, "api_key": "LEAK", "secret_token": "LEAK2"},
+    }])
+    async with pool.acquire() as conn:
+        acct_cfg = await conn.fetchval(
+            "SELECT config_snapshot FROM debug_account_traces WHERE run_id=$1", run_id)
+        run_cfg = await conn.fetchval(
+            "SELECT config_snapshot FROM debug_runs WHERE id=$1", run_id)
+    acct_cfg = _json.loads(acct_cfg) if isinstance(acct_cfg, str) else acct_cfg
+    run_cfg = _json.loads(run_cfg) if isinstance(run_cfg, str) else run_cfg
+    assert acct_cfg == {"max_trades": 3}            # api_key + secret_token stripped
+    assert run_cfg == {"num_configs": 1}            # llm_api_key stripped at create_run
+    assert "api_key" not in acct_cfg and "secret_token" not in acct_cfg
 
 
 @pytest.mark.asyncio

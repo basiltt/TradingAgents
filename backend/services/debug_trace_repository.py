@@ -24,6 +24,22 @@ def _num(x):
     return Decimal(str(x))
 
 
+_SECRET_KEY_MARKERS = ("key", "secret", "token", "password", "credential")
+
+
+def _strip_secret_keys(payload):
+    """Defense-in-depth: drop any dict key that looks credential-shaped before persist.
+
+    Spec §10 requires config/wallet sanitized BEFORE persisting. The executor already
+    sanitizes config at the emit call site, but enforcing it here at the persistence
+    boundary protects every caller path (and any future one). Returns {} for non-dicts.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    return {k: v for k, v in payload.items()
+            if not any(m in str(k).lower() for m in _SECRET_KEY_MARKERS)}
+
+
 def _build_narrative(node: dict) -> str:
     """Plain-English per-account story from the trace node."""
     aid = node.get("account_label") or node.get("account_id")
@@ -109,7 +125,7 @@ class DebugTraceRepository:
                 """,
                 scan_id, trigger_source, schedule_id, schedule_execution_id,
                 scan_started_at, scan_completed_at, datetime.now(timezone.utc),
-                json.dumps(config_snapshot or {}, default=str),
+                json.dumps(_strip_secret_keys(config_snapshot or {}), default=str),
             )
 
     async def finalize_run(
@@ -158,7 +174,7 @@ class DebugTraceRepository:
                         int(r.get("trades_executed", 0)), int(r.get("trades_failed", 0)),
                         int(r.get("trades_skipped", 0)),
                         json.dumps(r.get("rules_created", []), default=str),
-                        json.dumps(r.get("config_snapshot", {}), default=str),
+                        json.dumps(_strip_secret_keys(r.get("config_snapshot", {})), default=str),
                     ) for r in account_traces],
                 )
             if lifecycle_events:
