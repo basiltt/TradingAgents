@@ -316,6 +316,66 @@ class TestEquityCloseRules:
                 "reference from scan-1 — equity_drop must re-anchor per cycle"
             )
 
+    def test_equity_drop_reference_excludes_carried_locked_margin(self):
+        """With positions CARRIED across scans (skip_if_positions_open=False), the
+        equity-drop reference must re-anchor EVERY scan to the AVAILABLE balance
+        (wallet − locked margin) — mirroring production, which rebuilds the executor
+        each scan and sets the EQUITY_DROP reference_value = totalAvailableBalance.
+
+        Regression guard for the R6/R9 interaction bug: the reference was previously
+        re-anchored only on an empty book and to the FULL wallet, so when scan-1's
+        position stayed open (locking margin) the reference was too HIGH at scan-2 →
+        equity_drop fired far too eagerly (a modest unrealized loss read as a large
+        cycle drawdown). Production measures drawdown from the margin-reduced
+        available balance, so the same loss does NOT trip the rule.
+
+        Scenario: scan-1 opens BTC (flat, stays open → locks 40%×10000 margin). scan-2
+        opens ETH while BTC is open; ETH drifts down to a modest unrealized loss. With
+        the BUG (reference = full 10000 wallet) the cycle reads ~8% down → both close
+        via equity_drop. With the FIX (reference = wallet − locked ≈ 6000, the
+        production basis) the same equity is far ABOVE the reference → no equity_drop,
+        positions ride to backtest_end.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            max_drawdown_pct=8.0, leverage=5, capital_pct=40.0,
+            take_profit_pct=500.0, stop_loss_pct=500.0,  # wide → only equity_drop could close
+            slippage_bps=0, fee_rate_pct=0.0, skip_if_positions_open=False,
+        )
+
+        scan1 = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan2 = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, scan_id="scan-1", signal_time=scan1, analysis_price=50000.0),
+            _make_signal(ticker="ETHUSDT", id=2, scan_id="scan-2", signal_time=scan2, analysis_price=3000.0),
+        ]
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        btc = [{"open_time": base + timedelta(minutes=i * 5),
+                "open": 50000.0, "high": 50050.0, "low": 49950.0, "close": 50000.0, "volume": 100.0}
+               for i in range(600)]
+        # ETH flat at 3000 until scan-2, then drifts down to a floor of 2790 (a modest
+        # unrealized loss — enough to trip the buggy full-wallet reference, NOT the
+        # correct available-balance one, and well above liquidation).
+        eth = []
+        for i in range(600):
+            t = base + timedelta(minutes=i * 5)
+            px = 3000.0 if t < scan2 else max(2790.0, 3000.0 - int((t - scan2).total_seconds() // 300) * 5.0)
+            eth.append({"open_time": t, "open": px, "high": px + 2, "low": px - 2, "close": px, "volume": 100.0})
+        klines = {"BTCUSDT": btc, "ETHUSDT": eth}
+
+        result = engine.run(config, signals, klines)
+        # Neither position may close via equity_drop: measured from the margin-reduced
+        # available balance, the modest ETH loss is nowhere near the 8% threshold.
+        reasons = {t["symbol"]: t["close_reason"] for t in result.trades}
+        for sym, reason in reasons.items():
+            assert reason != "equity_drop", (
+                f"{sym} closed via equity_drop — the reference did not exclude carried "
+                "locked margin (it used the full wallet instead of available balance)"
+            )
+
 
 class TestTrailingProfit:
     """Test TRAILING_PROFIT close rule state machine."""

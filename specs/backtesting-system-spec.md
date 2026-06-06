@@ -110,7 +110,15 @@ The engine processes scan results chronologically, applying the full auto-trade 
   candle.close, exit fills at `candle.close × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
 
 **Equity reference for EQUITY_RISE/DROP/SMART rules:**
-- `ref` = cycle_start_equity (equity at the moment the first position of the cycle opened)
+- `ref` = cycle_start_equity, re-anchored EVERY (non-skipped) scan to the AVAILABLE
+  balance = `wallet_balance − Σ(locked_margin of open positions)`. This mirrors
+  production, which rebuilds the executor each scan and sets the EQUITY_DROP/RISE
+  `reference_value = totalAvailableBalance`. The evaluated equity is
+  `wallet_balance + Σ(unrealized_pnl)` (≈ production `totalEquity`), so a carried
+  position's locked margin lowers the reference but its unrealized PnL still counts in
+  equity — matching live drawdown semantics. On an empty book (no locked margin) the
+  reference reduces to the full wallet. The skip_if_positions_open=True path (open book)
+  preserves the prior anchor, matching production's only no-recreate case.
 - For EQUITY_DROP_PCT_SMART: ref resets to current equity immediately after closing losing positions
 
 **Price drift check:**

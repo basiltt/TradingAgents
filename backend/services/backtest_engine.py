@@ -175,20 +175,11 @@ class BacktestEngine:
             # untouched (it drives the backtest-level target_goal early-stop + stats).
             state.scan_entered = 0
 
-            # Re-anchor the cycle equity reference when the book is empty (a genuinely
-            # fresh cycle). Production fetches the CURRENT wallet balance into
-            # base_capital at each scan's init_balances and uses it as the
-            # EQUITY_DROP/EQUITY_RISE reference_value, so every fresh cycle measures
-            # drawdown/profit from the wallet AS OF THAT SCAN. cycle_start_equity is
-            # otherwise only zeroed when an equity rule itself terminates a cycle, so
-            # a cycle that closed via TP/SL/trailing/max_duration/liquidation would
-            # leave a STALE prior-cycle baseline frozen in — making the next cycle's
-            # equity_drop/close_on_profit measure against the wrong reference. Zeroing
-            # here lets the next _open_position re-seed it to the then-current wallet.
-            # When positions carry over (skip_if_positions_open=False with an open
-            # book), the cycle is still live, so we preserve the existing anchor.
-            if not state.open_positions:
-                state.cycle_start_equity = 0.0
+            # NOTE: the equity-rule reference (cycle_start_equity) is re-anchored
+            # below at the per-scan sizing refresh — for EVERY non-skipped scan, to the
+            # available-balance basis, mirroring production. See that block for the
+            # full rationale. The skip_if_positions_open early-continue below preserves
+            # the existing anchor (production's only preservation case).
 
             # --- CYCLE LOCK (Task 3.9) ---
             # If skip_if_positions_open=True AND positions exist → skip entire scan
@@ -217,6 +208,20 @@ class BacktestEngine:
             # negative available balance can't produce negative position sizes.
             locked_margin = sum(p.locked_margin for p in state.open_positions)
             state.sizing_capital = max(0.0, state.wallet_balance - locked_margin)
+
+            # Re-anchor the equity-rule reference EVERY executed scan, to the SAME
+            # available-balance basis as sizing. Production builds a fresh
+            # AutoTradeExecutor per scan and recreates the EQUITY_DROP/RISE rule each
+            # scan with reference_value = totalAvailableBalance (wallet − locked
+            # margin) — it does NOT preserve a prior cycle's reference while positions
+            # carry over (the only preservation case is skip_if_positions_open=True
+            # with an open book, which early-continues above before reaching here).
+            # The evaluated equity (wallet + unrealized PnL) already mirrors production's
+            # totalEquity, so matching the reference to totalAvailableBalance makes
+            # equity_drop / close_on_profit fire at the same level as live trading.
+            # On an empty book locked=0 → this reduces to the full wallet (the prior
+            # first-open seed value), so single-cycle behaviour is unchanged.
+            state.cycle_start_equity = state.sizing_capital
 
             # Process signals through filter chain
             if execution_mode == "batch":
@@ -674,9 +679,14 @@ class BacktestEngine:
         state.signals_entered += 1  # lifetime counter (stats + target_goal early-stop)
         state.scan_entered += 1  # per-scan counter (gates max_trades, reset each scan)
 
-        # Set cycle_start_equity on first position of a cycle
+        # Fallback seed for cycle_start_equity. The per-scan refresh in run() already
+        # re-anchors this to sizing_capital (= wallet − locked margin) before any
+        # signal is processed, so this normally no-ops. It only fires if an equity
+        # rule zeroed the reference mid-scan (cycle termination) and a later open
+        # occurs before the next per-scan refresh — use the SAME available-balance
+        # basis (sizing_capital), never the full wallet, so the basis can't drift.
         if state.cycle_start_equity == 0:
-            state.cycle_start_equity = state.wallet_balance
+            state.cycle_start_equity = state.sizing_capital
 
         return True
 
