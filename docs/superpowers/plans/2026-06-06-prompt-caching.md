@@ -1692,6 +1692,16 @@ git commit -m "feat(caching): add prompt_cache_enabled config flag (default OFF,
 
 ### Task 8.1: Backend schema — add `prompt_cache_enabled` to the request models
 
+> **Why the schema field is required for manual scans but not scheduled scans
+> (verified):** the manual `ScannerPage`/analysis path calls `body.model_dump()`
+> (`scanner.py:56` / analysis router), which **drops keys not declared on the Pydantic
+> model** — so `prompt_cache_enabled` MUST be a declared field on `AnalysisRequest` +
+> `ScanRequest` or it's silently lost. The **scheduled** path carries the flag inside
+> the freeform `scan_config: Dict[str, Any]` (no model_dump filtering), so it needs no
+> schema change — but it DOES still need Task 8.2's `_run_single` relay to reach the
+> graph (verified: scheduled scans funnel through the same `start_scan → _run_single →
+> _build_config` chain, no separate scheduler execution path).
+
 **Files:**
 - Modify: `backend/schemas/__init__.py` (`AnalysisRequest` ~line 110, `ScanRequest` ~line 475)
 - Test: `tests/backend/test_schemas.py`
