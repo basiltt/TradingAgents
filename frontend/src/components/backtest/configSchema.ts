@@ -34,7 +34,7 @@ export const backtestConfigSchema = z
   .object({
     // Backtest-specific — ranges AND defaults MUST match backend BacktestCreateRequest.
     starting_capital: z.coerce
-      .number()
+      .number({ invalid_type_error: "Enter a starting capital" })
       .positive("Must be > 0")
       .max(100_000_000, "Max $100,000,000"),
     date_range_start: isoDate,

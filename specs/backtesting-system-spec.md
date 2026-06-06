@@ -83,9 +83,10 @@ Three modes for selecting which historical signals to replay:
 
 The engine processes scan results chronologically, applying the full auto-trade filter chain and close rules:
 
-**Interface:** `BacktestEngine.run(config, signals, klines, cancel_event=None, on_progress=None) -> SimulationResult`
+**Interface:** `BacktestEngine.run(config, signals, klines, cancel_event=None, on_progress=None, instrument_info=None) -> SimulationResult`
 - `cancel_event`: `threading.Event` checked every 100 candles. Raises `BacktestCancelled` if set. This is the single impurity allowed in the otherwise pure engine.
 - `on_progress`: `Callable[[int], None]` for % updates (0-100).
+- `instrument_info`: optional `{symbol: {qty_step, min_qty, tick_size, max_leverage}}` resolved by the service from the Bybit instrument cache; used to round qty to the real lot step, reject below min qty, round TP/SL to the tick, and cap leverage. Absent → no-op defaults (see Known Modeling Approximations §6).
 
 **Input:** Config + list of scan signals (chronological) + kline DataFrames per symbol
 **Output:** List of simulated trades + equity curve + raw metrics
@@ -448,3 +449,45 @@ See Architecture §3.1 for complete DDL. Tables:
 | AC-008 | Kline cache survives across runs (no re-download) | Regression test |
 | AC-009 | Cancel button stops running backtest within 200 candles | Threading.Event + unit test |
 | AC-010 | Comparison view shows overlaid equity curves | E2E test |
+
+---
+
+## Known Modeling Approximations
+
+These are intentional, documented deltas from live trading — surfaced here (and, where
+user-visible, via result warnings or field labels) so results are not silently misread.
+None individually exceeds the <1% deviation budget for typical configs.
+
+1. **Sharpe / Sortino annualization.** Returns are resampled to daily and annualized by
+   √365. TradingView's Strategy Tester reports a non-annualized, per-period Sharpe, so the
+   backtest's Sharpe is several× larger than TV shows for the same run — the *ranking* is
+   consistent, but do not expect bit-for-bit TV parity on the absolute number. On gap-heavy
+   or sub-day windows the daily resampling is approximate.
+
+2. **`max_signal_age_minutes` is a near-no-op in replay.** Production measures age as
+   `now − completed_at` (real execution latency); the backtest executes at the scan
+   timestamp, so age ≈ 0 and the filter rarely rejects. The per-ticker `completed_at` is not
+   stored in `scan_results`, so a faithful per-signal age cannot be reconstructed. A config
+   relying on a tight age filter will admit more signals in backtest than in production.
+
+3. **`max_same_sector` is not enforced** (the sector service is IO-bound and the engine is
+   pure/synchronous). Surfaced via the `max_same_sector_not_enforced` warning and the form
+   field label "Max Same Sector (not simulated)".
+
+4. **Batch ranking tie-break.** Production ranks tied-score signals by `completed_at`; the
+   backtest ranks by `abs(score)` only (stable/insertion order on ties). At the `max_trades`
+   boundary with coarse integer scores, a different tied signal may be admitted.
+
+5. **Scan-boundary candle.** A candle whose `open_time` equals an interior scan timestamp is
+   excluded from both the preceding and following close-rule windows, so a TP/SL/funding that
+   would land exactly on that one candle is deferred one candle. One candle per interior
+   boundary (sub-1% at 5m granularity).
+
+6. **`qty_step` / `min_qty` / `tick_size` / `max_leverage`** come from a best-effort Bybit
+   instrument cache; on a refresh failure or an unlisted symbol they fall back to no-op
+   defaults (no lot rounding, no tick rounding, no leverage cap) rather than imposing a
+   possibly-wrong constraint.
+
+7. **`slippage_bps` is a round-trip cost** applied adversely on both the entry and exit fill
+   (production closes via market reduce-only orders that slip). This overrides the original
+   spec's exact-exit-fill wording.
