@@ -27,6 +27,24 @@ LLMCallable = Callable[[str, str], Coroutine[None, None, str]]
 
 _active_clients: list["httpx.AsyncClient"] = []
 
+# Models that reject sampling params (temperature/top_p/top_k removed on Opus 4.7+).
+# Conservative: omit for these; keep for everything else.
+_NO_SAMPLING_PARAM_SUBSTRINGS = ("opus-4-7", "opus-4-8")
+
+
+def _sampling_params(model: str) -> dict:
+    """Return the sampling/token params to merge into a payload for this model.
+
+    Always includes max_tokens. Omits temperature (and other sampling params)
+    for models that 400 on them (current Opus). Conservative default: include
+    temperature unless the model is known to reject it.
+    """
+    params: dict = {"max_tokens": 1024}
+    model_l = (model or "").lower()
+    if not any(s in model_l for s in _NO_SAMPLING_PARAM_SUBSTRINGS):
+        params["temperature"] = 0.2
+    return params
+
 
 async def _acquire_global_rate_limit() -> bool:
     """Respect the global LLM concurrency semaphore and minimum spacing.
@@ -247,8 +265,7 @@ def create_llm_callable_with_cleanup(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": context_prompt},
                     ],
-                    "temperature": 0.2,
-                    "max_tokens": 1024,
+                    **_sampling_params(model),
                 }
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
@@ -282,8 +299,7 @@ def create_llm_callable_with_cleanup(
                     "model": model,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": context_prompt}],
-                    "temperature": 0.2,
-                    "max_tokens": 1024,
+                    **_sampling_params(model),
                 }
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
@@ -318,8 +334,7 @@ def _create_openai_callable(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": context_prompt},
                 ],
-                "temperature": 0.2,
-                "max_tokens": 1024,
+                **_sampling_params(model),
             }
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
@@ -352,8 +367,7 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
                 "model": model,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": context_prompt}],
-                "temperature": 0.2,
-                "max_tokens": 1024,
+                **_sampling_params(model),
             }
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
