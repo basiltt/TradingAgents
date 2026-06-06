@@ -133,7 +133,10 @@ class ClosePositionsService:
             client = await self._accounts_service.get_client(account_id)
             positions = await client.get_positions()
 
-            if symbols:
+            # `symbols is None` means "close all for this account" (no scoping).
+            # An explicit (possibly empty) list means "close ONLY these symbols" —
+            # so symbols=[] must close NOTHING, not fall through to close-all.
+            if symbols is not None:
                 symbol_set = set(symbols)
                 positions = [p for p in positions if p["symbol"] in symbol_set]
 

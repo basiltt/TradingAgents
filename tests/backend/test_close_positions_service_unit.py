@@ -235,6 +235,23 @@ async def test_close_for_rule_with_positions(service, mock_accounts_service):
     assert result["closed"] == 1
 
 
+@pytest.mark.asyncio(loop_scope="function")
+async def test_close_for_rule_empty_symbols_closes_nothing(service, mock_accounts_service):
+    """SAFETY: an explicit EMPTY symbols list must close NOTHING (not fall through
+    to close-all). Regression for the `if symbols:` vs `if symbols is not None:` bug —
+    an empty scoping list closing every position would be catastrophic."""
+    client = await mock_accounts_service.get_client("acc-1")
+    client.get_positions.return_value = [
+        {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"},
+        {"symbol": "ETHUSDT", "side": "Sell", "size": "1"},
+    ]
+    result = await service.close_all_for_rule("acc-1", "rule-1", symbols=[])
+    assert result["total"] == 0
+    assert result["closed"] == 0
+    # The exchange close order must never have been called for any position.
+    client.place_market_close_order.assert_not_called()
+
+
 # ─── _close_matching_trades ────────────────────────────────────────────────
 
 
