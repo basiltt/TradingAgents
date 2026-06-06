@@ -177,5 +177,166 @@ The most critical discovery: the **Crypto Portfolio Manager** (`tradingagents/ag
 
 ---
 
+## 2026-06-06 — Three-Feature Integration (Backtesting + Debug Tracing + Prompt Caching)
+
+**Timestamp:** 2026-06-06 ~22:00 UTC
+**Type:** Multi-feature merge to `main` (3 independent feature branches merged by a senior-lead merge process)
+**Trigger:** Three critical features were developed in parallel in separate git worktrees and needed to land on `main` together — cleanly, with correct database-migration ordering, and with every feature verified working end-to-end.
+
+### Why this matters for profitability research
+
+These three features are **research-enablement infrastructure**, not new trading logic. Up to now, profitability analysis (see the 2026-06-04 entries) has been *retrospective* — we could only learn from trades the live system had already taken with real (demo) capital. That is slow and expensive: validating a single config idea (e.g. "raise min_score to 7") meant waiting days for the live system to accumulate enough trades. The three features close that loop:
+
+- **Backtesting** lets us test config changes against *historical* scan data in seconds instead of waiting days for live trades.
+- **Debug tracing** gives us per-decision forensics, so when a backtest (or live run) does something surprising we can see exactly *why* each symbol was traded, skipped, or closed.
+- **Prompt caching** cuts the LLM cost of running scans/analyses, which makes large research sweeps (and re-scanning for backtests) economically viable.
+
+Together they turn profitability research from "wait and observe" into "hypothesize, simulate, inspect, repeat."
+
+---
+
+### Feature 1 — Backtesting System
+
+**Problem it solves:**
+Every recommendation in the 2026-06-04 research (raise min_score, reduce max_trades, change drawdown thresholds, sector limits, etc.) could only be validated by deploying it live and waiting for enough closed trades to reach significance. There was **no way to ask "what would this config have done?"** against history. That made the recommendation table (`READY (config change only)`) a list of *untested guesses*.
+
+**What was built:**
+A full simulation engine that replays the **real auto-trade cycle** (scan results → signal filtering → trade placement → close-rule evaluation → position closure) against historical scan data already stored in the DB. It reuses the *same* parameters as the Scheduled Market Scanner (all `AutoTradeConfig` fields), enforces the same cycle rules (no new trades while a previous cycle is running), and evaluates all the same close rules (`EQUITY_RISE_PCT`, `EQUITY_DROP_PCT`, `BREAKEVEN_TIMEOUT`, `MAX_DURATION`, `TRAILING_PROFIT`). It runs in seconds using cached kline data and produces TradingView-quality output: equity curve, drawdown chart, and the full standard metric set (Sharpe, Sortino, profit factor, max drawdown, win rate, expectancy, etc.).
+
+**Key components:**
+| Component | File | Role |
+|-----------|------|------|
+| Simulation engine | `backend/services/backtest_engine.py` | Candle-by-candle replay; 17-step filter chain; wick-based TP/SL; unified close-rule timeline; look-ahead-bias guards |
+| Trading rules | `backend/services/trading_rules.py` | Pure functions for liquidation, fees, funding, sizing — shared parity with live trading |
+| Metrics | `backend/services/backtest_metrics.py` | TradingView-parity metric computation from the trade ledger + equity curve |
+| Kline cache | `backend/services/kline_cache_service.py` | Local OHLCV cache (Bybit fetcher + gap detection + instrument-info cache) so re-runs are instant |
+| Service/orchestration | `backend/services/backtest_service.py` | Run lifecycle, signal loading from scan history, stale-run recovery on restart, result persistence |
+| API | `backend/routers/backtest.py` | `POST/GET/DELETE /api/v1/backtest`, `/backtest/{id}/trades`, `/backtest/compare`, `/backtest/{id}/cancel`, `/backtest-cache/status`, `/backtest-cache/warmup` |
+| Frontend | `frontend/src/components/backtest/*` | Results dashboard: equity curve, drawdown, metrics grid, trade list, multi-run comparison basket |
+
+**Important:** the backtest uses real scan results from the DB as its signal source (it does **not** re-analyze with the LLM), and the user supplies fresh capital / TP / SL / leverage rather than reusing account configs. The **AI Manager** is intentionally excluded from the backtest (deferred). Target fidelity: <1% deviation from real trading results.
+
+---
+
+### Feature 2 — Auto-Trade Debug Tracing
+
+**Problem it solves:**
+The 2026-06-04 research repeatedly hit a wall: when the system did something wrong (93% sell bias, batch wipeouts, the AI Manager's 181 null execution results), we could only infer *what* happened from the trades table — we could not see *why* each decision was made. There was no forensic record of "for scan X, account Y, symbol Z: the signal scored 7, passed the drift check, failed the sector-concentration limit, and was therefore skipped." Diagnosing a profitability regression meant guessing from outcomes.
+
+**What was built:**
+Always-on, performance-safe forensic tracing for the entire `AutoTradeExecutor` path. Every scheduled or manual auto-trade run now records a reconstructable decision tree: the run lifecycle, per-account traces (capital, equity, gate that stopped execution, recheck-rescue status), per-symbol decisions (scan score/confidence/direction, the decision + reason code, resulting order id), lifecycle events, and exchange snapshots at each gate. This is the missing instrument that lets future research answer "why" instead of just "what."
+
+**Design constraints (money-critical hot path):**
+- **Fail-open:** a recorder failure can never break a live trade. Emit is wrapped so tracing exceptions are swallowed.
+- **Non-blocking:** synchronous emit into a bounded in-memory buffer with drop-on-pressure; a background drainer does the actual DB writes via bulk `COPY`.
+- **Kill-switch:** runtime-toggleable (`debug_config.tracing_enabled`) so it can be turned off instantly with near-zero overhead.
+- **Retention:** 60-day default retention with a background cleanup loop; secrets are stripped from `config_snapshot` at the persistence boundary.
+
+**Key components:**
+| Component | File | Role |
+|-----------|------|------|
+| Recorder | `backend/services/debug_trace_recorder.py` | Fail-open emit, bounded buffer, drainer, retention loop, run lifecycle/context |
+| Repository | `backend/services/debug_trace_repository.py` | Bulk `COPY` insert, lifecycle SQL, aggregate-tree + sub-route read queries with narrative |
+| API | `backend/routers/debug.py` | `GET /api/v1/debug/scan/{scan_id}`, `/scan/{scan_id}/account/{account_id}`, `/runs`, `/account/{account_id}/timeline`, `/symbol/{symbol}`, `/config` |
+| Wiring | `backend/main.py`, `backend/services/scanner_service.py`, `backend/services/auto_trade_service.py` | Recorder instantiated in lifespan; threaded into the executor; per-symbol decisions + account summaries emitted; debug run closed in `finally` |
+
+**Bonus safety fix carried on this branch:** `close_positions_service.py` — an explicit *empty* symbols list must close **nothing**, not fall through to close-all (`if symbols:` → `if symbols is not None:`). An empty scoping list closing every position would be catastrophic; a regression test now guards it.
+
+---
+
+### Feature 3 — Anthropic Prompt Caching
+
+**Problem it solves:**
+Each scan analyzes ~570 coins, and every analyst (market, fundamentals, crypto-technical) sends a large, mostly-static system prompt to the LLM on every single call. With Anthropic models, that static prefix was billed at full input-token price every time. The cost of running scans — and therefore the cost of *research* (large sweeps, re-scans for backtests, parameter exploration) — was dominated by re-sending identical prompt prefixes. Expensive research is research you don't do.
+
+**What was built:**
+Prompt-prefix caching for `anthropic/*` models. The static portion of each analyst prompt is split into a cacheable prefix and injected with `cache_control` at the litellm chokepoint, so Anthropic bills the repeated prefix at the (much cheaper) cache-read rate. The feature is **off by default** and controllable three ways: an environment variable (`TRADINGAGENTS_PROMPT_CACHE_ENABLED`), an admin/global resolved-config value, and a per-run request flag (`prompt_cache_enabled`) exposed in the Analysis and Scanner UI forms. Normalized cache/token metrics (cache-creation vs cache-read vs uncached tokens) are logged from the invoke chokepoint so the savings are measurable.
+
+**Key components:**
+| Component | File | Role |
+|-----------|------|------|
+| Prompt-split helper | `tradingagents/agents/utils/prompt_cache.py` | `split_cacheable_prompt` (Pattern A) + message-shaping helper |
+| Cacheable analysts | `tradingagents/agents/analysts/market_analyst.py`, `analysts/fundamentals_analyst.py`, `agents/crypto_analysts.py` | Static prompt split into cacheable prefix |
+| litellm injection | `tradingagents/llm_clients/litellm_client.py`, `llm_clients/model_families.py` | `cache_control` injected on the system message for `anthropic/*`; cache metrics logged |
+| Config plumbing | `tradingagents/default_config.py`, `graph/trading_graph.py`, `backend/services/scanner_service.py`, `analysis_service.py`, `schemas/__init__.py` | `prompt_cache_enabled` threaded request → graph config (relay preserves the resolved/admin value when the request omits it) |
+| Frontend toggle | `frontend/src/components/analysis/ConfigForm.tsx`, `scanner/ScannerPage.tsx`, `scanner/ScheduledScansPage.tsx`, `api/client.ts` | Per-run caching toggle in the 3 LLM-settings forms |
+
+**Operational caveats (recorded so future research doesn't trip on them):**
+- Caching is a **cost** optimization, not a behavior change — a behavioral-parity eval harness (`scripts/cache_parity_eval.py`) was built to confirm decisions are unchanged with caching on vs off.
+- OpenAI/Gemini paths are unaffected (no-op); only `anthropic/*` benefits.
+- `pyproject.toml` dependency upper bounds were tightened for the tested caching path (`litellm>=1.83.7,<2`, `langchain-community>=0.4.1,<0.5`, `langchain-anthropic>=1.4.2,<2`, `langchain-core<2`). **Follow-up:** `uv.lock` was not regenerated (the branch documented it as un-installable in that environment) — regenerate before a clean-room deploy.
+
+---
+
+### Merge mechanics — how the three branches were integrated safely
+
+All three branches had **different merge-bases** but all were ancestors of `main`. Merge order chosen: **backtesting → debug-tracing → prompt-caching**.
+
+**Critical issue #1 — database migration version collision (v38).**
+Both the backtesting and debug-tracing branches independently branched off `main` and each appended a migration numbered **v38**. The migration applier (`_apply_migrations`) only runs versions `> current` and stores a single max version, so two `(38, …)` entries would mean **one feature's tables silently never get created** — and git auto-merges adjacent list entries with *no conflict marker*, so this would have shipped invisibly. Resolution:
+- Backtesting keeps **v38–v41** (kline cache + backtest tables, `analysis_price` column, widened numeric columns, trade indexes).
+- Debug-tracing's v38 was **renumbered to v42** (constant renamed `_SCHEMA_DEBUG_V38` → `_SCHEMA_DEBUG_V42`).
+- Migration version integers are positional-only (code references table/column *names*, never the number), so renumbering is safe. Final list is contiguous **1..42, no duplicates**.
+
+**Critical issue #2 — the live dev DB was already at schema v41.**
+The backtesting worktree had been run against the shared local Postgres, so it was already migrated to v41 with backtest tables present (but no debug tables). This *dictated* the renumber direction: if debug had kept v38, `38 ≤ 41` would skip it forever and debug tables would never be created on that DB. Renumbering debug to v42 means it layers cleanly on top. Confirmed post-merge: live DB advanced to **v42**, all 6 `debug_*` tables created, backtest v38–v41 tables intact.
+
+**Conflicts resolved:**
+| File | Branches | Resolution |
+|------|----------|------------|
+| `backend/async_persistence.py` | backtest ∩ debug | Kept both migration helpers; renumbered debug v38→v42 |
+| `specs/…`, `plans/backtesting-system/…` (4 docs) | backtest ∩ main | Took the backtest branch's final, more complete versions |
+| `backend/main.py` | backtest ∩ debug | Auto-merged clean — both feature blocks coexist (service wiring + router includes) |
+| `backend/services/scanner_service.py` | all three | Auto-merged clean — `analysis_price` (×5), `_debug_recorder` (×13), `prompt_cache_enabled` (×1) coexist |
+| `frontend/src/api/client.ts`, `scanner/ScheduledScansPage.tsx` | backtest ∩ caching | Auto-merged clean — non-colliding regions |
+
+### Database migrations added (this session)
+
+| Version | Owner | Tables / Change |
+|---------|-------|-----------------|
+| v38 | Backtesting | `kline_cache` (+ monthly partitions), `kline_cache_coverage`, `backtest_runs`, `backtest_results`, `backtest_trades` |
+| v39 | Backtesting | `scan_results.analysis_price` column (entry-price anchor for drift + backtest fill) |
+| v40 | Backtesting | Widen `backtest_trades` pnl_pct/mfe_pct/mae_pct → NUMERIC(12,4), qty → NUMERIC(30,8) (overflow guards) |
+| v41 | Backtesting | Composite indexes on `backtest_trades(run_id, entry_time)` and `(run_id, pnl)` |
+| **v42** | Debug Tracing | `debug_runs`, `debug_account_traces`, `debug_lifecycle_events`, `debug_symbol_decisions`, `debug_exchange_snapshots`, `debug_config` (**renumbered from the branch's v38**) |
+
+### Verification performed (money-critical — no room for error)
+
+- **Backend feature suites:** 557 tests pass across all three features (backtest engine/metrics/service/router/rules/close-rules/filter-chain, kline cache, debug recorder/repository/router/e2e/performance, caching helper/injection/metrics/analyst-prompts).
+- **Full app lifespan:** the complete FastAPI app starts (`app_ready: all services initialised`) and shuts down cleanly with all three features' services wired together; `GET /api/v1/backtest` and `/api/v1/debug/runs` both return 200; 146 routes registered.
+- **Live DB migration:** applied v42 to the real dev DB → `schema_version=42`, all feature tables present.
+- **Frontend:** `tsc --noEmit` clean; production build (`tsc -b && vite build`) succeeds; **644 frontend tests pass** (59 files).
+- **Build-blocking bug fixed:** the backtesting branch shipped a Zod **v3** API call (`invalid_type_error`) while the project ships Zod **v4** — `tsc --noEmit` and vitest both tolerated it, but the production build rejected it. Fixed to the v4 `error` field (1 line, behavior-preserving).
+
+### Pre-existing issues found (NOT caused by this merge — flagged for follow-up)
+
+1. **`tests/backend/test_close_positions_service_unit.py` — 9 failures.** Stale mocks return `{"orderId": …}` without `cumExecQty`, so they fail the fill-confirmation safety check in `_close_single_position`. **Proven pre-existing** by running them against the pre-merge `main` snapshot (identical 9 failures). Money-critical test-quality gap — the mocks should be updated to include `cumExecQty`.
+2. **`tests/backend/test_analysis_service.py` — 21 failures, environmental.** `validate_backend_url` blocks `localhost` because this host resolves it to IPv6 `::1`; this hits **every** `_build_config` test (caching and non-caching alike). `validators.py` is untouched by any merged branch. The caching config logic itself was proven correct by exercising `_build_config` directly with the URL validator patched.
+
+### Recommendation status update (from the 2026-06-04 research)
+
+| # | Recommendation | Previous Status | New Status |
+|---|---------------|----------------|------------|
+| 2 | Raise min_score from 6 to 7 | READY (config) | **NOW TESTABLE** via backtesting before committing live |
+| 3 | Per-position SL / relax batch close | PARTIALLY READY | **NOW TESTABLE** — backtest evaluates all close rules incl. drawdown |
+| 6 | Reduce max_trades from 5 to 3 | READY (config) | **NOW TESTABLE** via backtesting |
+| 9 | Lower EQUITY_RISE_PCT 14%→8% | READY (config) | **NOW TESTABLE** via backtesting |
+| New | Backtesting system | — | **IMPLEMENTED** (code) |
+| New | Auto-trade debug tracing | — | **IMPLEMENTED** (code) |
+| New | Anthropic prompt caching | — | **IMPLEMENTED** (code, default OFF) |
+
+### Next steps for profitability research
+
+1. Use the backtesting system to validate the still-`READY (config change only)` recommendations (#2, #3, #6, #9) against historical scan data **before** changing live config.
+2. Enable debug tracing on a live scan and use the forensic tree to confirm the 2026-06-04 fixes (sell-bias, drift check, sector limit) behave as intended per-symbol.
+3. Run the cache-parity eval, then enable prompt caching to lower the cost of large research sweeps.
+4. Resolve the two pre-existing test issues above before the next production deploy.
+
+---
+
 <!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
+
+
+
+
 
