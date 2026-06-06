@@ -72,7 +72,9 @@ class SimulationState:
     # Tracking
     signals_processed: int = 0
     signals_filtered: int = 0
-    signals_entered: int = 0
+    signals_entered: int = 0  # LIFETIME entries across the whole backtest (stats + target_goal)
+    scan_entered: int = 0  # entries in the CURRENT scan only — reset each scan; gates max_trades
+                           # (production creates a fresh executor per scan, so max_trades is per-cycle)
 
 
 class BacktestEngine:
@@ -164,6 +166,27 @@ class BacktestEngine:
             scan_signals = scans[scan_id]
             current_time = scan_signals[0]["signal_time"]
 
+            # Reset the per-scan entry counter. max_trades caps NEW trades per scan
+            # (cycle), mirroring production, which builds a fresh AutoTradeExecutor
+            # per scan with trades_executed=0. The lifetime signals_entered is left
+            # untouched (it drives the backtest-level target_goal early-stop + stats).
+            state.scan_entered = 0
+
+            # Re-anchor the cycle equity reference when the book is empty (a genuinely
+            # fresh cycle). Production fetches the CURRENT wallet balance into
+            # base_capital at each scan's init_balances and uses it as the
+            # EQUITY_DROP/EQUITY_RISE reference_value, so every fresh cycle measures
+            # drawdown/profit from the wallet AS OF THAT SCAN. cycle_start_equity is
+            # otherwise only zeroed when an equity rule itself terminates a cycle, so
+            # a cycle that closed via TP/SL/trailing/max_duration/liquidation would
+            # leave a STALE prior-cycle baseline frozen in — making the next cycle's
+            # equity_drop/close_on_profit measure against the wrong reference. Zeroing
+            # here lets the next _open_position re-seed it to the then-current wallet.
+            # When positions carry over (skip_if_positions_open=False with an open
+            # book), the cycle is still live, so we preserve the existing anchor.
+            if not state.open_positions:
+                state.cycle_start_equity = 0.0
+
             # --- CYCLE LOCK (Task 3.9) ---
             # If skip_if_positions_open=True AND positions exist → skip entire scan
             if config.get("skip_if_positions_open") and state.open_positions:
@@ -180,9 +203,17 @@ class BacktestEngine:
                     on_progress(min(pct, 99))
                 continue
 
-            # Refresh sizing_capital at each scan (matches production init_balances per scan)
-            # Clamp to >= 0 so a negative wallet doesn't produce negative position sizes
-            state.sizing_capital = max(0.0, state.wallet_balance)
+            # Refresh sizing_capital at each scan (matches production init_balances
+            # per scan). Production reads totalAvailableBalance = wallet MINUS the
+            # margin locked by already-open positions, so when a prior cycle's
+            # positions are still open (skip_if_positions_open=False) the next scan
+            # sizes off the REDUCED available balance. Mirror that by subtracting the
+            # sum of open locked_margin — otherwise the backtest would oversize every
+            # scan that carries open positions (e.g. ~capital_pct% per carried
+            # position), breaking the <1% deviation requirement. Clamp to >= 0 so a
+            # negative available balance can't produce negative position sizes.
+            locked_margin = sum(p.locked_margin for p in state.open_positions)
+            state.sizing_capital = max(0.0, state.wallet_balance - locked_margin)
 
             # Process signals through filter chain
             if execution_mode == "batch":
@@ -351,6 +382,25 @@ class BacktestEngine:
             if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
                 if self._open_position(config, sig, klines, state, current_time):
                     entered += 1
+
+        # fill_to_max_trades backfill — mirrors production's fill_immediate_remaining
+        # (auto_trade_service), which after the strict immediate pass relaxes the
+        # filters to top the cycle up to max_trades, ranking the leftover signals by
+        # abs(score). Without this the backtest under-fills any immediate-mode config
+        # that enables fill_to_max_trades, diverging from real trading.
+        if config.get("fill_to_max_trades") and state.scan_entered < config.get("max_trades", 999):
+            open_syms = {p.symbol for p in state.open_positions}
+            remaining = [
+                s for s in scan_signals
+                if s.get("ticker") not in open_syms and s.get("direction", "hold") != "hold"
+            ]
+            remaining.sort(key=lambda s: abs(s.get("score", 0)), reverse=True)
+            for sig in remaining:
+                if state.scan_entered >= config.get("max_trades", 999):
+                    break
+                if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True):
+                    if self._open_position(config, sig, klines, state, current_time, relaxed=True):
+                        entered += 1
         return entered
 
     def _apply_filter_chain(
@@ -421,8 +471,12 @@ class BacktestEngine:
                 state.signals_filtered += 1
                 return False
 
-        # 9. Sector concentration limit (simplified — no sector service in backtest)
-        # TODO: Could add sector lookup if needed. For now, skip.
+        # 9. Sector concentration limit — NOT enforced in the backtest engine.
+        # Real sector classification requires the IO-bound sector service
+        # (CoinGecko/LLM/DB cache), which the pure synchronous engine cannot call.
+        # max_same_sector is therefore intentionally a no-op here; the service
+        # surfaces a `max_same_sector_not_enforced` warning when it is set so the
+        # user knows results may diverge from live trading (which DOES enforce it).
 
         # 10. Adaptive blacklist (computed from backtest's own trade history)
         if config.get("adaptive_blacklist_enabled"):
@@ -458,13 +512,16 @@ class BacktestEngine:
                     state.signals_filtered += 1
                     return False
 
-        # 14. Max trades limit
+        # 14. Max trades limit (PER SCAN/CYCLE — matches production, which resets
+        # trades_executed=0 for each scan's executor). Uses the per-scan counter so
+        # a later scan can open fresh trades even after earlier cycles filled up.
         max_trades = config.get("max_trades", 999)
-        if state.signals_entered >= max_trades:
+        if state.scan_entered >= max_trades:
             state.signals_filtered += 1
             return False
 
-        # 15. Target goal (trade_count type)
+        # 15. Target goal (trade_count type) — backtest-level early stop, so this
+        # legitimately uses the LIFETIME entry count, not the per-scan one.
         target_type = config.get("target_goal_type")
         target_value = config.get("target_goal_value")
         if target_type == "trade_count" and target_value:
@@ -477,7 +534,12 @@ class BacktestEngine:
             state.signals_filtered += 1
             return False
 
-        # 17. Price drift validation
+        # 17. Price drift validation — skip only if price already moved too far IN THE
+        # SIGNAL'S DIRECTION (the move is "consumed"). Mirrors production exactly
+        # (auto_trade_service._evaluate_result): a signed, direction-aware check, NOT a
+        # symmetric abs() one. A buy whose price has DROPPED is a BETTER entry and is
+        # admitted (production trades it); only a buy that already ran UP past the cap
+        # is rejected. Uses the raw signal direction (production checks pre-reverse).
         max_drift = config.get("max_price_drift_pct")
         if max_drift is not None:
             analysis_price = signal.get("analysis_price")
@@ -490,8 +552,11 @@ class BacktestEngine:
                         current_price = k["close"]
                         break
                 if current_price is not None:
-                    drift = abs(current_price - analysis_price) / analysis_price * 100
-                    if drift > max_drift:
+                    drift_pct = (current_price - analysis_price) / analysis_price * 100
+                    if direction in ("buy", "long") and drift_pct > max_drift:
+                        state.signals_filtered += 1
+                        return False
+                    if direction in ("sell", "short") and drift_pct < -max_drift:
                         state.signals_filtered += 1
                         return False
 
@@ -528,7 +593,8 @@ class BacktestEngine:
                 entry_base_price = k["close"]
                 break
 
-        # Apply slippage
+        # Apply slippage to get the actual ENTRY FILL price (used for PnL, fee, and
+        # margin — mirrors production filling a market order at the slipped avgPrice).
         side = determine_side(direction, config.get("direction", "straight"))
         entry_price = apply_slippage(entry_base_price, side, config.get("slippage_bps", 2))
 
@@ -540,11 +606,15 @@ class BacktestEngine:
         locked = sum(p.locked_margin for p in state.open_positions)
         available = state.wallet_balance - locked
 
+        # Size off the UN-SLIPPED mark (entry_base_price), matching production, which
+        # computes qty = usdt_amount × leverage / mark_price (accounts_service), NOT
+        # off the slipped fill. Sizing off the slipped price would understate qty and
+        # (combined with the TP/SL anchor below) bias every exit in the trader's favor.
         qty = compute_position_size(
             sizing_capital=state.sizing_capital,
             capital_pct=capital_pct,
             leverage=leverage,
-            price=entry_price,
+            price=entry_base_price,
             qty_step=0.001,  # TODO: get from instrument cache
             min_qty=0.001,   # TODO: get from instrument cache
             available_balance=available,
@@ -553,12 +623,19 @@ class BacktestEngine:
             state.signals_filtered += 1
             return False
 
-        # Compute TP/SL
+        # Compute TP/SL — anchored to the UN-SLIPPED mark (entry_base_price), matching
+        # production (tp = mark_price × (1 ± tp_pct/100), accounts_service). The entry
+        # FILLS at the slipped entry_price, so realized PnL = (mark-anchored TP −
+        # slipped fill), i.e. slightly less than the nominal TP% — exactly as live
+        # trading. Anchoring TP/SL to the slipped price instead would hand the trader
+        # the full nominal move plus the slippage, a systematic favorable bias.
         tp_pct = config.get("take_profit_pct", 150.0)
         sl_pct = config.get("stop_loss_pct", 100.0)
-        tp_price, sl_price = compute_tp_sl(entry_price, side, tp_pct, sl_pct, leverage)
+        tp_price, sl_price = compute_tp_sl(entry_base_price, side, tp_pct, sl_pct, leverage)
 
-        # Compute liquidation price
+        # Compute liquidation price — anchored to the SLIPPED entry_price (the fill),
+        # because Bybit isolated-margin liquidation is computed off the average fill
+        # price (avgPrice), not the mark. Keeping this slipped mirrors the exchange.
         liq_price = compute_liquidation_price(entry_price, side, leverage)
 
         # Compute entry fee
@@ -591,7 +668,8 @@ class BacktestEngine:
             max_adverse_price=entry_price,
         )
         state.open_positions.append(position)
-        state.signals_entered += 1  # Increment immediately so max_trades filter works
+        state.signals_entered += 1  # lifetime counter (stats + target_goal early-stop)
+        state.scan_entered += 1  # per-scan counter (gates max_trades, reset each scan)
 
         # Set cycle_start_equity on first position of a cycle
         if state.cycle_start_equity == 0:
@@ -630,15 +708,6 @@ class BacktestEngine:
 
         win_rate = (wins / total) * 100.0
         return win_rate < max_win_rate
-
-    def _compute_total_unrealized(self, state: SimulationState, current_price_unused: float) -> float:
-        """Compute total unrealized PnL across all open positions."""
-        from backend.services.trading_rules import compute_unrealized_pnl
-        total = 0.0
-        for pos in state.open_positions:
-            # Use entry_price as proxy when no current price available
-            total += compute_unrealized_pnl(pos.entry_price, pos.entry_price, pos.qty, pos.side)
-        return total
 
     def _evaluate_candles_until(
         self,
@@ -907,8 +976,6 @@ class BacktestEngine:
         for pos in state.open_positions:
             # Use per-symbol latest price (not a single symbol's close)
             current_price = latest_prices.get(pos.symbol, pos.entry_price)
-            # Approximation: use same close_price for simplicity in per-symbol loop
-            # In production this uses actual mark price per symbol
             upnl = compute_unrealized_pnl(pos.entry_price, current_price, pos.qty, pos.side)
             total_upnl += upnl
             if upnl < 0:

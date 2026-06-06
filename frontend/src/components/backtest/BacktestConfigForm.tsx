@@ -454,7 +454,7 @@ export function BacktestConfigForm({
       <Section title="Risk Limits" defaultOpen={false} forceOpen={riskLimitsHasError}>
         <div className={GRID}>
           <NumberField control={control} name="max_same_direction" label="Max Same Direction" nullable error={fieldError("max_same_direction")} />
-          <NumberField control={control} name="max_same_sector" label="Max Same Sector" nullable error={fieldError("max_same_sector")} />
+          <NumberField control={control} name="max_same_sector" label="Max Same Sector (not simulated)" nullable error={fieldError("max_same_sector")} />
           <NumberField control={control} name="max_signal_age_minutes" label="Max Signal Age (min)" nullable error={fieldError("max_signal_age_minutes")} />
           <NumberField control={control} name="max_price_drift_pct" label="Max Price Drift (%)" nullable error={fieldError("max_price_drift_pct")} />
         </div>

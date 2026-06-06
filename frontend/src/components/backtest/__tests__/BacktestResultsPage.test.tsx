@@ -340,6 +340,63 @@ describe("BacktestResultsPage", () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it("surfaces result warnings on a SUCCESSFUL run (with metrics)", async () => {
+    // A completed run that placed trades but carries a warning (e.g. the
+    // max_same_sector limit isn't simulated) must surface it — not bury it behind
+    // a clean dashboard. Regression guard: warnings used to render only on the
+    // no-results path.
+    server.use(
+      http.get("/api/v1/backtest/run-123", () =>
+        HttpResponse.json(
+          run({
+            results: {
+              metrics: metrics(),
+              equity_curve: [{ ts: "2026-01-01T00:00:00Z", equity: 10000 }],
+              summary: {},
+              warnings: ["max_same_sector_not_enforced"],
+            },
+          }),
+        ),
+      ),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({ trades: [], total: 0, page: 1 }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    expect(await screen.findByTestId("metrics-grid")).toBeInTheDocument();
+    const banner = screen.getByTestId("result-warnings");
+    expect(banner).toHaveTextContent(/Max Same Sector.*not simulated/i);
+  });
+
+  it("shows a retry affordance when the trades fetch fails", async () => {
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
+      http.get("/api/v1/backtest/run-123/trades", () => new HttpResponse(null, { status: 500 })),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /trades/i }));
+    expect(await screen.findByText(/Failed to load trades/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No trades to display/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it("shows the trades-fetch error on the Analysis tab too (not silent empty charts)", async () => {
+    // Both Trades and Analysis depend on the same trades query. A failed fetch must
+    // surface on Analysis as well, rather than rendering empty charts as if the run
+    // genuinely had no trades. Regression guard: the error affordance was originally
+    // only added to the Trades tab.
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
+      http.get("/api/v1/backtest/run-123/trades", () => new HttpResponse(null, { status: 500 })),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /analysis/i }));
+    expect(await screen.findByText(/Failed to load trades/i)).toBeInTheDocument();
+    // The analysis charts must NOT render on a fetch error.
+    expect(screen.queryByTestId("backtest-analysis-tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
   it("shows a 'no trades' explanation for a completed run with empty metrics", async () => {
     // A no-signals run yields metrics={} which the service augments with a few
     // buy&hold keys → truthy but field-less. The page must route this to the

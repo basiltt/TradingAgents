@@ -690,6 +690,13 @@ class BacktestService:
             )
             engine_done = True
 
+            # Surface config knobs the engine cannot honor so results aren't
+            # silently misleading. max_same_sector needs the IO-bound sector
+            # service (unavailable to the pure engine), so live trading enforces it
+            # but the backtest does not — warn when the user set it.
+            if config.get("max_same_sector") is not None and result.warnings is not None:
+                result.warnings.append("max_same_sector_not_enforced")
+
             # Buy & Hold benchmark + excess return (Phase 4 carry-forward):
             # compare the strategy against simply holding BTC over the same window.
             await self._attach_buy_hold(config, result)

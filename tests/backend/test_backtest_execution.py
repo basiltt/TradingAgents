@@ -191,6 +191,42 @@ class TestExecution:
         assert service._active_slots == 0
 
     @pytest.mark.asyncio
+    async def test_max_same_sector_emits_not_enforced_warning(self, mock_db):
+        """max_same_sector needs the IO-bound sector service the pure engine can't
+        call, so the backtest does not enforce it. When the user sets it, the
+        service must append a 'max_same_sector_not_enforced' warning so results
+        aren't silently misleading (live trading DOES enforce the limit)."""
+        from unittest.mock import patch, AsyncMock
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+        service = BacktestService(db=mock_db, kline_cache=None)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+
+        captured = {}
+
+        async def fake_persist(run_id, result):
+            captured["warnings"] = list(result.warnings or [])
+
+        sim_result = SimulationResult(
+            trades=[], equity_curve=[{"ts": None, "equity": 10000.0}],
+            metrics={"net_profit": 0.0}, warnings=[], filter_stats={},
+        )
+        cfg = _make_config(max_same_sector=2)
+        with patch.object(service, "_load_signals", new=AsyncMock(return_value=[
+            {"ticker": "BTCUSDT", "signal_time": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+        ])):
+            with patch.object(service, "_load_klines", new=AsyncMock(return_value={
+                "BTCUSDT": [{"open_time": datetime(2026, 1, 1, tzinfo=timezone.utc), "close": 50000.0}]
+            })):
+                with patch("backend.services.backtest_engine.BacktestEngine.run", return_value=sim_result):
+                    with patch.object(service, "_persist_results", side_effect=fake_persist):
+                        with patch.object(service, "_attach_buy_hold", new=AsyncMock()):
+                            await service._execute_backtest("run-1", cfg)
+
+        assert "max_same_sector_not_enforced" in captured["warnings"]
+
+    @pytest.mark.asyncio
     async def test_persist_json_safes_equity_curve(self, mock_db):
         """_persist_results must route the equity curve through _json_safe: raw
         datetimes become ISO-8601 with a 'T' separator (Safari-parseable) and any

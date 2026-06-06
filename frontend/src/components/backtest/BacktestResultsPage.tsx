@@ -24,6 +24,36 @@ export interface BacktestResultsPageProps {
   onCompare?: (runIds: string[]) => void;
 }
 
+/** Friendly copy for engine/service warning codes. Unknown codes fall back to
+ * the raw code so nothing is silently dropped. */
+const WARNING_LABELS: Record<string, string> = {
+  no_signals_found: "No scan signals matched this date range and filters.",
+  max_same_sector_not_enforced:
+    "The “Max Same Sector” limit is not simulated — results may differ from live trading, which enforces it.",
+};
+
+function warningLabel(code: string): string {
+  if (WARNING_LABELS[code]) return WARNING_LABELS[code];
+  // Any other code (metrics diagnostics like "metrics_dropped_2_malformed_trades",
+  // or a future engine code like "funding_rate_estimated") → de-underscored so it
+  // reads as words rather than raw snake_case, and nothing is silently dropped.
+  return code.replace(/_/g, " ");
+}
+
+/** Error + retry affordance for the lazy trades fetch. Shared by the Trades and
+ * Analysis tabs (both depend on the same query) so a failed fetch never silently
+ * degrades to an empty table / empty charts on either tab. */
+function TradesFetchError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 py-8 text-center">
+      <p className="text-sm text-[var(--neu-danger)]">Failed to load trades.</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 /** Sticky strip of the 4 headline metrics shown above the tabs. */
 function HeroMetrics({
   netProfit,
@@ -260,6 +290,25 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
         />
       ) : null}
 
+      {/* Result warnings banner — surfaced for ANY completed run with metrics so
+          approximations (e.g. max_same_sector not simulated) and metrics
+          diagnostics aren't silently hidden behind a clean dashboard. The
+          no-results empty state handles the no_signals_found case separately. */}
+      {completed && metrics && resultWarnings.length > 0 ? (
+        <div
+          role="status"
+          data-testid="result-warnings"
+          className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-warning)]/40 bg-[color:var(--neu-warning)]/5 px-4 py-3"
+        >
+          <p className="text-[0.8rem] font-semibold text-[var(--neu-warning)]">Notes about these results</p>
+          <ul className="mt-1 list-inside list-disc text-[0.78rem] text-[var(--neu-text-muted)]">
+            {resultWarnings.map((w) => (
+              <li key={w}>{warningLabel(w)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {/* Body by status */}
       {run.status === "pending" || run.status === "running" ? (
         <RunningState progress={run.progress_pct} />
@@ -315,6 +364,8 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
           <TabsContent value="trades">
             {tradesQuery.isLoading ? (
               <Skeleton className="h-64 w-full" />
+            ) : tradesQuery.isError ? (
+              <TradesFetchError onRetry={() => tradesQuery.refetch()} />
             ) : tradesQuery.data ? (
               <div className="flex flex-col gap-2">
                 {tradesQuery.data.total > tradesQuery.data.trades.length ? (
@@ -335,6 +386,8 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
           <TabsContent value="analysis">
             {tradesQuery.isLoading ? (
               <Skeleton className="h-64 w-full" />
+            ) : tradesQuery.isError ? (
+              <TradesFetchError onRetry={() => tradesQuery.refetch()} />
             ) : (
               <BacktestAnalysisTab trades={tradesQuery.data?.trades ?? []} />
             )}
@@ -355,11 +408,13 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
               ? "No scan signals matched this date range and filters. Widen the range, relax the filters, or pick a different signal source."
               : "This backtest completed but produced no usable results."}
           </p>
-          {resultWarnings.length > 0 ? (
+          {resultWarnings.filter((w) => w !== "no_signals_found").length > 0 ? (
             <ul className="mt-3 list-inside list-disc text-[0.78rem] text-[var(--neu-text-soft)]">
-              {resultWarnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
+              {resultWarnings
+                .filter((w) => w !== "no_signals_found")
+                .map((w) => (
+                  <li key={w}>{warningLabel(w)}</li>
+                ))}
             </ul>
           ) : null}
         </div>

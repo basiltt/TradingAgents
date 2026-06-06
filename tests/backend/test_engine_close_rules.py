@@ -240,6 +240,82 @@ class TestEquityCloseRules:
             assert eth_trade["close_reason"] == "equity_drop_smart"
             assert eth_trade["pnl"] < 0
 
+    def test_equity_drop_reference_reanchors_each_cycle(self):
+        """cycle_start_equity must re-anchor to the CURRENT wallet at the start of
+        each fresh cycle — matching production, which re-reads the wallet balance
+        into base_capital (the EQUITY_DROP reference) at every scan's init_balances.
+
+        Regression guard (same bug class as max_trades-per-cycle): cycle_start_equity
+        was set only when ==0 and zeroed ONLY by the equity rules themselves, so a
+        cycle that closed via SL/TP/trailing/max_duration/liquidation left a STALE
+        prior-cycle baseline frozen in. The next cycle's equity_drop then measured
+        against that stale reference.
+
+        Scenario (hand-verified to reproduce the bug): scan-1 loses ~10.5% of the
+        wallet via SL (10000 → ~8913), leaving a stale ~9956 baseline. Scan-2 opens a
+        HEALTHY (flat) position. With the BUG, scan-2 equity (~8913) vs the stale
+        ~9956 reference = -10.5% → EQUITY_DROP wrongly force-closes the healthy fresh
+        position on its first candle. With the FIX, the reference re-anchors to the
+        scan-2 wallet, so the flat position does NOT trigger equity_drop.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        # High capital + a wide-ish SL so scan-1's loss is a LARGE fraction of the
+        # wallet (>max_drawdown_pct), which is what surfaces the stale-reference bug.
+        config = _make_config(
+            max_drawdown_pct=5.0,
+            leverage=10,
+            capital_pct=80.0,
+            take_profit_pct=500.0,   # wide → only SL or equity_drop can close
+            stop_loss_pct=12.0,      # scan-1 SL stops out at a large $ loss
+            slippage_bps=0,
+            skip_if_positions_open=False,
+        )
+
+        scan1 = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan2 = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, scan_id="scan-1", signal_time=scan1),
+            _make_signal(ticker="BTCUSDT", id=2, scan_id="scan-2", signal_time=scan2),
+        ]
+
+        c = []
+        # scan-1: 50000 → 44400 over 8 candles (~-11% → past the 12%-leveraged SL),
+        # losing ~10.5% of the wallet.
+        for i in range(8):
+            px = 50000.0 - i * 800.0
+            c.append({"open_time": scan1 + timedelta(minutes=i * 5),
+                      "open": px, "high": px + 30, "low": px - 850, "close": px - 800, "volume": 100.0})
+        # Bridge flat candles to scan-2 (stable ~44000 so the next entry is clean).
+        bridge_start = scan1 + timedelta(minutes=60)
+        for i in range(6):
+            c.append({"open_time": bridge_start + timedelta(minutes=i * 5),
+                      "open": 44000.0, "high": 44050.0, "low": 43950.0, "close": 44000.0, "volume": 100.0})
+        # scan-2: FLAT around 44000 (healthy, ~breakeven — must NOT equity_drop).
+        for i in range(6):
+            c.append({"open_time": scan2 + timedelta(minutes=i * 5),
+                      "open": 44000.0, "high": 44100.0, "low": 43900.0, "close": 44000.0, "volume": 100.0})
+        klines = {"BTCUSDT": c}
+
+        result = engine.run(config, signals, klines)
+
+        # scan-1's trade closed at a loss (SL), shrinking the wallet well past 5%.
+        assert len(result.trades) >= 1
+        scan1_trade = [t for t in result.trades if t.get("scan_id") == "scan-1"][0]
+        assert scan1_trade["close_reason"] in ("sl", "liquidation")
+        assert scan1_trade["pnl"] < 0
+
+        # The KEY assertion: scan-2's healthy flat position must NOT be force-closed by
+        # equity_drop. Under the bug it WOULD (stale ~9956 ref → instant -10.5%).
+        scan2_trades = [t for t in result.trades if t.get("scan_id") == "scan-2"]
+        assert scan2_trades, "scan-2 should have opened a position"
+        for t in scan2_trades:
+            assert t["close_reason"] != "equity_drop", (
+                "scan-2's fresh position was force-closed by a STALE cycle_start_equity "
+                "reference from scan-1 — equity_drop must re-anchor per cycle"
+            )
+
 
 class TestTrailingProfit:
     """Test TRAILING_PROFIT close rule state machine."""

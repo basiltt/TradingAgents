@@ -287,6 +287,42 @@ class TestGoldenScenarios:
         )
         _assert_reconciles(result, cfg)
 
+    def test_golden_trailing_profit_close(self):
+        """A position that rallies (activating the trailing stop) then pulls back
+        closes via TRAILING_PROFIT and reconciles. Covers the trailing close-rule
+        path (previously untested)."""
+        cfg = _config(take_profit_pct=500.0, stop_loss_pct=500.0, trailing_profit_pct=2.0)
+        prices = [50000 + i * 150 for i in range(40)] + [56000 - i * 100 for i in range(40)]
+        klines = {"BTCUSDT": [_candle(5 * i, p, p + 100, p - 100, p) for i, p in enumerate(prices)]}
+        result = BacktestEngine().run(cfg, [_signal()], klines)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "trailing_profit"
+        _assert_reconciles(result, cfg)
+
+    def test_golden_equity_drop_close(self):
+        """A position whose equity falls past max_drawdown_pct closes via
+        EQUITY_DROP. Covers the equity-based close-rule path (previously untested)."""
+        cfg = _config(take_profit_pct=500.0, stop_loss_pct=500.0, max_drawdown_pct=3.0)
+        prices = [50000 - i * 100 for i in range(60)]
+        klines = {"BTCUSDT": [_candle(5 * i, p, p + 50, p - 50, p) for i, p in enumerate(prices)]}
+        result = BacktestEngine().run(cfg, [_signal()], klines)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "equity_drop"
+        _assert_reconciles(result, cfg)
+
+    def test_golden_liquidation_close(self):
+        """A high-leverage position with an adverse move beyond the liquidation
+        distance closes via LIQUIDATION (full margin + entry-fee loss) and still
+        reconciles. Covers the liquidation path (previously untested)."""
+        cfg = _config(leverage=100, take_profit_pct=500.0, stop_loss_pct=500.0)
+        prices = [50000 - i * 60 for i in range(40)]
+        klines = {"BTCUSDT": [_candle(5 * i, p, p + 20, p - 100, p) for i, p in enumerate(prices)]}
+        result = BacktestEngine().run(cfg, [_signal()], klines)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "liquidation"
+        assert result.trades[0]["pnl"] < 0
+        _assert_reconciles(result, cfg)
+
     def test_golden_funding_reconciles(self):
         """With the fixed_8h funding model, a position held across several funding
         windows accrues funding that mutates the wallet. The recorded trade pnl
@@ -328,3 +364,125 @@ class TestGoldenScenarios:
             _config(max_price_drift_pct=50.0), [_signal(price=50000.0)], _rising_klines(start=50000.0)
         )
         assert len(admitted.trades) == 1
+
+    def test_golden_price_drift_is_directional(self):
+        """Price drift is DIRECTION-AWARE, matching production (auto_trade_service):
+        only reject when price already moved too far IN the signal's direction (the
+        move is "consumed"/chasing). A buy whose price has DROPPED below the analysis
+        price is a BETTER entry and must be ADMITTED — the old symmetric abs() check
+        wrongly rejected it, diverging from real trading. Regression guard for that fix.
+        """
+        # BUY, price DROPPED 20% (analysis 60000, klines at 48000) → favorable entry.
+        # Old abs() logic: |drift|=20% > 1% → WRONGLY filtered. New signed logic: a buy
+        # only rejects on a POSITIVE drift past the cap, so this is ADMITTED.
+        admitted_buy = BacktestEngine().run(
+            _config(max_price_drift_pct=1.0),
+            [_signal(direction="buy", price=60000.0)],
+            _rising_klines(start=48000.0),
+        )
+        assert len(admitted_buy.trades) == 1, "a buy that got a better (lower) entry must be admitted"
+
+        # BUY, price RAN UP 20% past the cap (analysis 50000, klines 60000) → chasing → rejected.
+        rejected_buy = BacktestEngine().run(
+            _config(max_price_drift_pct=1.0),
+            [_signal(direction="buy", price=50000.0)],
+            _rising_klines(start=60000.0),
+        )
+        assert rejected_buy.trades == [], "a buy chasing a consumed up-move must be rejected"
+
+        # SELL, price DROPPED 20% past the cap (analysis 60000, klines 48000) → move
+        # consumed downward → rejected (mirror of the buy-up case). score<0 → sell side.
+        rejected_sell = BacktestEngine().run(
+            _config(max_price_drift_pct=1.0),
+            [_signal(direction="sell", price=60000.0, sid=2)],
+            _falling_klines(start=48000.0),
+        )
+        assert rejected_sell.trades == [], "a sell chasing a consumed down-move must be rejected"
+
+    def test_golden_slippage_anchors_tp_sl_and_qty_to_unslipped_mark(self):
+        """Slippage parity with production: the entry FILLS at the slipped price (used
+        for PnL), but qty and TP/SL are anchored to the UN-SLIPPED mark — exactly like
+        production (accounts_service: qty = usdt×lev/mark_price; tp = mark×(1±pct)).
+
+        Regression guard: the engine previously anchored qty AND TP/SL to the slipped
+        entry, handing the trader the full nominal move PLUS the slippage on every
+        exit — a systematic favorable bias (~lev×slippage per trade) that breaches the
+        <1% deviation requirement over many trades.
+
+        Setup: mark 50000, slippage 10 bps → fill 50050. leverage 10, capital_pct 20 →
+        qty must be 0.4 (off the 50000 mark, NOT 0.3996 off the 50050 fill). TP 50% at
+        10x = +5% price → anchored to mark = 52500 (NOT 50050×1.05 = 52552.5). Fees off
+        (0%) to isolate the price math. Realized PnL = 0.4×(52500−50050) = 980.
+        """
+        cfg = _config(
+            leverage=10, capital_pct=20.0,
+            take_profit_pct=50.0, stop_loss_pct=500.0,
+            slippage_bps=10, fee_rate_pct=0.0,
+        )
+        # Rising candles that reach the mark-anchored TP (52500) but NOT the slipped
+        # one (52552.5) would be ambiguous, so go well past both; the exit price pins
+        # which anchor was used.
+        klines = {"BTCUSDT": [
+            _candle(5 * i, 50000.0 + i * 100, 50000.0 + i * 100 + 300, 50000.0 + i * 100 - 50, 50000.0 + i * 100)
+            for i in range(40)
+        ]}
+        result = BacktestEngine().run(cfg, [_signal(price=50000.0)], klines)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        assert trade["close_reason"] == "tp"
+        # Entry fill is the SLIPPED price (for PnL) — production fills the market order
+        # at avgPrice.
+        assert trade["entry_price"] == pytest.approx(50050.0, rel=REL_TOL)
+        # qty anchored to the UN-SLIPPED mark (0.4), not the slipped fill (~0.3996).
+        assert trade["qty"] == pytest.approx(0.4, rel=REL_TOL)
+        # TP exit anchored to the UN-SLIPPED mark: 50000 × 1.05 = 52500 (NOT 52552.5).
+        assert trade["exit_price"] == pytest.approx(52500.0, rel=REL_TOL)
+        # Realized PnL = qty × (mark_TP − slipped_fill) = 0.4 × (52500 − 50050) = 980,
+        # i.e. slightly LESS than the nominal +20% on margin — matching live trading.
+        assert trade["pnl"] == pytest.approx(980.0, rel=REL_TOL)
+        _assert_reconciles(result, cfg)
+
+    def test_golden_close_on_profit_close(self):
+        """A cycle whose equity rises past the close_on_profit threshold closes via
+        CLOSE_ON_PROFIT (the EQUITY_RISE-style take-profit-on-cycle rule) and
+        reconciles. Covers the close_on_profit equity path with the golden
+        exact-reconciliation guard the other close rules get."""
+        # effective threshold = (close_on_profit_pct/100) * target_goal_value
+        #                     = (5/100) * 100 = 5.0  → fires at +5% cycle equity.
+        # A long at lev 10 / 10% capital holds 0.2 BTC; a ~$2.5k price rise yields
+        # ~+$500 (>5% of 10k) before the wide 500% TP (needs +50% price) is reached.
+        cfg = _config(take_profit_pct=500.0, stop_loss_pct=500.0, close_on_profit_pct=5.0)
+        result = BacktestEngine().run(cfg, [_signal()], _rising_klines())
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "close_on_profit"
+        # It is a winning cycle (closed BECAUSE equity rose past the threshold).
+        assert result.metrics["net_profit"] > 0
+        _assert_reconciles(result, cfg)
+
+    def test_golden_breakeven_timeout_close(self):
+        """BREAKEVEN_TIMEOUT does NOT force-close; it lowers TP to the breakeven
+        price after the timeout. A subsequent small uptick then closes the position
+        via that breakeven TP for a roughly flat result. Covers the breakeven path
+        with the golden exact-reconciliation guard."""
+        # Wide TP/SL (500% → needs a 50% move) so only the breakeven-lowered TP can
+        # fire. breakeven_timeout_hours=1.0 → after 12 flat 5m candles TP drops to
+        # ~entry*(1+1/(lev*100)) = 50050; a later 50100 candle then hits it.
+        cfg = _config(
+            take_profit_pct=500.0, stop_loss_pct=500.0, breakeven_timeout_hours=1.0
+        )
+        klines = {
+            "BTCUSDT": (
+                [_candle(5 * i, 50000.0, 50010.0, 49990.0, 50000.0) for i in range(14)]
+                + [_candle(5 * i, 50100.0, 50150.0, 50050.0, 50100.0) for i in range(14, 30)]
+            )
+        }
+        result = BacktestEngine().run(cfg, [_signal()], klines)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        # The engine realises breakeven by moving the TP, so the close_reason is "tp"
+        # (at the breakeven price), and the net result is approximately flat.
+        assert trade["close_reason"] == "tp"
+        assert trade["exit_price"] == pytest.approx(50050.0, rel=1e-3)
+        # Near-breakeven: the result is a small fraction of starting capital.
+        assert abs(result.metrics["net_profit"]) < 0.005 * cfg["starting_capital"]
+        _assert_reconciles(result, cfg)
