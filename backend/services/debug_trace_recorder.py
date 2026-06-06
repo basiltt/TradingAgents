@@ -173,3 +173,139 @@ class DebugTraceRecorder:
             self._append(ctx, rec)
         except Exception:
             logger.debug("emit_account_trace_failed", exc_info=True)
+
+    # ── run open/close (async — called off the hot path) ──────
+    async def open_run(self, ctx: RunContext, *, config_snapshot: Optional[dict] = None,
+                       scan_started_at=None, scan_completed_at=None) -> None:
+        try:
+            ctx.run_id = await self._repo.create_run(
+                scan_id=ctx.scan_id, trigger_source=ctx.trigger_source,
+                schedule_id=ctx.schedule_id, schedule_execution_id=ctx.schedule_execution_id,
+                scan_started_at=scan_started_at, scan_completed_at=scan_completed_at,
+                config_snapshot=config_snapshot or {},
+            )
+        except Exception:
+            logger.warning("debug_open_run_failed", exc_info=True)
+            ctx.run_id = None  # disables emits for this run; trading unaffected
+
+    async def close_run(self, ctx: RunContext, *, phase_reached: str,
+                        total_symbols: int = 0, completed_symbols: int = 0,
+                        failed_symbols: int = 0, num_accounts: int = 0) -> None:
+        try:
+            await self.drain_once()
+            if ctx.run_id is not None:
+                await self._repo.finalize_run(
+                    ctx.run_id, phase_reached=phase_reached,
+                    total_symbols=total_symbols, completed_symbols=completed_symbols,
+                    failed_symbols=failed_symbols, num_accounts=num_accounts,
+                    dropped_event_count=ctx.dropped_event_count,
+                )
+        except Exception:
+            logger.warning("debug_close_run_failed", exc_info=True)
+
+    # ── drainer ───────────────────────────────────────────────
+    async def drain_once(self) -> None:
+        # Serialize drains: drain_once is called from the periodic loop, close_run,
+        # and shutdown. Without this lock, two drains could run overlapping bulk
+        # inserts on the pool. The lock is created lazily (no event loop at __init__).
+        if self._drain_lock is None:
+            import asyncio
+            self._drain_lock = asyncio.Lock()
+        async with self._drain_lock:
+            if not self._buffer:
+                return
+            # Snapshot and clear quickly (single-threaded event loop — safe; the
+            # snapshot+clear has no await between the two statements).
+            batch = list(self._buffer)
+            self._buffer.clear()
+            grouped: dict[str, list[dict]] = {
+                "account_traces": [], "lifecycle_events": [],
+                "symbol_decisions": [], "exchange_snapshots": [],
+            }
+            for rec in batch:
+                grouped.get(rec["_table"], []).append(rec)
+            # Insert each table INDEPENDENTLY so a failure in one table (poison record
+            # or transient error) does not discard the other three. Data for a failed
+            # table is lost for this batch — logged — but trading is unaffected.
+            for table, rows in grouped.items():
+                if not rows:
+                    continue
+                try:
+                    await self._repo.bulk_insert(**{table: rows})
+                except Exception:
+                    logger.warning("debug_drain_table_failed", extra={"table": table, "count": len(rows)}, exc_info=True)
+
+    async def refresh_config(self) -> None:
+        try:
+            cfg = await self._repo.get_config()
+            self._enabled = bool(cfg.get("tracing_enabled", True))
+            self._retention_days = int(cfg.get("retention_days", 60))
+            self._symbol_decision_cap = int(cfg.get("symbol_decision_cap", 200))
+        except Exception:
+            logger.warning("debug_refresh_config_failed", exc_info=True)
+
+    # ── lifecycle (lifespan-managed) ──────────────────────────
+    async def start(self, *, drain_interval_s: float = 3.0, cleanup_interval_s: float = 86400.0,
+                    initial_cleanup_delay_s: float = 300.0) -> None:
+        import asyncio
+        self._drain_lock = asyncio.Lock()   # create on the running loop (not __init__)
+        await self.refresh_config()
+        # Reconcile runs orphaned by a previous crash/restart BEFORE any new run opens,
+        # so they don't masquerade as in-progress. Best-effort; never blocks startup.
+        try:
+            n = await self._repo.recover_orphaned_runs()
+            if n:
+                logger.info("debug_recovered_orphaned_runs", extra={"count": n})
+        except Exception:
+            logger.warning("debug_recover_orphaned_runs_failed", exc_info=True)
+        self._running = True
+        self._drainer_task = asyncio.create_task(self._drain_loop(drain_interval_s))
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop(cleanup_interval_s, initial_cleanup_delay_s))
+
+    async def shutdown(self) -> None:
+        import asyncio
+        self._running = False
+        for t in (self._drainer_task, self._cleanup_task):
+            if t and not t.done():
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+        await self.drain_once()  # final flush
+
+    async def _drain_loop(self, interval_s: float) -> None:
+        import asyncio
+        # Refresh config roughly every ~30s (every Nth drain), not every drain — the
+        # PUT /config endpoint already refreshes immediately, so the loop only needs a
+        # slow safety re-sync. At interval_s=3 this is ~10 drains; min 1.
+        refresh_every = max(1, int(30 / interval_s)) if interval_s > 0 else 1
+        while self._running:
+            try:
+                await asyncio.sleep(interval_s)
+                self._drain_count += 1
+                if self._drain_count % refresh_every == 0:
+                    await self.refresh_config()
+                await self.drain_once()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.warning("debug_drain_loop_error", exc_info=True)
+
+    async def _cleanup_loop(self, interval_s: float, initial_delay_s: float = 300.0) -> None:
+        import asyncio
+        # Run an initial cleanup shortly after startup (not after a full interval).
+        # Otherwise a server that restarts more often than `interval_s` (e.g. daily
+        # deploys vs a 24h interval) would NEVER run retention → unbounded growth.
+        first = True
+        while self._running:
+            try:
+                await asyncio.sleep(initial_delay_s if first else interval_s)
+                first = False
+                deleted = await self._repo.delete_runs_older_than(self._retention_days)
+                if deleted:
+                    logger.info("debug_retention_deleted", extra={"count": deleted})
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.warning("debug_cleanup_loop_error", exc_info=True)

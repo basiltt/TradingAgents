@@ -96,3 +96,83 @@ def test_symbol_decision_cap_truncates():
     syms = [e for e in rec.snapshot_buffer() if e["_table"] == "symbol_decisions"]
     assert len(syms) == 4
     assert any(s["reason_code"] == "truncated" for s in syms)
+
+
+@pytest.mark.asyncio
+async def test_open_run_sets_run_id_and_persists():
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
+    await rec.open_run(ctx, config_snapshot={"x": 1})
+    assert ctx.run_id == 1
+    repo.create_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_drain_flushes_buffer_to_repo():
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
+    ctx.run_id = 1
+    rec.emit_lifecycle(ctx, account_id="a1", phase="batch", event_type="x")
+    rec.emit_exchange_snapshot(ctx, account_id="a1", gate="scan_start", positions=[])
+    await rec.drain_once()
+    repo.bulk_insert.assert_awaited()
+    assert rec.buffered_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_isolates_failing_table():
+    """One table's bulk_insert failure must not discard the other tables' rows."""
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
+    ctx.run_id = 1
+    inserted_tables = []
+    async def _bulk(**kwargs):
+        table = next(iter(kwargs))
+        if table == "symbol_decisions":
+            raise RuntimeError("poison")
+        inserted_tables.append(table)
+    repo.bulk_insert = AsyncMock(side_effect=_bulk)
+    rec.emit_lifecycle(ctx, account_id="a1", phase="batch", event_type="x")
+    rec.emit_symbol_decision(ctx, account_id="a1", phase="batch", symbol="FOO",
+                             decision="skipped", reason_code="min_score", reason_detail={})
+    rec.emit_exchange_snapshot(ctx, account_id="a1", gate="scan_start", positions=[])
+    await rec.drain_once()
+    assert "lifecycle_events" in inserted_tables
+    assert "exchange_snapshots" in inserted_tables
+    assert rec.buffered_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_close_run_finalizes_with_dropped_count():
+    rec, repo = _recorder(buffer_max=1)
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
+    ctx.run_id = 1
+    rec.emit_lifecycle(ctx, account_id="a1", phase="batch", event_type="a")
+    rec.emit_lifecycle(ctx, account_id="a1", phase="batch", event_type="b")  # dropped
+    await rec.close_run(ctx, phase_reached="finalized", total_symbols=10,
+                        completed_symbols=10, failed_symbols=0, num_accounts=1)
+    repo.finalize_run.assert_awaited_once()
+    _, kwargs = repo.finalize_run.await_args
+    assert kwargs["dropped_event_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_config_updates_enabled_flag():
+    rec, repo = _recorder()
+    repo.get_config = AsyncMock(return_value={
+        "tracing_enabled": False, "retention_days": 30, "symbol_decision_cap": 99,
+    })
+    await rec.refresh_config()
+    assert rec._enabled is False
+    assert rec._retention_days == 30
+    assert rec._symbol_decision_cap == 99
+
+
+@pytest.mark.asyncio
+async def test_start_recovers_orphaned_runs_then_shuts_down():
+    rec, repo = _recorder()
+    repo.recover_orphaned_runs = AsyncMock(return_value=3)
+    await rec.start(drain_interval_s=999, cleanup_interval_s=999, initial_cleanup_delay_s=999)
+    repo.recover_orphaned_runs.assert_awaited_once()
+    assert rec._drain_lock is not None
+    await rec.shutdown()
