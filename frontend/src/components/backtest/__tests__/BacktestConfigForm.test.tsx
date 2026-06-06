@@ -27,6 +27,22 @@ describe("BacktestConfigForm", () => {
     expect(req.date_range_end).toMatch(/Z$/);
   });
 
+  it("clearing a cost field restores its default, not zero (no silent zero-cost run)", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Clear the Fee Rate field — an empty value must NOT submit as 0 (which would be
+    // zero-cost trading and inflate PnL), it must restore the production default.
+    const fee = screen.getByLabelText(/Fee Rate/i) as HTMLInputElement;
+    fireEvent.change(fee, { target: { value: "" } });
+    const slip = screen.getByLabelText(/Slippage/i) as HTMLInputElement;
+    fireEvent.change(slip, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.fee_rate_pct).toBe(0.055);  // default restored, NOT 0
+    expect(req.slippage_bps).toBe(2);       // default restored, NOT 0
+  });
+
   it("seeds values from the seed prop", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} seed={{ starting_capital: 25000, leverage: 5 }} />);
     expect((screen.getByLabelText("Starting Capital ($)") as HTMLInputElement).value).toBe("25000");

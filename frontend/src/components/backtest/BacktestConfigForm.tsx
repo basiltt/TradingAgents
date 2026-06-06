@@ -43,7 +43,12 @@ function NumberField({ control, name, label, step, placeholder, nullable, error 
             value={field.value == null ? "" : String(field.value)}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === "") field.onChange(nullable ? null : "");
+              // Clearing a NULLABLE field → null (an explicit "unset"). Clearing a
+              // NON-nullable field → undefined, NOT "" — an empty string coerces to 0
+              // via z.coerce.number(), which for cost/rate fields (fee, slippage)
+              // silently means "zero-cost trading" and inflates PnL. undefined lets
+              // the schema's .default() restore the production value on submit.
+              if (v === "") field.onChange(nullable ? null : undefined);
               else field.onChange(v);
             }}
             onBlur={field.onBlur}

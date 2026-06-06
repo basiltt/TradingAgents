@@ -1105,10 +1105,21 @@ ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
 ALTER TABLE backtest_trades ALTER COLUMN pnl_pct TYPE NUMERIC(12,4);
 ALTER TABLE backtest_trades ALTER COLUMN mfe_pct TYPE NUMERIC(12,4);
 ALTER TABLE backtest_trades ALTER COLUMN mae_pct TYPE NUMERIC(12,4);
--- Widen qty: it is a UNIT COUNT (notional / price), which for an ultra-cheap
--- token (e.g. price 1e-8) can reach ~1e13 units and overflow NUMERIC(20,8)
--- (max ~1e12), crashing the persist transaction. NUMERIC(30,8) covers it.
+-- Widen qty: it is a UNIT COUNT (notional / price). For an ultra-cheap token at
+-- the Bybit price floor (~1e-8) the worst-case is notional(~1.25e10) / 1e-8 ≈
+-- 1.25e18 units, which overflows NUMERIC(20,8) (max ~1e12). NUMERIC(30,8) (max
+-- ~1e22) covers it with headroom.
 ALTER TABLE backtest_trades ALTER COLUMN qty TYPE NUMERIC(30,8);
+"""),
+    (41, """
+-- The trades list reads filter by run_id and sort by entry_time (default) or pnl,
+-- over up to _MAX_SIGNALS (50k) rows per run. The single (run_id) index forces an
+-- in-memory sort of every matching row on each page. Composite indexes let Postgres
+-- satisfy the ORDER BY from the index. IF NOT EXISTS keeps this idempotent.
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_entry
+    ON backtest_trades(run_id, entry_time);
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
+    ON backtest_trades(run_id, pnl);
 """),
 ]
 

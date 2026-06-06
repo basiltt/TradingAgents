@@ -108,6 +108,38 @@ class TestFilterChainBlacklist:
         result = engine.run(config, signals, klines)
         assert result.trades == []
 
+    def test_blacklist_matches_normalized_symbol_not_bare_ticker(self):
+        """Blacklist/whitelist match the NORMALIZED symbol ({ticker}USDT), exactly like
+        production (auto_trade_service normalizes then matches `symbol in blacklist`).
+        A BARE-ticker entry ("BTC") must NOT filter "BTCUSDT" — production trades it, so
+        the backtest must too, or it diverges (skips a trade production takes)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        # A bare "BTC" in the blacklist does NOT match the normalized "BTCUSDT" symbol.
+        bare = BacktestEngine().run(
+            _make_config(symbol_blacklist=["BTC"]),
+            [_make_signal(ticker="BTCUSDT")],
+            {"BTCUSDT": _make_klines()},
+        )
+        assert bare.filter_stats["signals_filtered"] == 0 or bare.filter_stats["signals_entered"] > 0
+
+        # The full normalized symbol DOES match → filtered.
+        full = BacktestEngine().run(
+            _make_config(symbol_blacklist=["BTCUSDT"]),
+            [_make_signal(ticker="BTCUSDT")],
+            {"BTCUSDT": _make_klines()},
+        )
+        assert full.trades == []
+
+        # A signal whose ticker lacks the USDT suffix is normalized before matching.
+        suffixed = BacktestEngine().run(
+            _make_config(symbol_blacklist=["BTCUSDT"]),
+            [_make_signal(ticker="BTC", analysis_price=50000.0)],
+            {"BTCUSDT": _make_klines()},  # klines keyed by the raw ticker
+        )
+        # "BTC" → "BTCUSDT" matches the blacklist → filtered (no trade).
+        assert suffixed.trades == []
+
 
 class TestFilterChainScore:
     """Test min_score and confidence filters."""

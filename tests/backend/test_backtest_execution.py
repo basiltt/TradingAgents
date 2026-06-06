@@ -714,6 +714,38 @@ class TestPersistResults:
         assert isinstance(row[9], Decimal)
 
     @pytest.mark.asyncio
+    async def test_persist_coerces_non_finite_trade_numerics_to_none(self, mock_db):
+        """A non-finite trade numeric (NaN/Infinity) must persist as NULL, not
+        Decimal('Infinity'/'NaN') — the latter is rejected by a NUMERIC column on
+        PostgreSQL < 14, which would abort the whole persist transaction and LOSE a
+        completed simulation. The engine guards its divisors, but _num is the
+        persistence boundary and must self-defend."""
+        from decimal import Decimal
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+        service = BacktestService(db=mock_db)
+        conn = _wire_transaction(mock_db)
+        result = SimulationResult(
+            trades=[{"symbol": "BTCUSDT", "side": "Buy", "entry_price": 50000.0,
+                     "exit_price": 51000.0, "qty": 0.1, "leverage": 20,
+                     "entry_time": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                     "exit_time": datetime(2026, 1, 1, 1, tzinfo=timezone.utc),
+                     "pnl": float("inf"), "pnl_pct": float("nan"),
+                     "mfe_pct": float("-inf"), "mae_pct": 1.0,
+                     "fees_paid": 2.0, "close_reason": "tp"}],
+            equity_curve=[], metrics={}, warnings=[], filter_stats={},
+        )
+        await service._persist_results("run-1", result)
+        records = conn.executemany.call_args[0][1]
+        row = records[0]
+        # Column order: ...9=pnl, 10=pnl_pct, 11=fees_paid, 12=close_reason,
+        # 13=mfe_pct, 14=mae_pct. inf/nan/-inf → None; the finite mae stays Decimal.
+        assert row[9] is None    # pnl = inf
+        assert row[10] is None   # pnl_pct = nan
+        assert row[13] is None   # mfe_pct = -inf
+        assert isinstance(row[14], Decimal) and row[14] == Decimal("1")  # mae_pct = 1.0
+
+    @pytest.mark.asyncio
     async def test_persist_deletes_old_trades_for_idempotency(self, mock_db):
         from backend.services.backtest_service import BacktestService
         from backend.schemas.backtest_schemas import SimulationResult

@@ -978,12 +978,18 @@ class BacktestService:
         def _num(v: Any) -> Any:
             # asyncpg NUMERIC columns require Decimal, not float. Decimal(str(x))
             # avoids binary-float artifacts (Decimal(0.1) != Decimal("0.1")).
+            # CRITICAL: reject non-finite values — Decimal(str(inf)) yields
+            # Decimal('Infinity') / Decimal('NaN'), which a NUMERIC column rejects on
+            # PostgreSQL < 14, aborting the ENTIRE persist transaction and losing a
+            # completed simulation. The engine guards its divisors, but this is the
+            # persistence boundary and must self-defend.
             if v is None:
                 return None
             try:
-                return Decimal(str(v))
+                d = Decimal(str(v))
             except (ValueError, TypeError, ArithmeticError):
                 return None
+            return d if d.is_finite() else None
 
         # Strip the per_trade array out of the metrics JSONB — the full per-trade
         # detail is persisted relationally in backtest_trades (and the cumulative

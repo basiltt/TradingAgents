@@ -483,15 +483,22 @@ class BacktestEngine:
             state.signals_filtered += 1
             return False
 
+        # Normalize the ticker to a full symbol exactly as production does
+        # (auto_trade_service: f"{ticker}USDT" unless it already ends with USDT), then
+        # match the blacklist/whitelist against THAT — production does NOT also match a
+        # bare ticker, so neither must the backtest, or a bare-listed symbol would be
+        # filtered here while production trades it.
+        symbol = ticker if ticker.endswith("USDT") else f"{ticker}USDT"
+
         # 3. Blacklist
         blacklist = config.get("symbol_blacklist") or []
-        if ticker in blacklist or f"{ticker}USDT" in blacklist:
+        if blacklist and symbol in blacklist:
             state.signals_filtered += 1
             return False
 
         # 4. Whitelist (if set, must be in it)
         whitelist = config.get("symbol_whitelist")
-        if whitelist and ticker not in whitelist and f"{ticker}USDT" not in whitelist:
+        if whitelist and symbol not in whitelist:
             state.signals_filtered += 1
             return False
 
@@ -838,8 +845,23 @@ class BacktestEngine:
 
         sorted_timestamps = sorted(all_timestamps)
 
-        # Track latest known close per symbol (seed with entry price)
-        latest_prices: dict[str, float] = {p.symbol: p.entry_price for p in state.open_positions}
+        # Seed each open position's mark with its last close AT/BEFORE the window
+        # start, NOT its entry price. A position carried from a prior scan may have
+        # moved far from entry; marking it at entry until its first in-window candle
+        # would make the equity rules (which run on the very first timestamp) evaluate
+        # a stale, wrong equity — firing equity_drop/close_on_profit spuriously or
+        # late under uneven multi-symbol coverage. This mirrors the carried-uPnL
+        # mark used for the per-scan reference (run()), so numerator and reference
+        # agree. No look-ahead: only candles with open_time <= start_time are used.
+        latest_prices: dict[str, float] = {}
+        for p in state.open_positions:
+            mark = p.entry_price
+            for k in klines.get(p.symbol, []):
+                if k["open_time"] <= start_time:
+                    mark = k["close"]
+                else:
+                    break
+            latest_prices[p.symbol] = mark
         candle_count = 0
 
         # Process timestamps chronologically — unified timeline

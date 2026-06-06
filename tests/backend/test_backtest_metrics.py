@@ -759,16 +759,18 @@ class TestValueLocking:
         single = compute_run_up([{"ts": base, "equity": 5000.0}])
         assert single == {"max_run_up_pct": 0.0, "max_run_up_usd": 0.0}
 
-    def test_streaks_breakeven_does_not_reset(self):
+    def test_streaks_breakeven_breaks_the_run(self):
         from backend.services.backtest_metrics import compute_streaks
-        # win, win, breakeven(0), win → pnl==0 is skipped, so streak stays at... 3?
-        # The win streak is NOT reset by 0, but the run is [W,W] then [W], counted
-        # across the 0 — current behavior: max consecutive wins = 3 (0 neither breaks).
+        # win, win, breakeven(0), win → a breakeven is neither a win nor a loss and
+        # BREAKS both runs, so the longest win streak is the first [W,W] = 2, not 3.
+        # (Standard convention; the previous impl let the 0 pass through, over-reporting.)
         trades = [_make_trade(pnl=10.0), _make_trade(pnl=10.0),
                   _make_trade(pnl=0.0), _make_trade(pnl=10.0)]
         s = compute_streaks(trades)
-        assert s["max_consecutive_wins"] == 3  # breakeven neither increments nor resets
+        assert s["max_consecutive_wins"] == 2  # breakeven resets the run
         assert s["max_consecutive_losses"] == 0
+        # The $ for the best 2-win run is 20, not 30 (the post-BE win starts a new run).
+        assert abs(s["max_consecutive_wins_usd"] - 20.0) < 0.01
 
     def test_streaks_alternating_resets(self):
         from backend.services.backtest_metrics import compute_streaks

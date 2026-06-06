@@ -387,6 +387,13 @@ def compute_streaks(trades: list[dict[str, Any]]) -> dict[str, Any]:
             if cur_losses > max_losses:
                 max_losses = cur_losses
                 max_loss_usd = cur_loss_usd
+        else:
+            # A breakeven trade (pnl == 0) is neither a win nor a loss and BREAKS
+            # both runs — otherwise W, BE, W would over-report a 2-win streak.
+            cur_wins = 0
+            cur_win_usd = 0.0
+            cur_losses = 0
+            cur_loss_usd = 0.0
 
     return {
         "max_consecutive_wins": max_wins,
