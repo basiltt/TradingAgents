@@ -42,24 +42,12 @@ def _truncate_history(text: str, max_chars: int = _MAX_DEBATE_HISTORY_CHARS) -> 
     return "[earlier rounds truncated]\n" + truncated
 
 
-_ANALYST_SYSTEM_PREFIX = (
-    "You are a helpful AI assistant, collaborating with other assistants."
-    " Use the provided tools to progress towards answering the question."
-    " If you are unable to fully answer, that's OK; another assistant with different tools"
-    " will help where you left off. Execute what you can to make progress."
-    " If you or any other assistant has the FINAL ANALYSIS or deliverable,"
-    " prefix your response with FINAL ANALYSIS so the team knows to stop."
-    " You have access to the following tools: {tool_names}.\n{system_message}"
-    "For your reference, the current date is {current_date}. {instrument_context}"
-    "\n\n--- CURRENT PRICE DATA (use this as the reference price for your analysis) ---\n"
-    "{current_price_context}"
-)
-
-
-# Cacheable Pattern-A split of the prefix above, used ONLY by the technical
-# analyst (which has a large enough stable head to ever cache). The other four
-# crypto analysts keep using _ANALYST_SYSTEM_PREFIX unchanged. Invariant:
-# _ANALYST_STABLE_PREFIX + _ANALYST_VOLATILE_TAIL == _ANALYST_SYSTEM_PREFIX.
+# Cacheable Pattern-A split of the analyst system prefix. These two PARTS are
+# the source of truth: the stable head (used ONLY by the technical analyst,
+# which has a large enough stable prefix to ever cache) and the volatile tail
+# (date/instrument/price). The other four crypto analysts use the full
+# _ANALYST_SYSTEM_PREFIX, which is DERIVED below so it can never drift from the
+# parts. Invariant: _ANALYST_STABLE_PREFIX + _ANALYST_VOLATILE_TAIL == _ANALYST_SYSTEM_PREFIX.
 _ANALYST_STABLE_PREFIX = (
     "You are a helpful AI assistant, collaborating with other assistants."
     " Use the provided tools to progress towards answering the question."
@@ -74,6 +62,7 @@ _ANALYST_VOLATILE_TAIL = (
     "\n\n--- CURRENT PRICE DATA (use this as the reference price for your analysis) ---\n"
     "{current_price_context}"
 )
+_ANALYST_SYSTEM_PREFIX = _ANALYST_STABLE_PREFIX + _ANALYST_VOLATILE_TAIL
 
 
 def create_crypto_technical_analyst(llm, crypto_tools: list):
