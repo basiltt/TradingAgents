@@ -89,6 +89,7 @@ interface ScannerSettings {
   maxRiskRounds?: number;
   maxRecurLimit?: number;
   checkpointEnabled?: boolean;
+  promptCacheEnabled?: boolean;
   maxParallel?: number;
   workflowMode?: "quick_trade" | "deep_analysis";
   taPrefilterEnabled?: boolean;
@@ -332,6 +333,7 @@ export function ScannerPage() {
   const [maxRiskRounds, setMaxRiskRounds] = useState(scanner.maxRiskRounds ?? 1);
   const [maxRecurLimit, setMaxRecurLimit] = useState(scanner.maxRecurLimit ?? 100);
   const [checkpointEnabled, setCheckpointEnabled] = useState(scanner.checkpointEnabled ?? false);
+  const [promptCacheEnabled, setPromptCacheEnabled] = useState(scanner.promptCacheEnabled ?? false);
   const [maxParallel, setMaxParallel] = useState(scanner.maxParallel ?? 10);
   const [workflowMode, setWorkflowMode] = useState<"quick_trade" | "deep_analysis">(scanner.workflowMode ?? "deep_analysis");
   const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(scanner.taPrefilterEnabled ?? false);
@@ -365,13 +367,13 @@ export function ScannerPage() {
   }, [showEndpoints]);
 
   useEffect(() => {
-    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold });
+    saveScannerSettings({ analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, promptCacheEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold });
     if (backendUrl.trim()) {
       saveEndpoint({ url: backendUrl.trim(), apiKey: llmApiKey, deepModel, quickModel });
       // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing localStorage into state after write
       setEndpoints(loadEndpoints());
     }
-  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold]);
+  }, [analysisDate, provider, llmApiKey, backendUrl, deepModel, quickModel, interval, analysts, researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds, maxRecurLimit, checkpointEnabled, promptCacheEnabled, maxParallel, workflowMode, taPrefilterEnabled, taPrefilterThreshold]);
 
   function selectEndpoint(ep: EndpointProfile) {
     setBackendUrl(ep.url);
@@ -501,6 +503,7 @@ export function ScannerPage() {
       max_risk_discuss_rounds: maxRiskRounds,
       max_recur_limit: maxRecurLimit !== 100 ? maxRecurLimit : undefined,
       checkpoint_enabled: checkpointEnabled || undefined,
+      prompt_cache_enabled: promptCacheEnabled || undefined,
       max_parallel: maxParallel !== 10 ? maxParallel : undefined,
       workflow_mode: workflowMode !== "deep_analysis" ? workflowMode : undefined,
       ta_prefilter_enabled: taPrefilterEnabled,
@@ -847,6 +850,13 @@ export function ScannerPage() {
                       onChange={setCheckpointEnabled}
                       title="Enable checkpoints"
                       description="Resume interrupted scans instead of restarting."
+                      accent="warning"
+                    />
+                    <ScannerToggle
+                      checked={promptCacheEnabled}
+                      onChange={setPromptCacheEnabled}
+                      title="Prompt caching (Anthropic)"
+                      description="Cache the stable system prompt prefix on Anthropic models to cut token cost and latency."
                       accent="warning"
                     />
                   </div>

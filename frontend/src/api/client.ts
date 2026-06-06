@@ -192,6 +192,7 @@ export interface StartAnalysisRequest {
   max_risk_discuss_rounds?: number;
   max_recur_limit?: number;
   checkpoint_enabled?: boolean;
+  prompt_cache_enabled?: boolean;
   data_vendors?: Record<string, string>;
   asset_type?: AssetType;
   interval?: CryptoInterval;
@@ -288,6 +289,7 @@ export interface ScanRequest {
   max_risk_discuss_rounds?: number;
   max_recur_limit?: number;
   checkpoint_enabled?: boolean;
+  prompt_cache_enabled?: boolean;
   data_vendors?: Record<string, string>;
   max_parallel?: number;
   workflow_mode?: "quick_trade" | "deep_analysis";
