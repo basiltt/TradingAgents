@@ -12,7 +12,7 @@
 | P3 Restructure | DONE | helper module + 3 cacheable sites refactored (market, fundamentals, crypto/technical); byte-for-byte preserved (verified 4 ways); Pattern B verified. Both reviews passed + cleanups. |
 | P4 Inject | DONE | litellm cache_control injection (4.1 85669f8), config→client flag wiring all 3 trading_graph sites (4.2 07aaa17), real-binding wire test (4.3 aa1bb63). Task 4.4 AI Manager SKIPPED per P1 (sub-threshold) — see blocker log. |
 | P5 Logging | DONE | extract_cache_metrics (base_client) + log in litellm invoke; _extract_cache_usage + 4 guarded log sites in AI Manager. Review passed + parity guard. (7e3426b, d6354f2, b586d52) |
-| P6 EVAL GATE | PENDING | behavioral-parity; must pass before default ON |
+| P6 EVAL GATE | HARNESS BUILT (not run) | Task 6.1: `scripts/cache_parity_eval.py` (dry-run-safe; N=30 fixtures; OLD-vs-NEW parity; noise-floor+agreement+McNemar exact-binomial, stdlib fallback) + 35 smoke tests + NOT-RUN results stub. (dfa9811). Eval itself NOT executed — must run+PASS before default ON. |
 | P7 Ops flag | DONE | prompt_cache_enabled in DEFAULT_CONFIG (default OFF, TRADINGAGENTS_PROMPT_CACHE_ENABLED override). End-to-end chain verified: flag→client→injection. |
 | P8 UI toggle | DONE | schema field (AnalysisRequest+ScanRequest), relay (analysis+scanner), 3-form toggle. Both reviews passed; fixed else-clobber bug (config-override). tsc+build clean. |
 
