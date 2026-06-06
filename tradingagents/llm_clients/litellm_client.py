@@ -14,6 +14,7 @@ import httpx
 from langchain_community.chat_models import ChatLiteLLM
 
 from .base_client import BaseLLMClient, normalize_content, llm_rate_limited_invoke
+from .model_families import OPUS_ADAPTIVE_SUBSTRINGS
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ class LiteLLMClient(BaseLLMClient):
             # Use adaptive for those models; keep the legacy budget shape for older
             # Anthropic models that still accept it.
             model_l = self.model.lower()
-            if "opus-4-7" in model_l or "opus-4-8" in model_l:
+            if any(s in model_l for s in OPUS_ADAPTIVE_SUBSTRINGS):
                 model_kwargs["thinking"] = {"type": "adaptive"}
             else:
                 budget = {"high": 32000, "medium": 16000, "low": 4000}.get(

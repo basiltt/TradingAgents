@@ -27,21 +27,20 @@ LLMCallable = Callable[[str, str], Coroutine[None, None, str]]
 
 _active_clients: list["httpx.AsyncClient"] = []
 
-# Models that reject sampling params (temperature/top_p/top_k removed on Opus 4.7+).
-# Conservative: omit for these; keep for everything else.
-_NO_SAMPLING_PARAM_SUBSTRINGS = ("opus-4-7", "opus-4-8")
-
 
 def _sampling_params(model: str) -> dict:
     """Return the sampling/token params to merge into a payload for this model.
 
     Always includes max_tokens. Omits temperature (and other sampling params)
     for models that 400 on them (current Opus). Conservative default: include
-    temperature unless the model is known to reject it.
+    temperature unless the model is known to reject it. The Opus list lives in
+    tradingagents.llm_clients.model_families so the engine and API agree.
     """
+    from tradingagents.llm_clients.model_families import OPUS_ADAPTIVE_SUBSTRINGS
+
     params: dict = {"max_tokens": 1024}
     model_l = (model or "").lower()
-    if not any(s in model_l for s in _NO_SAMPLING_PARAM_SUBSTRINGS):
+    if not any(s in model_l for s in OPUS_ADAPTIVE_SUBSTRINGS):
         params["temperature"] = 0.2
     return params
 

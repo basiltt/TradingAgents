@@ -1,6 +1,7 @@
 from .base_client import BaseLLMClient, configure_llm_concurrency, configure_llm_min_spacing
 from .factory import create_llm_client
 from .litellm_client import fetch_models_from_endpoint, get_litellm_supported_providers
+from .model_families import OPUS_ADAPTIVE_SUBSTRINGS
 
 __all__ = [
     "BaseLLMClient",
@@ -9,4 +10,5 @@ __all__ = [
     "configure_llm_min_spacing",
     "fetch_models_from_endpoint",
     "get_litellm_supported_providers",
+    "OPUS_ADAPTIVE_SUBSTRINGS",
 ]

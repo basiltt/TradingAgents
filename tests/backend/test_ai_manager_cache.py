@@ -6,7 +6,7 @@ class TestSamplingParams:
         from backend.services.ai_manager_llm_provider import _sampling_params
         params = _sampling_params("claude-opus-4-7")
         assert "temperature" not in params
-        assert "top_p" not in params
+        assert "temperature" not in _sampling_params("anthropic/claude-opus-4-8")
 
     def test_omits_temperature_for_opus_4_8(self):
         from backend.services.ai_manager_llm_provider import _sampling_params
