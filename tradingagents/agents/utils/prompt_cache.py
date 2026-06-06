@@ -13,6 +13,7 @@ installed libraries).
 from typing import Any
 
 from langchain_core.messages import SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 _EPHEMERAL = {"type": "ephemeral"}
 
@@ -32,3 +33,15 @@ def apply_cache_control_to_messages(messages: list[Any]) -> list[Any]:
                 {"type": "text", "text": m["content"], "cache_control": _EPHEMERAL}]}
             return [*messages[:i], new, *messages[i + 1:]]
     return messages
+
+
+def split_cacheable_prompt(stable_system: str, volatile_context: str) -> ChatPromptTemplate:
+    """Build a Pattern-A prompt: stable system message, then a human turn holding
+    the volatile context, then the MessagesPlaceholder. Template variables in both
+    strings are interpolated by langchain's normal .format/.partial machinery.
+    """
+    return ChatPromptTemplate.from_messages([
+        ("system", stable_system),
+        ("human", volatile_context),
+        MessagesPlaceholder(variable_name="messages"),
+    ])

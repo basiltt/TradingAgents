@@ -39,3 +39,19 @@ class TestApplyCacheControl:
         msgs = [SystemMessage(content=[{"type": "text", "text": "X"}])]
         out = apply_cache_control_to_messages(msgs)
         assert out[0].content == [{"type": "text", "text": "X"}]
+
+
+class TestSplitCacheablePrompt:
+    def test_stable_in_system_volatile_in_human(self):
+        from tradingagents.agents.utils.prompt_cache import split_cacheable_prompt
+        tmpl = split_cacheable_prompt(
+            stable_system="You are an analyst. Tools: {tool_names}.",
+            volatile_context="Date: {current_date}. {instrument_context}",
+        )
+        rendered = tmpl.format_messages(
+            tool_names="t1", current_date="2026-06-06",
+            instrument_context="BTCUSDT", messages=[],
+        )
+        assert "analyst" in rendered[0].content
+        assert "2026-06-06" not in rendered[0].content
+        assert any("2026-06-06" in getattr(m, "content", "") for m in rendered[1:])
