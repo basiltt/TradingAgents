@@ -486,6 +486,31 @@ class TestGoldenScenarios:
         assert trade["pnl"] < -840.0  # strictly worse than the no-exit-slippage loss
         _assert_reconciles(result, cfg)
 
+    def test_golden_equity_rise_profit_goal_close(self):
+        """A profit_pct target goal closes the whole cycle via EQUITY_RISE_PCT when
+        cycle equity rises goal_value% from the reference — mirroring production, which
+        maps a profit_pct target goal to an EQUITY_RISE_PCT close rule (reference =
+        base_capital, threshold = goal_value). Regression guard: check_equity_rise
+        existed but was never wired into the engine, so a profit_pct goal previously
+        ran to backtest_end instead of closing on the rise.
+
+        Setup: target_goal_type=profit_pct, target_goal_value=5 → fire at +5% cycle
+        equity. leverage 10 / capital_pct 20 → 0.4 BTC; a rising price crosses +$500
+        (+5% of 10000) well before the wide 500% TP, closing via equity_rise.
+        """
+        cfg = _config(
+            take_profit_pct=500.0, stop_loss_pct=500.0,
+            target_goal_type="profit_pct", target_goal_value=5.0,
+            leverage=10, capital_pct=20.0,
+        )
+        prices = [50000.0 + i * 200.0 for i in range(40)]
+        klines = {"BTCUSDT": [_candle(5 * i, p, p + 250, p - 50, p) for i, p in enumerate(prices)]}
+        result = BacktestEngine().run(cfg, [_signal()], klines)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "equity_rise"
+        assert result.trades[0]["pnl"] > 0  # closed BECAUSE the cycle rose into profit
+        _assert_reconciles(result, cfg)
+
     def test_golden_close_on_profit_close(self):
         """A cycle whose equity rises past the close_on_profit threshold closes via
         CLOSE_ON_PROFIT (the EQUITY_RISE-style take-profit-on-cycle rule) and

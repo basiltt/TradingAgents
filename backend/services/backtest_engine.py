@@ -1022,7 +1022,7 @@ class BacktestEngine:
         Uses per-symbol latest close price for unrealized PnL calculation.
         """
         from backend.services.trading_rules import (
-            compute_unrealized_pnl, check_equity_drop, check_close_on_profit,
+            compute_unrealized_pnl, check_equity_drop, check_close_on_profit, check_equity_rise,
         )
 
         if not state.open_positions:
@@ -1073,6 +1073,24 @@ class BacktestEngine:
             if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value or 100.0):
                 for pos in list(state.open_positions):
                     self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+                state.cycle_start_equity = 0  # Cycle terminated
+                return  # Cycle closed — don't also evaluate the rise goal this candle
+
+        # --- EQUITY_RISE_PCT (target_goal_type == "profit_pct") ---
+        # Production maps a profit_pct target goal to an EQUITY_RISE_PCT close rule
+        # (auto_trade_service: reference_value = base_capital, threshold = goal_value),
+        # closing ALL positions when equity rises goal_value% from the cycle reference.
+        # Mirror that here so a profit_pct goal terminates the cycle in the backtest the
+        # same way it does in live trading (the trade_count goal is handled separately
+        # as an admission early-stop in the filter chain).
+        if (
+            config.get("target_goal_type") == "profit_pct"
+            and target_goal_value
+            and state.cycle_start_equity > 0
+        ):
+            if check_equity_rise(equity, state.cycle_start_equity, target_goal_value):
+                for pos in list(state.open_positions):
+                    self._close_position(state, pos, "equity_rise", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
                 state.cycle_start_equity = 0  # Cycle terminated
 
     def _evaluate_trailing_profit_for_symbol(
