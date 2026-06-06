@@ -142,3 +142,32 @@ prompt is built **separately** from the context — clean structural candidate
 - P4 cache_control sites: market_analyst, fundamentals_analyst, crypto/technical (the
   3 that clear Sonnet 1024). AI Manager caching: SKIPPED (sub-threshold). Pattern B +
   the other 6 A sites: restructured by P3 for hygiene but won't cache (sub-threshold).
+
+## MONEY-CRITICAL REVIEW (post-implementation, 3 deep reviews + adversarial)
+
+**No caching-caused test breakage.** 188 caching tests pass. The 30 full-suite
+failures + 246 errors are ALL pre-existing on main (verified: `test_conditional_logic`
++ `test_crypto_agent_utils` fail identically on the main repo working copy; the rest
+are DB/network sandbox). Caching touched none of those files.
+
+**Content safety CONFIRMED:** the 3 restructured prompts are byte-for-byte identical to
+main (AST-verified: crypto 677==677, market 635==635, fundamentals 635==635). litellm
+MERGES the two consecutive user turns for Anthropic/Gemini; OpenAI accepts them — no
+400, no dropped content. Concurrency SAFE (each scan symbol gets its own graph+LLM;
+injection builds new lists, no shared mutation).
+
+### Findings + fixes
+- **C1 (FIXED):** `_cache_enabled` was a plain attr-assign on a pydantic model; a future
+  langchain-core that flips to frozen/extra=forbid would break ALL llm creation. Fixed
+  with `object.__setattr__` + capped `langchain-core<2`.
+- **C2 (DECISION NEEDED):** uv.lock is stale vs pyproject (litellm/langchain pins added
+  by P0; litellm was never a direct dep on main). `uv sync --frozen` would fail in CI;
+  `uv lock` re-resolves to UNTESTED litellm 1.87.1 etc. Installed env (tested) = litellm
+  1.83.7. **Decision:** keep tested env; reconcile the lock as a SEPARATE, tested deploy
+  step before merge to a deploy branch. (See review notes.)
+- **M1 (TODO):** future-Opus (4.9/5) hardcoded list → 400 → AI Manager freezes to
+  HOLD-only silently. Make the Opus-rejects-sampling gate self-heal.
+- **M2 (TODO):** real-binding test imports a PRIVATE litellm path → a minor litellm bump
+  could break CI. Guard with importorskip.
+- **MINORS (TODO):** env `.strip()`; ON-but-missing debug log; document that OpenAI users
+  get no benefit from the flag + the role-move ships unconditionally.
