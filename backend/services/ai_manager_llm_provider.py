@@ -32,15 +32,16 @@ def _sampling_params(model: str) -> dict:
     """Return the sampling/token params to merge into a payload for this model.
 
     Always includes max_tokens. Omits temperature (and other sampling params)
-    for models that 400 on them (current Opus). Conservative default: include
-    temperature unless the model is known to reject it. The Opus list lives in
-    tradingagents.llm_clients.model_families so the engine and API agree.
+    for models that 400 on them (Opus 4.7+). Conservative default: include
+    temperature unless the model is known to reject it. The Opus detection lives
+    in tradingagents.llm_clients.model_families so the engine and API agree, and
+    it covers FUTURE Opus releases (4.9, 5.x …) so a new model can't silently
+    400 and freeze the AI Manager.
     """
-    from tradingagents.llm_clients.model_families import OPUS_ADAPTIVE_SUBSTRINGS
+    from tradingagents.llm_clients.model_families import model_rejects_sampling_params
 
     params: dict = {"max_tokens": 1024}
-    model_l = (model or "").lower()
-    if not any(s in model_l for s in OPUS_ADAPTIVE_SUBSTRINGS):
+    if not model_rejects_sampling_params(model):
         params["temperature"] = 0.2
     return params
 

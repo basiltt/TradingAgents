@@ -9,7 +9,7 @@ description = "TradingAgents: Multi-Agents LLM Financial Trading Framework"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "langchain-core>=0.3.81",
+    "langchain-core>=0.3.81,<2",
     "backtrader>=1.9.78.123",
     "fastapi>=0.115.9",
     "langchain-anthropic>=1.4.2,<2",

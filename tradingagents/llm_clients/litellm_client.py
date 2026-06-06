@@ -14,7 +14,7 @@ import httpx
 from langchain_community.chat_models import ChatLiteLLM
 
 from .base_client import BaseLLMClient, normalize_content, llm_rate_limited_invoke
-from .model_families import OPUS_ADAPTIVE_SUBSTRINGS
+from .model_families import model_rejects_sampling_params
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,10 @@ class NormalizedChatLiteLLM(ChatLiteLLM):
         # current agent call sites use sync .invoke.
         if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
             input = self._inject_cache_control(input)
+            # DEBUG breadcrumb so "caching ON but no hits" (e.g. a sub-1024-token
+            # prefix that silently won't cache) is distinguishable from "caching
+            # OFF". Without this, both look identical (no INFO line below).
+            logger.debug("LLM cache | injection attempted | model=%s", self.model)
         result = normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
         try:
             from tradingagents.llm_clients.base_client import extract_cache_metrics
@@ -210,12 +214,12 @@ class LiteLLMClient(BaseLLMClient):
             # OpenAI reasoning models (o-series, GPT-5)
             model_kwargs["reasoning_effort"] = self.kwargs["reasoning_effort"]
         if self.kwargs.get("effort"):
-            # Anthropic thinking. Current Opus (4.7/4.8) removed budget_tokens and
-            # require adaptive thinking; the legacy enabled+budget_tokens shape 400s.
-            # Use adaptive for those models; keep the legacy budget shape for older
-            # Anthropic models that still accept it.
-            model_l = self.model.lower()
-            if any(s in model_l for s in OPUS_ADAPTIVE_SUBSTRINGS):
+            # Anthropic thinking. Opus 4.7+ removed budget_tokens and require
+            # adaptive thinking; the legacy enabled+budget_tokens shape 400s.
+            # Use adaptive for those models (and future Opus 4.9/5.x via the
+            # shared predicate); keep the legacy budget shape for older Anthropic
+            # models that still accept it.
+            if model_rejects_sampling_params(self.model):
                 model_kwargs["thinking"] = {"type": "adaptive"}
             else:
                 budget = {"high": 32000, "medium": 16000, "low": 4000}.get(
@@ -230,7 +234,15 @@ class LiteLLMClient(BaseLLMClient):
             llm_kwargs["model_kwargs"] = model_kwargs
 
         instance = NormalizedChatLiteLLM(**llm_kwargs)
-        instance._cache_enabled = bool(self.kwargs.get("prompt_cache_enabled", False))
+        # Use object.__setattr__ so this never depends on the pydantic model's
+        # __setattr__ policy. ChatLiteLLM is extra="ignore" today, but a future
+        # langchain-core release that flips to frozen/extra="forbid" would make a
+        # plain ``instance._cache_enabled = ...`` raise here — and get_llm() builds
+        # EVERY LLM, so that would take the whole app down, not just caching.
+        object.__setattr__(
+            instance, "_cache_enabled",
+            bool(self.kwargs.get("prompt_cache_enabled", False)),
+        )
         return instance
 
     def validate_model(self) -> bool:

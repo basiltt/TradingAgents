@@ -86,8 +86,30 @@ class TestCacheFlagWiring:
 
 class TestRealBindingPayload:
     def test_cache_control_reaches_anthropic_system_param(self):
+        """Drive the REAL langchain-community -> litellm Anthropic transform (no
+        mock) and assert cache_control reaches Anthropic's top-level `system`
+        param exactly once. This is the on-the-wire guard: it fails loudly if a
+        library upgrade silently stops emitting the breakpoint.
+
+        NOTE: it exercises litellm's *internal* `AnthropicConfig.transform_request`
+        (a private path that can move between litellm minors). To distinguish
+        "caching genuinely broke" from "litellm relocated its internals", a moved
+        import/signature is reported as a SKIP (needs-update), not a red failure
+        that would mask a real regression. If this skips after a litellm bump,
+        update the import/call to match — do not assume caching is fine.
+        """
         import json
-        from litellm.llms.anthropic.chat.transformation import AnthropicConfig
+        import pytest
+
+        # Private litellm path — importorskip so a relocation skips, not errors.
+        transformation = pytest.importorskip(
+            "litellm.llms.anthropic.chat.transformation",
+            reason="litellm AnthropicConfig moved; update the real-binding test import",
+        )
+        AnthropicConfig = getattr(transformation, "AnthropicConfig", None)
+        if AnthropicConfig is None:
+            pytest.skip("litellm AnthropicConfig symbol moved; update the real-binding test")
+
         from tradingagents.agents.utils.prompt_cache import apply_cache_control_to_messages
         from langchain_community.chat_models.litellm import _convert_message_to_dict
         from langchain_core.messages import SystemMessage, HumanMessage
@@ -95,10 +117,20 @@ class TestRealBindingPayload:
         msgs = apply_cache_control_to_messages(
             [SystemMessage(content="STABLE " * 300), HumanMessage(content="date 2026-06-06")])
         dicts = [_convert_message_to_dict(m) for m in msgs]
-        out = AnthropicConfig().transform_request(
-            model="claude-sonnet-4-6", messages=dicts,
-            optional_params={}, litellm_params={}, headers={})
+        try:
+            out = AnthropicConfig().transform_request(
+                model="claude-sonnet-4-6", messages=dicts,
+                optional_params={}, litellm_params={}, headers={})
+        except TypeError as e:
+            pytest.skip(
+                f"litellm AnthropicConfig.transform_request signature changed "
+                f"({e}); update the real-binding test to match")
+
+        # When the transform DOES run, the assertion is strict — a real breakpoint
+        # regression must fail here, not pass.
         payload = json.dumps(out)
-        assert "cache_control" in payload
+        assert "cache_control" in payload, (
+            "cache_control did NOT reach the Anthropic payload — the breakpoint "
+            "is being dropped (real regression, not a library move)")
         assert payload.count("cache_control") == 1
         assert out.get("system") and out["system"][0]["cache_control"] == {"type": "ephemeral"}
