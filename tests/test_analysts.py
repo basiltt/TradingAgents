@@ -35,11 +35,11 @@ class TestMarketAnalyst:
 
         # We need to patch the chain creation (prompt | llm.bind_tools)
         # Easiest: patch ChatPromptTemplate to return something that pipes to our chain
-        with patch("tradingagents.agents.analysts.market_analyst.ChatPromptTemplate") as mock_pt:
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
             mock_prompt = MagicMock()
             mock_prompt.partial.return_value = mock_prompt
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
-            mock_pt.from_messages.return_value = mock_prompt
+            mock_split.return_value = mock_prompt
 
             state = {
                 "trade_date": "2025-01-10",
@@ -59,11 +59,11 @@ class TestMarketAnalyst:
         mock_llm, mock_chain = _make_mock_llm(content="ignored", tool_calls=[{"name": "get_stock_data"}])
         node = create_market_analyst(mock_llm)
 
-        with patch("tradingagents.agents.analysts.market_analyst.ChatPromptTemplate") as mock_pt:
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
             mock_prompt = MagicMock()
             mock_prompt.partial.return_value = mock_prompt
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
-            mock_pt.from_messages.return_value = mock_prompt
+            mock_split.return_value = mock_prompt
 
             state = {
                 "trade_date": "2025-01-10",
