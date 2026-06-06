@@ -137,7 +137,9 @@ P1  Recon       enumerate sites + exact count; token-count every stable   (P0)
     [GO/NO-GO]   prefix vs 1024/4096; measure AI Manager cadence + prefix.
                  → decides which sites/paths get cache_control at all.
 P2  Param fix   conditional temperature/max_tokens in the 4 httpx sites    (P0)
-                 (§6c) — UNBLOCKS Anthropic testing on Opus 4.7/4.8 (else 400).
+                 (§6c) + litellm effort→thinking deprecated-API fix
+                 (litellm_client.py:184-189). UNBLOCKS Anthropic testing on
+                 Opus 4.7/4.8 — both paths 400 on those models otherwise.
 P3  Restructure §4 prompt hygiene, OLD builder RETAINED behind ops flag    (P1)
                  — provider-agnostic; helps automatic caching immediately.
 P4  Inject      §5 system-block transform (graph) + §6a AI Manager         (P1,P2,P3)
@@ -755,14 +757,14 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
    critical path; §7.5(2)'s schema/frontend table is **reference for that future
    work**, not this implementation.
 
-**Iteration-3 — NEW decision needed (sign-off):**
+**Iteration-3 — CONFIRMED:**
 
-1. **litellm `effort→thinking` deprecated-API bug (§6c note).** Iter-3 found
-   `litellm_client.py:184-189` emits the deprecated `thinking:{type:"enabled",
+1. **litellm `effort→thinking` deprecated-API bug folded into P2 (§6c note).** Iter-3
+   found `litellm_client.py:184-189` emits the deprecated `thinking:{type:"enabled",
    budget_tokens}` that **400s on Opus 4.7/4.8** — the **production** trading-graph
-   path, independent of caching. Recommend **folding the fix into P2** (caching is
-   untestable on current Opus while this 400s). Fold into P2, or file as a separate
-   bug outside this spec? *(If out of scope, P2's "caching untestable on Opus" caveat
-   stands and Anthropic-Opus-4.7/4.8 caching can't be validated until it's fixed
-   somewhere.)*
+   path. **Confirmed: fix it in P2** alongside the AI Manager sampling-param fix (same
+   "current Opus rejects the param" class; caching is untestable on current Opus while
+   either 400s). P2 now covers both the httpx sampling params **and** the litellm
+   `effort`→thinking mapping (migrate to adaptive thinking / drop `budget_tokens` for
+   models that reject it).
 
