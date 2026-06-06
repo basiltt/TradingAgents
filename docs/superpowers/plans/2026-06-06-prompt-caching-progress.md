@@ -10,7 +10,7 @@
 | P1 Recon (GO/NO-GO) | DONE | A=9 B=4 C=15 D=1 (29 sites). GO only: market_analyst(1526), fundamentals_analyst(1124), crypto/technical(1030,fragile) clear Sonnet 1024; NONE clear Opus 4096; all B sub-threshold; AI Mgr 731-799 sub-threshold → DO NOT cache. See P1 sections below. |
 | P2 Param fix | DONE | _sampling_params + litellm adaptive thinking; DRY shared OPUS_ADAPTIVE_SUBSTRINGS. Both reviews passed. (cd6f3a8, 0603778, bd038df) |
 | P3 Restructure | DONE | helper module + 3 cacheable sites refactored (market, fundamentals, crypto/technical); byte-for-byte preserved (verified 4 ways); Pattern B verified. Both reviews passed + cleanups. |
-| P4 Inject | PENDING | litellm cache_control + AI Manager — A/B only |
+| P4 Inject | DONE | litellm cache_control injection (4.1 85669f8), config→client flag wiring all 3 trading_graph sites (4.2 07aaa17), real-binding wire test (4.3 aa1bb63). Task 4.4 AI Manager SKIPPED per P1 (sub-threshold) — see blocker log. |
 | P5 Logging | PENDING | cache-metric normalizer |
 | P6 EVAL GATE | PENDING | behavioral-parity; must pass before default ON |
 | P7 Ops flag | PENDING | global flag, default OFF |
@@ -25,6 +25,9 @@
   correct (litellm 1.83.7, lc-community 0.4.1, lc-anthropic 1.4.2), so caching work is
   unblocked. **Follow-up (separate, out of this feature):** a tested lock
   reconciliation pass before any `uv sync` in CI/deploy.
+- **P4 Task 4.4 (AI Manager cache_control) SKIPPED per P1** — system prompt 731-799 tok,
+  sub-threshold on all models; would cache nothing. The P2 sampling-param fix to that
+  file already shipped (the independently-valuable part).
 
 ## OLD-prompt recovery for P6
 - git tag `pre-cache-p3` marks the pre-restructure commit.
