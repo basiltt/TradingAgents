@@ -130,3 +130,12 @@ prompt is built **separately** from the context — clean structural candidate
 - **OpenAI note:** default AI Manager runs on OpenAI, which auto-caches ≥1024 tok — and this prefix is also under 1024 there, so it isn't auto-cached either. The size, not the provider, is the blocker.
 
 **DECISION: DO NOT cache this path.** The stable system prefix (731–799 tok) is sub-threshold on every supported model (Sonnet 1024 / Opus 4096), so `cache_control` would be a silent no-op. Cadence is favorable (a 5-min TTL would suffice — no need for 1-hr), so **if** the system prompt is later expanded past ~1100 tokens, revisit with a **5-min TTL** (not 1-hr; the breakeven is met but 5-min is cheaper to write and the cadence never exceeds it). Skip the P4.4 AI Manager Anthropic branch for now.
+
+## SCOPE DECISION (post-P1, user-confirmed)
+- **FULL PLAN as written.** User accepts the narrow caching benefit (3 sites,
+  Anthropic+Sonnet config only) in exchange for the complete instrumented feature:
+  P4 cache_control for the 3 Sonnet-clearing sites, P5 logging, P6 eval gate, P7 ops
+  flag, P8 3-form UI toggle. P2 param fixes ship regardless (independent bug fixes).
+- P4 cache_control sites: market_analyst, fundamentals_analyst, crypto/technical (the
+  3 that clear Sonnet 1024). AI Manager caching: SKIPPED (sub-threshold). Pattern B +
+  the other 6 A sites: restructured by P3 for hygiene but won't cache (sub-threshold).
