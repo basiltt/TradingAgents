@@ -8,6 +8,7 @@ Performance contract (money path safety):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -17,6 +18,11 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BUFFER_MAX = 50_000
+
+# Hard cap on how long open_run may wait for the DB when creating a run row. It is
+# awaited on the scan/trade-leading path, so a saturated pool must not stall trade
+# placement — on timeout we fail open (untraced run, trading proceeds).
+_OPEN_RUN_TIMEOUT_S = 5.0
 
 
 # Wallet fields retained in snapshots (spec §10 — sanitize before persisting).
@@ -192,11 +198,19 @@ class DebugTraceRecorder:
             ctx.run_id = None
             return
         try:
-            ctx.run_id = await self._repo.create_run(
-                scan_id=ctx.scan_id, trigger_source=ctx.trigger_source,
-                schedule_id=ctx.schedule_id, schedule_execution_id=ctx.schedule_execution_id,
-                scan_started_at=scan_started_at, scan_completed_at=scan_completed_at,
-                config_snapshot=config_snapshot or {},
+            # open_run is awaited on the SCAN/TRADE-leading path (before symbols are
+            # processed), so it must be time-bounded: if the shared DB pool is
+            # saturated, an unbounded acquire could stall trade placement. On
+            # timeout we fail open (run_id=None disables this run's emits; trading
+            # proceeds untraced rather than blocked).
+            ctx.run_id = await asyncio.wait_for(
+                self._repo.create_run(
+                    scan_id=ctx.scan_id, trigger_source=ctx.trigger_source,
+                    schedule_id=ctx.schedule_id, schedule_execution_id=ctx.schedule_execution_id,
+                    scan_started_at=scan_started_at, scan_completed_at=scan_completed_at,
+                    config_snapshot=config_snapshot or {},
+                ),
+                timeout=_OPEN_RUN_TIMEOUT_S,
             )
         except Exception:
             logger.warning("debug_open_run_failed", exc_info=True)

@@ -201,12 +201,21 @@ def create_app() -> FastAPI:
         configure_llm_min_spacing(llm_spacing)
 
         app.state.db = db
-        from backend.services.debug_trace_repository import DebugTraceRepository
-        from backend.services.debug_trace_recorder import DebugTraceRecorder
-        debug_repo = DebugTraceRepository(db.pool)
-        debug_recorder = DebugTraceRecorder(debug_repo)
+        # Debug tracing is an OPTIONAL forensics feature. Its router (503 when absent)
+        # and the scanner (`if self._debug_recorder is not None`) are both designed to
+        # tolerate a missing recorder, so a failure here must NEVER abort trading
+        # startup — degrade to None and continue, mirroring backtest_service recovery.
+        debug_recorder = None
+        try:
+            from backend.services.debug_trace_repository import DebugTraceRepository
+            from backend.services.debug_trace_recorder import DebugTraceRecorder
+            debug_repo = DebugTraceRepository(db.pool)
+            debug_recorder = DebugTraceRecorder(debug_repo)
+            await debug_recorder.start()
+        except Exception:
+            logger.exception("debug_trace_recorder_init_failed")
+            debug_recorder = None
         app.state.debug_trace_recorder = debug_recorder
-        await debug_recorder.start()
         app.state.event_bus = event_bus
         app.state.ws_manager = ws_manager
         app.state.config_service = config_service

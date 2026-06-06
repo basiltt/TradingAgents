@@ -1623,16 +1623,30 @@ class AsyncAnalysisDB:
             logger.warning("insert_scan_result: invalid status %r — forcing unknown", status)
             status = "unknown"
 
+        # analysis_price (v39) anchors the backtest's price-drift filter to the price
+        # the signal was generated at. It is read back by BacktestService.load_signals;
+        # if it is not persisted here the drift filter silently no-ops in backtests
+        # (every row NULL), diverging from live trading. Coerce defensively: only a
+        # positive finite number is stored, otherwise NULL.
+        _analysis_price = result.get("analysis_price")
+        try:
+            _analysis_price = float(_analysis_price) if _analysis_price is not None else None
+            if _analysis_price is not None and not (_analysis_price > 0):
+                _analysis_price = None
+        except (TypeError, ValueError):
+            _analysis_price = None
+
         row = await self.pool.fetchrow(
             "INSERT INTO scan_results "
             "(scan_id, ticker, run_id, status, direction, confidence, "
-            "score, decision_summary, signal_source) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+            "score, decision_summary, signal_source, analysis_price) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
             "ON CONFLICT (scan_id, ticker) DO UPDATE SET "
             "run_id = EXCLUDED.run_id, status = EXCLUDED.status, "
             "direction = EXCLUDED.direction, confidence = EXCLUDED.confidence, "
             "score = EXCLUDED.score, decision_summary = EXCLUDED.decision_summary, "
-            "signal_source = EXCLUDED.signal_source "
+            "signal_source = EXCLUDED.signal_source, "
+            "analysis_price = COALESCE(EXCLUDED.analysis_price, scan_results.analysis_price) "
             "RETURNING id",
             scan_id,
             result["ticker"],
@@ -1643,6 +1657,7 @@ class AsyncAnalysisDB:
             score,
             result.get("decision_summary", ""),
             result.get("signal_source", "unknown"),
+            _analysis_price,
         )
         return row["id"] if row else None
 
