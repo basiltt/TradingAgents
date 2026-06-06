@@ -58,3 +58,27 @@ python scripts/cache_parity_eval.py --run
 Approx cost: ~180 model calls (N=30 fixtures x K=5 noise-floor + N new). Use Sonnet.
 NOTE: if a local proxy sets `ANTHROPIC_BASE_URL` (e.g. a Copilot proxy on :4141 that
 doesn't serve Claude models), unset it so calls reach real Anthropic.
+
+## Operational caveats (must-know before enabling)
+1. **The prompt restructure ships to ALL users unconditionally.** P3 moved the
+   volatile date/instrument/price from the system role into a human turn for 3
+   analysts (market, fundamentals, crypto/technical) — for every provider, flag on
+   or off. Content is byte-for-byte identical (verified 4 ways) and litellm merges
+   the two consecutive user turns, so no 400 and no dropped content. The only change
+   is role placement, which the (currently inconclusive) parity eval was meant to
+   validate. The `prompt_cache_enabled` flag gates ONLY the `cache_control` marker,
+   NOT the restructure.
+2. **`prompt_cache_enabled` does nothing for non-Anthropic providers.** The default
+   provider is OpenAI, which auto-caches server-side. Our injection only fires for
+   `anthropic/*` models. A user enabling the flag on OpenAI/Gemini/etc. gets no
+   change from us (those providers cache automatically regardless). Set expectations
+   accordingly in any UI copy.
+3. **Caching only helps 3 sites, Anthropic+Sonnet only** (P1: those clear the 1024
+   minimum; none clear Opus's 4096; the AI Manager prompt is sub-threshold and is
+   intentionally NOT cached). The feature is correct and safe but its savings are
+   narrow — set ROI expectations accordingly.
+4. **Deploy: reconcile uv.lock first.** pyproject pins litellm/langchain-community/
+   langchain-anthropic/langchain-core ranges; the committed uv.lock predates the
+   litellm pin. `uv sync --frozen` will fail until the lock is regenerated AND the
+   re-resolved versions (litellm 1.87.x etc.) are tested. Do this as a separate,
+   verified step before deploying — do not blind-commit a re-resolved lock.
