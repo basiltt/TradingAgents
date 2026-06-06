@@ -34,7 +34,7 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None):
         self._accounts = accounts_service
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
@@ -42,6 +42,32 @@ class AutoTradeExecutor:
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
         self._ai_manager_enabled_accounts: set = set()
+        self._recorder = recorder
+        self._debug_ctx = debug_ctx
+
+    def _emit_life(self, account_id: str, phase: str, event_type: str, **detail: Any) -> None:
+        """Fail-open lifecycle emit helper. Never raises, never blocks."""
+        rec, ctx = self._recorder, self._debug_ctx
+        if rec is None or ctx is None:
+            return
+        rec.emit_lifecycle(ctx, account_id=account_id, phase=phase, event_type=event_type, detail=detail or {})
+
+    def _emit_snapshot(self, account_id: str, gate: str, positions, wallet=None, equity=None) -> None:
+        rec, ctx = self._recorder, self._debug_ctx
+        if rec is None or ctx is None:
+            return
+        rec.emit_exchange_snapshot(ctx, account_id=account_id, gate=gate, positions=positions, wallet=wallet, equity=equity)
+
+    def _emit_decision(self, account_id: str, phase: str, symbol: str, decision: str, reason_code: str, result: Dict[str, Any], **detail: Any) -> None:
+        rec, ctx = self._recorder, self._debug_ctx
+        if rec is None or ctx is None:
+            return
+        rec.emit_symbol_decision(
+            ctx, account_id=account_id, phase=phase, symbol=symbol,
+            decision=decision, reason_code=reason_code, reason_detail=detail or {},
+            scan_score=result.get("score"), scan_confidence=result.get("confidence"),
+            scan_direction=result.get("direction"),
+        )
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
         self._state.clear()

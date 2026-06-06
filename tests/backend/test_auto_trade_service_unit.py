@@ -171,3 +171,17 @@ async def test_post_scan_recheck_zero_trades_cleans_up():
     mock_close_svc.delete_rule.assert_any_call("acc_1", "new_rule_2")
     mock_close_svc.delete_rule.assert_any_call("acc_1", "new_rule_3")
     mock_close_svc.delete_rule.assert_any_call("acc_1", "new_rule_4")
+
+
+@pytest.mark.asyncio
+async def test_executor_accepts_recorder_and_context_optional():
+    from backend.services.auto_trade_service import AutoTradeExecutor
+    mock_accounts = AsyncMock()
+    ex = AutoTradeExecutor(mock_accounts, None)
+    assert ex._recorder is None
+    assert ex._debug_ctx is None
+    rec = MagicMock()
+    ctx = object()
+    ex2 = AutoTradeExecutor(mock_accounts, None, recorder=rec, debug_ctx=ctx)
+    assert ex2._recorder is rec
+    assert ex2._debug_ctx is ctx
