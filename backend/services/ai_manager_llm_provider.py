@@ -283,10 +283,13 @@ def create_llm_callable_with_cleanup(
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                _m = _extract_cache_usage(data, "openai")
-                if _m["cache_read"] is not None:
-                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
-                                "openai", model, _m["cache_read"])
+                try:
+                    _m = _extract_cache_usage(data, "openai")
+                    if _m["cache_read"] is not None:
+                        logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                    "openai", model, _m["cache_read"])
+                except Exception:
+                    pass  # never let metric logging break a call
                 return _extract_openai_text(data, model)
             finally:
                 _release_global_rate_limit(acquired)
@@ -321,10 +324,13 @@ def create_llm_callable_with_cleanup(
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                _m = _extract_cache_usage(data, "anthropic")
-                if _m["cache_read"] is not None:
-                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
-                                "anthropic", model, _m["cache_read"])
+                try:
+                    _m = _extract_cache_usage(data, "anthropic")
+                    if _m["cache_read"] is not None:
+                        logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                    "anthropic", model, _m["cache_read"])
+                except Exception:
+                    pass  # never let metric logging break a call
                 return _extract_anthropic_text(data, model)
             finally:
                 _release_global_rate_limit(acquired)
@@ -360,10 +366,13 @@ def _create_openai_callable(
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            _m = _extract_cache_usage(data, "openai")
-            if _m["cache_read"] is not None:
-                logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
-                            "openai", model, _m["cache_read"])
+            try:
+                _m = _extract_cache_usage(data, "openai")
+                if _m["cache_read"] is not None:
+                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                "openai", model, _m["cache_read"])
+            except Exception:
+                pass  # never let metric logging break a call
             return _extract_openai_text(data, model)
         finally:
             _release_global_rate_limit(acquired)
@@ -397,10 +406,13 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            _m = _extract_cache_usage(data, "anthropic")
-            if _m["cache_read"] is not None:
-                logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
-                            "anthropic", model, _m["cache_read"])
+            try:
+                _m = _extract_cache_usage(data, "anthropic")
+                if _m["cache_read"] is not None:
+                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                "anthropic", model, _m["cache_read"])
+            except Exception:
+                pass  # never let metric logging break a call
             return _extract_anthropic_text(data, model)
         finally:
             _release_global_rate_limit(acquired)
