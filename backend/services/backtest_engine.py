@@ -75,6 +75,8 @@ class SimulationState:
     signals_entered: int = 0  # LIFETIME entries across the whole backtest (stats + target_goal)
     scan_entered: int = 0  # entries in the CURRENT scan only — reset each scan; gates max_trades
                            # (production creates a fresh executor per scan, so max_trades is per-cycle)
+    slippage_bps: int = 0  # round-trip slippage; applied adversely on BOTH entry fill and exit fill
+                           # (production closes via Bybit market reduce-only orders that slip)
 
 
 class BacktestEngine:
@@ -112,6 +114,7 @@ class BacktestEngine:
         state = SimulationState(
             wallet_balance=starting_capital,
             sizing_capital=starting_capital,
+            slippage_bps=config.get("slippage_bps", 2),
         )
 
         warnings: list[str] = []
@@ -869,20 +872,32 @@ class BacktestEngine:
         fee_rate: float,
     ) -> None:
         """Close a position: compute PnL, update wallet, record trade."""
-        from backend.services.trading_rules import compute_unrealized_pnl, compute_fee, compute_liquidation_pnl
+        from backend.services.trading_rules import (
+            compute_unrealized_pnl, compute_fee, compute_liquidation_pnl, apply_slippage,
+        )
 
         # Compute realized PnL
         if close_reason == "liquidation":
             # Liquidation: full margin loss (Bybit isolated). Already net of both
             # fees (compute_liquidation_pnl subtracts entry_fee; no exit fee). The
             # wallet update below deducts locked_margin directly (not wallet_delta).
+            # No exit-slippage modeled: liquidation is a forced full-margin loss, not
+            # a market fill, so exit_price is unused here.
             net_pnl = compute_liquidation_pnl(position.locked_margin, position.entry_fee)
             exit_fee = 0.0  # liquidation fee already in the pnl calc
             wallet_delta = 0.0  # unused for liquidation; wallet loses locked_margin
             recorded_pnl = net_pnl - position.funding_paid
         else:
-            pnl = compute_unrealized_pnl(position.entry_price, exit_price, position.qty, position.side)
-            exit_fee = compute_fee(position.qty, exit_price, fee_rate)
+            # Apply adverse exit slippage — production closes via Bybit market
+            # reduce-only orders, which fill worse than the trigger/close price. The
+            # CLOSE side is the inverse of the position side (a long sells to close →
+            # fills lower; a short buys to close → fills higher), so slippage_bps is a
+            # round-trip cost (entry fill was already slipped on open). Both the
+            # realized PnL and the taker exit fee use this slipped exit price.
+            close_side = "Sell" if position.side == "Buy" else "Buy"
+            filled_exit_price = apply_slippage(exit_price, close_side, state.slippage_bps)
+            pnl = compute_unrealized_pnl(position.entry_price, filled_exit_price, position.qty, position.side)
+            exit_fee = compute_fee(position.qty, filled_exit_price, fee_rate)
             # Wallet delta excludes entry_fee because it was already deducted from
             # the wallet at open (line ~522), and excludes funding because funding
             # was already applied live to the wallet at each funding event. But the
@@ -892,6 +907,8 @@ class BacktestEngine:
             # liquidation branch above.
             wallet_delta = pnl - exit_fee
             recorded_pnl = pnl - exit_fee - position.entry_fee - position.funding_paid
+            # Record the actual filled exit price (with slippage) on the trade.
+            exit_price = filled_exit_price
 
         # Update wallet
         # Model: wallet_balance includes locked margin (never deducted on open, only entry_fee deducted)
@@ -1091,9 +1108,12 @@ class BacktestEngine:
                 if per_unit_pnl < pos.trailing_peak * 0.5:
                     positions_to_close.append(pos)
 
-        # Close triggered positions
+        # Close triggered positions. Guard against a position already closed by an
+        # earlier rule this candle (defensive parity with the TP/SL close loop —
+        # _close_position would raise on a double .remove()).
         for pos in positions_to_close:
-            self._close_position(state, pos, "trailing_profit", close_price, candle_time, fee_rate)
+            if pos in state.open_positions:
+                self._close_position(state, pos, "trailing_profit", close_price, candle_time, fee_rate)
 
     def _evaluate_time_rules(
         self,
@@ -1137,7 +1157,10 @@ class BacktestEngine:
                 new_tp = compute_breakeven_price(pos.entry_price, pos.side, pos.leverage)
                 pos.tp_price = new_tp
 
-        # Close MAX_DURATION positions at the symbol's latest price
+        # Close MAX_DURATION positions at the symbol's latest price. Guard against a
+        # position already closed by an earlier rule this candle (defensive parity
+        # with the TP/SL close loop — _close_position would raise on a double .remove()).
         for pos in positions_to_close:
-            exit_price = latest_prices.get(pos.symbol, pos.entry_price)
-            self._close_position(state, pos, "max_duration", exit_price, candle_time, fee_rate)
+            if pos in state.open_positions:
+                exit_price = latest_prices.get(pos.symbol, pos.entry_price)
+                self._close_position(state, pos, "max_duration", exit_price, candle_time, fee_rate)

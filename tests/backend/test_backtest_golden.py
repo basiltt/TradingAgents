@@ -401,27 +401,30 @@ class TestGoldenScenarios:
 
     def test_golden_slippage_anchors_tp_sl_and_qty_to_unslipped_mark(self):
         """Slippage parity with production: the entry FILLS at the slipped price (used
-        for PnL), but qty and TP/SL are anchored to the UN-SLIPPED mark — exactly like
-        production (accounts_service: qty = usdt×lev/mark_price; tp = mark×(1±pct)).
+        for PnL), but qty and TP/SL TRIGGERS are anchored to the UN-SLIPPED mark —
+        exactly like production (accounts_service: qty = usdt×lev/mark_price; tp =
+        mark×(1±pct)). The exit then FILLS with adverse round-trip slippage, since
+        production closes via a Bybit market reduce-only order.
 
         Regression guard: the engine previously anchored qty AND TP/SL to the slipped
         entry, handing the trader the full nominal move PLUS the slippage on every
         exit — a systematic favorable bias (~lev×slippage per trade) that breaches the
         <1% deviation requirement over many trades.
 
-        Setup: mark 50000, slippage 10 bps → fill 50050. leverage 10, capital_pct 20 →
-        qty must be 0.4 (off the 50000 mark, NOT 0.3996 off the 50050 fill). TP 50% at
-        10x = +5% price → anchored to mark = 52500 (NOT 50050×1.05 = 52552.5). Fees off
-        (0%) to isolate the price math. Realized PnL = 0.4×(52500−50050) = 980.
+        Setup: mark 50000, slippage 10 bps. Entry fill = 50050. leverage 10,
+        capital_pct 20 → qty 0.4 (off the 50000 mark, NOT 0.3996 off the 50050 fill).
+        TP 50% at 10x = +5% → TRIGGER anchored to mark = 52500 (NOT 50050×1.05). The
+        exit FILLS with adverse slippage on the sell-to-close: 52500×(1−0.001)=52447.5.
+        Fees off (0%) to isolate the price math. Realized PnL =
+        0.4×(52447.5−50050) = 959.0.
         """
         cfg = _config(
             leverage=10, capital_pct=20.0,
             take_profit_pct=50.0, stop_loss_pct=500.0,
             slippage_bps=10, fee_rate_pct=0.0,
         )
-        # Rising candles that reach the mark-anchored TP (52500) but NOT the slipped
-        # one (52552.5) would be ambiguous, so go well past both; the exit price pins
-        # which anchor was used.
+        # Rising candles that reach the mark-anchored TP trigger (52500); the exit
+        # then fills slightly below it due to exit slippage.
         klines = {"BTCUSDT": [
             _candle(5 * i, 50000.0 + i * 100, 50000.0 + i * 100 + 300, 50000.0 + i * 100 - 50, 50000.0 + i * 100)
             for i in range(40)
@@ -435,11 +438,52 @@ class TestGoldenScenarios:
         assert trade["entry_price"] == pytest.approx(50050.0, rel=REL_TOL)
         # qty anchored to the UN-SLIPPED mark (0.4), not the slipped fill (~0.3996).
         assert trade["qty"] == pytest.approx(0.4, rel=REL_TOL)
-        # TP exit anchored to the UN-SLIPPED mark: 50000 × 1.05 = 52500 (NOT 52552.5).
-        assert trade["exit_price"] == pytest.approx(52500.0, rel=REL_TOL)
-        # Realized PnL = qty × (mark_TP − slipped_fill) = 0.4 × (52500 − 50050) = 980,
-        # i.e. slightly LESS than the nominal +20% on margin — matching live trading.
-        assert trade["pnl"] == pytest.approx(980.0, rel=REL_TOL)
+        # TP TRIGGER anchored to the un-slipped mark (50000×1.05 = 52500), but the
+        # recorded exit FILL is slipped down by 10 bps on the sell-to-close: 52447.5.
+        assert trade["exit_price"] == pytest.approx(52447.5, rel=REL_TOL)
+        # Realized PnL = qty × (slipped_exit − slipped_entry) = 0.4 × (52447.5 − 50050)
+        # = 959.0 — slightly LESS than anchoring to the un-slipped mark (980), and far
+        # less than the buggy slipped-anchor (~1000); matches round-trip live trading.
+        assert trade["pnl"] == pytest.approx(959.0, rel=REL_TOL)
+        _assert_reconciles(result, cfg)
+
+    def test_golden_exit_slippage_applied_adversely_on_close(self):
+        """Exit fills incur adverse round-trip slippage — production closes via Bybit
+        market reduce-only orders that fill worse than the trigger/close price. A long
+        sells to close → the fill slips DOWN from the SL trigger. The recorded
+        exit_price and PnL must reflect that slipped fill (not the exact trigger).
+
+        Regression guard: the engine previously applied slippage only on entry, never
+        on exit, handing the trader a systematic favorable ~slippage per close — the
+        symmetric counterpart of the entry slippage. (User-confirmed: slippage_bps is
+        a round-trip cost, overriding the spec's exact-exit-fill wording.)
+
+        Setup: mark 50000, slippage 20 bps → entry fill 50100. leverage 10,
+        capital_pct 20 → qty 0.4. SL 40% at 10x = -4% → SL TRIGGER at mark×0.96 =
+        48000; the sell-to-close exit FILLS slipped down: 48000×(1−0.002) = 47904.
+        Fees off. Realized PnL = 0.4×(47904 − 50100) = -878.4.
+        """
+        cfg = _config(
+            leverage=10, capital_pct=20.0,
+            take_profit_pct=500.0, stop_loss_pct=40.0,
+            slippage_bps=20, fee_rate_pct=0.0,
+        )
+        # Falling candles that breach the SL trigger (48000).
+        klines = {"BTCUSDT": [
+            _candle(5 * i, 50000.0 - i * 200, 50000.0 - i * 200 + 50, 50000.0 - i * 200 - 300, 50000.0 - i * 200)
+            for i in range(40)
+        ]}
+        result = BacktestEngine().run(cfg, [_signal(price=50000.0)], klines)
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        assert trade["close_reason"] == "sl"
+        assert trade["entry_price"] == pytest.approx(50100.0, rel=REL_TOL)
+        # Exit fill is the SL trigger (48000) slipped DOWN by 20 bps on the close: 47904.
+        assert trade["exit_price"] == pytest.approx(47904.0, rel=REL_TOL)
+        # Realized PnL reflects the slipped exit: 0.4 × (47904 − 50100) = -878.4. Under
+        # the bug (exact 48000 fill) it would be a smaller loss: 0.4×(48000−50100)=-840.
+        assert trade["pnl"] == pytest.approx(-878.4, rel=REL_TOL)
+        assert trade["pnl"] < -840.0  # strictly worse than the no-exit-slippage loss
         _assert_reconciles(result, cfg)
 
     def test_golden_close_on_profit_close(self):

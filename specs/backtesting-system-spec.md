@@ -97,18 +97,30 @@ The engine processes scan results chronologically, applying the full auto-trade 
 4. Track equity at each step
 
 **Exit price rules:**
-- TP hit: exit at tp_price (taker fee 0.055%)
-- SL hit: exit at sl_price (taker fee 0.055%)
-- Liquidation: realized_pnl = -(initial_margin + entry_fee). User loses FULL margin on liquidation (Bybit isolated).
-- ALL other closes (TRAILING, MAX_DURATION, EQUITY_RISE/DROP, close_on_profit_pct): exit at **candle.close** (taker fee 0.055%)
+- Slippage is **round-trip**: `slippage_bps` is applied adversely on the exit FILL as well
+  as the entry fill, because production closes positions via Bybit market reduce-only orders
+  that fill worse than the trigger/close price. The close side is the inverse of the position
+  side (a long sells to close → fills lower; a short buys to close → fills higher).
+- TP hit: trigger at tp_price (anchored to the un-slipped mark), exit fills at
+  `tp_price × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
+- SL hit: trigger at sl_price (anchored to the un-slipped mark), exit fills at
+  `sl_price × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
+- Liquidation: realized_pnl = -(initial_margin + entry_fee). User loses FULL margin on liquidation (Bybit isolated). No exit slippage (forced full-margin loss, not a market fill).
+- ALL other closes (TRAILING, MAX_DURATION, EQUITY_RISE/DROP, close_on_profit_pct): trigger at
+  candle.close, exit fills at `candle.close × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
 
 **Equity reference for EQUITY_RISE/DROP/SMART rules:**
 - `ref` = cycle_start_equity (equity at the moment the first position of the cycle opened)
 - For EQUITY_DROP_PCT_SMART: ref resets to current equity immediately after closing losing positions
 
 **Price drift check:**
-- If `max_price_drift_pct` is set: `drift = abs(candle.close - signal.analysis_price) / signal.analysis_price × 100`
-- If `drift > max_price_drift_pct` → skip signal (price already moved past entry zone)
+- If `max_price_drift_pct` is set: `drift = (candle.close - signal.analysis_price) / signal.analysis_price × 100`
+  (SIGNED, direction-aware — matches production). Reject only when the price has already
+  moved too far IN the signal's direction (the move is "consumed"/chasing):
+  - buy/long signal → skip if `drift > max_price_drift_pct`
+  - sell/short signal → skip if `drift < -max_price_drift_pct`
+- A favorable adverse move (e.g. a buy whose price has dropped below analysis) is ADMITTED —
+  it is a better entry, exactly as production trades it.
 
 **Kline cache concurrency:**
 - All inserts use `ON CONFLICT (symbol, interval, open_time) DO NOTHING`
@@ -166,21 +178,29 @@ intended_margin = sizing_capital × capital_pct / 100
 available_balance = wallet_balance - Σ(locked_margin_i)  # for sufficiency check only
 # locked_margin_i = (qty_i × entry_price_i) / leverage_i  (= the margin allocated at open)
 if intended_margin > available_balance: SKIP trade (insufficient margin)
-qty = (intended_margin × leverage) / entry_price
+# qty is sized off the UN-SLIPPED mark price (candle.close), matching production
+# (qty = usdt_amount × leverage / mark_price) — NOT the slipped fill.
+mark_price = candle.close
+qty = (intended_margin × leverage) / mark_price
 qty = floor(qty / qty_step) × qty_step  # Round to instrument precision
 if qty < min_qty: SKIP trade
 
-# Entry price (no look-ahead)
-entry_price = candle.close × (1 + slippage_bps/10000) for Buy
-entry_price = candle.close × (1 - slippage_bps/10000) for Sell
+# Entry FILL price (no look-ahead) — the order fills at the slipped price (production
+# fills a market order at avgPrice). This slipped fill is used for PnL, entry fee,
+# locked margin, and the liquidation anchor.
+entry_price = mark_price × (1 + slippage_bps/10000) for Buy
+entry_price = mark_price × (1 - slippage_bps/10000) for Sell
 
-# TP/SL levels
-tp_price = entry × (1 + tp_pct / leverage / 100) for Buy
-tp_price = entry × (1 - tp_pct / leverage / 100) for Sell
-sl_price = entry × (1 - sl_pct / leverage / 100) for Buy
-sl_price = entry × (1 + sl_pct / leverage / 100) for Sell
+# TP/SL TRIGGERS — anchored to the UN-SLIPPED mark, matching production
+# (tp = mark_price × (1 ± tp_pct/leverage/100)). The exit then fills with adverse
+# slippage (see Exit price rules above).
+tp_price = mark_price × (1 + tp_pct / leverage / 100) for Buy
+tp_price = mark_price × (1 - tp_pct / leverage / 100) for Sell
+sl_price = mark_price × (1 - sl_pct / leverage / 100) for Buy
+sl_price = mark_price × (1 + sl_pct / leverage / 100) for Sell
 
-# Liquidation price (isolated margin, tier 1 MMR=0.5%)
+# Liquidation price (isolated margin, tier 1 MMR=0.5%) — anchored to the SLIPPED entry
+# fill (Bybit liquidates off the average fill price / avgPrice).
 liq_price = entry × (1 - (1/leverage - 0.005)) for Buy
 liq_price = entry × (1 + (1/leverage - 0.005)) for Sell
 
