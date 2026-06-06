@@ -206,7 +206,10 @@ def compute_max_drawdown(equity_curve: list[dict[str, Any]]) -> dict[str, float]
                 max_dd_pct = dd_pct
                 dur = _hours_between(peak_time, ts)
                 if dur is not None:
-                    max_dd_duration = dur
+                    # Clamp to 0: the authoritative terminal equity point may carry
+                    # an earlier ts than a force-close point, which could otherwise
+                    # yield a spurious negative duration. Magnitude is unaffected.
+                    max_dd_duration = max(0.0, dur)
 
     avg_dd = sum(drawdowns) / len(drawdowns) if drawdowns else 0.0
 
@@ -665,6 +668,12 @@ def compute_all_metrics(
     winners = [p for p in pnls if p > 0]
     losers = [p for p in pnls if p < 0]
 
+    # NOTE: each trade's pnl is recorded NET of all commissions and funding (see
+    # backtest_engine._close_position). So gross_profit/gross_loss here are the
+    # net-of-cost winner/loser sums, and net_profit == gross_profit + gross_loss
+    # already — commission is NOT to be subtracted again. total_commission is a
+    # standalone memo (sum of fees+funding), never a term in the net_profit
+    # identity. net_profit reconciles with final_equity - starting_capital.
     gross_profit = sum(winners)
     gross_loss = sum(losers)  # negative
     net_profit = sum(pnls)

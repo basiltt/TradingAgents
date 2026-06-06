@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { formatDurationBetween } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type ScanResultItem } from "@/api/client";
@@ -10,6 +10,7 @@ import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanR
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { NeuScoreBar } from "@/design-system/neumorphism";
+import { scanToBacktestSeed, encodeSeedParam } from "@/components/backtest/scanSeed";
 
 // Custom ScoreBar removed in favor of design system's NeuScoreBar
 
@@ -236,6 +237,7 @@ interface DeleteConfirmState {
 
 export function ScanDetailPage({ scanId }: { scanId: string }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(null);
   const [tradeTarget, setTradeTarget] = useState<{ symbol: string; direction: "buy" | "sell" } | null>(null);
   const [tradedSymbols, setTradedSymbols] = useState<Set<string>>(new Set());
@@ -386,6 +388,24 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
                   </svg>
                 )}
                 {isAutoTrading ? "Executing Trades..." : "Auto Trade"}
+              </button>
+            )}
+            {isCrypto && scan.status === "completed" && (
+              <button
+                onClick={() => {
+                  const seed = scanToBacktestSeed({
+                    scan_id: scanId,
+                    started_at: scan.started_at,
+                    completed_at: scan.completed_at,
+                  });
+                  navigate({ to: "/backtest/new", search: { seed: encodeSeedParam(seed) } });
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[var(--neu-radius-pill)] text-sm font-medium bg-[var(--neu-surface-raised)] text-[var(--neu-accent)] hover:translate-y-[-1px] shadow-[var(--neu-shadow-pill)] transition-all border-none cursor-pointer"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Backtest These Settings
               </button>
             )}
             <button

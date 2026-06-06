@@ -44,7 +44,9 @@
 | 2026-06-06 | 12 | P6 Frontend 12a impl (Tasks 6.1-6.8) | COMPLETED — 16 backtest source files, 12 test files, 102 tests |
 | 2026-06-06 | 12 | P6 Frontend 12b validate | COMPLETED — 102 tests pass, tsc clean, build clean |
 | 2026-06-06 | 12 | P6 Frontend 12c-12f review (12 rounds) | COMPLETED — 2 consecutive clean (R11+R12). 210 tests, tsc+build clean |
-| 2026-06-06 | 12 | P6 Frontend 12g commit | IN_PROGRESS |
+| 2026-06-06 | 12 | P6 Frontend 12g commit | COMPLETED — ee5f62d |
+| 2026-06-06 | 12 | P7 Integration 12a/12b (Tasks 7.1-7.4) | COMPLETED — scanner "Backtest These Settings" buttons (ScanDetail + ScheduledScans) + scanSeed util (6 tests); golden-set (6 tests); performance <1.5s (2 tests); nav (done P6); carry-forward integration (3 DB-gated). 216 FE + 208 BE backtest tests, tsc+build clean |
+| 2026-06-06 | 12 | P7 Integration 12c-12f review | IN_PROGRESS — R1-R3 fixed entry-fee/price-drift/funding/equity-curve-points. R4 (3 agents): equity-curve fix VERIFIED + adversarial found follow-on HIGH — curve started at first trade's CLOSE not the starting-capital anchor (single-trade run → degenerate drawdown); + MED non-chronological force-close tail. FIXED: seed (start, starting_capital) anchor before scan loop; stable-sort equity curve by ts before metrics; removed dead wallet_delta. Single losing trade now shows max_dd 5.11%. 214 BE backtest tests. NEXT: R5 verify.
 
 ---
 

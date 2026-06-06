@@ -50,6 +50,10 @@ class Position:
     # MFE/MAE tracking
     max_favorable_price: float = 0.0
     max_adverse_price: float = 0.0
+    # Cumulative funding paid by this position (positive = cost to the trader,
+    # negative = credit). Folded into the recorded trade pnl at close so that
+    # sum(trade.pnl) reconciles with the wallet/final_equity.
+    funding_paid: float = 0.0
 
 
 @dataclass
@@ -137,6 +141,18 @@ class BacktestEngine:
         # Sort scans chronologically by their first signal's timestamp
         scan_order = sorted(scans.keys(), key=lambda sid: scans[sid][0]["signal_time"])
 
+        # Seed the equity curve with the starting-capital anchor at the first
+        # signal time, so the curve begins at (start, starting_capital). Without
+        # this, the first recorded point would be the first trade's CLOSE, hiding
+        # the start→first-close move from drawdown/run-up/Sharpe and leaving a
+        # single-trade run with a degenerate 1-point curve.
+        if scan_order:
+            state.equity_curve.append({
+                "ts": scans[scan_order[0]][0]["signal_time"],
+                "equity": starting_capital,
+                "drawdown_pct": 0.0,
+            })
+
         execution_mode = config.get("execution_mode", "batch")
         candle_count = 0
 
@@ -207,16 +223,33 @@ class BacktestEngine:
             if "backtest_end" not in [w for w in warnings]:
                 warnings.append(f"force_closed_{len([t for t in state.closed_trades if t.get('close_reason') == 'backtest_end'])}_positions_at_end")
 
-        # Record final equity point
-        final_equity = state.wallet_balance
-        state.equity_curve.append({
-            "ts": signals[-1]["signal_time"] if signals else None,
-            "equity": final_equity,
-            "drawdown_pct": 0.0,
-        })
-
         if on_progress:
             on_progress(100)
+
+        # Ensure the equity curve is chronological before deriving path-dependent
+        # metrics. Closes are appended in simulation-time order during the run,
+        # but the end-of-data force-close tail stamps each position with its own
+        # symbol's last candle time, which can be out of order across symbols.
+        # Stable-sort by ts (the anchor's earliest ts and any None sort first).
+        state.equity_curve.sort(
+            key=lambda p: (p.get("ts") is not None, p.get("ts"))
+        )
+
+        # Append the AUTHORITATIVE terminal equity point AFTER the sort, so
+        # equity_curve[-1] always reflects the true final wallet balance. (Without
+        # this, an out-of-order force-close point from a short-coverage symbol
+        # could sort to the end and make final_equity — read from curve[-1] by the
+        # metrics layer — disagree with the wallet, breaking reconciliation.) Skip
+        # only when the last sorted point already equals the final wallet, to
+        # avoid a zero-length duplicate segment.
+        final_equity = state.wallet_balance
+        last_equity = state.equity_curve[-1]["equity"] if state.equity_curve else None
+        if last_equity is None or abs(final_equity - last_equity) > 1e-9:
+            state.equity_curve.append({
+                "ts": signals[-1]["signal_time"] if signals else None,
+                "equity": final_equity,
+                "drawdown_pct": 0.0,
+            })
 
         # Compute all metrics from trades + equity curve
         from backend.services.backtest_metrics import compute_all_metrics
@@ -270,7 +303,7 @@ class BacktestEngine:
         # Step 3: Apply filter chain (strict pass)
         entered = 0
         for sig in unique_signals:
-            if self._apply_filter_chain(config, sig, state, current_time, relaxed=False):
+            if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
                 if self._open_position(config, sig, klines, state, current_time):
                     entered += 1
 
@@ -282,7 +315,7 @@ class BacktestEngine:
             for sig in remaining:
                 if entered >= config.get("max_trades", 999):
                     break
-                if self._apply_filter_chain(config, sig, state, current_time, relaxed=True):
+                if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True):
                     if self._open_position(config, sig, klines, state, current_time, relaxed=True):
                         entered += 1
 
@@ -299,7 +332,7 @@ class BacktestEngine:
         """Process signals in immediate mode: one-at-a-time, no dedup."""
         entered = 0
         for sig in scan_signals:
-            if self._apply_filter_chain(config, sig, state, current_time, relaxed=False):
+            if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
                 if self._open_position(config, sig, klines, state, current_time):
                     entered += 1
         return entered
@@ -310,6 +343,7 @@ class BacktestEngine:
         signal: dict[str, Any],
         state: SimulationState,
         current_time: datetime,
+        klines: dict[str, list[dict[str, Any]]],
         relaxed: bool = False,
     ) -> bool:
         """Apply 17-step filter chain. Returns True if signal passes all filters."""
@@ -664,8 +698,10 @@ class BacktestEngine:
                         payment = fp.qty * price * funding_rate
                         if fp.side == "Buy":
                             state.wallet_balance -= payment
+                            fp.funding_paid += payment  # longs pay funding (cost)
                         else:
                             state.wallet_balance += payment
+                            fp.funding_paid -= payment  # shorts receive funding (credit)
 
             # --- PER-POSITION: liquidation + TP/SL (only symbols with a candle now) ---
             positions_to_close: list[tuple] = []
@@ -752,22 +788,34 @@ class BacktestEngine:
 
         # Compute realized PnL
         if close_reason == "liquidation":
-            # Liquidation: full margin loss (Bybit isolated)
+            # Liquidation: full margin loss (Bybit isolated). Already net of both
+            # fees (compute_liquidation_pnl subtracts entry_fee; no exit fee). The
+            # wallet update below deducts locked_margin directly (not wallet_delta).
             net_pnl = compute_liquidation_pnl(position.locked_margin, position.entry_fee)
             exit_fee = 0.0  # liquidation fee already in the pnl calc
+            wallet_delta = 0.0  # unused for liquidation; wallet loses locked_margin
+            recorded_pnl = net_pnl - position.funding_paid
         else:
             pnl = compute_unrealized_pnl(position.entry_price, exit_price, position.qty, position.side)
             exit_fee = compute_fee(position.qty, exit_price, fee_rate)
-            net_pnl = pnl - exit_fee  # entry_fee already deducted at open
+            # Wallet delta excludes entry_fee because it was already deducted from
+            # the wallet at open (line ~522), and excludes funding because funding
+            # was already applied live to the wallet at each funding event. But the
+            # RECORDED trade pnl must be net of BOTH fees AND funding so that
+            # sum(trade.pnl) reconciles with final_equity - starting_capital
+            # (TradingView "Net Profit" semantics) and stays consistent with the
+            # liquidation branch above.
+            wallet_delta = pnl - exit_fee
+            recorded_pnl = pnl - exit_fee - position.entry_fee - position.funding_paid
 
         # Update wallet
         # Model: wallet_balance includes locked margin (never deducted on open, only entry_fee deducted)
-        # On normal close: add net_pnl (margin stays in wallet, PnL adjusts it)
+        # On normal close: add wallet_delta (margin stays in wallet, PnL adjusts it)
         # On liquidation: LOSE the locked margin (deduct it now)
         if close_reason == "liquidation":
             state.wallet_balance -= position.locked_margin  # margin is lost
         else:
-            state.wallet_balance += net_pnl  # PnL adjusts wallet (no margin return needed)
+            state.wallet_balance += wallet_delta  # PnL adjusts wallet (no margin return needed)
 
         # Compute MFE/MAE percentages (guard against zero entry_price)
         if position.entry_price <= 0:
@@ -790,9 +838,9 @@ class BacktestEngine:
             "leverage": position.leverage,
             "entry_time": position.entry_time,
             "exit_time": exit_time,
-            "pnl": net_pnl,
-            "pnl_pct": (net_pnl / position.locked_margin) * 100 if position.locked_margin else 0,
-            "fees_paid": position.entry_fee + exit_fee,
+            "pnl": recorded_pnl,
+            "pnl_pct": (recorded_pnl / position.locked_margin) * 100 if position.locked_margin else 0,
+            "fees_paid": position.entry_fee + exit_fee + position.funding_paid,
             "close_reason": close_reason,
             "mfe_pct": mfe_pct,
             "mae_pct": mae_pct,
@@ -804,6 +852,18 @@ class BacktestEngine:
 
         # Remove from open positions
         state.open_positions.remove(position)
+
+        # Record a realized-equity point at each close so the equity curve has
+        # intermediate samples (not just start/end). This is the per-trade equity
+        # curve TradingView shows: wallet_balance here reflects all realized PnL,
+        # fees, and funding to date. Path-dependent metrics (max drawdown, Sharpe,
+        # run-up, etc.) are computed from these points — without them they would
+        # all degenerate to zero on a 2-point line.
+        state.equity_curve.append({
+            "ts": exit_time,
+            "equity": state.wallet_balance,
+            "drawdown_pct": 0.0,
+        })
 
     def _evaluate_equity_rules(
         self,

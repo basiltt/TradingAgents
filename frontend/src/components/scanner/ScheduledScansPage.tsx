@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   scheduledScansApi,
@@ -10,6 +11,7 @@ import {
   type ScheduleConfig,
   type CryptoInterval,
 } from "@/api/client";
+import { scheduleToBacktestSeed, encodeSeedParam } from "@/components/backtest/scanSeed";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModelSelect } from "@/components/ui/model-select";
@@ -150,6 +152,7 @@ function ScheduleCard({
   onEdit,
   onExport,
   onDelete,
+  onBacktest,
   isPending,
 }: {
   schedule: ScheduledScan;
@@ -159,6 +162,7 @@ function ScheduleCard({
   onEdit: () => void;
   onExport: () => void;
   onDelete: () => void;
+  onBacktest: () => void;
   isPending: boolean;
 }) {
   const status = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.completed;
@@ -283,6 +287,16 @@ function ScheduleCard({
               </svg>
             </button>
             <button
+              onClick={onBacktest}
+              className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-accent)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all cursor-pointer"
+              aria-label="Backtest These Settings"
+              title="Backtest These Settings"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </button>
+            <button
               onClick={onEdit}
               className="p-2 rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)] hover:shadow-[var(--neu-shadow-raised-hover)] hover:translate-y-[-1px] transition-all cursor-pointer"
               aria-label="Edit"
@@ -321,6 +335,7 @@ function ScheduleCard({
 
 export function ScheduledScansPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -651,6 +666,12 @@ export function ScheduledScansPage() {
               onEdit={() => openEdit(s.id)}
               onExport={() => exportSingle(s)}
               onDelete={() => setDeleteConfirm(s.id)}
+              onBacktest={() =>
+                navigate({
+                  to: "/backtest/new",
+                  search: { seed: encodeSeedParam(scheduleToBacktestSeed(s.id)) },
+                })
+              }
               isPending={pendingActionIds.has(s.id)}
             />
           ))}
