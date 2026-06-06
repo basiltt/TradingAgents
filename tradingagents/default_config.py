@@ -28,6 +28,11 @@ DEFAULT_CONFIG = {
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,
+    # Anthropic prompt caching: inject cache_control on the stable system prefix
+    # for anthropic/* models. Default OFF until the behavioral-parity eval passes;
+    # flipping to ON is a deliberate, evidence-backed change. Env-overridable.
+    "prompt_cache_enabled": os.getenv("TRADINGAGENTS_PROMPT_CACHE_ENABLED", "").strip().lower()
+        in ("1", "true", "yes"),
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",

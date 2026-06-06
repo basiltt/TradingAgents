@@ -35,11 +35,11 @@ class TestMarketAnalyst:
 
         # We need to patch the chain creation (prompt | llm.bind_tools)
         # Easiest: patch ChatPromptTemplate to return something that pipes to our chain
-        with patch("tradingagents.agents.analysts.market_analyst.ChatPromptTemplate") as mock_pt:
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
             mock_prompt = MagicMock()
             mock_prompt.partial.return_value = mock_prompt
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
-            mock_pt.from_messages.return_value = mock_prompt
+            mock_split.return_value = mock_prompt
 
             state = {
                 "trade_date": "2025-01-10",
@@ -59,11 +59,11 @@ class TestMarketAnalyst:
         mock_llm, mock_chain = _make_mock_llm(content="ignored", tool_calls=[{"name": "get_stock_data"}])
         node = create_market_analyst(mock_llm)
 
-        with patch("tradingagents.agents.analysts.market_analyst.ChatPromptTemplate") as mock_pt:
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
             mock_prompt = MagicMock()
             mock_prompt.partial.return_value = mock_prompt
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
-            mock_pt.from_messages.return_value = mock_prompt
+            mock_split.return_value = mock_prompt
 
             state = {
                 "trade_date": "2025-01-10",
@@ -132,13 +132,29 @@ class TestSocialMediaAnalyst:
 
 
 class TestFundamentalsAnalyst:
-    def test_returns_report(self):
-        _test_analyst_node(
-            "tradingagents.agents.analysts.fundamentals_analyst",
-            "create_fundamentals_analyst",
-            "fundamentals_report",
-            [
-                "tradingagents.agents.analysts.fundamentals_analyst.get_language_instruction",
-                "tradingagents.agents.analysts.fundamentals_analyst.build_instrument_context",
-            ],
-        )
+    @patch("tradingagents.agents.analysts.fundamentals_analyst.get_language_instruction", return_value="")
+    @patch("tradingagents.agents.analysts.fundamentals_analyst.build_instrument_context", return_value="ctx")
+    def test_returns_report(self, mock_ctx, mock_lang):
+        # fundamentals_analyst routes prompt construction through
+        # split_cacheable_prompt (cacheable Pattern-A), so the mock seam is
+        # the helper rather than ChatPromptTemplate.
+        from tradingagents.agents.analysts.fundamentals_analyst import create_fundamentals_analyst
+
+        mock_llm, mock_chain = _make_mock_llm(content="Report content", tool_calls=[])
+        node = create_fundamentals_analyst(mock_llm)
+
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
+            mock_prompt = MagicMock()
+            mock_prompt.partial.return_value = mock_prompt
+            mock_prompt.__or__ = MagicMock(return_value=mock_chain)
+            mock_split.return_value = mock_prompt
+
+            state = {
+                "trade_date": "2025-01-10",
+                "company_of_interest": "AAPL",
+                "messages": [],
+            }
+            result = node(state)
+
+        assert result["fundamentals_report"] == "Report content"
+        assert "messages" in result

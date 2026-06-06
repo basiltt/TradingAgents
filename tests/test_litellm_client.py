@@ -320,3 +320,32 @@ class TestGetLiteLLMSupportedProviders:
         assert "openai" in providers
         assert "anthropic" in providers
         assert "google" in providers
+
+
+class TestEffortThinkingMapping:
+    def _model_kwargs(self, model, effort):
+        from unittest.mock import patch, MagicMock
+        from tradingagents.llm_clients.litellm_client import LiteLLMClient
+        with patch("tradingagents.llm_clients.litellm_client.NormalizedChatLiteLLM") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            LiteLLMClient(model, provider="anthropic", effort=effort).get_llm()
+            return mock_cls.call_args[1].get("model_kwargs", {})
+
+    def test_opus_4_8_uses_adaptive_not_budget_tokens(self):
+        mk = self._model_kwargs("claude-opus-4-8", "high")
+        thinking = mk.get("thinking")
+        assert thinking is not None
+        assert thinking.get("type") != "enabled"
+        assert "budget_tokens" not in thinking
+
+    def test_opus_4_7_uses_adaptive_not_budget_tokens(self):
+        mk = self._model_kwargs("claude-opus-4-7", "high")
+        thinking = mk.get("thinking")
+        assert thinking is not None
+        assert thinking.get("type") != "enabled"
+        assert "budget_tokens" not in thinking
+
+    def test_older_anthropic_keeps_budget_tokens(self):
+        mk = self._model_kwargs("claude-sonnet-4-6", "high")
+        thinking = mk.get("thinking")
+        assert thinking == {"type": "enabled", "budget_tokens": 32000}

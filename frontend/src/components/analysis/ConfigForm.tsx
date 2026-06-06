@@ -75,6 +75,7 @@ interface SavedSettings {
   max_risk_discuss_rounds?: number;
   max_recur_limit?: number;
   checkpoint_enabled?: boolean;
+  prompt_cache_enabled?: boolean;
   interval?: CryptoInterval;
   data_vendors?: Record<string, string>;
   workflow_mode?: "quick_trade" | "deep_analysis";
@@ -113,6 +114,7 @@ interface FormValues {
   max_risk_discuss_rounds: number;
   max_recur_limit: number;
   checkpoint_enabled: boolean;
+  prompt_cache_enabled: boolean;
   interval: CryptoInterval;
   data_vendor_core: string;
   data_vendor_technical: string;
@@ -264,6 +266,7 @@ export function ConfigForm() {
       max_risk_discuss_rounds: saved.max_risk_discuss_rounds ?? 1,
       max_recur_limit: saved.max_recur_limit ?? 100,
       checkpoint_enabled: saved.checkpoint_enabled ?? false,
+      prompt_cache_enabled: saved.prompt_cache_enabled ?? false,
       interval: saved.interval || "60",
       data_vendor_core: saved.data_vendors?.core_stock_apis || "yfinance",
       data_vendor_technical: saved.data_vendors?.technical_indicators || "yfinance",
@@ -289,6 +292,7 @@ export function ConfigForm() {
   const watchedRisk = watch("max_risk_discuss_rounds");
   const watchedRecur = watch("max_recur_limit");
   const watchedCheckpoint = watch("checkpoint_enabled");
+  const watchedPromptCache = watch("prompt_cache_enabled");
   const watchedInterval = watch("interval");
   const watchedTicker = watch("ticker");
   const watchedVendorCore = watch("data_vendor_core");
@@ -319,6 +323,7 @@ export function ConfigForm() {
       max_risk_discuss_rounds: watchedRisk,
       max_recur_limit: watchedRecur,
       checkpoint_enabled: watchedCheckpoint,
+      prompt_cache_enabled: watchedPromptCache,
       interval: watchedInterval,
       data_vendors: {
         core_stock_apis: watchedVendorCore,
@@ -432,6 +437,7 @@ export function ConfigForm() {
         max_risk_discuss_rounds: data.max_risk_discuss_rounds,
         max_recur_limit: data.max_recur_limit !== 100 ? data.max_recur_limit : undefined,
         checkpoint_enabled: data.checkpoint_enabled || undefined,
+        prompt_cache_enabled: data.prompt_cache_enabled || undefined,
         workflow_mode: data.workflow_mode !== "deep_analysis" ? data.workflow_mode : undefined,
         ta_prefilter_enabled: isCryptoSubmit ? data.ta_prefilter_enabled : undefined,
         ta_prefilter_threshold: isCryptoSubmit && data.ta_prefilter_enabled ? data.ta_prefilter_threshold : undefined,
@@ -1092,6 +1098,19 @@ export function ConfigForm() {
                       <div>
                         <Label htmlFor="checkpoint" className="font-bold text-sm cursor-pointer select-none">Enable Resilient State Checkpointing</Label>
                         <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">Saves step-wise run context to DB allowing recovery/resumption after connection or proxy timeouts.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3.5 bg-muted/20 border border-border/30 rounded-xl p-4 mt-2">
+                      <Controller
+                        name="prompt_cache_enabled"
+                        control={control}
+                        render={({ field }) => (
+                          <Checkbox checked={field.value} onCheckedChange={field.onChange} id="prompt-cache" />
+                        )}
+                      />
+                      <div>
+                        <Label htmlFor="prompt-cache" className="font-bold text-sm cursor-pointer select-none">Prompt caching (Anthropic)</Label>
+                        <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">Caches the stable system prompt prefix on Anthropic models to reduce token cost and latency on repeated runs.</p>
                       </div>
                     </div>
                   </div>

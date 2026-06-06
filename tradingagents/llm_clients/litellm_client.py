@@ -14,6 +14,7 @@ import httpx
 from langchain_community.chat_models import ChatLiteLLM
 
 from .base_client import BaseLLMClient, normalize_content, llm_rate_limited_invoke
+from .model_families import model_rejects_sampling_params
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,38 @@ class NormalizedChatLiteLLM(ChatLiteLLM):
         return params
 
     def invoke(self, input, config=None, **kwargs):
-        return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+        # Cache injection fires only for DIRECT anthropic/ routing. Models routed via a
+        # slash-containing override (e.g. openrouter/anthropic/...) or a custom proxy with a
+        # bare model name won't match and silently skip caching — acceptable v1 limitation.
+        # Only sync invoke() is wrapped; async ainvoke/astream would bypass caching, but all
+        # current agent call sites use sync .invoke.
+        if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
+            input = self._inject_cache_control(input)
+            # DEBUG breadcrumb so "caching ON but no hits" (e.g. a sub-1024-token
+            # prefix that silently won't cache) is distinguishable from "caching
+            # OFF". Without this, both look identical (no INFO line below).
+            logger.debug("LLM cache | injection attempted | model=%s", self.model)
+        result = normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+        try:
+            from tradingagents.llm_clients.base_client import extract_cache_metrics
+            m = extract_cache_metrics(result)
+            if m["cache_read"] is not None or m["cache_creation"] is not None:
+                logger.info("LLM cache | model=%s input=%s cache_read=%s cache_creation=%s",
+                            self.model, m["input_tokens"], m["cache_read"], m["cache_creation"])
+        except Exception:
+            pass  # never let metric logging break a call
+        return result
+
+    def _inject_cache_control(self, input):
+        """Rewrite the first system message to a cache_control block (Anthropic only).
+        Handles ChatPromptValue / list[BaseMessage] / list[dict]. Other shapes pass
+        through unchanged (no-op)."""
+        from tradingagents.agents.utils.prompt_cache import apply_cache_control_to_messages
+        if hasattr(input, "to_messages"):
+            return apply_cache_control_to_messages(input.to_messages())
+        if isinstance(input, list):
+            return apply_cache_control_to_messages(input)
+        return input
 
     def __iter__(self):
         with _serialize_lock:
@@ -182,11 +214,18 @@ class LiteLLMClient(BaseLLMClient):
             # OpenAI reasoning models (o-series, GPT-5)
             model_kwargs["reasoning_effort"] = self.kwargs["reasoning_effort"]
         if self.kwargs.get("effort"):
-            # Anthropic extended thinking — litellm uses 'thinking' param
-            budget = {"high": 32000, "medium": 16000, "low": 4000}.get(
-                self.kwargs["effort"], 16000
-            )
-            model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            # Anthropic thinking. Opus 4.7+ removed budget_tokens and require
+            # adaptive thinking; the legacy enabled+budget_tokens shape 400s.
+            # Use adaptive for those models (and future Opus 4.9/5.x via the
+            # shared predicate); keep the legacy budget shape for older Anthropic
+            # models that still accept it.
+            if model_rejects_sampling_params(self.model):
+                model_kwargs["thinking"] = {"type": "adaptive"}
+            else:
+                budget = {"high": 32000, "medium": 16000, "low": 4000}.get(
+                    self.kwargs["effort"], 16000
+                )
+                model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
         if self.kwargs.get("thinking_level"):
             # Google Gemini thinking level — passed as extra kwarg.
             # Litellm may pass this through; for full fidelity use legacy client.
@@ -194,7 +233,17 @@ class LiteLLMClient(BaseLLMClient):
         if model_kwargs:
             llm_kwargs["model_kwargs"] = model_kwargs
 
-        return NormalizedChatLiteLLM(**llm_kwargs)
+        instance = NormalizedChatLiteLLM(**llm_kwargs)
+        # Use object.__setattr__ so this never depends on the pydantic model's
+        # __setattr__ policy. ChatLiteLLM is extra="ignore" today, but a future
+        # langchain-core release that flips to frozen/extra="forbid" would make a
+        # plain ``instance._cache_enabled = ...`` raise here — and get_llm() builds
+        # EVERY LLM, so that would take the whole app down, not just caching.
+        object.__setattr__(
+            instance, "_cache_enabled",
+            bool(self.kwargs.get("prompt_cache_enabled", False)),
+        )
+        return instance
 
     def validate_model(self) -> bool:
         """LiteLLM supports any model string — validation is permissive."""

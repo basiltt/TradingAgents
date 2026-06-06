@@ -28,6 +28,24 @@ LLMCallable = Callable[[str, str], Coroutine[None, None, str]]
 _active_clients: list["httpx.AsyncClient"] = []
 
 
+def _sampling_params(model: str) -> dict:
+    """Return the sampling/token params to merge into a payload for this model.
+
+    Always includes max_tokens. Omits temperature (and other sampling params)
+    for models that 400 on them (Opus 4.7+). Conservative default: include
+    temperature unless the model is known to reject it. The Opus detection lives
+    in tradingagents.llm_clients.model_families so the engine and API agree, and
+    it covers FUTURE Opus releases (4.9, 5.x …) so a new model can't silently
+    400 and freeze the AI Manager.
+    """
+    from tradingagents.llm_clients.model_families import model_rejects_sampling_params
+
+    params: dict = {"max_tokens": 1024}
+    if not model_rejects_sampling_params(model):
+        params["temperature"] = 0.2
+    return params
+
+
 async def _acquire_global_rate_limit() -> bool:
     """Respect the global LLM concurrency semaphore and minimum spacing.
 
@@ -158,6 +176,20 @@ def _extract_anthropic_text(data: dict, model: str) -> str:
     return content[0].get("text") or content[0].get("thinking") or str(content[0])
 
 
+def _extract_cache_usage(data: dict, provider: str) -> dict:
+    """Read cache token counts from a raw provider response `usage` object.
+
+    Anthropic /v1/messages: usage.cache_read_input_tokens / cache_creation_input_tokens.
+    OpenAI-compat chat: usage.prompt_tokens_details.cached_tokens.
+    Returns None when not reported."""
+    usage = (data or {}).get("usage") or {}
+    if provider == "anthropic":
+        return {"cache_read": usage.get("cache_read_input_tokens"),
+                "cache_creation": usage.get("cache_creation_input_tokens")}
+    details = usage.get("prompt_tokens_details") or {}
+    return {"cache_read": details.get("cached_tokens"), "cache_creation": None}
+
+
 def create_llm_callable(
     provider: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -247,12 +279,18 @@ def create_llm_callable_with_cleanup(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": context_prompt},
                     ],
-                    "temperature": 0.2,
-                    "max_tokens": 1024,
+                    **_sampling_params(model),
                 }
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
+                try:
+                    _m = _extract_cache_usage(data, "openai")
+                    if _m["cache_read"] is not None:
+                        logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                    "openai", model, _m["cache_read"])
+                except Exception:
+                    pass  # never let metric logging break a call
                 return _extract_openai_text(data, model)
             finally:
                 _release_global_rate_limit(acquired)
@@ -282,12 +320,18 @@ def create_llm_callable_with_cleanup(
                     "model": model,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": context_prompt}],
-                    "temperature": 0.2,
-                    "max_tokens": 1024,
+                    **_sampling_params(model),
                 }
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
+                try:
+                    _m = _extract_cache_usage(data, "anthropic")
+                    if _m["cache_read"] is not None:
+                        logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                    "anthropic", model, _m["cache_read"])
+                except Exception:
+                    pass  # never let metric logging break a call
                 return _extract_anthropic_text(data, model)
             finally:
                 _release_global_rate_limit(acquired)
@@ -318,12 +362,18 @@ def _create_openai_callable(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": context_prompt},
                 ],
-                "temperature": 0.2,
-                "max_tokens": 1024,
+                **_sampling_params(model),
             }
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
+            try:
+                _m = _extract_cache_usage(data, "openai")
+                if _m["cache_read"] is not None:
+                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                "openai", model, _m["cache_read"])
+            except Exception:
+                pass  # never let metric logging break a call
             return _extract_openai_text(data, model)
         finally:
             _release_global_rate_limit(acquired)
@@ -352,12 +402,18 @@ def _create_anthropic_callable(api_key: str, model: str, backend_url: Optional[s
                 "model": model,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": context_prompt}],
-                "temperature": 0.2,
-                "max_tokens": 1024,
+                **_sampling_params(model),
             }
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
+            try:
+                _m = _extract_cache_usage(data, "anthropic")
+                if _m["cache_read"] is not None:
+                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                "anthropic", model, _m["cache_read"])
+            except Exception:
+                pass  # never let metric logging break a call
             return _extract_anthropic_text(data, model)
         finally:
             _release_global_rate_limit(acquired)

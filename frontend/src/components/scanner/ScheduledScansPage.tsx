@@ -753,6 +753,7 @@ interface ScheduledFormDefaults {
   taPrefilterEnabled?: boolean;
   taPrefilterThreshold?: number;
   checkpointEnabled?: boolean;
+  promptCacheEnabled?: boolean;
   llmMaxConcurrent?: number;
   llmMinSpacingMs?: number;
   backendUrl?: string;
@@ -823,6 +824,7 @@ function ScheduleFormDialog({
   const [taPrefilterEnabled, setTaPrefilterEnabled] = useState(() => formDefaults.taPrefilterEnabled ?? false);
   const [taPrefilterThreshold, setTaPrefilterThreshold] = useState(() => formDefaults.taPrefilterThreshold ?? 40);
   const [checkpointEnabled, setCheckpointEnabled] = useState(() => formDefaults.checkpointEnabled ?? false);
+  const [promptCacheEnabled, setPromptCacheEnabled] = useState(() => formDefaults.promptCacheEnabled ?? false);
   const [llmMaxConcurrent, setLlmMaxConcurrent] = useState(() => formDefaults.llmMaxConcurrent ?? 0);
   const [llmMinSpacingMs, setLlmMinSpacingMs] = useState(() => formDefaults.llmMinSpacingMs ?? 0);
   const [agentModelOverrides, setAgentModelOverrides] = useState<Record<string, string>>(loadOverrides);
@@ -927,6 +929,7 @@ function ScheduleFormDialog({
       if (sc.ta_prefilter_enabled != null) setTaPrefilterEnabled(sc.ta_prefilter_enabled as boolean);
       if (sc.ta_prefilter_threshold != null) setTaPrefilterThreshold(sc.ta_prefilter_threshold as number);
       if (sc.checkpoint_enabled != null) setCheckpointEnabled(sc.checkpoint_enabled as boolean);
+      if (sc.prompt_cache_enabled != null) setPromptCacheEnabled(sc.prompt_cache_enabled as boolean);
       if (sc.llm_max_concurrent != null) setLlmMaxConcurrent(sc.llm_max_concurrent as number);
       if (sc.llm_min_spacing_ms != null) setLlmMinSpacingMs(sc.llm_min_spacing_ms as number);
       if (sc.agent_model_overrides != null && typeof sc.agent_model_overrides === "object") {
@@ -945,7 +948,7 @@ function ScheduleFormDialog({
       cronExpression, timezone, provider, klineInterval, analysts,
       researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
       maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
-      taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
+      taPrefilterThreshold, checkpointEnabled, promptCacheEnabled, llmMaxConcurrent, llmMinSpacingMs,
       backendUrl, llmApiKey, deepModel, quickModel, autoTradeConfigs,
     });
   }, [
@@ -953,7 +956,7 @@ function ScheduleFormDialog({
     cronExpression, timezone, provider, klineInterval, analysts,
     researchDepth, outputLanguage, maxDebateRounds, maxRiskRounds,
     maxRecurLimit, maxParallel, workflowMode, taPrefilterEnabled,
-    taPrefilterThreshold, checkpointEnabled, llmMaxConcurrent, llmMinSpacingMs,
+    taPrefilterThreshold, checkpointEnabled, promptCacheEnabled, llmMaxConcurrent, llmMinSpacingMs,
     backendUrl, llmApiKey, deepModel, quickModel, autoTradeConfigs,
   ]);
 
@@ -981,6 +984,7 @@ function ScheduleFormDialog({
       setWorkflowMode(fd.workflowMode ?? "deep_analysis");
       setTaPrefilterEnabled(fd.taPrefilterEnabled ?? false); setTaPrefilterThreshold(fd.taPrefilterThreshold ?? 40);
       setCheckpointEnabled(fd.checkpointEnabled ?? false);
+      setPromptCacheEnabled(fd.promptCacheEnabled ?? false);
       setLlmMaxConcurrent(fd.llmMaxConcurrent ?? 0); setLlmMinSpacingMs(fd.llmMinSpacingMs ?? 0);
       setAgentModelOverrides(loadOverrides());
       setAutoTradeConfigs(fd.autoTradeConfigs ?? []);
@@ -1041,6 +1045,7 @@ function ScheduleFormDialog({
           ta_prefilter_enabled: taPrefilterEnabled,
           ta_prefilter_threshold: taPrefilterEnabled ? taPrefilterThreshold : undefined,
           checkpoint_enabled: checkpointEnabled,
+          prompt_cache_enabled: promptCacheEnabled,
           llm_max_concurrent: llmMaxConcurrent,
           llm_min_spacing_ms: llmMinSpacingMs,
           agent_model_overrides: filterOverridesForAssetType(agentModelOverrides, "crypto"),
@@ -1336,6 +1341,13 @@ function ScheduleFormDialog({
               onChange={setCheckpointEnabled}
               label="Enable Checkpoints"
               description="Save state after each step so crashed runs can resume."
+              className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3.5"
+            />
+            <NeuSwitch
+              checked={promptCacheEnabled}
+              onChange={setPromptCacheEnabled}
+              label="Prompt caching (Anthropic)"
+              description="Cache the stable system prompt prefix on Anthropic models to cut token cost and latency."
               className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] border-none shadow-[var(--shadow-card)] px-3.5 py-3.5"
             />
           </CollapsibleSection>

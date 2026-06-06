@@ -318,6 +318,8 @@ class AnalysisService:
             config["max_recur_limit"] = request["max_recur_limit"]
         if request.get("checkpoint_enabled") is not None:
             config["checkpoint_enabled"] = request["checkpoint_enabled"]
+        if request.get("prompt_cache_enabled") is not None:
+            config["prompt_cache_enabled"] = request["prompt_cache_enabled"]
 
         if request.get("ta_prefilter_enabled") is not None:
             config["ta_prefilter_enabled"] = request["ta_prefilter_enabled"]

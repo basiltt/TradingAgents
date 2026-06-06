@@ -111,6 +111,25 @@ def normalize_content(response):
     return response
 
 
+def extract_cache_metrics(response) -> dict:
+    """Pull normalized cache token counts from a langchain response.
+
+    langchain maps Anthropic / OpenAI-Responses / Gemini all to
+    usage_metadata['input_token_details']['cache_read' | 'cache_creation'].
+    Returns None for a field the provider did not report (distinct from 0).
+    Gemini caveat: cache_read may be unpopulated even when caching fired
+    (known langchain_google_genai issue) — treat Gemini cache_read==0/None
+    as inconclusive, not proof of no caching.
+    """
+    um = getattr(response, "usage_metadata", None) or {}
+    details = um.get("input_token_details") or {}
+    return {
+        "input_tokens": um.get("input_tokens"),
+        "cache_read": details.get("cache_read"),
+        "cache_creation": details.get("cache_creation"),
+    }
+
+
 class BaseLLMClient(ABC):
     """Abstract base class for LLM clients."""
 

@@ -401,6 +401,41 @@ def test_build_config_overrides(service):
     assert config["checkpoint_enabled"] is False
 
 
+def test_build_config_prompt_cache_enabled_override(service):
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+        "prompt_cache_enabled": True,
+    })
+    assert config["prompt_cache_enabled"] is True
+
+
+def test_build_config_prompt_cache_preserves_resolved_when_absent(service):
+    # An admin global setting (set via update_config) flows into _build_config
+    # through the resolved-config loop. When the per-run request omits
+    # prompt_cache_enabled, the relay must NOT clobber that resolved value back
+    # to DEFAULT_CONFIG — it has no else branch, mirroring the checkpoint_enabled
+    # relay exactly.
+    service._config.get_config = MagicMock(
+        return_value={"resolved": {"prompt_cache_enabled": True}}
+    )
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+    })
+    assert config["prompt_cache_enabled"] is True
+
+
+def test_build_config_prompt_cache_request_overrides_resolved(service):
+    # An explicit per-run request value wins over the resolved/admin value.
+    service._config.get_config = MagicMock(
+        return_value={"resolved": {"prompt_cache_enabled": True}}
+    )
+    config = service._build_config({
+        "ticker": "SPY", "analysis_date": "2025-01-10",
+        "prompt_cache_enabled": False,
+    })
+    assert config["prompt_cache_enabled"] is False
+
+
 def test_build_config_backend_url(service):
     with patch("backend.services.analysis_service.validate_backend_url", return_value="http://ollama:11434") as mock_val:
         config = service._build_config({
