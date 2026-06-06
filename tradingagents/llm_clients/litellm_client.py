@@ -182,11 +182,18 @@ class LiteLLMClient(BaseLLMClient):
             # OpenAI reasoning models (o-series, GPT-5)
             model_kwargs["reasoning_effort"] = self.kwargs["reasoning_effort"]
         if self.kwargs.get("effort"):
-            # Anthropic extended thinking — litellm uses 'thinking' param
-            budget = {"high": 32000, "medium": 16000, "low": 4000}.get(
-                self.kwargs["effort"], 16000
-            )
-            model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            # Anthropic thinking. Current Opus (4.7/4.8) removed budget_tokens and
+            # require adaptive thinking; the legacy enabled+budget_tokens shape 400s.
+            # Use adaptive for those models; keep the legacy budget shape for older
+            # Anthropic models that still accept it.
+            model_l = self.model.lower()
+            if "opus-4-7" in model_l or "opus-4-8" in model_l:
+                model_kwargs["thinking"] = {"type": "adaptive"}
+            else:
+                budget = {"high": 32000, "medium": 16000, "low": 4000}.get(
+                    self.kwargs["effort"], 16000
+                )
+                model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
         if self.kwargs.get("thinking_level"):
             # Google Gemini thinking level — passed as extra kwarg.
             # Litellm may pass this through; for full fidelity use legacy client.
