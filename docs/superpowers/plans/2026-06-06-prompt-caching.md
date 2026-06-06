@@ -136,6 +136,15 @@ git add docs/superpowers/plans/2026-06-06-prompt-caching-progress.md
 git commit -m "docs(caching): add implementation progress tracker"
 ```
 
+- [ ] **Step 3: Tag the pre-restructure commit (for the P6 old-vs-new eval)**
+
+Before any P3 prompt restructuring lands, tag the current state so the P6 eval can
+recover the OLD prompts:
+```bash
+git tag pre-cache-p3
+```
+Record in the tracker: "OLD-prompt recovery for P6 = `git tag pre-cache-p3`."
+
 ---
 
 ## Phase P1 — Recon & GO/NO-GO (measurement, not code)
@@ -363,54 +372,31 @@ Expected: PASS (5 passed).
 
 - [ ] **Step 5: Apply the helper at all 4 payload sites**
 
+> **VERIFIED LOCATIONS (corrected).** The 4 payloads are NOT all nested inside the two
+> `create_*` functions. Two live in module-level helpers that `create_llm_callable`
+> calls. Edit all four:
+> - `call_openai` in `create_llm_callable_with_cleanup`: temp L250, max_tokens L251
+> - `call_anthropic` in `create_llm_callable_with_cleanup`: temp L285, max_tokens L286
+> - `call_openai` in `_create_openai_callable` (module-level): temp L321, max_tokens L322
+> - `call_anthropic` in `_create_anthropic_callable` (module-level): temp L355, max_tokens L356
+
 In `backend/services/ai_manager_llm_provider.py`, replace the hardcoded
-`"temperature": 0.2, "max_tokens": 1024,` in **each** of the 4 payloads (the
-`call_openai` and `call_anthropic` inside both `create_llm_callable` and
-`create_llm_callable_with_cleanup`).
+`"temperature": 0.2, "max_tokens": 1024,` in **each** of the 4 payloads.
 
 For the **anthropic** payloads, change:
 ```python
-                payload = {
-                    "model": model,
-                    "system": system_prompt,
-                    "messages": [{"role": "user", "content": context_prompt}],
                     "temperature": 0.2,
                     "max_tokens": 1024,
                 }
 ```
 to:
 ```python
-                payload = {
-                    "model": model,
-                    "system": system_prompt,
-                    "messages": [{"role": "user", "content": context_prompt}],
                     **_sampling_params(model),
                 }
 ```
 
-For the **openai** payloads, change:
-```python
-                payload = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": context_prompt},
-                    ],
-                    "temperature": 0.2,
-                    "max_tokens": 1024,
-                }
-```
-to:
-```python
-                payload = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": context_prompt},
-                    ],
-                    **_sampling_params(model),
-                }
-```
+For the **openai** payloads, make the identical change (replace the two hardcoded
+lines with `**_sampling_params(model),`).
 
 - [ ] **Step 6: Run the AI Manager provider tests + nearby suite**
 
@@ -730,10 +716,20 @@ git commit -m "feat(caching): add split_cacheable_prompt Pattern-A builder"
 
 - [ ] **Step 1: Write the failing content-preservation test**
 
+> **Harness note (VERIFIED):** `create_market_analyst` does `prompt | llm.bind_tools(tools)`,
+> so `bind_tools(...)` MUST return a real LangChain `Runnable` or the `|` raises
+> `TypeError: Expected a Runnable`. A plain object returning `self` does NOT work. Use
+> `RunnableLambda` as the bound model so the pipe composes and we capture the REAL
+> rendered messages. Also patch `get_language_instruction` to a non-empty sentinel so
+> the content-preservation assertion on it is meaningful (it returns `""` for the
+> default English).
+
 Create `tests/test_market_analyst_prompt.py`:
 ```python
 """Content-preservation for the market_analyst prompt refactor."""
 import re
+from unittest.mock import MagicMock, patch
+from langchain_core.runnables import RunnableLambda
 
 
 def _norm(s: str) -> str:
@@ -747,46 +743,70 @@ def _msg_text(m) -> str:
     return content
 
 
+def _render_market_analyst():
+    """Run the node with a RunnableLambda model that captures the real rendered
+    messages. Returns the captured list[BaseMessage]."""
+    captured = {}
+
+    def fake_model(prompt_value):
+        captured["messages"] = (prompt_value.to_messages()
+                                if hasattr(prompt_value, "to_messages") else prompt_value)
+        return MagicMock(tool_calls=[], content="ok")
+
+    mock_llm = MagicMock()
+    mock_llm.bind_tools.return_value = RunnableLambda(fake_model)
+
+    from tradingagents.agents.analysts.market_analyst import create_market_analyst
+    with patch("tradingagents.agents.analysts.market_analyst.get_language_instruction",
+               return_value=" RESPOND_IN_TESTLANG."), \
+         patch("tradingagents.agents.analysts.market_analyst.build_instrument_context",
+               return_value="Asset: BTCUSDT futures"):
+        node = create_market_analyst(mock_llm)
+        node({"trade_date": "2026-06-06", "company_of_interest": "BTCUSDT", "messages": []})
+    return captured["messages"]
+
+
 class TestMarketAnalystContentPreserved:
-    def _render(self):
-        from unittest.mock import MagicMock
-        from tradingagents.agents.analysts.market_analyst import create_market_analyst
-        captured = {}
-
-        class FakeLLM:
-            def bind_tools(self, tools):
-                return self
-            def invoke(self, value):
-                captured["messages"] = value.to_messages() if hasattr(value, "to_messages") else value
-                return MagicMock(tool_calls=[], content="ok")
-
-        node = create_market_analyst(FakeLLM())
-        state = {"trade_date": "2026-06-06", "company_of_interest": "BTCUSDT", "messages": []}
-        node(state)
-        return " ".join(_norm(_msg_text(m)) for m in captured["messages"])
-
     def test_all_content_reaches_model(self):
-        text = self._render()
-        for fragment in ["trading assistant", "2026-06-06", "BTCUSDT", "Markdown table"]:
-            assert _norm(fragment) in text, f"missing: {fragment}"
+        msgs = _render_market_analyst()
+        joined = " ".join(_norm(_msg_text(m)) for m in msgs)
+        for fragment in ["trading assistant", "2026-06-06", "BTCUSDT futures",
+                         "Markdown table", "RESPOND_IN_TESTLANG"]:
+            assert _norm(fragment) in joined, f"missing: {fragment}"
 
     def test_system_message_has_no_volatile_tokens(self):
-        from unittest.mock import MagicMock
-        from tradingagents.agents.analysts.market_analyst import create_market_analyst
-        captured = {}
-
-        class FakeLLM:
-            def bind_tools(self, tools): return self
-            def invoke(self, value):
-                captured["messages"] = value.to_messages() if hasattr(value, "to_messages") else value
-                return MagicMock(tool_calls=[], content="ok")
-
-        create_market_analyst(FakeLLM())(
-            {"trade_date": "2026-06-06", "company_of_interest": "BTCUSDT", "messages": []})
         from langchain_core.messages import SystemMessage
-        sys_msgs = [m for m in captured["messages"] if isinstance(m, SystemMessage)]
+        msgs = _render_market_analyst()
+        sys_msgs = [m for m in msgs if isinstance(m, SystemMessage)]
         assert sys_msgs, "expected a leading system message"
-        assert "2026-06-06" not in _msg_text(sys_msgs[0])  # date hoisted to human turn
+        # date + instrument hoisted out of the system message into the human turn
+        assert "2026-06-06" not in _msg_text(sys_msgs[0])
+        assert "BTCUSDT futures" not in _msg_text(sys_msgs[0])
+
+    def test_system_prefix_byte_stable_across_date_and_symbol(self):
+        """The whole point of caching: the system prefix must be byte-identical
+        across different (date, symbol) pairs, or no cache hit ever fires."""
+        from langchain_core.messages import SystemMessage
+        from unittest.mock import MagicMock, patch
+        from langchain_core.runnables import RunnableLambda
+
+        def _sys_for(date, symbol, instrument):
+            captured = {}
+            def fake_model(pv):
+                captured["m"] = pv.to_messages() if hasattr(pv, "to_messages") else pv
+                return MagicMock(tool_calls=[], content="ok")
+            mock_llm = MagicMock()
+            mock_llm.bind_tools.return_value = RunnableLambda(fake_model)
+            from tradingagents.agents.analysts.market_analyst import create_market_analyst
+            with patch("tradingagents.agents.analysts.market_analyst.get_language_instruction", return_value=""), \
+                 patch("tradingagents.agents.analysts.market_analyst.build_instrument_context", return_value=instrument):
+                create_market_analyst(mock_llm)({"trade_date": date, "company_of_interest": symbol, "messages": []})
+            sys = [m for m in captured["m"] if isinstance(m, SystemMessage)][0]
+            return _msg_text(sys)
+
+        a = _sys_for("2026-06-06", "BTCUSDT", "Asset: BTC")
+        b = _sys_for("2025-01-02", "ETHUSDT", "Asset: ETH")
+        assert a == b, "system prefix differs across runs → caching will never hit"
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -868,6 +888,76 @@ git commit -m "refactor(caching): cacheable prompt split for market_analyst"
 
 - [ ] **Step 7: Update the progress tracker** — list which sites were refactored and which were skipped (sub-threshold per P1).
 
+### Task 3.5: Verify/handle Pattern B sites (trader, risk_manager, compliance_officer)
+
+> **VERIFIED (trader):** `trader.py` builds `direction_messages = [{"role":"system",
+> "content": _DIRECTION_SYSTEM}, {"role":"user", "content": _DIRECTION_USER.format(...)}]`.
+> The system constant `_DIRECTION_SYSTEM` is **already stable** (no date/instrument —
+> those are in the `_DIRECTION_USER` turn). So Pattern B sites where the system
+> constant is already volatile-free need **NO restructuring** — the P4 client transform
+> handles the `{"role":"system"}` dict form automatically. This task is **verification +
+> the dict-handling test**, not a refactor, unless a site embeds volatile content in
+> its system constant.
+
+**Files:**
+- Inspect: `tradingagents/agents/trader/trader.py`, `tradingagents/agents/risk/risk_manager.py`, `tradingagents/agents/compliance/compliance_officer.py`
+- Test: `tests/test_pattern_b_sites.py`
+
+- [ ] **Step 1: Inspect each Pattern B system constant for volatile content**
+
+For each site, read the system constant passed as `{"role": "system", "content": ...}`.
+Classify:
+- **Already stable** (volatile content only in the user turn) → no refactor; relies on
+  P4 dict-handling. (Trader's `_DIRECTION_SYSTEM` / `_LEVELS_SYSTEM` are this case.)
+- **Embeds volatile content** (e.g. `{instrument_context}` inside the system string) →
+  hoist it into the user turn (mirror the §4 split), OR explicitly flag the site
+  non-caching in the progress tracker if hoisting would reorder stable text.
+
+- [ ] **Step 2: Write a test proving the P4 transform marks a dict-form system message**
+
+Create `tests/test_pattern_b_sites.py`:
+```python
+"""Pattern B: dict-form {"role":"system"} messages get cache_control via the transform."""
+from tradingagents.agents.utils.prompt_cache import apply_cache_control_to_messages
+
+
+class TestPatternBDictSystem:
+    def test_dict_system_marked(self):
+        msgs = [{"role": "system", "content": "STABLE TRADER SYSTEM"},
+                {"role": "user", "content": "volatile per-trade data"}]
+        out = apply_cache_control_to_messages(msgs)
+        assert isinstance(out[0]["content"], list)
+        assert out[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert out[1]["content"] == "volatile per-trade data"  # user turn untouched
+```
+(This exercises the dict branch already implemented in Task 3.1; it confirms Pattern B
+is covered by the shared helper without a per-site refactor.)
+
+- [ ] **Step 3: Run the test, confirm it passes** (the helper from 3.1 already handles dicts).
+
+Run: `python -m pytest tests/test_pattern_b_sites.py -v`
+Expected: PASS.
+
+- [ ] **Step 4: Record the per-site Pattern B finding** in the progress tracker
+  (which sites are already-stable vs need hoisting vs flagged non-caching).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/test_pattern_b_sites.py docs/superpowers/plans/2026-06-06-prompt-caching-progress.md
+git commit -m "test(caching): verify Pattern B dict-system sites covered by cache_control transform"
+```
+
+> **NOTE on `invoke_structured_or_freetext`:** Pattern B sites call the model via
+> `bind_structured(...)` / `invoke_structured_or_freetext(...)` (`structured.py`), which
+> route through `with_structured_output(...).invoke` → a `RunnableBinding` whose
+> `.bound` is `NormalizedChatLiteLLM` → our `invoke` override fires. The transform
+> therefore applies on these paths too. The structured **free-text fallback**
+> (`invoke_structured_or_freetext` calling `plain_llm.invoke`) also passes through the
+> same wrapper, so caching applies whenever the message list has a leading system
+> dict. Verify this routing holds during implementation (it relies on langchain's
+> RunnableBinding delegating to `.invoke`, confirmed in prior analysis).
+
 ---
 
 ## Phase P4 — `cache_control` injection (the heart)
@@ -925,6 +1015,26 @@ class TestCacheInjection:
         llm = _make("gpt-5.4", cache_enabled=True)
         out = self._capture_input(llm, [SystemMessage(content="STABLE"), HumanMessage(content="v")])
         assert out[0].content == "STABLE"  # openai → no cache_control
+
+    def test_handles_chatpromptvalue_shape(self):
+        from langchain_core.prompt_values import ChatPromptValue
+        llm = _make("anthropic/claude-sonnet-4-6", cache_enabled=True)
+        pv = ChatPromptValue(messages=[SystemMessage(content="STABLE"), HumanMessage(content="v")])
+        out = self._capture_input(llm, pv)
+        assert isinstance(out[0].content, list)  # to_messages() unwrapped + marked
+
+    def test_handles_bare_string_noop(self):
+        llm = _make("anthropic/claude-sonnet-4-6", cache_enabled=True)
+        out = self._capture_input(llm, "just a string, no system message")
+        assert out == "just a string, no system message"  # no-op, no crash
+
+    def test_handles_list_of_tuples_noop_or_marks(self):
+        # list[tuple] like [("system","X"),("human","y")] has no SystemMessage object
+        # nor a role-dict, so the transform is a safe no-op (does not crash).
+        llm = _make("anthropic/claude-sonnet-4-6", cache_enabled=True)
+        msgs = [("system", "STABLE"), ("human", "v")]
+        out = self._capture_input(llm, msgs)
+        assert out == msgs  # unchanged — tuple form not matched, no error
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1036,11 +1146,17 @@ In `tradingagents/llm_clients/factory.py`, `prompt_cache_enabled` arrives via `*
 
 - [ ] **Step 5: Pass the flag from `trading_graph.py`**
 
-In `tradingagents/graph/trading_graph.py`, where `create_llm_client(...)` is called (3 sites: ~179, ~186, ~421), add the flag from config. At each call, add:
-```python
-            prompt_cache_enabled=self.config.get("prompt_cache_enabled", False),
-```
-(merge into the existing kwargs — e.g. alongside `**llm_kwargs`).
+In `tradingagents/graph/trading_graph.py`, add the flag at the `create_llm_client(...)`
+calls:
+- **L179 (deep)** and **L186 (quick)**: add `prompt_cache_enabled=self.config.get("prompt_cache_enabled", False),` alongside `**llm_kwargs`.
+- **L421 (agent override) — IMPORTANT:** this call passes `**safe_kwargs`, and
+  `safe_kwargs` (built ~L415-419) deliberately strips provider-specific keys, carrying
+  only `callbacks`/`api_key`. So adding it to `llm_kwargs` won't reach this call —
+  add it explicitly:
+  ```python
+              prompt_cache_enabled=self.config.get("prompt_cache_enabled", False),
+  ```
+  as a direct kwarg on the L421 `create_llm_client(...)` call (not via `safe_kwargs`).
 
 - [ ] **Step 6: Run the test to verify it passes**
 
@@ -1107,6 +1223,25 @@ git add tests/test_litellm_cache_injection.py
 git commit -m "test(caching): real-binding assertion that cache_control reaches Anthropic system param"
 ```
 
+- [ ] **Step 4: Offline engagement check (§8.7b) — confirm a real cache HIT**
+
+> CI (Step 1-3) proves the payload *structure* would cache. This step proves caching
+> actually *engages* against the live API — run ONCE, offline, recorded; not in CI.
+
+Write `scripts/verify_cache_engagement.py` that, with real `ANTHROPIC_API_KEY` and a
+cacheable prefix (≥1024 tok), sends the **same** cacheable request twice via the real
+`NormalizedChatLiteLLM` (`_cache_enabled=True`, `anthropic/claude-sonnet-4-6`) and
+prints `usage_metadata['input_token_details']` for both. Expected: 2nd call shows
+`cache_read > 0`. Record the output in the progress tracker as the engagement evidence.
+```bash
+python scripts/verify_cache_engagement.py   # needs ANTHROPIC_API_KEY; small spend
+```
+Commit the script + recorded result:
+```bash
+git add scripts/verify_cache_engagement.py docs/superpowers/plans/2026-06-06-prompt-caching-progress.md
+git commit -m "test(caching): offline cache-engagement verification (real cache_read>0)"
+```
+
 ### Task 4.4: AI Manager Anthropic branch — `cache_control` on the system block (if P1 cleared it)
 
 > Skip this task if P1 decided the AI Manager prefix is sub-threshold / cadence
@@ -1130,6 +1265,11 @@ class TestAnthropicCacheControl:
     def test_plain_string_when_disabled(self):
         from backend.services.ai_manager_llm_provider import _anthropic_system_param
         assert _anthropic_system_param("SYS", cache_enabled=False) == "SYS"
+
+    def test_one_hour_ttl_emitted(self):
+        from backend.services.ai_manager_llm_provider import _anthropic_system_param
+        out = _anthropic_system_param("SYS", cache_enabled=True, ttl="1h")
+        assert out[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 ```
 
 - [ ] **Step 2: Run the test, confirm it fails**
@@ -1139,22 +1279,25 @@ Expected: FAIL — `_anthropic_system_param` undefined.
 
 - [ ] **Step 3: Implement the helper + apply it**
 
-In `backend/services/ai_manager_llm_provider.py`, add the helper:
+In `backend/services/ai_manager_llm_provider.py`, add the helper (with optional `ttl`
+so P1's 5-min-vs-1-hour decision can be honored — §6a):
 ```python
-def _anthropic_system_param(system_prompt: str, cache_enabled: bool):
+def _anthropic_system_param(system_prompt: str, cache_enabled: bool, ttl: str = "5m"):
     """Return the `system` field: a cache_control block when enabled, else the
-    plain string."""
+    plain string. ttl is "5m" (default) or "1h" per the P1 cadence decision."""
     if cache_enabled:
-        return [{"type": "text", "text": system_prompt,
-                 "cache_control": {"type": "ephemeral"}}]
+        cc = {"type": "ephemeral"} if ttl == "5m" else {"type": "ephemeral", "ttl": "1h"}
+        return [{"type": "text", "text": system_prompt, "cache_control": cc}]
     return system_prompt
 ```
 Then thread a `cache_enabled` flag into `create_llm_callable_with_cleanup` /
-`create_llm_callable` (add a `cache_enabled: bool = False` parameter, default False),
-and in each `call_anthropic` payload replace `"system": system_prompt,` with
-`"system": _anthropic_system_param(system_prompt, cache_enabled),`. Wire the flag from
-the AI Manager config resolution (`ai_account_manager_service._create_llm_from_scan_configs`
-→ pass `cache_enabled=<resolved prompt_cache_enabled>`), and include it in
+`create_llm_callable` (add a `cache_enabled: bool = False` parameter, default False;
+optionally `cache_ttl: str = "5m"`), and in each `call_anthropic` payload replace
+`"system": system_prompt,` with
+`"system": _anthropic_system_param(system_prompt, cache_enabled, cache_ttl),`. Wire the
+flag from the AI Manager config resolution
+(`ai_account_manager_service._create_llm_from_scan_configs` → pass
+`cache_enabled=<resolved prompt_cache_enabled>`), and include it in
 `_extract_llm_identity` so a toggle change rebuilds the callable.
 
 - [ ] **Step 4: Run the test, confirm it passes.**
@@ -1243,7 +1386,12 @@ def extract_cache_metrics(response) -> dict:
     }
 ```
 Then, inside `llm_rate_limited_invoke`, after a successful `return super_invoke(...)`,
-log metrics before returning. Restructure the success path to:
+log metrics before returning. The log line includes `model` so per-site/provider
+grep + alerting works (spec §7 record shape). `llm_rate_limited_invoke` is a free
+function (not a method), so it does not have `self.model` — pass the model through, or
+read it off the bound callable. Simplest: have each wrapper's `invoke` pass its model
+into the helper via the existing call. Concretely, change the helper signature to
+accept an optional `model` label and log it:
 ```python
         try:
             result = super_invoke(input, config, **kwargs)
@@ -1251,7 +1399,8 @@ log metrics before returning. Restructure the success path to:
                 m = extract_cache_metrics(result)
                 if m["cache_read"] is not None or m["cache_creation"] is not None:
                     logger.info(
-                        "LLM cache | input=%s cache_read=%s cache_creation=%s",
+                        "LLM cache | model=%s input=%s cache_read=%s cache_creation=%s",
+                        kwargs.get("_cache_log_model", "?"),
                         m["input_tokens"], m["cache_read"], m["cache_creation"],
                     )
             except Exception:
@@ -1260,7 +1409,16 @@ log metrics before returning. Restructure the success path to:
         except Exception as exc:
             ...  # existing retry/raise logic unchanged
 ```
-(Keep the existing retry/except structure; only wrap the success return.)
+> Implementation note: `_cache_log_model` must NOT be forwarded to the provider. Pop it
+> from `kwargs` **once at the top of `llm_rate_limited_invoke`, before the retry loop**
+> (`model = kwargs.pop("_cache_log_model", None)`), so it isn't passed to `super_invoke`
+> on any attempt. Keep the existing `try/except/finally` (the `finally: sem.release()`
+> must still run) — only replace the `return super_invoke(...)` line inside the `try`
+> with capture-log-return. Have `NormalizedChatLiteLLM.invoke` pass
+> `_cache_log_model=str(self.model)` into the helper call. If threading a kwarg is
+> awkward, the acceptable alternative is to log inside each wrapper's `invoke`
+> (where `self.model` is in scope) instead of the shared helper — pick one and keep
+> the `model=` field in the log line either way.
 
 - [ ] **Step 4: Run the test, confirm it passes.**
 
@@ -1324,13 +1482,25 @@ def _extract_cache_usage(data: dict, provider: str) -> dict:
     details = usage.get("prompt_tokens_details") or {}
     return {"cache_read": details.get("cached_tokens"), "cache_creation": None}
 ```
-After `data = resp.json()` in each branch (before returning the extracted text), log:
+After `data = resp.json()` in each branch (before returning the extracted text), log
+the cache metrics. **Reconcile with existing infra (spec §7 — do NOT build a second
+stack):** `ai_manager_task.py` already logs `result.get("_input_tokens", 0)` (currently
+always 0 because nothing populates it). Where the AI Manager graph node assembles its
+result, **populate `_input_tokens` (and add cache read/creation) from the parsed
+`usage`** so the existing logger surfaces them, rather than adding an independent
+logging path. A lightweight `logger.info` here is acceptable for the immediate signal,
+but the durable record must flow through the existing `_input_tokens` field:
 ```python
                 _m = _extract_cache_usage(data, "anthropic")  # or "openai"
                 if _m["cache_read"] is not None:
-                    logger.info("AI Manager LLM cache | provider=%s cache_read=%s",
-                                "anthropic", _m["cache_read"])
+                    logger.info("AI Manager LLM cache | provider=%s model=%s cache_read=%s",
+                                "anthropic", model, _m["cache_read"])
 ```
+> Trace where `action_generation_node` (`ai_manager_graph.py`) builds its return dict
+> and set `_input_tokens` / cache fields there from the `usage` the callable saw. If the
+> callable doesn't currently surface `usage` to the node, thread it through (the
+> callable returns text today — extend its contract or stash the last-usage on the
+> callable). Record in the tracker how `_input_tokens` is now populated.
 
 - [ ] **Step 4: Run the test, confirm it passes.**
 
@@ -1366,10 +1536,21 @@ bull / bear / chop. Store them in the script as a list. Use real configured mode
 
 - [ ] **Step 2: Write the harness**
 
+> **Old-prompt recovery (concrete, not hand-waved):** P6 compares old-vs-new prompts,
+> so the pre-P3 prompt must be runnable at eval time. Pick ONE concrete mechanism and
+> record it in the tracker:
+> - **(Recommended) Git-ref capture:** P0 tags the pre-P3 commit (`git tag pre-cache-p3`).
+>   The eval runs the NEW prompt from `HEAD` and the OLD prompt by checking out the
+>   agent files at `pre-cache-p3` in a throwaway worktree, or by reading the old prompt
+>   string from that ref. No production code carries dead branches.
+> - **Alternative:** during P3, keep the old prompt string as a module constant
+>   `_LEGACY_SYSTEM_PROMPT` (commented "for P6 eval only; delete after eval passes") so
+>   the harness can build both without git gymnastics.
+
 Create `scripts/cache_parity_eval.py` that, for each fixture:
-1. Runs the relevant agent(s) with the **OLD** prompt structure (git stash / a flag /
-   a copy of the pre-P3 builder) K≈5 times → record decision labels (BUY/HOLD/SELL)
-   and any numeric scores → compute the **noise floor** (intrinsic disagreement).
+1. Runs the relevant agent(s) with the **OLD** prompt structure (via the recovery
+   mechanism above) K≈5 times → record decision labels (BUY/HOLD/SELL) and any numeric
+   scores → compute the **noise floor** (intrinsic disagreement).
 2. Runs the **NEW** prompt structure once per fixture → record decisions.
 3. Compares: new-vs-old **label agreement ≥ (1 − noise_floor)** over N fixtures, **and**
    McNemar's test p > 0.05 (no systematic drift). Score deltas within f(measured variance).
@@ -1485,7 +1666,8 @@ class TestPromptCacheField:
 
     def test_scan_request_accepts_flag(self):
         from backend.schemas import ScanRequest
-        r = ScanRequest(prompt_cache_enabled=False)  # plus any other required fields
+        # ScanRequest requires analysis_date; everything else has defaults.
+        r = ScanRequest(analysis_date="2026-06-06", prompt_cache_enabled=False)
         assert r.prompt_cache_enabled is False
 
     def test_defaults_none(self):
@@ -1525,8 +1707,10 @@ git commit -m "feat(caching): add prompt_cache_enabled to AnalysisRequest + Scan
 ### Task 8.2: Backend — relay the flag into config at both read sites
 
 **Files:**
-- Modify: `backend/services/analysis_service.py` (`_build_config` ~line 319)
-- Modify: `backend/services/scanner_service.py` (`_run_single` request re-assembly ~line 903)
+- Modify: `backend/services/analysis_service.py` (`_build_config` at **L285**; the
+  `checkpoint_enabled` relay it contains is at **L319-320** — mirror that)
+- Modify: `backend/services/scanner_service.py` (`_run_single` at **L879**; the
+  `checkpoint_enabled` relay line is **L903**)
 - Test: `tests/backend/test_analysis_service.py` (or nearest existing)
 
 - [ ] **Step 1: Write the failing test** asserting that when a request carries
@@ -1538,16 +1722,19 @@ git commit -m "feat(caching): add prompt_cache_enabled to AnalysisRequest + Scan
 
 - [ ] **Step 3: Implement**
 
-In `analysis_service._build_config`, copy the field with default fallback:
+In `analysis_service._build_config` (L285), mirror the existing `checkpoint_enabled`
+relay (L319-320) exactly — `request` is a `Dict[str, Any]`, so use `.get(...)`:
 ```python
-        config["prompt_cache_enabled"] = (
-            request.get("prompt_cache_enabled")
-            if request.get("prompt_cache_enabled") is not None
-            else DEFAULT_CONFIG["prompt_cache_enabled"]
-        )
+        if request.get("prompt_cache_enabled") is not None:
+            config["prompt_cache_enabled"] = request["prompt_cache_enabled"]
+        else:
+            config["prompt_cache_enabled"] = DEFAULT_CONFIG["prompt_cache_enabled"]
 ```
-In `scanner_service._run_single`, where the per-ticker request dict is assembled
-(mirror the `checkpoint_enabled` relay), add `"prompt_cache_enabled": <from scan request>`.
+In `scanner_service._run_single` (L879), next to the `checkpoint_enabled` relay (L903
+`"checkpoint_enabled": config.get("checkpoint_enabled"),`), add:
+```python
+            "prompt_cache_enabled": config.get("prompt_cache_enabled"),
+```
 
 - [ ] **Step 4: Run it, confirm it passes; run `python -m pytest tests/backend/ -k "analysis or scanner" -q`.**
 
@@ -1619,3 +1806,24 @@ git commit -m "feat(caching): per-run prompt caching toggle in the 3 LLM-setting
 - [ ] Confirm the progress tracker shows all phases DONE and records the P1 GO/NO-GO
   and P6 PASS/FAIL artifacts.
 - [ ] Update `CLAUDE.md` "Recent Changes" with a one-line summary.
+
+## Known lower-priority follow-ups (track, don't block)
+
+These are minor and can be handled during their phase or as fast-follows — noted so
+they aren't lost:
+- **`max_completion_tokens` (§8.4):** reasoning models (OpenAI o-series/GPT-5) expect
+  `max_completion_tokens` not `max_tokens`. `_sampling_params` (Task 2.1) currently
+  always emits `max_tokens`. If the AI Manager is pointed at a reasoning model, extend
+  `_sampling_params` to emit `max_completion_tokens` for those model families. litellm's
+  `drop_params` handles the graph path; the raw-httpx path does not.
+- **Identity-hash test (Task 4.4):** the plan threads `cache_enabled` into
+  `_extract_llm_identity` in prose — add an explicit test that two identities differ
+  when only `cache_enabled` differs, so a toggle change rebuilds the callable.
+- **Scheduled-scan `scan_config` relay (Task 8.x):** the scheduled form nests the flag
+  in the freeform `scan_config` dict. Add a backend test that a scheduled scan with
+  `scan_config={"prompt_cache_enabled": true, ...}` resolves to `config["prompt_cache_enabled"] is True`.
+- **Sustained-`cache_read==0` alert (§10):** P5 logs metrics; a real alert on a
+  sustained zero-hit rate (vs manual grep) is future ops work, not in this scope.
+- **Gemini "inconclusive" caveat (§7):** Gemini may report `cache_read=0` even when
+  caching fired (known langchain issue). Don't treat Gemini `cache_read==0` as proof
+  of invalidation — note it in the logging code comment.
