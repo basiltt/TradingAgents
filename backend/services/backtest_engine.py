@@ -75,6 +75,9 @@ class SimulationState:
     signals_entered: int = 0  # LIFETIME entries across the whole backtest (stats + target_goal)
     scan_entered: int = 0  # entries in the CURRENT scan only — reset each scan; gates max_trades
                            # (production creates a fresh executor per scan, so max_trades is per-cycle)
+    signals_no_kline: int = 0  # signals dropped because the symbol had NO cached candles —
+                               # production would have traded them, so this means the backtest
+                               # UNDER-trades vs reality; surfaced as a warning, not a silent skip.
     slippage_bps: int = 0  # round-trip slippage; applied adversely on BOTH entry fill and exit fill
                            # (production closes via Bybit market reduce-only orders that slip)
     # Last 8h funding boundary already charged, as (date, hour) — guards against
@@ -205,7 +208,16 @@ class BacktestEngine:
             # If skip_if_positions_open=True AND positions exist → skip entire scan
             if config.get("skip_if_positions_open") and state.open_positions:
                 state.signals_filtered += len(scan_signals)
-                # Still evaluate close rules on existing positions
+                # Still evaluate close rules on the carried positions until the next
+                # scan. We deliberately do NOT re-trade this scan's signals if the
+                # book clears mid-window: production's post_scan_recheck fires ONCE,
+                # synchronously at scan completion (scanner_service calls it right
+                # after execute_batch — auto_trade_service.post_scan_recheck is a
+                # single non-looping pass). Because each scan is anchored to its
+                # completed_at timestamp, that instant is already modelled by the
+                # per-scan open branch; positions clearing LATER in the window are not
+                # re-traded by production until the NEXT scheduled scan (with its own
+                # signals). See "Known Modeling Approximations" in the spec.
                 if state.open_positions:
                     next_scan_time = None
                     if scan_idx + 1 < len(scan_order):
@@ -217,64 +229,11 @@ class BacktestEngine:
                     on_progress(min(pct, 99))
                 continue
 
-            # Refresh sizing_capital at each scan (matches production init_balances
-            # per scan). Production reads totalAvailableBalance = wallet MINUS the
-            # margin locked by already-open positions, so when a prior cycle's
-            # positions are still open (skip_if_positions_open=False) the next scan
-            # sizes off the REDUCED available balance. Mirror that by subtracting the
-            # sum of open locked_margin — otherwise the backtest would oversize every
-            # scan that carries open positions (e.g. ~capital_pct% per carried
-            # position), breaking the <1% deviation requirement. Clamp to >= 0 so a
-            # negative available balance can't produce negative position sizes.
-            # Refresh the per-scan AVAILABLE balance, mirroring production's
-            # totalAvailableBalance = totalWalletBalance + unrealised_pnl − initial_margin.
-            # Both the new-position sizing basis AND the equity-rule reference derive
-            # from this SAME value in production (base_capital), so compute it once and
-            # feed both. Three components:
-            #   • wallet_balance ≈ totalWalletBalance (margin is never deducted here,
-            #     only entry fees),
-            #   • carried_upnl = marked-to-market unrealised PnL of still-open positions
-            #     (production's +totalPerpUPL term — omitting it over/under-states the
-            #     basis by the carried uPnL on every scan that carries a position),
-            #   • locked_margin = Σ entry-time initial margin of open positions.
-            # The mark price is the candle at/just-before current_time (the scan
-            # timestamp) — the same information production reads as the live mark at
-            # scan start, so there is no look-ahead. Clamp to >= 0 so a depleted
-            # available balance can't produce negative sizes or references.
-            from backend.services.trading_rules import compute_unrealized_pnl as _cu
-            carried_upnl = 0.0
-            for _p in state.open_positions:
-                _ks = klines.get(_p.symbol, [])
-                _mark = _p.entry_price
-                for _k in _ks:
-                    if _k["open_time"] <= current_time:
-                        _mark = _k["close"]
-                    else:
-                        break
-                carried_upnl += _cu(_p.entry_price, _mark, _p.qty, _p.side)
-            locked_margin = sum(p.locked_margin for p in state.open_positions)
-            available_balance = max(0.0, state.wallet_balance + carried_upnl - locked_margin)
-            state.sizing_capital = available_balance
-
-            # Re-anchor the equity-rule reference EVERY executed scan to that same
-            # available balance. Production builds a fresh AutoTradeExecutor per scan
-            # and recreates the EQUITY_DROP/RISE rule each scan with reference_value =
-            # totalAvailableBalance — it does NOT preserve a prior cycle's reference
-            # while positions carry over (the only preservation case is
-            # skip_if_positions_open=True with an open book, which early-continues
-            # above before reaching here). The evaluated equity (wallet + unrealized
-            # PnL) mirrors production's totalEquity, so anchoring the reference to
-            # totalAvailableBalance makes equity_drop / close_on_profit fire at the
-            # same level as live trading. On an empty book (no carried positions)
-            # carried_upnl=0 and locked=0 → this reduces to the full wallet, so
-            # single-cycle behaviour is unchanged.
-            state.cycle_start_equity = available_balance
-
-            # Process signals through filter chain
-            if execution_mode == "batch":
-                self._process_batch_signals(config, scan_signals, klines, state, current_time)
-            else:
-                self._process_immediate_signals(config, scan_signals, klines, state, current_time)
+            # Refresh the per-scan available balance + re-anchor the equity reference,
+            # then open this scan's signals. Extracted into a helper so the open
+            # sequence (balance refresh, reference anchor, batch/immediate dispatch)
+            # lives in exactly one place.
+            self._open_scan_signals(config, scan_signals, klines, state, current_time, execution_mode)
 
             # --- CANDLE-BY-CANDLE CLOSE RULE EVALUATION (Task 3.3+) ---
             # After opening positions, evaluate close rules on subsequent candles
@@ -284,7 +243,7 @@ class BacktestEngine:
                 next_scan_id = scan_order[scan_idx + 1]
                 next_scan_time = scans[next_scan_id][0]["signal_time"]
 
-            # Evaluate open positions against candles
+            # Evaluate open positions against candles until the next scan event.
             if state.open_positions:
                 self._evaluate_candles_until(
                     config, klines, state, current_time, next_scan_time, cancel_event
@@ -379,6 +338,7 @@ class BacktestEngine:
                 "signals_total": len(signals),
                 "signals_filtered": state.signals_filtered,
                 "signals_entered": state.signals_entered,
+                "signals_no_kline": state.signals_no_kline,
             },
         )
 
@@ -646,6 +606,10 @@ class BacktestEngine:
         # Get entry price from klines at signal time
         symbol_klines = klines.get(ticker, [])
         if not symbol_klines:
+            # No cached candles for this symbol → we cannot simulate the trade, but
+            # production WOULD have traded it. Count it distinctly (not as a filtered
+            # signal) so the service can warn that the backtest under-traded here.
+            state.signals_no_kline += 1
             return False
 
         # Find the kline at or near signal_time (use last available candle close)
@@ -802,6 +766,51 @@ class BacktestEngine:
         win_rate = (wins / total) * 100.0
         return win_rate < max_win_rate
 
+    def _open_scan_signals(
+        self,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        current_time: datetime,
+        execution_mode: str,
+    ) -> int:
+        """Refresh the per-scan AVAILABLE balance, re-anchor the equity reference, and
+        open this scan's signals. The single source of the per-scan open sequence.
+
+        Returns the number of NEW positions opened (scan_entered before vs after).
+
+        Available balance mirrors production's totalAvailableBalance =
+        totalWalletBalance + unrealised_pnl − initial_margin: wallet_balance (margin
+        never deducted here, only entry fees) + carried_upnl (marked to the candle
+        at/just-before current_time — no look-ahead) − Σ locked_margin. Both the
+        new-position sizing basis AND the equity-rule reference derive from this one
+        value, exactly as production derives both from base_capital. On an empty book
+        carried_upnl=0 and locked=0 → it reduces to the full wallet.
+        """
+        from backend.services.trading_rules import compute_unrealized_pnl as _cu
+        carried_upnl = 0.0
+        for _p in state.open_positions:
+            _ks = klines.get(_p.symbol, [])
+            _mark = _p.entry_price
+            for _k in _ks:
+                if _k["open_time"] <= current_time:
+                    _mark = _k["close"]
+                else:
+                    break
+            carried_upnl += _cu(_p.entry_price, _mark, _p.qty, _p.side)
+        locked_margin = sum(p.locked_margin for p in state.open_positions)
+        available_balance = max(0.0, state.wallet_balance + carried_upnl - locked_margin)
+        state.sizing_capital = available_balance
+        state.cycle_start_equity = available_balance
+
+        before = state.scan_entered
+        if execution_mode == "batch":
+            self._process_batch_signals(config, scan_signals, klines, state, current_time)
+        else:
+            self._process_immediate_signals(config, scan_signals, klines, state, current_time)
+        return state.scan_entered - before
+
     def _evaluate_candles_until(
         self,
         config: dict[str, Any],
@@ -827,9 +836,8 @@ class BacktestEngine:
         symbol_time_idx: dict[str, dict[datetime, dict]] = {}
         all_timestamps: set[datetime] = set()
         for sym in open_symbols:
-            sym_klines = klines.get(sym, [])
             idx: dict[datetime, dict] = {}
-            for k in sym_klines:
+            for k in klines.get(sym, []):
                 kt = k["open_time"]
                 if kt <= start_time:
                     continue
@@ -873,7 +881,7 @@ class BacktestEngine:
             if candle_count % 100 == 0 and cancel_event and cancel_event.is_set():
                 raise BacktestCancelled("Cancelled during candle evaluation")
 
-            # Gather candles for all symbols at this timestamp; update latest prices
+            # Gather candles for all open symbols at this timestamp; update latest prices
             candles_at_time: dict[str, dict] = {}
             for sym in list(open_symbols):
                 candle = symbol_time_idx.get(sym, {}).get(candle_time)

@@ -523,9 +523,18 @@ class BacktestService:
         The query JOINs scan_results with scans to get signal timestamps,
         since scan_results has no timestamp column itself.
 
+        signal_time is anchored to the scan's COMPLETED_AT (the moment production
+        actually placed the trade — execute_batch runs after the full per-ticker
+        analysis finishes), NOT started_at. Anchoring at scan start would enter every
+        trade at a pre-analysis price the live account never got (the scan takes
+        minutes), systematically inflating PnL. COALESCE falls back to started_at for
+        any legacy scan missing completed_at. The date-range WHERE still filters on
+        started_at (the user picks the window by when scans RAN). A deterministic
+        `, sr.id` tiebreak makes the per-scan ordering stable on equal abs(score).
+
         Returns:
             List of signal dicts with: id, ticker, direction, confidence,
-            score, signal_time, scan_id, signal_source.
+            score, signal_time, scan_id, signal_source, analysis_price.
         """
         mode = scan_source.get("mode", "date_range")
         start, end = date_range
@@ -534,7 +543,7 @@ class BacktestService:
             schedule_id = scan_source.get("schedule_id")
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
-                       s.started_at::timestamptz AS signal_time,
+                       COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
@@ -543,7 +552,7 @@ class BacktestService:
                   AND s.started_at::timestamptz <= $3
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY s.started_at::timestamptz, ABS(sr.score) DESC
+                ORDER BY signal_time, ABS(sr.score) DESC, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, schedule_id, start, end)
@@ -552,14 +561,14 @@ class BacktestService:
             scan_ids = scan_source.get("scan_ids", [])
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
-                       s.started_at::timestamptz AS signal_time,
+                       COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
                 WHERE s.scan_id = ANY($1)
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY s.started_at::timestamptz, ABS(sr.score) DESC
+                ORDER BY signal_time, ABS(sr.score) DESC, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, scan_ids)
@@ -567,7 +576,7 @@ class BacktestService:
         else:  # date_range (default)
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
-                       s.started_at::timestamptz AS signal_time,
+                       COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
@@ -575,7 +584,7 @@ class BacktestService:
                   AND s.started_at::timestamptz <= $2
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY s.started_at::timestamptz, ABS(sr.score) DESC
+                ORDER BY signal_time, ABS(sr.score) DESC, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, start, end)
@@ -729,6 +738,13 @@ class BacktestService:
             # but the backtest does not — warn when the user set it.
             if config.get("max_same_sector") is not None and result.warnings is not None:
                 result.warnings.append("max_same_sector_not_enforced")
+
+            # Surface signals that were dropped purely because the symbol had no cached
+            # candles — production would have traded them, so the backtest UNDER-trades
+            # here. This is data coverage, not a strategy filter, so the user must know.
+            no_kline = (result.filter_stats or {}).get("signals_no_kline", 0)
+            if no_kline and result.warnings is not None:
+                result.warnings.append(f"signals_dropped_no_kline_data_{no_kline}")
 
             # Buy & Hold benchmark + excess return (Phase 4 carry-forward):
             # compare the strategy against simply holding BTC over the same window.

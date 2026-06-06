@@ -596,3 +596,30 @@ class TestInstrumentInfo:
         # Reconciliation invariant holds.
         assert result.metrics["net_profit"] == pytest.approx(
             result.metrics["final_equity"] - config["starting_capital"], abs=1e-6)
+
+
+class TestNoKlineCoverage:
+    """A signal whose symbol has NO cached candles is dropped distinctly (not as a
+    rule-filtered signal) and surfaced via filter_stats.signals_no_kline so the user
+    knows the backtest under-traded vs live trading."""
+
+    def test_missing_kline_counted_distinctly_not_as_filtered(self):
+        from backend.services.backtest_engine import BacktestEngine
+        engine = BacktestEngine()
+        config = _make_config()
+        # Two signals; only BTC has klines. ETH has none → dropped as no-kline.
+        signals = [_make_signal(ticker="BTCUSDT", id=1),
+                   _make_signal(ticker="ETHUSDT", id=2, score=7)]
+        klines = {"BTCUSDT": _make_klines("BTCUSDT")}  # ETHUSDT absent
+        result = engine.run(config, signals, klines)
+        # ETH is counted as no-kline, NOT as a strategy filter rejection.
+        assert result.filter_stats["signals_no_kline"] == 1
+        # BTC still traded; ETH did not.
+        assert all(t["symbol"] == "BTCUSDT" for t in result.trades)
+
+    def test_no_kline_zero_when_all_covered(self):
+        from backend.services.backtest_engine import BacktestEngine
+        engine = BacktestEngine()
+        result = engine.run(_make_config(), [_make_signal(ticker="BTCUSDT")],
+                            {"BTCUSDT": _make_klines("BTCUSDT")})
+        assert result.filter_stats["signals_no_kline"] == 0

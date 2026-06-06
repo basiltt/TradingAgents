@@ -441,3 +441,65 @@ class TestTrailingProfit:
         # Should NOT have closed via trailing (upnl <= 0 guard prevents activation)
         trailing_closes = [t for t in result.trades if t.get("close_reason") == "trailing_profit"]
         assert len(trailing_closes) == 0
+
+
+class TestNoMidWindowRetrade:
+    """Faithfulness guard for production's post_scan_recheck timing.
+
+    Production's post_scan_recheck runs ONCE, synchronously at scan completion
+    (scanner_service calls it right after execute_batch; the method itself is a
+    single non-looping pass). It does NOT keep re-trading a scan's signals as the
+    scan's positions close over the following minutes/hours — the next chance to
+    trade is the NEXT scheduled scan, with that scan's own signals.
+
+    The backtest anchors each scan to its completed_at instant, so the per-scan
+    open branch already models the state at recheck time. The engine must therefore
+    NOT re-open a scan's signals when its book clears mid-window. A tight take-profit
+    that keeps firing must produce ONE trade per scan, not many — re-trading here
+    would fabricate trades production never makes (a fidelity-breaking over-count)."""
+
+    @staticmethod
+    def _rising(n=120, drift=0.0003):
+        from datetime import datetime, timezone, timedelta
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        return [{"open_time": base + timedelta(minutes=i * 5),
+                 "open": 50000.0 * (1 + drift * i), "high": 50000.0 * (1 + drift * i) * 1.0015,
+                 "low": 50000.0 * (1 + drift * i) * 0.999, "close": 50000.0 * (1 + drift * i),
+                 "volume": 100.0} for i in range(n)]
+
+    def test_skipped_scan_does_not_retrade_when_book_clears_midwindow(self):
+        """skip_if_positions_open + a single scan whose TP-closing position frees the
+        book mid-window must NOT re-trade — exactly ONE trade, no matter how many
+        candles the freed book sees afterwards."""
+        from backend.services.backtest_engine import BacktestEngine
+        from datetime import datetime, timezone
+        s1 = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        klines = {"BTCUSDT": self._rising()}
+        result = BacktestEngine().run(
+            _make_config(take_profit_pct=1.0, stop_loss_pct=500.0, max_trades=1,
+                         leverage=10, capital_pct=20.0, slippage_bps=0, fee_rate_pct=0.0,
+                         skip_if_positions_open=True),
+            [_make_signal(ticker="BTCUSDT", scan_id="scan-1", signal_time=s1, analysis_price=50000.0)],
+            klines,
+        )
+        assert len(result.trades) == 1, "freed book must not re-trade within one scan window"
+        # The single trade reconciles.
+        assert result.metrics["net_profit"] == pytest.approx(
+            result.metrics["final_equity"] - 10000.0, abs=1e-6)
+
+    def test_trade_count_independent_of_skip_flag_single_scan(self):
+        """For a single scan, skip_if_positions_open must not change the trade count:
+        with no carried positions at scan start, the scan trades once either way."""
+        from backend.services.backtest_engine import BacktestEngine
+        from datetime import datetime, timezone
+        s1 = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        klines = {"BTCUSDT": self._rising()}
+        cfg = lambda **o: _make_config(  # noqa: E731
+            take_profit_pct=1.0, stop_loss_pct=500.0, max_trades=1,
+            leverage=10, capital_pct=20.0, slippage_bps=0, fee_rate_pct=0.0, **o)
+        sig = [_make_signal(ticker="BTCUSDT", scan_id="scan-1", signal_time=s1, analysis_price=50000.0)]
+
+        off = BacktestEngine().run(cfg(skip_if_positions_open=False), sig, klines)
+        on = BacktestEngine().run(cfg(skip_if_positions_open=True), sig, klines)
+        assert len(off.trades) == 1
+        assert len(on.trades) == len(off.trades) == 1

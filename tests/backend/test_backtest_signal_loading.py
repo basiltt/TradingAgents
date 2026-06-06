@@ -108,3 +108,31 @@ class TestLoadSignals:
         # Only buy/sell completed signals should be returned (query filters)
         for s in signals:
             assert s["direction"] in ("buy", "sell")
+
+    @pytest.mark.asyncio
+    async def test_signal_time_anchored_to_completed_at(self, mock_db):
+        """signal_time MUST anchor to the scan's completed_at (when production actually
+        traded — after the full per-ticker analysis), with a started_at fallback. Using
+        started_at would enter at a pre-analysis price the live account never got,
+        systematically inflating PnL. Also asserts the deterministic id tiebreak so the
+        per-scan ordering is stable on equal abs(score)."""
+        from backend.services.backtest_service import BacktestService
+        service = BacktestService(db=mock_db)
+        mock_db.pool.fetch = AsyncMock(return_value=[])
+        for mode_src in (
+            {"mode": "schedule", "schedule_id": "s1"},
+            {"mode": "explicit", "scan_ids": ["x"]},
+            {"mode": "date_range"},
+        ):
+            await service._load_signals(
+                mode_src,
+                (datetime(2026, 1, 1, tzinfo=timezone.utc),
+                 datetime(2026, 1, 31, tzinfo=timezone.utc)),
+            )
+            query = mock_db.pool.fetch.call_args[0][0]
+            # Anchor: COALESCE(completed_at, started_at) AS signal_time — NOT bare started_at.
+            assert "COALESCE(s.completed_at, s.started_at)" in query
+            assert "AS signal_time" in query
+            # Deterministic tiebreak on equal abs(score).
+            assert "ABS(sr.score) DESC, sr.id" in query
+

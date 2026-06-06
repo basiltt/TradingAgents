@@ -491,3 +491,26 @@ None individually exceeds the <1% deviation budget for typical configs.
 7. **`slippage_bps` is a round-trip cost** applied adversely on both the entry and exit fill
    (production closes via market reduce-only orders that slip). This overrides the original
    spec's exact-exit-fill wording.
+
+8. **`post_scan_recheck` is modeled by the per-scan `completed_at` anchor, not a re-trade
+   loop.** Production's `post_scan_recheck` runs ONCE per scan, synchronously at scan
+   completion (scanner_service invokes it right after `execute_batch`; the method itself is a
+   single non-looping pass that re-trades the freed account only if positions have already
+   cleared at that instant). Because the backtest anchors every scan to its `completed_at`
+   timestamp — the same instant production runs the recheck — the per-scan open branch already
+   reproduces the post-recheck book. The engine deliberately does NOT re-open a scan's signals
+   when its positions close LATER in the window: production would not re-trade them until the
+   next scheduled scan (with that scan's own signals). The only unmodeled case is a position
+   closing in the sub-second gap between the batch-skip and the recheck call, which is far
+   below 5-minute candle resolution. (Earlier drafts REQ-GAP-010/011 assumed an iterative
+   recheck loop with a configurable iteration cap; that model was corrected against production
+   source — there is no such loop and no `max_recheck_iterations` field.)
+
+9. **Intra-candle equity is evaluated at candle boundaries.** Close rules (TP/SL, equity
+   drawdown, trailing, time rules) are checked once per candle using that candle's
+   high/low/close, not on every tick. Within a candle the order of a wick touching TP vs SL is
+   resolved by a fixed convention (favorable-first is NOT assumed; the engine checks SL on the
+   adverse wick), and equity-based rules see the candle close. Marks use the kline close as a
+   proxy for Bybit's mark/index price (the backtest does not have a separate mark-price feed),
+   so liquidation and equity rules can differ from live by the last-vs-mark basis. Both are
+   inherent to candle-resolution replay and are sub-1% at 5m granularity for typical configs.

@@ -394,9 +394,9 @@ This order ensures earlier events (liquidation, SL) take priority over later one
 
 **REQ-GAP-009: Relaxed Pass Tagging** — Tag entries with "strict_pass" vs "relaxed_fill." Report comparative performance.
 
-**REQ-GAP-010: post_scan_recheck** — If position closes during scan window, fill freed slot from remaining signals.
+**REQ-GAP-010: post_scan_recheck** — _Corrected after verifying production source._ Production's `post_scan_recheck` (auto_trade_service.py) runs ONCE per scan, synchronously at scan completion — scanner_service calls it immediately after `execute_batch`, and the method is a single non-looping pass. It is NOT an iterative loop that fills freed slots as positions close over the scan window. Because the backtest anchors each scan to its `completed_at` instant (the same instant production runs the recheck), the per-scan open branch already models the post-recheck state. The residual real trigger — a position closing in the sub-second gap between batch-skip and the recheck call — is far below the 5-minute candle resolution and is therefore not separately modeled. Documented in spec "Known Modeling Approximations."
 
-**REQ-GAP-011: Recheck Timing** — Entry at position-close candle price. Max recheck iterations configurable (default 3).
+**REQ-GAP-011: Recheck Timing** — _Superseded by the REQ-GAP-010 correction._ The original "max recheck iterations (default 3)" assumed an iterative-fill model that production does not implement. There is no per-window recheck loop; re-trading a scan's signals does not recur as its positions close. The next opportunity to trade is the next scheduled scan with its own signals. No `max_recheck_iterations` config field is exposed.
 
 **REQ-GAP-012: Backtest-Internal Blacklist** — Compute adaptive blacklist from backtest-internal performance only.
 

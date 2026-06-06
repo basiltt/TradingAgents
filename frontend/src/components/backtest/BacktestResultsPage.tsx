@@ -34,6 +34,12 @@ const WARNING_LABELS: Record<string, string> = {
 
 function warningLabel(code: string): string {
   if (WARNING_LABELS[code]) return WARNING_LABELS[code];
+  // "signals_dropped_no_kline_data_<N>" — some signals had no cached candles, so the
+  // backtest couldn't simulate them and under-traded vs live trading.
+  const noKline = code.match(/^signals_dropped_no_kline_data_(\d+)$/);
+  if (noKline) {
+    return `${Number(noKline[1]).toLocaleString()} signal(s) were skipped because the symbol had no cached candles — live trading would have taken these, so results under-count trades. Warm the cache for full coverage.`;
+  }
   // Any other code (metrics diagnostics like "metrics_dropped_2_malformed_trades",
   // or a future engine code like "funding_rate_estimated") → de-underscored so it
   // reads as words rather than raw snake_case, and nothing is silently dropped.
