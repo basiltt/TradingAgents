@@ -240,8 +240,10 @@ async def test_init_balances_emits_snapshot_and_skip_when_positions_open():
 @pytest.mark.asyncio
 async def test_emit_account_summaries_emits_one_per_state():
     from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    from backend.services.debug_trace_recorder import RunContext
     rec = MagicMock()
-    ctx = object()
+    ctx = RunContext(scan_id="s1")
+    ctx.run_id = 7   # an active run is required for summaries to emit
     accounts = AsyncMock()
     accounts.get_account.return_value = {"id": "acc_1", "label": "Dad - Demo"}
     ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
@@ -251,6 +253,23 @@ async def test_emit_account_summaries_emits_one_per_state():
     _, kwargs = rec.emit_account_trace.call_args
     assert kwargs["account_label"] == "Dad - Demo"
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_emit_account_summaries_noop_when_run_inactive():
+    """When the run is inactive (run_id None — tracing disabled/open_run failed),
+    summaries must NOT do get_account DB lookups or emit; just return the count."""
+    from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
+    from backend.services.debug_trace_recorder import RunContext
+    rec = MagicMock()
+    ctx = RunContext(scan_id="s1")  # run_id stays None
+    accounts = AsyncMock()
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
+    ex._state = {"acc_1_0": _AccountState(config={"account_id": "acc_1", "execution_mode": "batch"})}
+    count = await ex.emit_account_summaries()
+    assert count == 1
+    rec.emit_account_trace.assert_not_called()
+    accounts.get_account.assert_not_called()   # no wasted DB lookups when tracing off
 
 
 @pytest.mark.asyncio

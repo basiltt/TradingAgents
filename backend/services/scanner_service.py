@@ -907,8 +907,11 @@ class ScannerService:
                 async with self._lock:
                     _scan = self._scans.get(scan_id)
                     _total = (_scan.get("total", 0) if _scan else 0)
+                # phase_reached mirrors the real scan outcome so a cancelled/failed
+                # scan is not mislabeled "finalized" in the forensic record.
+                _phase = {"cancelled": "cancelled", "failed": "failed"}.get(final_status, "finalized")
                 await self._debug_recorder.close_run(
-                    debug_ctx, phase_reached=("failed" if scan_error else "finalized"),
+                    debug_ctx, phase_reached=_phase,
                     total_symbols=_total, completed_symbols=final_completed,
                     failed_symbols=final_failed, num_accounts=num_accounts,
                 )

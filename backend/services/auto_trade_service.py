@@ -603,7 +603,10 @@ class AutoTradeExecutor:
         Safe to call even when tracing is off (returns the count without emitting)."""
         seen_accounts = {s.config.get("account_id", "") for s in self._state.values()}
         rec, ctx = self._recorder, self._debug_ctx
-        if rec is None or ctx is None:
+        # Short-circuit when there is no active run (recorder absent, tracing disabled,
+        # or open_run failed → ctx.run_id is None). Avoids wasted get_account DB lookups
+        # at every scan finalize when tracing is off.
+        if rec is None or ctx is None or getattr(ctx, "run_id", None) is None:
             return len(seen_accounts)
         label_cache: Dict[str, Optional[str]] = {}
         for state in self._state.values():

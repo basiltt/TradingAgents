@@ -185,6 +185,12 @@ class DebugTraceRecorder:
     # ── run open/close (async — called off the hot path) ──────
     async def open_run(self, ctx: RunContext, *, config_snapshot: Optional[dict] = None,
                        scan_started_at=None, scan_completed_at=None) -> None:
+        # Kill-switch: when tracing is disabled, do NOT create a run row at all.
+        # Leaving ctx.run_id = None makes every emit AND close_run a no-op, so a
+        # disabled recorder writes nothing to the DB (not even empty run shells).
+        if not self._enabled:
+            ctx.run_id = None
+            return
         try:
             ctx.run_id = await self._repo.create_run(
                 scan_id=ctx.scan_id, trigger_source=ctx.trigger_source,

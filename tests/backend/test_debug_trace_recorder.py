@@ -108,6 +108,19 @@ async def test_open_run_sets_run_id_and_persists():
 
 
 @pytest.mark.asyncio
+async def test_open_run_when_disabled_creates_no_run():
+    """Kill-switch: a disabled recorder must NOT write even an empty run shell."""
+    rec, repo = _recorder(enabled=False)
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="scheduled")
+    await rec.open_run(ctx, config_snapshot={"num_configs": 1})
+    assert ctx.run_id is None              # no run opened
+    repo.create_run.assert_not_awaited()   # nothing persisted
+    # close_run on a never-opened ctx is also a no-op (run_id is None).
+    await rec.close_run(ctx, phase_reached="finalized")
+    repo.finalize_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_drain_flushes_buffer_to_repo():
     rec, repo = _recorder()
     ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
