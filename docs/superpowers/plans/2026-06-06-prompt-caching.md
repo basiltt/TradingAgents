@@ -849,7 +849,7 @@ If `ChatPromptTemplate`/`MessagesPlaceholder` imports become unused, leave them 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `python -m pytest tests/test_market_analyst_prompt.py -v`
-Expected: PASS (2 passed).
+Expected: PASS (3 passed).
 
 - [ ] **Step 5: Run the existing analyst tests for regressions**
 
@@ -937,6 +937,48 @@ is covered by the shared helper without a per-site refactor.)
 
 Run: `python -m pytest tests/test_pattern_b_sites.py -v`
 Expected: PASS.
+
+- [ ] **Step 3b: Add a routing-regression test (the override MUST fire on structured output)**
+
+> Pattern B routes through `with_structured_output(...).invoke`. This was verified to
+> re-enter `NormalizedChatLiteLLM.invoke` (RunnableBinding delegates to `.invoke`). Lock
+> that in with a test so a future langchain upgrade that bypasses `.invoke` fails CI —
+> otherwise Pattern B caching would silently stop with no error.
+
+Add to `tests/test_pattern_b_sites.py`:
+```python
+class TestStructuredOutputRoutesThroughOverride:
+    def test_with_structured_output_invoke_hits_override(self):
+        from unittest.mock import patch
+        from pydantic import BaseModel
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from tradingagents.llm_clients.litellm_client import NormalizedChatLiteLLM
+
+        class Out(BaseModel):
+            action: str
+
+        llm = NormalizedChatLiteLLM(model="anthropic/claude-sonnet-4-6", api_key="dummy")
+        fired = {"hit": False}
+        real_invoke = NormalizedChatLiteLLM.invoke
+
+        def spy(self, input, config=None, **kwargs):
+            fired["hit"] = True
+            # short-circuit: don't actually call the network
+            from unittest.mock import MagicMock
+            return MagicMock(content='{"action":"Hold"}', tool_calls=[], usage_metadata=None)
+
+        with patch.object(NormalizedChatLiteLLM, "invoke", spy):
+            structured = llm.with_structured_output(Out, method="function_calling")
+            try:
+                structured.invoke([SystemMessage(content="S"), HumanMessage(content="u")])
+            except Exception:
+                pass  # parsing may fail on the mock; we only care that .invoke fired
+        assert fired["hit"], "structured-output path bypassed NormalizedChatLiteLLM.invoke"
+```
+
+Run: `python -m pytest tests/test_pattern_b_sites.py::TestStructuredOutputRoutesThroughOverride -v`
+Expected: PASS. (If it FAILS, the structured-output path no longer routes through our
+override — Pattern B caching is broken and the mechanism needs revisiting before P4.)
 
 - [ ] **Step 4: Record the per-site Pattern B finding** in the progress tracker
   (which sites are already-stable vs need hoisting vs flagged non-caching).
@@ -1079,7 +1121,7 @@ instance; block-form `cache_control` survives to Anthropic's `system` param (Tas
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `python -m pytest tests/test_litellm_cache_injection.py::TestCacheInjection -v`
-Expected: PASS (3 passed).
+Expected: PASS (6 passed).
 
 - [ ] **Step 5: Run the litellm client suite**
 
@@ -1325,7 +1367,8 @@ git commit -m "feat(caching): cache_control on AI Manager Anthropic system block
 ### Task 5.1: Add a cache-metric log helper and call it from the invoke chokepoint
 
 **Files:**
-- Modify: `tradingagents/llm_clients/base_client.py`
+- Modify: `tradingagents/llm_clients/base_client.py` (`extract_cache_metrics` helper)
+- Modify: `tradingagents/llm_clients/litellm_client.py` (log call in `NormalizedChatLiteLLM.invoke`)
 - Test: `tests/test_cache_metrics.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1385,40 +1428,40 @@ def extract_cache_metrics(response) -> dict:
         "cache_creation": details.get("cache_creation"),
     }
 ```
-Then, inside `llm_rate_limited_invoke`, after a successful `return super_invoke(...)`,
-log metrics before returning. The log line includes `model` so per-site/provider
-grep + alerting works (spec §7 record shape). `llm_rate_limited_invoke` is a free
-function (not a method), so it does not have `self.model` — pass the model through, or
-read it off the bound callable. Simplest: have each wrapper's `invoke` pass its model
-into the helper via the existing call. Concretely, change the helper signature to
-accept an optional `model` label and log it:
+Then log the metrics. **Use the per-wrapper approach (simpler, avoids threading a
+kwarg through `llm_rate_limited_invoke` and the pop/get bug):** add the metric read +
+log to each `Normalized*.invoke` override, where `self.model` is in scope. The shared
+`extract_cache_metrics` helper does the field extraction; each wrapper logs with its
+own model label.
+
+In `NormalizedChatLiteLLM.invoke` (and analogously the other wrappers if desired),
+wrap the result:
 ```python
+    def invoke(self, input, config=None, **kwargs):
+        if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
+            input = self._inject_cache_control(input)
+        result = normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
         try:
-            result = super_invoke(input, config, **kwargs)
-            try:
-                m = extract_cache_metrics(result)
-                if m["cache_read"] is not None or m["cache_creation"] is not None:
-                    logger.info(
-                        "LLM cache | model=%s input=%s cache_read=%s cache_creation=%s",
-                        kwargs.get("_cache_log_model", "?"),
-                        m["input_tokens"], m["cache_read"], m["cache_creation"],
-                    )
-            except Exception:
-                pass  # never let metric logging break a call
-            return result
-        except Exception as exc:
-            ...  # existing retry/raise logic unchanged
+            from tradingagents.llm_clients.base_client import extract_cache_metrics
+            m = extract_cache_metrics(result)
+            if m["cache_read"] is not None or m["cache_creation"] is not None:
+                logger.info("LLM cache | model=%s input=%s cache_read=%s cache_creation=%s",
+                            self.model, m["input_tokens"], m["cache_read"], m["cache_creation"])
+        except Exception:
+            pass  # never let metric logging break a call
+        return result
 ```
-> Implementation note: `_cache_log_model` must NOT be forwarded to the provider. Pop it
-> from `kwargs` **once at the top of `llm_rate_limited_invoke`, before the retry loop**
-> (`model = kwargs.pop("_cache_log_model", None)`), so it isn't passed to `super_invoke`
-> on any attempt. Keep the existing `try/except/finally` (the `finally: sem.release()`
-> must still run) — only replace the `return super_invoke(...)` line inside the `try`
-> with capture-log-return. Have `NormalizedChatLiteLLM.invoke` pass
-> `_cache_log_model=str(self.model)` into the helper call. If threading a kwarg is
-> awkward, the acceptable alternative is to log inside each wrapper's `invoke`
-> (where `self.model` is in scope) instead of the shared helper — pick one and keep
-> the `model=` field in the log line either way.
+(Add `import logging; logger = logging.getLogger(__name__)` at the top of
+`litellm_client.py` if not already present — it is.) `llm_rate_limited_invoke` itself is
+**left unchanged**, so the other wrappers (`NormalizedChatAnthropic`,
+`NormalizedChatOpenAI`, `NormalizedChatGoogleGenerativeAI`) keep working untouched; add
+the same try/log block to them only if you want their cache metrics too (recommended for
+the OpenAI/Google graph paths — same 3-line block, using `self.model_name`/`self.model`
+as appropriate per class).
+> `extract_cache_metrics` stays a `base_client.py` function (Step 3 above); only the
+> per-wrapper `invoke` overrides gain the log call. **Files for this task therefore
+> include `tradingagents/llm_clients/litellm_client.py`** (and optionally the other
+> wrapper files), not just `base_client.py`.
 
 - [ ] **Step 4: Run the test, confirm it passes.**
 
@@ -1433,7 +1476,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tradingagents/llm_clients/base_client.py tests/test_cache_metrics.py
+git add tradingagents/llm_clients/base_client.py tradingagents/llm_clients/litellm_client.py tests/test_cache_metrics.py
 git commit -m "feat(caching): log normalized cache metrics from the invoke chokepoint"
 ```
 

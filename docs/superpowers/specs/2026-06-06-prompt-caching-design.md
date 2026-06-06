@@ -143,8 +143,9 @@ P2  Param fix   conditional temperature/max_tokens in the 4 httpx sites    (P0)
                  (§6c) + litellm effort→thinking deprecated-API fix
                  (litellm_client.py:184-189). UNBLOCKS Anthropic testing on
                  Opus 4.7/4.8 — both paths 400 on those models otherwise.
-P3  Restructure §4 prompt hygiene, OLD builder RETAINED behind ops flag    (P1)
-                 — provider-agnostic; helps automatic caching immediately.
+P3  Restructure §4 prompt hygiene, UNCONDITIONAL (no old builder kept;     (P1)
+                 P6 eval gates the restructure itself). Provider-agnostic;
+                 helps automatic caching immediately.
 P4  Inject      §5 system-block transform (graph) + §6a AI Manager         (P1,P2,P3)
                  Anthropic branch — ONLY for sites P1 cleared.
 P5  Logging     §7 cache-metric normalizer, all wrappers + AI Manager      (P3)
@@ -166,8 +167,11 @@ P8  UI toggle   per-run prompt_cache_enabled in 3 forms (New Analysis,      (P7)
 > restructure = P3, injection = P4, logging = P5, eval = P6, ops flag = P7, UI = P8).
 - **P2 before P4** — §6c states the Anthropic injection is *untestable* on current
   Opus until the sampling-param fix lands (the call 400s before a cache forms).
-- **P3 retains the old prompt builder behind the flag** — required so **P6** can run
-  old-vs-new, and so the OFF path (§8.8) is byte-identical.
+- **P3 restructure is UNCONDITIONAL** (no old builder kept behind a flag). For the
+  **P6** old-vs-new comparison, the pre-P3 prompts are recovered from a git tag
+  (`pre-cache-p3`), not a runtime branch. The OFF path is therefore **not**
+  byte-identical to pre-refactor prompts — it is "restructured, no `cache_control`"
+  (§7.5, §8.8). P6 gates the restructure itself.
 - **P6 gates the default-ON flip**, not the merge. Code can land dark (flag OFF) any
   time; only enabling it for users waits on the eval.
 - **P1 is a go/no-go** — if token counts show prefixes below threshold and cadence
