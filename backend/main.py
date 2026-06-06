@@ -201,6 +201,12 @@ def create_app() -> FastAPI:
         configure_llm_min_spacing(llm_spacing)
 
         app.state.db = db
+        from backend.services.debug_trace_repository import DebugTraceRepository
+        from backend.services.debug_trace_recorder import DebugTraceRecorder
+        debug_repo = DebugTraceRepository(db.pool)
+        debug_recorder = DebugTraceRecorder(debug_repo)
+        app.state.debug_trace_recorder = debug_recorder
+        await debug_recorder.start()
         app.state.event_bus = event_bus
         app.state.ws_manager = ws_manager
         app.state.config_service = config_service
@@ -219,6 +225,7 @@ def create_app() -> FastAPI:
             analysis_service=app.state.analysis_service,
             db=db,
             ws_manager=ws_manager,
+            debug_recorder=debug_recorder,
         )
 
         # Sector classification service (CoinGecko + LLM + DB cache)
@@ -510,6 +517,8 @@ def create_app() -> FastAPI:
         if app.state.accounts_service:
             await _safe_shutdown("accounts_service", app.state.accounts_service.shutdown())
         await _safe_shutdown("scanner_service", app.state.scanner_service.shutdown())
+        if getattr(app.state, "debug_trace_recorder", None):
+            await _safe_shutdown("debug_trace_recorder", app.state.debug_trace_recorder.shutdown())
         await _safe_shutdown("analysis_service", app.state.analysis_service.shutdown())
         await _safe_shutdown("backtest_service", app.state.backtest_service.shutdown())
         await _safe_shutdown("ws_manager", ws_manager.shutdown())
@@ -576,6 +585,8 @@ def create_app() -> FastAPI:
     app.include_router(backtest_router, prefix="/api/v1")
     from backend.routers.trading_cycles import router as trading_cycles_router
     app.include_router(trading_cycles_router, prefix="/api/v1")
+    from backend.routers.debug import router as debug_router
+    app.include_router(debug_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
 

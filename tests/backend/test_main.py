@@ -110,3 +110,12 @@ async def test_csp_and_csrf_middleware_bypass_websocket(app):
             # The WS may close immediately (no active run), but it must reach the endpoint
             # The middleware bypass branches (lines 27, 45) are exercised by the WS handshake
             pass
+
+
+def test_debug_router_registered():
+    """The debug router is registered under /api/v1."""
+    from backend.main import create_app
+    app = create_app()
+    paths = {r.path for r in app.routes}
+    assert "/api/v1/debug/config" in paths
+    assert "/api/v1/debug/scan/{scan_id}" in paths

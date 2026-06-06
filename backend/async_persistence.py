@@ -677,6 +677,102 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id)
 """)
 
 
+_SCHEMA_DEBUG_V42 = """
+CREATE TABLE IF NOT EXISTS debug_runs (
+    id BIGSERIAL PRIMARY KEY,
+    scan_id TEXT NOT NULL,
+    trigger_source TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (trigger_source IN ('scheduled','manual','run_now','unknown')),
+    schedule_id TEXT,
+    schedule_execution_id BIGINT,
+    scan_started_at TIMESTAMPTZ,
+    scan_completed_at TIMESTAMPTZ,
+    exec_started_at TIMESTAMPTZ,
+    exec_completed_at TIMESTAMPTZ,
+    config_snapshot JSONB NOT NULL DEFAULT '{}',
+    total_symbols INT NOT NULL DEFAULT 0,
+    completed_symbols INT NOT NULL DEFAULT 0,
+    failed_symbols INT NOT NULL DEFAULT 0,
+    num_accounts INT NOT NULL DEFAULT 0,
+    phase_reached TEXT,
+    dropped_event_count INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debug_runs_scan ON debug_runs(scan_id);
+CREATE INDEX IF NOT EXISTS idx_debug_runs_created ON debug_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_debug_runs_schedule ON debug_runs(schedule_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS debug_account_traces (
+    id BIGSERIAL PRIMARY KEY,
+    run_id BIGINT NOT NULL REFERENCES debug_runs(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    account_label TEXT,
+    execution_mode TEXT,
+    final_stopped_reason TEXT,
+    gate_that_stopped TEXT,
+    rescued_by_recheck BOOLEAN NOT NULL DEFAULT FALSE,
+    base_capital NUMERIC(20,8),
+    equity_at_start NUMERIC(20,8),
+    positions_at_start_count INT,
+    trades_executed INT NOT NULL DEFAULT 0,
+    trades_failed INT NOT NULL DEFAULT 0,
+    trades_skipped INT NOT NULL DEFAULT 0,
+    rules_created JSONB NOT NULL DEFAULT '[]',
+    config_snapshot JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debug_acct_run ON debug_account_traces(run_id);
+CREATE INDEX IF NOT EXISTS idx_debug_acct_account ON debug_account_traces(account_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS debug_lifecycle_events (
+    id BIGSERIAL PRIMARY KEY,
+    run_id BIGINT NOT NULL REFERENCES debug_runs(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    seq INT NOT NULL DEFAULT 0,
+    phase TEXT NOT NULL DEFAULT 'unknown',
+    event_type TEXT NOT NULL,
+    detail JSONB NOT NULL DEFAULT '{}',
+    ts TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debug_life_run_acct ON debug_lifecycle_events(run_id, account_id, seq);
+CREATE TABLE IF NOT EXISTS debug_symbol_decisions (
+    id BIGSERIAL PRIMARY KEY,
+    run_id BIGINT NOT NULL REFERENCES debug_runs(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    phase TEXT NOT NULL DEFAULT 'unknown',
+    symbol TEXT NOT NULL,
+    scan_score INT,
+    scan_confidence TEXT,
+    scan_direction TEXT,
+    decision TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    reason_detail JSONB NOT NULL DEFAULT '{}',
+    order_id TEXT,
+    ts TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debug_sym_run_acct ON debug_symbol_decisions(run_id, account_id);
+CREATE INDEX IF NOT EXISTS idx_debug_sym_symbol ON debug_symbol_decisions(symbol, ts DESC);
+CREATE TABLE IF NOT EXISTS debug_exchange_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    run_id BIGINT NOT NULL REFERENCES debug_runs(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    gate TEXT NOT NULL,
+    positions JSONB NOT NULL DEFAULT '[]',
+    position_count INT NOT NULL DEFAULT 0,
+    wallet JSONB NOT NULL DEFAULT '{}',
+    equity NUMERIC(20,8),
+    ts TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_debug_snap_run_acct ON debug_exchange_snapshots(run_id, account_id, gate);
+CREATE TABLE IF NOT EXISTS debug_config (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    tracing_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    retention_days INT NOT NULL DEFAULT 60 CHECK (retention_days BETWEEN 1 AND 3650),
+    symbol_decision_cap INT NOT NULL DEFAULT 200 CHECK (symbol_decision_cap BETWEEN 0 AND 100000),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO debug_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING
+"""
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -1121,6 +1217,10 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_entry
 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     ON backtest_trades(run_id, pnl);
 """),
+    # v42 — auto-trade debug tracing tables (renumbered from the branch's v38 to
+    # resolve a version collision with the backtesting feature, which already
+    # owns v38–v41 and is applied to the live DB).
+    (42, _SCHEMA_DEBUG_V42),
 ]
 
 
