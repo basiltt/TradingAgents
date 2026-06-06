@@ -334,6 +334,52 @@ The backtesting worktree had been run against the shared local Postgres, so it w
 
 ---
 
+## 2026-06-06 — Post-Merge Senior Review & Hardening
+
+**Timestamp:** 2026-06-06 ~22:45 UTC
+**Type:** Code review + targeted fixes (no new data analysis)
+**Trigger:** Money-critical review of the just-merged 3-feature integration — hunt for gaps, breakage, inconsistencies, and internal conflicts before relying on the features.
+
+### Method
+
+Dispatched adversarial reviewers across each feature (backtest correctness, debug reliability, caching parity) plus a cross-cutting integration review. **Every flagged "CRITICAL/HIGH" was independently verified before any code change** — most turned out to be false positives or pre-existing, documented design decisions. Three were confirmed real and fixed.
+
+### Problem #1 (HIGH, fixed) — Backtest price-drift filter silently disabled
+
+**The problem:** The backtesting feature added `scan_results.analysis_price` (migration v39), the scanner extracts it into the result dict, and the backtest signal loader `SELECT`s it — but the **shared, auto-merged** `insert_scan_result()` in `async_persistence.py` was never updated to actually WRITE the column. So `analysis_price` was always NULL in the DB. This is the classic auto-merge hazard: the column + the read path + the extraction all landed, but the write path in a file touched by another feature did not.
+
+**Why it matters for profitability research:** The backtest's `max_price_drift_pct` filter (which skips a signal whose price has already moved too far since analysis — one of the 2026-06-04 fixes) reads `analysis_price`. With it always NULL, the filter **silently no-ops in backtests**, so a backtest would admit trades that live trading rejects → results diverge from reality, defeating the <1% fidelity goal. Any profitability conclusion drawn from a drift-filtered config would have been wrong.
+
+**The fix:** Persist `analysis_price` in the INSERT + `ON CONFLICT` (with `COALESCE` so a price-less re-insert can't wipe an existing value) + defensive coercion (only a positive finite number is stored, else NULL). Verified round-tripping through the live DB. Note: live trading was unaffected — it reads `analysis_price` from the in-memory result dict, not the DB; only backtests read it from the DB.
+
+### Problem #2 (HIGH, fixed) — Optional forensics could abort trading startup
+
+**The problem:** `DebugTraceRecorder` init + `start()` ran **unguarded** in the app lifespan, before the trading services. The debug router (returns 503 when the recorder is absent) and the scanner (`if recorder is not None`) are both explicitly designed to tolerate a *missing* recorder — but startup made it mandatory. A throw during debug init would propagate out of lifespan and **halt the entire trading app to protect a forensics feature.**
+
+**The fix:** Wrap construction + `start()` in try/except; on failure log and degrade to `None` (every consumer already handles None), mirroring the sibling `backtest_service.recover_stale_runs()` pattern.
+
+### Problem #3 (reliability, fixed) — Debug `open_run` could stall trade placement
+
+**The problem:** `open_run` (which writes a debug run row) is awaited on the scan/trade-leading path. Its `create_run` DB call had no timeout, so a saturated shared connection pool could block trade placement while waiting to acquire a connection — violating "tracing must never slow a live trade."
+
+**The fix:** `asyncio.wait_for(create_run, timeout=5s)`; on timeout, fail open (run untraced, trading proceeds) rather than block.
+
+### Adversarially REFUTED (NOT changed — changing them would have introduced bugs)
+
+- **"Backtest equity-rule basis mismatch."** A reviewer claimed the EQUITY_DROP reference (which subtracts locked margin) is inconsistent with the measured equity (which doesn't). Verified against production: production's reference IS `totalAvailableBalance` (subtracts margin) while the measured value IS `totalEquity` (doesn't) — the backtest faithfully mirrors this asymmetry, and an existing regression test (`test_equity_drop_reference_excludes_carried_locked_margin`) locks it in. The proposed "fix" would have **re-introduced a prior real bug (R6/R9).**
+- **"Caching makes 4 crypto analysts more expensive."** Refuted against Anthropic's billing docs: a sub-min-length prefix is a silent no-op (no write premium), and these are multi-call tool-using agents that read the cache back **within** a scan → net cheaper, not more expensive. Real (minor) issue is only a missed cross-scan optimization, not a cost regression.
+- **Realized-only equity curve / drawdown granularity.** Already disclosed as "known approximation #14" in the backtest spec — a deliberate, documented design choice, not a defect.
+
+### Verification
+
+Added `tests/backend/test_merge_hardening.py` (6 regression tests, all green). Async-path test sweep across all touched areas: **115+ pass**. Full app lifespan starts/stops clean with all 3 features; `analysis_price` round-trips through the live DB. The pre-existing `close_positions` mock failures and sync-persistence(v35)-vs-live-DB(v42) version-guard errors are unrelated and were proven pre-existing (documented in the prior entry).
+
+### Takeaway for future merges
+
+The one real bug that would have corrupted profitability research (`analysis_price` not persisted) was a **silent auto-merge gap in a shared file** — exactly the failure mode to watch when several features edit the same module. Auto-merge being "textually clean" does not mean it is "semantically complete." Always trace each new column/field end-to-end: migration → write → read.
+
+---
+
 <!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
 
 
