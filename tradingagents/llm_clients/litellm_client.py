@@ -215,7 +215,9 @@ class LiteLLMClient(BaseLLMClient):
         if model_kwargs:
             llm_kwargs["model_kwargs"] = model_kwargs
 
-        return NormalizedChatLiteLLM(**llm_kwargs)
+        instance = NormalizedChatLiteLLM(**llm_kwargs)
+        instance._cache_enabled = bool(self.kwargs.get("prompt_cache_enabled", False))
+        return instance
 
     def validate_model(self) -> bool:
         """LiteLLM supports any model string — validation is permissive."""

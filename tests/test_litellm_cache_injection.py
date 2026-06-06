@@ -55,3 +55,23 @@ class TestCacheInjection:
         msgs = [("system", "STABLE"), ("human", "v")]
         out = self._capture_input(llm, msgs)
         assert out == msgs
+
+
+class TestCacheFlagWiring:
+    def test_get_llm_sets_cache_enabled_from_kwarg(self):
+        from tradingagents.llm_clients.litellm_client import LiteLLMClient
+        llm = LiteLLMClient("claude-sonnet-4-6", provider="anthropic",
+                            prompt_cache_enabled=True).get_llm()
+        assert llm._cache_enabled is True
+
+    def test_get_llm_defaults_cache_disabled(self):
+        from tradingagents.llm_clients.litellm_client import LiteLLMClient
+        llm = LiteLLMClient("claude-sonnet-4-6", provider="anthropic").get_llm()
+        assert getattr(llm, "_cache_enabled", False) is False
+
+    def test_factory_forwards_flag(self):
+        from tradingagents.llm_clients.factory import create_llm_client
+        client = create_llm_client("anthropic", "claude-sonnet-4-6",
+                                   prompt_cache_enabled=True)
+        llm = client.get_llm()
+        assert llm._cache_enabled is True

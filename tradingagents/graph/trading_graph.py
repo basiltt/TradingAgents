@@ -180,6 +180,7 @@ class TradingAgentsGraph:
             provider=self.config["llm_provider"],
             model=self.config["deep_think_llm"],
             base_url=self.config.get("backend_url"),
+            prompt_cache_enabled=self.config.get("prompt_cache_enabled", False),
             **deep_temp,
             **llm_kwargs,
         )
@@ -187,6 +188,7 @@ class TradingAgentsGraph:
             provider=self.config["llm_provider"],
             model=self.config["quick_think_llm"],
             base_url=self.config.get("backend_url"),
+            prompt_cache_enabled=self.config.get("prompt_cache_enabled", False),
             **quick_temp,
             **llm_kwargs,
         )
@@ -422,6 +424,7 @@ class TradingAgentsGraph:
                 provider=self.config["llm_provider"],
                 model=model_id,
                 base_url=self.config.get("backend_url"),
+                prompt_cache_enabled=self.config.get("prompt_cache_enabled", False),
                 **temp,
                 **safe_kwargs,
             )
