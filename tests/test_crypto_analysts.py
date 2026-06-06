@@ -62,13 +62,15 @@ class TestCryptoTechnicalAnalyst:
 
         node = create_crypto_technical_analyst(llm, tools)
         state = _base_state()
-        # Patch the chain invoke to return our mock message
-        with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
+        # Patch the chain invoke to return our mock message.
+        # technical analyst builds its prompt via split_cacheable_prompt
+        # (cacheable Pattern-A), so that helper is the mock seam.
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
             mock_chain = MagicMock()
             mock_chain.invoke.return_value = result_msg
             mock_prompt = MagicMock()
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
-            mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
+            mock_split.return_value.partial.return_value = mock_prompt
             result = node(state)
             assert "market_report" in result
             assert result["market_report"] == "BTC is bullish"
@@ -311,12 +313,12 @@ class TestCryptoToolCallsBranch:
         t2 = MagicMock()
         t2.name = "get_crypto_indicators"
         node = create_crypto_technical_analyst(llm, [t1, t2])
-        with patch("tradingagents.agents.crypto_analysts.ChatPromptTemplate") as mock_tpl:
+        with patch("tradingagents.agents.utils.prompt_cache.split_cacheable_prompt") as mock_split:
             mock_chain = MagicMock()
             mock_chain.invoke.return_value = result_msg
             mock_prompt = MagicMock()
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
-            mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
+            mock_split.return_value.partial.return_value = mock_prompt
             result = node(_base_state())
             assert result["market_report"] == "Analysis report here"
 

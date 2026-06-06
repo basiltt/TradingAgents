@@ -56,6 +56,26 @@ _ANALYST_SYSTEM_PREFIX = (
 )
 
 
+# Cacheable Pattern-A split of the prefix above, used ONLY by the technical
+# analyst (which has a large enough stable head to ever cache). The other four
+# crypto analysts keep using _ANALYST_SYSTEM_PREFIX unchanged. Invariant:
+# _ANALYST_STABLE_PREFIX + _ANALYST_VOLATILE_TAIL == _ANALYST_SYSTEM_PREFIX.
+_ANALYST_STABLE_PREFIX = (
+    "You are a helpful AI assistant, collaborating with other assistants."
+    " Use the provided tools to progress towards answering the question."
+    " If you are unable to fully answer, that's OK; another assistant with different tools"
+    " will help where you left off. Execute what you can to make progress."
+    " If you or any other assistant has the FINAL ANALYSIS or deliverable,"
+    " prefix your response with FINAL ANALYSIS so the team knows to stop."
+    " You have access to the following tools: {tool_names}.\n{system_message}"
+)
+_ANALYST_VOLATILE_TAIL = (
+    "For your reference, the current date is {current_date}. {instrument_context}"
+    "\n\n--- CURRENT PRICE DATA (use this as the reference price for your analysis) ---\n"
+    "{current_price_context}"
+)
+
+
 def create_crypto_technical_analyst(llm, crypto_tools: list):
     def node(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
@@ -109,10 +129,8 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             + get_language_instruction()
         )
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", _ANALYST_SYSTEM_PREFIX),
-            MessagesPlaceholder(variable_name="messages"),
-        ])
+        from tradingagents.agents.utils.prompt_cache import split_cacheable_prompt
+        prompt = split_cacheable_prompt(_ANALYST_STABLE_PREFIX, _ANALYST_VOLATILE_TAIL)
         prompt = prompt.partial(
             system_message=system_message,
             tool_names=", ".join(t.name for t in tools),
