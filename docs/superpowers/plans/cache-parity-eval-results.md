@@ -82,3 +82,18 @@ doesn't serve Claude models), unset it so calls reach real Anthropic.
    litellm pin. `uv sync --frozen` will fail until the lock is regenerated AND the
    re-resolved versions (litellm 1.87.x etc.) are tested. Do this as a separate,
    verified step before deploying — do not blind-commit a re-resolved lock.
+
+### uv.lock regeneration — TESTED, found un-installable (2026-06-06)
+Per the "regenerate + test the lock" decision, `uv lock` was run. It resolves to
+litellm 1.87.1, langchain-core 1.4.1, openai 2.41.0, anthropic 0.106.0 (all within
+the pinned `<2`/`<0.5` ranges). **`uv sync` to that lock FAILS in this environment:**
+litellm 1.87.1 pulls `tiktoken 0.9.0`, which has no prebuilt wheel for the
+Python 3.14 / platform combo and needs a Rust toolchain to build from source.
+Result: the regenerated lock is **not installable/testable here**, so it must NOT
+be committed (shipping an unvalidated, possibly-unbuildable lock to a money path is
+the larger risk). The committed lock is left at its prior state; the installed,
+fully-tested env stays litellm 1.83.7 / langchain-core 1.3.2 / anthropic 0.x.
+**Deploy action:** reconcile the lock in the actual deploy environment (which must
+have a Rust toolchain or prebuilt tiktoken wheels), run the suite there against the
+resolved versions, and commit the lock only after it installs+passes. Do not commit
+a lock that can't be installed in the dev environment.
