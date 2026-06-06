@@ -437,7 +437,20 @@ async def test_bulk_insert_events_and_read_back(pool):
         l = await conn.fetchval("SELECT count(*) FROM debug_lifecycle_events WHERE run_id=$1", run_id)
         s = await conn.fetchval("SELECT count(*) FROM debug_symbol_decisions WHERE run_id=$1", run_id)
         x = await conn.fetchval("SELECT count(*) FROM debug_exchange_snapshots WHERE run_id=$1", run_id)
+        # JSONB content must round-trip correctly through COPY (codec regression guard).
+        rules_json = await conn.fetchval(
+            "SELECT rules_created FROM debug_account_traces WHERE run_id=$1", run_id
+        )
+        snap_json = await conn.fetchval(
+            "SELECT positions FROM debug_exchange_snapshots WHERE run_id=$1", run_id
+        )
     assert (a, l, s, x) == (1, 1, 1, 1)
+    import json as _json
+    # asyncpg returns jsonb as str (built-in binary codec); it must parse back to our data.
+    rules = _json.loads(rules_json) if isinstance(rules_json, str) else rules_json
+    snap = _json.loads(snap_json) if isinstance(snap_json, str) else snap_json
+    assert rules[0]["trigger_type"] == "EQUITY_RISE_PCT"
+    assert snap[0]["symbol"] == "AAPLUSDT"
 
 
 @pytest.mark.asyncio
@@ -460,6 +473,8 @@ Run: `python -m pytest tests/backend/test_debug_trace_repository.py -k "bulk_ins
 Expected: FAIL with `AttributeError: 'DebugTraceRepository' object has no attribute 'bulk_insert'`
 
 - [ ] **Step 3: Implement bulk insert + retention**
+
+> **JSONB-over-COPY contract (verified).** `copy_records_to_table` uses asyncpg's binary protocol. asyncpg's built-in `jsonb` codec is **binary** and accepts a Python `str`, so passing `json.dumps(...)` strings for JSONB columns is correct and matches how the rest of `async_persistence.py` writes JSONB (lines 2005/2045/2077/2425). **Do NOT** register a global text json/jsonb codec via `set_type_codec(..., format='text')` / pool `init=` — a *text* codec is explicitly unsupported by COPY and would break this method. `copy_records_to_table` also does not support per-column `::jsonb` casts (none are needed). The repository round-trip test in Step 1 (`test_bulk_insert_events_and_read_back`) is the regression guard; if anyone later adds a text json codec, that test fails loudly.
 
 Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_repository.py`:
 
@@ -799,11 +814,16 @@ class DebugTraceRecorder:
         if not self._enabled or ctx.run_id is None:
             return
         try:
-            pos = positions or []
+            # Shallow-copy the executor's live structures: the caller may mutate the
+            # same positions/wallet objects later in init_balances, which would
+            # otherwise retroactively change this captured snapshot. Copies are cheap
+            # (a few dozen small dicts) and keep the snapshot a true point-in-time view.
+            pos = list(positions) if positions else []
+            wal = dict(wallet) if wallet else {}
             self._append(ctx, {
                 "_table": "exchange_snapshots", "run_id": ctx.run_id,
                 "account_id": account_id, "gate": gate, "positions": pos,
-                "position_count": len(pos), "wallet": wallet or {},
+                "position_count": len(pos), "wallet": wal,
                 "equity": equity, "ts": datetime.now(timezone.utc),
             })
         except Exception:
@@ -1261,22 +1281,30 @@ In `post_scan_recheck`:
 - After state reset (~771): `self._emit_life(account_id, "post_scan_recheck", "state_reset", new_balance=new_balance)`.
 - Trades placed in recheck call `_try_trade(state, result, phase="post_scan_recheck")` (pass the phase).
 
-Add a new method `emit_account_summaries(self)` called at finalize that, for each state, emits an account-trace record:
+Add a new method `emit_account_summaries(self)` called at finalize that, for each state, emits an account-trace record. It is **async** so it can resolve the human-readable account label off the hot path (finalize only):
 
 ```python
-    def emit_account_summaries(self) -> None:
+    async def emit_account_summaries(self) -> None:
         rec, ctx = self._recorder, self._debug_ctx
         if rec is None or ctx is None:
             return
+        # Resolve labels once per account (off the hot path — finalize only). Best-effort.
+        label_cache: Dict[str, Optional[str]] = {}
         for state in self._state.values():
             aid = state.config.get("account_id", "")
+            if aid and aid not in label_cache:
+                try:
+                    acct = await self._accounts.get_account(aid)
+                    label_cache[aid] = (acct or {}).get("label")
+                except Exception:
+                    label_cache[aid] = None
             rec.emit_account_trace(
                 ctx, account_id=aid,
-                account_label=None,  # resolved in scanner wiring (Task 11) if available
+                account_label=label_cache.get(aid),
                 execution_mode=state.config.get("execution_mode"),
                 final_stopped_reason=state.stopped_reason,
                 gate_that_stopped=state.stopped_reason,
-                rescued_by_recheck=(state.stopped_reason is None and state.trades_executed > 0),
+                rescued_by_recheck=getattr(state, "rescued_by_recheck", False),
                 base_capital=state.base_capital,
                 positions_at_start_count=len(state.existing_symbols),
                 trades_executed=state.trades_executed,
@@ -1287,7 +1315,9 @@ Add a new method `emit_account_summaries(self)` called at finalize that, for eac
             )
 ```
 
-Add a module-level `_sanitize_config(cfg)` helper that returns a copy with any key containing `key`/`secret`/`token` removed (defensive — auto_trade_config shouldn't contain secrets, but be safe).
+> **`rescued_by_recheck` must be a real flag, not inferred.** Inferring it from `stopped_reason is None and trades_executed > 0` would be TRUE for every normal account that simply traded — wrong. Instead, add a field to `_AccountState` (Task: the dataclass near line 1142) — `rescued_by_recheck: bool = False` — and set it to `True` inside `post_scan_recheck` at the point where a previously `positions_already_open` account is reset and goes on to place at least one trade (right after the state reset / successful placement in the recheck loop, ~line 760-890). `emit_account_summaries` then reads that real flag.
+
+Because `emit_account_summaries` is now `async`, update its single call site in the scanner finalize block (Task 11d) to `await executor.emit_account_summaries()` (already shown with `await` there).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1312,14 +1342,19 @@ async def test_init_balances_emits_snapshot_and_skip_when_positions_open():
     assert "marked_stopped" in evs
 
 
-def test_emit_account_summaries_emits_one_per_state():
+@pytest.mark.asyncio
+async def test_emit_account_summaries_emits_one_per_state():
     from backend.services.auto_trade_service import AutoTradeExecutor, _AccountState
     rec = MagicMock()
     ctx = object()
-    ex = AutoTradeExecutor(AsyncMock(), None, recorder=rec, debug_ctx=ctx)
+    accounts = AsyncMock()
+    accounts.get_account.return_value = {"id": "acc_1", "label": "Dad - Demo"}
+    ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
     ex._state = {"acc_1_0": _AccountState(config={"account_id": "acc_1", "execution_mode": "batch"})}
-    ex.emit_account_summaries()
+    await ex.emit_account_summaries()
     rec.emit_account_trace.assert_called_once()
+    _, kwargs = rec.emit_account_trace.call_args
+    assert kwargs["account_label"] == "Dad - Demo"   # label resolved off the hot path
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1336,6 +1371,19 @@ def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     bad = ("key", "secret", "token", "password")
     return {k: v for k, v in cfg.items() if not any(b in k.lower() for b in bad)}
 ```
+
+**Add the `rescued_by_recheck` field to `_AccountState`** (the dataclass near line 1142, alongside `stopped`, `stopped_reason`, etc.):
+```python
+    rescued_by_recheck: bool = False
+```
+Then in `post_scan_recheck`, after a previously-skipped account is reset and successfully places at least one trade in the recheck loop (i.e. inside the `# Execute trades from scan results` block ~line 872-890, when `total_executed > 0` for that account), set `state.rescued_by_recheck = True` on each state for that account. Concretely, after the recheck trade loop computes `total_executed` (~line 893), add:
+```python
+                if total_executed > 0:
+                    async with self._lock:
+                        for state in states:
+                            state.rescued_by_recheck = True
+```
+This makes `rescued_by_recheck` a real signal (only accounts that were rescued by the post-scan recheck), not an inference.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -1391,6 +1439,10 @@ async def test_get_latest_run_for_scan_and_tree(pool):
     assert len(acct["lifecycle_events"]) == 1
     assert len(acct["symbol_decisions"]) == 1
     assert len(acct["exchange_snapshots"]) == 1
+    # Linked-record keys are always present (spec §6.1), even when empty.
+    assert "linked_trades" in acct
+    assert "linked_close_rules" in acct
+    assert "linked_close_executions" in acct
 
 
 @pytest.mark.asyncio
@@ -1448,42 +1500,127 @@ Append to `DebugTraceRepository`:
             node["lifecycle_events"] = by_acct_ev.get(aid, [])
             node["symbol_decisions"] = by_acct_dec.get(aid, [])
             node["exchange_snapshots"] = by_acct_snap.get(aid, [])
+            # Linked external records (spec §6.1): trades by placed order_id; rules/closes by account+window.
+            node["linked_trades"] = await self._linked_trades_for_account(run, aid, by_acct_dec.get(aid, []))
+            node["linked_close_rules"], node["linked_close_executions"] = \
+                await self._linked_rules_and_closes(run, aid)
             node["narrative"] = _build_narrative(node)
             accounts.append(node)
         return {"run": dict(run), "accounts": accounts}
 
+    async def _linked_trades_for_account(self, run, account_id: str, decisions: list[dict]) -> list[dict]:
+        """Resulting trades for this account in this run, matched by placed order_id.
+
+        order_id is the precise run-scoped key: debug_symbol_decisions rows with
+        decision='placed' carry the order_id returned by place_trade, which equals
+        trades.order_id. Falls back to empty when no placements were recorded.
+        """
+        order_ids = [d.get("order_id") for d in decisions if d.get("decision") == "placed" and d.get("order_id")]
+        if not order_ids:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, symbol, side, status, close_reason, opened_at, closed_at,
+                       realized_pnl, order_id, scan_result_id
+                FROM trades WHERE account_id=$1 AND order_id = ANY($2::text[])
+                ORDER BY opened_at
+                """,
+                account_id, order_ids,
+            )
+        return [dict(r) for r in rows]
+
+    async def _linked_rules_and_closes(self, run, account_id: str):
+        """close_rules and close_executions for this account within the run's time window.
+
+        Window = [exec_started_at, coalesce(exec_completed_at, now) + 5 min]. This captures
+        rules created during the run and any close that fired through the auto-trade phase.
+        Returns (rules, executions). Best-effort: empty lists if the window is unknown.
+        """
+        start = run["exec_started_at"]
+        end = run["exec_completed_at"]
+        if start is None:
+            return [], []
+        async with self._pool.acquire() as conn:
+            rules = await conn.fetch(
+                """
+                SELECT id, trigger_type, threshold_value, reference_value, status,
+                       created_at, triggered_at, expires_at
+                FROM close_rules
+                WHERE account_id=$1
+                  AND created_at >= $2
+                  AND created_at <= COALESCE($3, now()) + interval '5 minutes'
+                ORDER BY created_at
+                """,
+                account_id, start, end,
+            )
+            closes = await conn.fetch(
+                """
+                SELECT id, rule_id, trigger_source, total_positions, closed_count,
+                       failed_count, executed_at
+                FROM close_executions
+                WHERE account_id=$1
+                  AND executed_at >= $2
+                  AND executed_at <= COALESCE($3, now()) + interval '5 minutes'
+                ORDER BY executed_at
+                """,
+                account_id, start, end,
+            )
+        return [dict(r) for r in rules], [dict(r) for r in closes]
+
     async def list_runs(self, *, limit: int = 20, offset: int = 0,
                         trigger_source: Optional[str] = None,
-                        account_id: Optional[str] = None) -> dict[str, Any]:
-        where, args, i = [], [], 1
+                        account_id: Optional[str] = None,
+                        from_ts: Optional[str] = None,
+                        to_ts: Optional[str] = None) -> dict[str, Any]:
+        # Build args positionally; track each placeholder index explicitly to avoid drift.
+        args: list = []
         join = ""
-        if trigger_source:
-            where.append(f"r.trigger_source=${i}"); args.append(trigger_source); i += 1
+        where: list[str] = []
         if account_id:
-            join = "JOIN debug_account_traces a ON a.run_id=r.id AND a.account_id=$%d" % i
-            args.append(account_id); i += 1
+            args.append(account_id)
+            join = f"JOIN debug_account_traces a ON a.run_id=r.id AND a.account_id=${len(args)}"
+        if trigger_source:
+            args.append(trigger_source)
+            where.append(f"r.trigger_source=${len(args)}")
+        if from_ts:
+            args.append(from_ts)
+            where.append(f"r.created_at >= ${len(args)}::timestamptz")
+        if to_ts:
+            args.append(to_ts)
+            where.append(f"r.created_at <= ${len(args)}::timestamptz")
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         async with self._pool.acquire() as conn:
             total = await conn.fetchval(
                 f"SELECT count(DISTINCT r.id) FROM debug_runs r {join} {clause}", *args
             )
+            args.append(limit); limit_ph = len(args)
+            args.append(offset); offset_ph = len(args)
             rows = await conn.fetch(
                 f"SELECT DISTINCT r.* FROM debug_runs r {join} {clause} "
-                f"ORDER BY r.created_at DESC LIMIT ${i} OFFSET ${i+1}",
-                *args, limit, offset,
+                f"ORDER BY r.created_at DESC LIMIT ${limit_ph} OFFSET ${offset_ph}",
+                *args,
             )
         return {"items": [dict(r) for r in rows], "total": total or 0, "limit": limit, "offset": offset}
 
     async def get_account_timeline(self, account_id: str, *, limit: int = 50,
-                                   from_ts=None, to_ts=None) -> list[dict]:
+                                   from_ts: Optional[str] = None,
+                                   to_ts: Optional[str] = None) -> list[dict]:
+        args: list = [account_id]
+        where = ["a.account_id=$1"]
+        if from_ts:
+            args.append(from_ts); where.append(f"r.created_at >= ${len(args)}::timestamptz")
+        if to_ts:
+            args.append(to_ts); where.append(f"r.created_at <= ${len(args)}::timestamptz")
+        args.append(limit); limit_ph = len(args)
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT a.*, r.scan_id, r.trigger_source, r.created_at AS run_created_at
                 FROM debug_account_traces a JOIN debug_runs r ON r.id=a.run_id
-                WHERE a.account_id=$1 ORDER BY r.created_at DESC LIMIT $2
+                WHERE {' AND '.join(where)} ORDER BY r.created_at DESC LIMIT ${limit_ph}
                 """,
-                account_id, limit,
+                *args,
             )
         return [dict(r) for r in rows]
 
@@ -1511,7 +1648,11 @@ Also add the narrative builder (module level, above the class):
 
 ```python
 def _build_narrative(node: dict) -> str:
-    """Plain-English per-account story from the trace node."""
+    """Plain-English per-account story from the trace node.
+
+    Mirrors the spec example: entry state → mid-scan close (from linked
+    close_executions) → recheck rescue → trades placed.
+    """
     aid = node.get("account_label") or node.get("account_id")
     reason = node.get("final_stopped_reason")
     executed = node.get("trades_executed", 0)
@@ -1520,17 +1661,28 @@ def _build_narrative(node: dict) -> str:
     parts = [f"Account {aid}:"]
     snaps = {s["gate"]: s for s in node.get("exchange_snapshots", [])}
     start = snaps.get("scan_start")
+    recheck = snaps.get("recheck")
     if start:
         parts.append(f"at scan-start held {start['position_count']} position(s)")
     if reason == "positions_already_open":
         parts.append("→ skipped (positions already open at scan-start)")
+    # If positions closed mid-scan, surface the close time from linked close_executions.
+    closes = node.get("linked_close_executions", []) or []
+    if closes and start and start["position_count"] > 0:
+        last_close = max(closes, key=lambda c: c.get("executed_at") or "")
+        when = str(last_close.get("executed_at", ""))[:19]
+        parts.append(f"→ prior positions closed during scan ({when})")
+    elif recheck is not None and start and start["position_count"] > 0 and recheck["position_count"] == 0:
+        parts.append("→ positions cleared during scan (recheck saw 0)")
     if rescued:
         parts.append("→ rescued by post-scan recheck")
     if executed:
-        parts.append(f"→ placed {executed} trade(s)")
+        placed_syms = [d["symbol"] for d in node.get("symbol_decisions", []) if d.get("decision") == "placed"]
+        sym_str = f" ({'/'.join(placed_syms[:6])})" if placed_syms else ""
+        parts.append(f"→ placed {executed} trade(s){sym_str}")
     if skipped:
         parts.append(f"(skipped {skipped} candidate signals)")
-    if not executed and reason:
+    if not executed and reason and reason != "positions_already_open":
         parts.append(f"→ no trades (stopped: {reason})")
     return " ".join(parts)
 ```
@@ -1693,16 +1845,22 @@ async def get_scan_account(request: Request, scan_id: str, account_id: str, run_
 @router.get("/debug/runs")
 async def list_runs(request: Request, limit: int = Query(20, ge=1, le=100),
                     offset: int = Query(0, ge=0), trigger_source: Optional[str] = None,
-                    account_id: Optional[str] = None):
+                    account_id: Optional[str] = None,
+                    from_ts: Optional[str] = Query(None, alias="from"),
+                    to_ts: Optional[str] = Query(None, alias="to")):
     _, repo = _repo(request)
     return await repo.list_runs(limit=limit, offset=offset,
-                                trigger_source=trigger_source, account_id=account_id)
+                                trigger_source=trigger_source, account_id=account_id,
+                                from_ts=from_ts, to_ts=to_ts)
 
 
 @router.get("/debug/account/{account_id}/timeline")
-async def account_timeline(request: Request, account_id: str, limit: int = Query(50, ge=1, le=200)):
+async def account_timeline(request: Request, account_id: str, limit: int = Query(50, ge=1, le=200),
+                           from_ts: Optional[str] = Query(None, alias="from"),
+                           to_ts: Optional[str] = Query(None, alias="to")):
     _, repo = _repo(request)
-    return {"items": await repo.get_account_timeline(account_id, limit=limit)}
+    return {"items": await repo.get_account_timeline(account_id, limit=limit,
+                                                     from_ts=from_ts, to_ts=to_ts)}
 
 
 @router.get("/debug/symbol/{symbol}")
@@ -1814,26 +1972,55 @@ and after `self._sector_service = sector_service` (line 327) add:
 
 The `config_snapshot` deliberately stores only `{"num_configs": ...}` (a count, not the raw configs) to avoid persisting any per-account config containing potentially sensitive fields; per-account sanitized config is captured separately by `emit_account_summaries` in Task 8.
 
-(c) The second executor construction (line 576, resume path) — apply the same pattern (create ctx, pass recorder+ctx, open_run before init_balances, store `scan["debug_ctx"]`).
+(c) The second executor construction (line 576, resume path, inside `resume_incomplete_scans`) — apply the same pattern, with these specifics: the resume `scan` dict does **not** carry a `schedule_id`, so build the ctx as:
+```python
+            debug_ctx = None
+            if self._debug_recorder is not None:
+                debug_ctx = self._debug_recorder.new_run_context(
+                    scan_id=scan_id, trigger_source="scheduled", schedule_id=None,
+                )
+            executor = AutoTradeExecutor(
+                self._accounts, self._close_svc, self._ai_manager_service,
+                sector_service=self._sector_service,
+                recorder=self._debug_recorder, debug_ctx=debug_ctx,
+            )
+            if self._debug_recorder is not None and debug_ctx is not None:
+                await self._debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "resumed": True})
+            executor.init_configs(auto_configs)
+            # ... existing restore_state(...) call stays ...
+            await executor.init_balances()
+            # ... after scan["auto_trade_executor"] = executor:
+            scan["debug_ctx"] = debug_ctx
+```
 
-(d) In the finalize block, pass `phase="..."` is already handled inside the executor. After `await executor.cleanup_unused_rules()` and `scan["auto_trade_summaries"] = executor.get_summaries()` (~862), add:
+> **Immediate-mode note (no extra run needed):** immediate-mode configs trade *during* the scan via `evaluate_result` (called from `_handle_completed_analysis`), not at finalize. Because the executor instance was constructed with `debug_ctx` and `open_run` set `ctx.run_id` *before* `init_balances`, those during-scan `_try_trade` emits are already captured under the same run. Do **not** open a second run for immediate mode.
+
+(d) **CRITICAL — variable scope.** `final_completed` and `final_failed` are top-level locals (assigned at lines 773-774 and reassigned ~848-849), so they are always in scope at the `if executor:` block (~853). But `total` is assigned **only inside** the `if not scan_error:` block (~line 784), so referencing `total` at the `if executor:` block raises `NameError` whenever `scan_error` is truthy (the executor can still be truthy on the error path because it is re-read at ~834). **Do not use `total`.** Capture the symbol count from the `scan` dict under the finalize lock instead.
+
+In the finalize block, after `scan["auto_trade_summaries"] = executor.get_summaries()` (~862), add:
 
 ```python
             # Debug: emit account summaries and close the debug run.
             try:
-                executor.emit_account_summaries()
+                await executor.emit_account_summaries()
             except Exception:
                 pass
-            debug_ctx = scan.get("debug_ctx")
+            debug_ctx = scan.get("debug_ctx") if scan else None
             if self._debug_recorder is not None and debug_ctx is not None:
+                # Read symbol counts from the scan dict (NOT `total`, which is only
+                # defined inside the `if not scan_error:` block above).
+                async with self._lock:
+                    _scan = self._scans.get(scan_id)
+                    _total = (_scan.get("total", 0) if _scan else 0)
+                num_accounts = len({s.config.get("account_id") for s in executor._state.values()})
                 await self._debug_recorder.close_run(
-                    debug_ctx, phase_reached="finalized",
-                    total_symbols=total, completed_symbols=final_completed,
-                    failed_symbols=final_failed, num_accounts=len({s.config.get("account_id") for s in executor._state.values()}),
+                    debug_ctx, phase_reached=("failed" if scan_error else "finalized"),
+                    total_symbols=_total, completed_symbols=final_completed,
+                    failed_symbols=final_failed, num_accounts=num_accounts,
                 )
 ```
 
-> If `total`/`final_completed`/`final_failed` are not in scope at that exact point, use the values already computed in the finalize block (they are set around lines 847-849). Place the close_run AFTER those are assigned.
+> Note: `final_completed` / `final_failed` are guaranteed defined (top-level init at ~773-774). `scan_error` is in scope throughout `_run_scan`. This avoids the `total` NameError entirely.
 
 (e) In `backend/routers/scanner.py` `_run_auto_trade` (~205): construct the recorder ctx and open/close a run around the manual executor, mirroring (b)+(d). Get the recorder via `getattr(request.app.state, "debug_trace_recorder", None)`. Trigger source = `"manual"`. This guarantees a manual re-trigger creates a NEW run (never overwrites).
 
@@ -2292,8 +2479,22 @@ After deploying, validate the feature end-to-end:
 ## Notes for the implementer
 - **Never alter existing trade control flow** in `auto_trade_service.py` — only ADD emit calls. Every emit is additive and fail-open.
 - The recorder's `_enabled` flag is refreshed by the drainer loop every few seconds and on every `PUT /debug/config`, so the kill-switch takes effect within one drain interval.
-- `account_label` resolution: the executor emits `account_label=None`; if you want labels populated at write time, resolve via `accounts_service.get_account(aid)["label"]` in `emit_account_summaries` (it's off the hot path, called at finalize). Keep it best-effort/try-except.
+- `account_label` resolution happens off the hot path: `emit_account_summaries` (async, called at finalize) resolves labels via `accounts_service.get_account(aid)["label"]`, cached per account, best-effort/try-except.
 - Storage: with the default 200 symbol-decision cap and 60-day retention, a 21-account / 3-hourly schedule produces bounded growth; the nightly cleanup keeps it in check.
+
+---
+
+## Review-Findings Changelog (decisions baked into this plan)
+
+These are non-obvious correctness decisions made during a verification review against the live codebase. Do not "simplify" them away.
+
+1. **`total` is NOT used at the `if executor:` finalize block** (Task 11d). `total` is only assigned inside `if not scan_error:` (~line 784); the finalize/close-run code runs even on the error path. Using `total` there raises `NameError`. The plan re-reads the symbol count from the `scan` dict under the lock instead, and `final_completed`/`final_failed` are top-level locals (safe).
+2. **JSONB via `copy_records_to_table` uses `json.dumps(...)` STRINGS** (Task 3). asyncpg's built-in `jsonb` codec is binary and accepts `str`. This is correct ONLY while no global *text* json codec is registered (none is). The round-trip assertion in `test_bulk_insert_events_and_read_back` is the regression guard.
+3. **`rescued_by_recheck` is a real `_AccountState` field**, set in `post_scan_recheck`, NOT inferred from `stopped_reason is None and trades_executed > 0` (which would be true for every normal trading account).
+4. **Exchange snapshots shallow-copy** `positions`/`wallet` in `emit_exchange_snapshot` — the executor reuses those structures, so without the copy the persisted snapshot would mutate.
+5. **Linked records (`close_rules`, `close_executions`, `trades`) are joined into the tree** (spec §6.1): trades by placed `order_id` (precise), rules/closes by `account_id` within `[exec_started_at, exec_completed_at + 5min]`.
+6. **Immediate-mode needs no second run**: immediate configs trade during the scan via `evaluate_result`; the executor already holds `debug_ctx` (set before `init_balances`), so those emits land under the same run.
+7. **`schedule_execution_id` is left NULL** in this iteration (the scanner does not thread the schedule-execution id into the scan dict). The `schedule_id` + timing window is sufficient for correlation; wiring the exec id is a future enhancement, not a gap that blocks forensics.
 
 
 
