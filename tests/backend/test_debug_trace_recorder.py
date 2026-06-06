@@ -176,3 +176,24 @@ async def test_start_recovers_orphaned_runs_then_shuts_down():
     repo.recover_orphaned_runs.assert_awaited_once()
     assert rec._drain_lock is not None
     await rec.shutdown()
+
+
+def test_emit_swallows_internal_exception(monkeypatch):
+    """The fail-open contract: if anything inside emit raises, it must be swallowed
+    (logged), never propagated to the trading path."""
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="scheduled")
+    ctx.run_id = 1
+
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rec, "_append", _boom)
+    # None of these may raise:
+    rec.emit_lifecycle(ctx, account_id="a1", phase="batch", event_type="x")
+    rec.emit_symbol_decision(ctx, account_id="a1", phase="batch", symbol="FOO",
+                             decision="skipped", reason_code="min_score", reason_detail={})
+    rec.emit_exchange_snapshot(ctx, account_id="a1", gate="scan_start", positions=[])
+    rec.emit_account_trace(ctx, account_id="a1", trades_executed=1)
+    # Buffer stayed empty because _append always raised, but no exception escaped.
+    assert rec.buffered_count() == 0

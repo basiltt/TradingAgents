@@ -41,7 +41,6 @@ class RunContext:
     schedule_execution_id: Optional[int] = None
     run_id: Optional[int] = None
     dropped_event_count: int = 0
-    phase_reached: str = "created"
     _seq: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     _symbol_counts: dict[tuple, int] = field(default_factory=lambda: defaultdict(int))
     _truncated_marked: set = field(default_factory=set)
@@ -53,6 +52,15 @@ class RunContext:
 
 
 class DebugTraceRecorder:
+    """In-memory, fail-open trace recorder.
+
+    THREADING INVARIANT (load-bearing): all emit_*/drain_once calls MUST run on the
+    application's single asyncio event-loop thread. The buffer snapshot-then-clear in
+    drain_once and the lazy _drain_lock initialization are only safe because no other
+    thread mutates the buffer concurrently. This class is NOT thread-safe — never call
+    emit_* from a worker thread / run_in_executor / asyncio.to_thread.
+    """
+
     def __init__(self, repository: Any, *, buffer_max: int = _DEFAULT_BUFFER_MAX) -> None:
         self._repo = repository
         self._buffer: deque = deque(maxlen=buffer_max)
@@ -248,7 +256,8 @@ class DebugTraceRecorder:
     async def start(self, *, drain_interval_s: float = 3.0, cleanup_interval_s: float = 86400.0,
                     initial_cleanup_delay_s: float = 300.0) -> None:
         import asyncio
-        self._drain_lock = asyncio.Lock()   # create on the running loop (not __init__)
+        if self._drain_lock is None:
+            self._drain_lock = asyncio.Lock()   # create on the running loop (not __init__)
         await self.refresh_config()
         # Reconcile runs orphaned by a previous crash/restart BEFORE any new run opens,
         # so they don't masquerade as in-progress. Best-effort; never blocks startup.
