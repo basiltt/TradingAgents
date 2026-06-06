@@ -75,3 +75,23 @@ class TestCacheFlagWiring:
                                    prompt_cache_enabled=True)
         llm = client.get_llm()
         assert llm._cache_enabled is True
+
+
+class TestRealBindingPayload:
+    def test_cache_control_reaches_anthropic_system_param(self):
+        import json
+        from litellm.llms.anthropic.chat.transformation import AnthropicConfig
+        from tradingagents.agents.utils.prompt_cache import apply_cache_control_to_messages
+        from langchain_community.chat_models.litellm import _convert_message_to_dict
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        msgs = apply_cache_control_to_messages(
+            [SystemMessage(content="STABLE " * 300), HumanMessage(content="date 2026-06-06")])
+        dicts = [_convert_message_to_dict(m) for m in msgs]
+        out = AnthropicConfig().transform_request(
+            model="claude-sonnet-4-6", messages=dicts,
+            optional_params={}, litellm_params={}, headers={})
+        payload = json.dumps(out)
+        assert "cache_control" in payload
+        assert payload.count("cache_control") == 1
+        assert out.get("system") and out["system"][0]["cache_control"] == {"type": "ephemeral"}
