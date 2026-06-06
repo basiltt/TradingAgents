@@ -68,7 +68,7 @@ uninterrupted. `cache_control` is the native-Anthropic-only add-on.
 | 5 | TTL | **5-minute** for scanner/graph; AI Manager TTL **TBD by Phase 1 cadence check** with explicit 1-hr breakeven rule (§6a) |
 | 6 | Adjacent bug | **Fix** hardcoded `temperature:0.2` **and `max_tokens:1024`** at 4 httpx sites; separate phase (P2), ordered **before** Anthropic injection |
 | 7 | Architecture | **Neutral split** (agents) + **system-block transform in the invoke override** (NOT the native last-block kwarg — wrong block; NOT the sentinel — §5) |
-| 8 | Enablement | **Global ops flag, default OFF** until eval passes (safety); **optional** UI toggle is a separate product feature (§7.5, §11) |
+| 8 | Enablement | **Global ops flag, default OFF** until eval passes (in scope, P7); **3-form UI toggle deferred** out of scope (§9, §11) |
 
 ### TTL rationale (5-minute wins decisively)
 
@@ -144,8 +144,8 @@ P6  EVAL GATE   §8.6 behavioral-parity, old-vs-new, offline spend-capped   (P3,
     [GATE]       → MUST PASS before the global flag may default ON.
 P7  Ops flag    global TRADINGAGENTS_PROMPT_CACHE_ENABLED, default OFF      (P3,P4)
                  → flip to ON is a separate PR justified by P6 evidence.
-P8  UI toggle   OPTIONAL product feature (3 forms + schema), default        (P7)
-    (optional)   follows global flag — build only if user wants per-run control.
+                 *** P7 is the last phase in THIS scope. ***
+[P8 UI toggle — DEFERRED out of scope (§9); reference table in §7.5(2)]
 ```
 
 **Key dependency facts the numbering must respect:**
@@ -537,12 +537,12 @@ wrappers reach**:
 - Gates **both** the §4 restructuring and the §5 `cache_control` together
   (behaviorally coupled). The §6c sampling-param bug fix is **not** gated.
 
-### (2) Optional per-run UI toggle — product choice (own phase, can be deferred)
+### (2) Optional per-run UI toggle — DEFERRED out of scope (§9, §11.2)
 
-> **This is a product decision, not a safety requirement — the ops flag already
-> provides safety.** Recommend building it **only if** there's a user story for
-> per-run control; otherwise ship the ops flag alone and defer the UI. Flagged for
-> user decision in §11.
+> **Confirmed deferred.** Not built in this scope — the global ops flag (1) is the
+> safety mechanism. The schema/frontend table below is **reference for future product
+> work**, retained so that effort doesn't have to re-derive the plumbing. Skip on a
+> first read of the implementation scope.
 
 If built, it surfaces in the LLM/Engine section of three forms, default following
 the global flag. **Schema — corrected models (iteration-1 named the wrong one):**
@@ -652,6 +652,10 @@ wire-payload assertion is **§8.3** (iteration-1 mis-cited "§8.6").
 
 ## 9. Out of Scope (YAGNI)
 
+- **The 3-form user-facing UI toggle** (New Analysis / Market Scan / Scheduled
+  Market Scan) — **confirmed deferred (§11.2)**. Safety is met by the global ops
+  flag; the UI toggle is optional future product work. The schema/frontend/plumbing
+  table in §7.5(2) is **reference for that future effort**, not this implementation.
 - DB persistence / UI surfacing of cache savings (future "full metrics + UI").
 - Gemini explicit `CachedContent` objects (implicit caching covers the win).
 - **`cache_control` injection for OpenRouter / Qwen / GLM / xAI / DeepSeek.** These
@@ -699,9 +703,8 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
 
 ---
 
-## 11. Decisions — confirmed + two NEW reversals needing sign-off
+## 11. Decisions — all confirmed
 
-**Confirmed earlier:**
 2. **Behavior guarantee (§4):** preserve **content** exactly + **behavioral-parity
    eval gate** (§8.6), not a byte-identical decision guarantee.
 3. **Per-path TTL (§6a):** scanner/graph = 5-min; AI Manager TTL decided in P1 on the
@@ -709,23 +712,16 @@ the `scheduled_scans.config` JSON column (`async_persistence.py:1152`,
 4. **`cache_control` scope:** native Anthropic (+ AI Manager Anthropic branch) only;
    others get prefix-hygiene → automatic caching.
 
-**Iteration-2 raised TWO reversals of your earlier "toggle, default on" choice —
-please confirm:**
+**Iteration-2 reversals — now CONFIRMED by user:**
 
-1. **Default OFF, not ON (C1).** You chose default-on. The review showed default-on
-   ships the unvalidated role-move to every user *before* the eval (§8.6) can gate
-   it — the gate would gate nothing. **Recommend `DEFAULT … = False`** until the eval
-   records a pass; flipping ON becomes a one-line PR backed by evidence. Keep
-   default-on, or accept default-OFF-until-eval?
-2. **Split safety flag from product toggle (M1).** You asked for a user-facing
-   toggle in 3 forms. The review showed the *safety* need is fully met by a **global
-   ops flag** (no UI), and the **3-form UI toggle is plausibly larger than the
-   caching change itself**. **Recommend:** ship the **ops flag** with the feature
-   (required), and treat the **UI toggle as optional product work** (build now,
-   later, or never). Still want the full 3-form UI toggle in this scope, or ship the
-   ops flag now and decide the UI separately?
-
-> These aren't me overriding you — the verification surfaced that "default-on
-> user-toggle" undercuts the very safety gate you also approved. Flagging so you
-> decide with the conflict visible.
+1. **Default OFF (was default-on).** `DEFAULT_CONFIG["prompt_cache_enabled"] = False`
+   until the behavioral-parity eval (§8.6/P6) records a pass. Flipping ON is a
+   separate one-line PR backed by the recorded eval evidence. The eval is a **real
+   rollout gate**, not decoration.
+2. **Ops flag now; UI toggle deferred (was: 3-form UI toggle in scope).** Ship the
+   **global ops flag** (`TRADINGAGENTS_PROMPT_CACHE_ENABLED`, no UI) as the safety
+   mechanism. The **3-form user-facing toggle is OUT of this scope** (§9) — optional
+   future product work. This removes P8 and all frontend/schema/TS plumbing from the
+   critical path; §7.5(2)'s schema/frontend table is **reference for that future
+   work**, not this implementation.
 
