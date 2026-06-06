@@ -213,6 +213,35 @@ def test_evaluate_pass_tolerates_noise_in_threshold():
     assert res.passed is True
 
 
+def test_evaluate_pass_symmetric_mode_vs_mode_survives_lone_new_tail():
+    # THE regression for the proxy-run FAIL (fixture 13): OLD is SELL-heavy with a
+    # lone HOLD tail; NEW is also SELL-heavy with its own lone tail. With symmetric
+    # K-sampling, BOTH modes are SELL, so they AGREE. A single-NEW-draw comparison
+    # could have caught NEW's tail and failed -- mode-vs-mode must not.
+    old_runs = [["SELL", "SELL", "SELL", "HOLD", "SELL"]]   # mode SELL (0.2 noise)
+    new_runs = [["SELL", "HOLD", "SELL", "SELL", "SELL"]]   # mode SELL (0.2 noise)
+    new_modal = ["SELL"]
+    res = cpe.evaluate_pass(old_runs, new_modal,
+                            new_runs_per_fixture=new_runs)
+    assert res.agreement == 1.0                 # SELL mode == SELL mode
+    assert res.mcnemar_p == 1.0                 # no discordant pair
+    # Pooled noise over both arms = mean per-fixture disagreement = 0.2.
+    assert res.noise == pytest.approx(0.2)
+    assert res.passed is True
+
+
+def test_evaluate_pass_symmetric_pools_noise_from_both_arms():
+    # noise floor is estimated over OLD+NEW samples pooled, not OLD alone.
+    old_runs = [["BUY"] * 5]                    # OLD perfectly consistent
+    new_runs = [["BUY", "BUY", "BUY", "BUY", "HOLD"]]  # NEW has 0.2 self-noise
+    res = cpe.evaluate_pass(old_runs, ["BUY"],
+                            new_runs_per_fixture=new_runs)
+    # Pooled fixture has 1 HOLD in 10 -> modal BUY, 0.1 disagreement.
+    assert res.noise == pytest.approx(0.1)
+    assert res.agreement == 1.0
+    assert res.passed is True
+
+
 # ---------------------------------------------------------------------------
 # Dry-run SAFETY — the critical property: no caller invocation, no spend
 # ---------------------------------------------------------------------------
@@ -275,8 +304,8 @@ def test_live_path_with_fake_caller_passes(tmp_path):
                        results_path=str(results_file))
     assert res is not None
     assert res.passed is True
-    # Budget: 4 fixtures * (3 noise + 1 new) = 16 calls.
-    assert spy.calls == len(fixtures) * (3 + 1)
+    # Budget: 4 fixtures * (3 OLD + 3 NEW) = 24 calls (symmetric K per arm).
+    assert spy.calls == len(fixtures) * 3 * 2
     # Results doc was written with a verdict.
     assert results_file.exists()
     body = results_file.read_text(encoding="utf-8")

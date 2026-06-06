@@ -23,15 +23,16 @@ COST / SAFETY
 -------------
 * This script makes REAL LLM API calls when (and ONLY when) invoked with
   ``--run`` AND a provider API key is present in the environment. Each call costs
-  real money. Approx spend per full run: ``N*K + N`` calls = 30*5 + 30 = **~180
-  calls** on the cheapest capable model (``claude-sonnet-4-6``).
+  real money (unless pointed at a local proxy). Approx spend per full run:
+  ``N*K*2`` calls = 30*5*2 = **~300 calls** (both prompt arms sampled K times) on
+  the cheapest capable model (``claude-sonnet-4-6``).
 * It is **NOT** run in CI and is **NOT** imported by the app. Importing this
   module has zero side effects and spends nothing.
 * The DEFAULT mode is a DRY RUN: with no ``--run`` flag (or no API key) the
   script prints exactly what it WOULD do — fixtures, call budget, pass rule —
   and exits **without constructing a client or spending a cent**.
 
-HOW TO RUN (when you actually want to spend the ~180 calls)
+HOW TO RUN (when you actually want to spend the ~300 calls)
 -----------------------------------------------------------
     export ANTHROPIC_API_KEY=sk-...      # the configured provider's key
     python scripts/cache_parity_eval.py --run
@@ -103,7 +104,8 @@ RESULTS_PATH = "docs/superpowers/plans/cache-parity-eval-results.md"
 
 # Approx call budget, printed in the dry-run plan.
 def _call_budget(n_fixtures: int) -> int:
-    return n_fixtures * K_NOISE_RUNS + n_fixtures
+    # Both arms are sampled K times (symmetric): OLD K + NEW K per fixture.
+    return n_fixtures * K_NOISE_RUNS * 2
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +196,12 @@ _OLD_SYSTEM_TEMPLATE = _STABLE_SYSTEM + _VOLATILE_CONTEXT
 # explicit label instruction so the response is machine-parseable.
 _TASK_TEMPLATE = (
     "Here is the current market snapshot for {symbol}:\n\n{market_state}\n\n"
-    "Based on the indicators and snapshot above, give your decision. You MUST end your"
-    " reply with exactly one line in this format and nothing after it:\n"
-    "FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**"
+    "Based on the indicators and snapshot above, decide BUY, HOLD, or SELL.\n"
+    "IMPORTANT: Begin your reply with the decision line FIRST, on its very first"
+    " line, in EXACTLY this format:\n"
+    "FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**\n"
+    "Then you may add at most 2 short sentences of justification. Do not write a"
+    " long report — the decision line is mandatory and must come first."
 )
 
 
@@ -568,15 +573,33 @@ class EvalResult:
 
 
 def evaluate_pass(old_runs_per_fixture: list[list[Optional[str]]],
-                  new_labels: list[Optional[str]]) -> EvalResult:
+                  new_labels: list[Optional[str]],
+                  new_runs_per_fixture: Optional[list[list[Optional[str]]]] = None
+                  ) -> EvalResult:
     """Apply the gate rule to collected labels.
 
     PASS iff BOTH:
-      * new-vs-old modal agreement >= (1 - noise_floor)   [no more disagreement
-        than the OLD prompt has with itself], AND
+      * new-vs-old MODAL agreement >= (1 - noise_floor)   [NEW's per-fixture modal
+        label disagrees with OLD's no more than the prompt disagrees with itself],
+        AND
       * McNemar exact p > 0.05  [no systematic directional drift].
+
+    ``new_labels`` carries ONE label per fixture — NEW's modal decision over its K
+    samples (computed by ``run_eval``). Comparing OLD's mode to NEW's mode (rather
+    than to a single NEW draw) is the symmetric, defensible test: a lone tail draw
+    on either arm can no longer flip the verdict.
+
+    ``new_runs_per_fixture`` (when provided) is the raw K samples of the NEW arm.
+    The noise floor is then estimated over BOTH arms' samples pooled together — a
+    better estimate of the prompt's intrinsic run-to-run variance than OLD alone,
+    and it makes the threshold symmetric in the two arms.
     """
-    noise = noise_floor(old_runs_per_fixture)
+    if new_runs_per_fixture is not None:
+        pooled = [o + n for o, n in zip(old_runs_per_fixture,
+                                        new_runs_per_fixture)]
+        noise = noise_floor(pooled)
+    else:
+        noise = noise_floor(old_runs_per_fixture)
     old_modal = [_modal([r for r in runs if r is not None]) if any(runs) else None
                  for runs in old_runs_per_fixture]
     agree = agreement_rate(old_modal, new_labels)
@@ -626,23 +649,22 @@ def default_model_caller(messages: list) -> str:
 
 
 def _print_plan(fixtures: list[dict], k_noise: int) -> None:
-    budget = len(fixtures) * k_noise + len(fixtures)
+    budget = len(fixtures) * k_noise * 2
     print("=" * 72)
     print("CACHE BEHAVIORAL-PARITY EVAL - DRY RUN (no API calls, no spend)")
     print("=" * 72)
     print(f"Provider / model : {PROVIDER} / {MODEL}")
     print(f"Fixtures (N)     : {len(fixtures)}")
-    print(f"Noise runs (K)   : {k_noise} per fixture (OLD prompt)")
-    print(f"New runs         : 1 per fixture (NEW prompt)")
-    print(f"Call budget      : {budget} calls  (N*K + N = "
-          f"{len(fixtures)}*{k_noise} + {len(fixtures)})")
+    print(f"Noise runs (K)   : {k_noise} per fixture, EACH arm (OLD and NEW)")
+    print(f"Call budget      : {budget} calls  (N*K*2 = "
+          f"{len(fixtures)}*{k_noise}*2)")
     print(f"Temperature      : {TEMPERATURE} (non-zero - needed for a noise floor)")
     print()
     print("PASS RULE (both must hold):")
-    print("  - new-vs-old modal agreement >= (1 - noise_floor)")
+    print("  - new-MODAL vs old-MODAL agreement >= (1 - noise_floor)")
     print(f"  - McNemar exact-binomial p > {MCNEMAR_ALPHA} (no directional drift)")
     print()
-    print("Prompt forms compared per fixture:")
+    print("Prompt forms compared per fixture (each sampled K times, mode-vs-mode):")
     print("  OLD = one system message [stable + volatile tail] + task")
     print("  NEW = system [stable] + human [volatile] + task   (P3 split)")
     print()
@@ -671,8 +693,9 @@ def run_eval(run: bool, have_key: bool,
     property and is exercised by the smoke tests.
 
     LIVE: calls ``model_caller`` (defaults to ``default_model_caller``) K times
-    per fixture for the OLD prompt and once for the NEW prompt, scores the gate,
-    writes ``results_path``, and returns the ``EvalResult``.
+    per fixture for the OLD prompt AND K times for the NEW prompt, reduces each
+    arm to its modal label, scores the gate (mode-vs-mode), writes
+    ``results_path``, and returns the ``EvalResult``.
     """
     fixtures = fixtures if fixtures is not None else FIXTURES
 
@@ -686,18 +709,26 @@ def run_eval(run: bool, have_key: bool,
     caller = model_caller or default_model_caller
 
     old_runs_per_fixture: list[list[Optional[str]]] = []
+    new_runs_per_fixture: list[list[Optional[str]]] = []
     new_labels: list[Optional[str]] = []
     for i, fx in enumerate(fixtures, 1):
         assert_content_parity(fx)
         old_runs: list[Optional[str]] = []
+        new_runs: list[Optional[str]] = []
         for _ in range(k_noise):
             old_runs.append(parse_decision(caller(build_old_messages(fx))))
+        for _ in range(k_noise):
+            new_runs.append(parse_decision(caller(build_new_messages(fx))))
         old_runs_per_fixture.append(old_runs)
-        new_labels.append(parse_decision(caller(build_new_messages(fx))))
+        new_runs_per_fixture.append(new_runs)
+        new_modal = (_modal([r for r in new_runs if r is not None])
+                     if any(new_runs) else None)
+        new_labels.append(new_modal)
         print(f"[{i}/{len(fixtures)}] {fx['symbol']} {fx['trade_date']}  "
-              f"old={old_runs}  new={new_labels[-1]}")
+              f"old={old_runs}  new={new_runs}  new_modal={new_modal}")
 
-    result = evaluate_pass(old_runs_per_fixture, new_labels)
+    result = evaluate_pass(old_runs_per_fixture, new_labels,
+                           new_runs_per_fixture=new_runs_per_fixture)
     print("\n" + result.summary())
     write_results(result, results_path)
     return result
