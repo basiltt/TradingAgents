@@ -133,24 +133,44 @@ class TestGetBacktest:
         # metrics flow through _build_results
         assert result["results"]["metrics"]["net_profit"] == 100.0
 
-    def test_downsample_preserves_drawdown_trough(self):
-        """The min-equity point (drawdown trough) must survive downsampling so the
-        chart's visible low matches the max_dd_pct metric tile. LTTB alone can drop
-        a sharp narrow trough."""
+    def test_downsample_preserves_max_drawdown_point(self):
+        """The MAX-DRAWDOWN point (most-negative per-point drawdown_pct) must survive
+        downsampling so the drawdown chart's visible trough matches the max_dd_pct
+        metric tile. LTTB picks largest-triangle points by EQUITY and can drop a sharp
+        drawdown that isn't an equity extreme.
+
+        Critically this keys on drawdown_pct, NOT min equity: max_dd_pct is a
+        peak-to-trough percentage, so the deepest %-drawdown point can sit at an
+        unremarkable equity level (here: mid-way up a rising ramp) that LTTB discards,
+        while the lowest-equity point is just the ramp's start (an endpoint LTTB always
+        keeps). Keying the force-include on min-equity would therefore preserve a
+        drawdown of ~0 and let the chart contradict the −77% tile — the exact failure
+        this guard exists to prevent.
+        """
         from backend.services.backtest_service import (
             BacktestService,
             _EQUITY_TARGET_POINTS,
         )
-        n = _EQUITY_TARGET_POINTS + 500
-        curve = [{"ts": None, "equity": 10000.0 + (i % 7), "drawdown_pct": 0.0} for i in range(n)]
-        # A sharp, narrow trough in the middle that LTTB would otherwise smooth over.
-        curve[1234]["equity"] = 5000.0
+        # A high downsample ratio so LTTB aggressively drops non-extreme points.
+        n = _EQUITY_TARGET_POINTS * 10
+        # Smooth rising equity ramp 10000 → 110000 (so the min-equity point is the
+        # START endpoint, which LTTB always keeps) with ~0 drawdown everywhere.
+        curve = [{"ts": None, "equity": 10000.0 + 100000.0 * i / (n - 1), "drawdown_pct": -0.001}
+                 for i in range(n)]
+        # Bury the true max drawdown (−77%) at a mid-ramp index, leaving its equity ON
+        # the ramp line (collinear → LTTB drops it). Its equity is NOT an extreme.
+        deep_idx = 12345
+        curve[deep_idx]["drawdown_pct"] = -77.0
+
         out = BacktestService._downsample_equity(curve)
         assert len(out) <= _EQUITY_TARGET_POINTS + 1
-        # The global minimum survived and the curve stays index-ordered.
-        assert min(p["equity"] for p in out) == 5000.0
-        equities_ts_order = [p["equity"] for p in out]
-        assert 5000.0 in equities_ts_order
+        # The −77% point must be force-included so the overlay trough matches the tile.
+        # Under the old min-equity key it would be dropped (min equity = the kept
+        # start endpoint at ~0% drawdown) and this would read ~-0.001.
+        assert min(p.get("drawdown_pct") for p in out) == pytest.approx(-77.0), (
+            "the deepest per-point drawdown (−77%) must survive downsampling; keying "
+            "the force-include on min-equity instead of drawdown_pct loses it"
+        )
 
     @pytest.mark.asyncio
     async def test_get_run_without_results(self, mock_db):

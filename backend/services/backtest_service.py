@@ -460,10 +460,13 @@ class BacktestService:
         The curve uses {ts, equity, ...} dicts; lttb_downsample wants {x, y}.
         We map index->x and equity->y, then restore the original dicts.
 
-        The minimum-equity point (the drawdown trough) is force-included so the
-        chart's visible low always matches the max_dd_pct metric tile — LTTB
-        otherwise picks largest-triangle points and can drop a sharp, narrow
-        trough, making the chart understate the drawdown the tile reports.
+        The max-drawdown point (the point whose per-point drawdown_pct is the most
+        negative) is force-included so the chart's visible trough always matches the
+        max_dd_pct metric tile — LTTB otherwise picks largest-triangle points and can
+        drop a sharp, narrow trough, making the chart understate the drawdown the tile
+        reports. NOTE: this must key on drawdown_pct, NOT min equity — max_dd_pct is a
+        peak-to-trough percentage, so on a curve whose peak rises after an early
+        absolute low the deepest %-drawdown point differs from the lowest-equity point.
         """
         if len(equity) <= _EQUITY_TARGET_POINTS:
             return equity
@@ -473,9 +476,11 @@ class BacktestService:
         sampled = lttb_downsample(indexed, _EQUITY_TARGET_POINTS)
         sampled_indices = {s["x"] for s in sampled}
 
-        # Force-include the global-min equity index (drawdown trough) if LTTB
-        # dropped it, then re-sort by original index to keep the curve ordered.
-        trough_idx = min(range(len(equity)), key=lambda i: equity[i].get("equity") or 0.0)
+        # Force-include the MAX-DRAWDOWN index (most-negative per-point drawdown_pct,
+        # which is exactly the point max_dd_pct reports) if LTTB dropped it, then
+        # re-sort by original index to keep the curve ordered. The engine stamps a
+        # real drawdown_pct on every point; default to 0.0 only if a point lacks it.
+        trough_idx = min(range(len(equity)), key=lambda i: equity[i].get("drawdown_pct") or 0.0)
         if trough_idx not in sampled_indices:
             sampled.append(indexed[trough_idx])
             sampled.sort(key=lambda s: s["x"])
