@@ -377,7 +377,7 @@ export function ConfigForm() {
   );
 
   const trimmedBackendUrl = useMemo(() => watchedBackendUrl?.trim() || undefined, [watchedBackendUrl]);
-  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl, watchedApiKey?.trim() || undefined);
+  const { data: proxyModels, isLoading: modelsLoading, isError: modelsError } = useModels(trimmedBackendUrl, watchedApiKey?.trim() || undefined, selectedProvider);
   const backendConn = useConnectivityCheck(trimmedBackendUrl, watchedApiKey?.trim() || undefined, 800, selectedProvider);
 
   const deepOptions = useMemo(() => {

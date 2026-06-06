@@ -592,9 +592,11 @@ export const apiClient = {
       `/api/v1/models/${encodeURIComponent(provider)}`, undefined, signal,
     ),
 
-  fetchRemoteModels: (url: string, apiKey?: string, signal?: AbortSignal) =>
+  fetchRemoteModels: (url: string | undefined, apiKey?: string, provider?: string, signal?: AbortSignal) =>
     mutate<{ models: Array<{ id: string; name?: string }>; error?: string }>(
-      "POST", "/api/v1/fetch-models", { url, api_key: apiKey || null }, signal,
+      "POST", "/api/v1/fetch-models",
+      { url: url || null, api_key: apiKey || null, provider: provider || null },
+      signal,
     ),
 
   // ── Strategies ──────────────────────────────────────────────────

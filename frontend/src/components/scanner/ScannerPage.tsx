@@ -405,7 +405,7 @@ export function ScannerPage() {
   }, []);
 
   const conn = useConnectivityCheck(backendUrl, llmApiKey || undefined, 800, provider);
-  const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined);
+  const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined, provider);
 
   const configQuery = useQuery({
     queryKey: ["config"],

@@ -846,7 +846,7 @@ function ScheduleFormDialog({
   });
   const PROVIDERS = providersData?.providers ?? PROVIDERS_FALLBACK;
 
-  const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined);
+  const { data: remoteModels } = useModels(backendUrl, llmApiKey || undefined, provider);
   const remoteIds = (remoteModels ?? []).map((m) => m.id);
   const catalogDeep = getModelOptions(provider, "deep");
   const catalogQuick = getModelOptions(provider, "quick");

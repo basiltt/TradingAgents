@@ -1,6 +1,7 @@
 """Models and providers router — TASK-007."""
 
 import ipaddress
+import os
 import time
 from urllib.parse import urlparse
 
@@ -8,7 +9,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.schemas import VALID_PROVIDERS
+from backend.schemas import PROVIDER_API_KEY_MAP, VALID_PROVIDERS
 from tradingagents.llm_clients.model_catalog import get_model_options
 
 router = APIRouter(tags=["models"])
@@ -25,6 +26,10 @@ PROVIDER_BASE_URLS: dict[str, str] = {
     "openrouter": "https://openrouter.ai/api",
     "ollama": "http://localhost:11434",
 }
+
+# Env var holding each provider's key, for native fetches when the UI sends none.
+# Extends the shared PROVIDER_API_KEY_MAP with providers it omits.
+_PROVIDER_ENV_KEYS: dict[str, str] = {**PROVIDER_API_KEY_MAP, "nvidia": "NVIDIA_API_KEY"}
 
 _ALLOWED_LOCALHOST = {"localhost", "127.0.0.1", "::1"}
 
@@ -109,37 +114,104 @@ async def connectivity_check(req: ConnectivityRequest):
 
 
 class FetchModelsRequest(BaseModel):
-    url: str
+    url: str | None = None
     api_key: str | None = None
+    provider: str | None = None
+
+
+def _parse_openai_models(data: dict) -> list[dict]:
+    """Parse the OpenAI-compatible {"data": [{"id", "name"?}]} shape."""
+    return [
+        {"id": m.get("id", ""), "name": m.get("name")}
+        for m in (data.get("data") or [])
+        if isinstance(m, dict) and m.get("id")
+    ]
+
+
+def _parse_anthropic_models(data: dict) -> list[dict]:
+    """Parse the Anthropic {"data": [{"id", "display_name"}]} shape."""
+    return [
+        {"id": m.get("id", ""), "name": m.get("display_name") or m.get("name")}
+        for m in (data.get("data") or [])
+        if isinstance(m, dict) and m.get("id")
+    ]
+
+
+def _parse_google_models(data: dict) -> list[dict]:
+    """Parse the Google {"models": [{"name": "models/x", "displayName"}]} shape."""
+    out: list[dict] = []
+    for m in data.get("models") or []:
+        if not isinstance(m, dict):
+            continue
+        raw = m.get("name") or ""
+        model_id = raw.split("/", 1)[1] if raw.startswith("models/") else raw
+        if model_id:
+            out.append({"id": model_id, "name": m.get("displayName") or model_id})
+    return out
 
 
 @router.post("/fetch-models")
 async def fetch_models(req: FetchModelsRequest):
-    """Proxy model list from a custom/self-hosted endpoint (avoids browser CORS)."""
-    base = req.url.strip().rstrip("/")
-    if not base:
-        raise HTTPException(status_code=400, detail="URL is required")
-    _validate_url_ssrf(base)
-    endpoint = base if base.endswith("/v1/models") else f"{base}/v1/models"
+    """List models from a custom proxy endpoint OR a native provider.
 
-    headers = {}
-    if req.api_key:
-        headers["Authorization"] = f"Bearer {req.api_key}"
+    Two modes (custom URL wins when both are present):
+      * Custom proxy: GET {url}/v1/models with Bearer auth (OpenAI shape).
+      * Native provider: resolve the official base URL, use the provider's auth
+        convention (anthropic x-api-key, google ?key=, others Bearer), and parse
+        that provider's response shape. Falls back to the provider's env API key
+        when the request supplies none — mirroring /connectivity-check so the
+        native option lists real models instead of the hardcoded catalog.
+    """
+    custom_url = (req.url or "").strip().rstrip("/")
+    provider = (req.provider or "").strip().lower()
+
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    parser = _parse_openai_models
+
+    if custom_url:
+        # Existing proxy behaviour — unchanged.
+        _validate_url_ssrf(custom_url)
+        endpoint = custom_url if custom_url.endswith("/v1/models") else f"{custom_url}/v1/models"
+        if req.api_key:
+            headers["Authorization"] = f"Bearer {req.api_key}"
+    elif provider:
+        if provider not in VALID_PROVIDERS:
+            raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+        base = PROVIDER_BASE_URLS.get(provider, "")
+        if not base:
+            raise HTTPException(status_code=400, detail=f"No base URL for provider: {provider}")
+        # Use the supplied key, else the provider's configured env key.
+        api_key = (req.api_key or "").strip() or os.environ.get(
+            _PROVIDER_ENV_KEYS.get(provider, ""), ""
+        )
+        if provider == "anthropic":
+            endpoint = f"{base}/v1/models"
+            parser = _parse_anthropic_models
+            if api_key:
+                headers["x-api-key"] = api_key
+                headers["anthropic-version"] = "2023-06-01"
+        elif provider == "google":
+            endpoint = f"{base}/v1beta/models"
+            parser = _parse_google_models
+            if api_key:
+                params["key"] = api_key
+        else:
+            endpoint = f"{base}/v1/models"
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+    else:
+        raise HTTPException(status_code=400, detail="A url or provider is required")
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(endpoint, headers=headers)
+            resp = await client.get(endpoint, headers=headers, params=params)
         if resp.status_code not in (200, 201):
             return {"models": [], "error": f"HTTP {resp.status_code}"}
         data = resp.json()
         if not isinstance(data, dict):
             return {"models": [], "error": "Unexpected response format"}
-        models = [
-            {"id": m.get("id", ""), "name": m.get("name")}
-            for m in (data.get("data") or [])
-            if isinstance(m, dict) and m.get("id")
-        ]
-        return {"models": models}
+        return {"models": parser(data)}
     except httpx.ConnectError:
         return {"models": [], "error": "Connection refused"}
     except httpx.TimeoutException:
