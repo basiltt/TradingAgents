@@ -83,9 +83,10 @@ Three modes for selecting which historical signals to replay:
 
 The engine processes scan results chronologically, applying the full auto-trade filter chain and close rules:
 
-**Interface:** `BacktestEngine.run(config, signals, klines, cancel_event=None, on_progress=None) -> SimulationResult`
+**Interface:** `BacktestEngine.run(config, signals, klines, cancel_event=None, on_progress=None, instrument_info=None) -> SimulationResult`
 - `cancel_event`: `threading.Event` checked every 100 candles. Raises `BacktestCancelled` if set. This is the single impurity allowed in the otherwise pure engine.
 - `on_progress`: `Callable[[int], None]` for % updates (0-100).
+- `instrument_info`: optional `{symbol: {qty_step, min_qty, tick_size, max_leverage}}` resolved by the service from the Bybit instrument cache; used to round qty to the real lot step, reject below min qty, round TP/SL to the tick, and cap leverage. Absent → no-op defaults (see Known Modeling Approximations §6).
 
 **Input:** Config + list of scan signals (chronological) + kline DataFrames per symbol
 **Output:** List of simulated trades + equity curve + raw metrics
@@ -97,18 +98,45 @@ The engine processes scan results chronologically, applying the full auto-trade 
 4. Track equity at each step
 
 **Exit price rules:**
-- TP hit: exit at tp_price (taker fee 0.055%)
-- SL hit: exit at sl_price (taker fee 0.055%)
-- Liquidation: realized_pnl = -(initial_margin + entry_fee). User loses FULL margin on liquidation (Bybit isolated).
-- ALL other closes (TRAILING, MAX_DURATION, EQUITY_RISE/DROP, close_on_profit_pct): exit at **candle.close** (taker fee 0.055%)
+- Slippage is **round-trip**: `slippage_bps` is applied adversely on the exit FILL as well
+  as the entry fill, because production closes positions via Bybit market reduce-only orders
+  that fill worse than the trigger/close price. The close side is the inverse of the position
+  side (a long sells to close → fills lower; a short buys to close → fills higher).
+- TP hit: trigger at tp_price (anchored to the un-slipped mark), exit fills at
+  `tp_price × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
+- SL hit: trigger at sl_price (anchored to the un-slipped mark), exit fills at
+  `sl_price × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
+- Liquidation: realized_pnl = -(initial_margin + entry_fee). User loses FULL margin on liquidation (Bybit isolated). No exit slippage (forced full-margin loss, not a market fill).
+- ALL other closes (TRAILING, MAX_DURATION, EQUITY_RISE/DROP, close_on_profit_pct): trigger at
+  candle.close, exit fills at `candle.close × (1 ∓ slippage_bps/10000)` (taker fee 0.055%)
 
 **Equity reference for EQUITY_RISE/DROP/SMART rules:**
-- `ref` = cycle_start_equity (equity at the moment the first position of the cycle opened)
-- For EQUITY_DROP_PCT_SMART: ref resets to current equity immediately after closing losing positions
+- `ref` = cycle_start_equity, re-anchored EVERY (non-skipped) scan to the AVAILABLE
+  balance = `wallet_balance + Σ(unrealised_pnl of open positions) − Σ(locked_margin)`.
+  This mirrors production's `totalAvailableBalance = totalWalletBalance + totalPerpUPL
+  − totalInitialMargin`, which production reads each scan and uses as the
+  EQUITY_DROP/RISE `reference_value` AND as the new-position sizing basis (so the
+  backtest derives both from this one value too). The carried unrealised PnL is marked
+  to the candle at/just-before the scan timestamp (no look-ahead). The evaluated equity
+  is `wallet_balance + Σ(unrealized_pnl)` (≈ production `totalEquity`). On an empty book
+  (no carried positions) uPnL=0 and locked=0 → the reference reduces to the full wallet.
+  The skip_if_positions_open=True path (open book) preserves the prior anchor, matching
+  production's only no-recreate case.
+- For EQUITY_DROP_PCT_SMART: closes only the LOSING positions ONCE per scan window
+  (production marks the rule "executed" after firing and does not re-arm until the
+  next scan re-creates it); surviving winners are NOT re-closed mid-window even if
+  they later turn losing. The no-losers case re-anchors the reference to current
+  equity without consuming the one-shot (it can still fire later if a position turns
+  negative), matching production.
 
 **Price drift check:**
-- If `max_price_drift_pct` is set: `drift = abs(candle.close - signal.analysis_price) / signal.analysis_price × 100`
-- If `drift > max_price_drift_pct` → skip signal (price already moved past entry zone)
+- If `max_price_drift_pct` is set: `drift = (next_bar.open − signal.analysis_price) / signal.analysis_price × 100`
+  (SIGNED, direction-aware — matches production). Reject only when the price has already
+  moved too far IN the signal's direction (the move is "consumed"/chasing):
+  - buy/long signal → skip if `drift > max_price_drift_pct`
+  - sell/short signal → skip if `drift < -max_price_drift_pct`
+- A favorable adverse move (e.g. a buy whose price has dropped below analysis) is ADMITTED —
+  it is a better entry, exactly as production trades it.
 
 **Kline cache concurrency:**
 - All inserts use `ON CONFLICT (symbol, interval, open_time) DO NOTHING`
@@ -166,21 +194,34 @@ intended_margin = sizing_capital × capital_pct / 100
 available_balance = wallet_balance - Σ(locked_margin_i)  # for sufficiency check only
 # locked_margin_i = (qty_i × entry_price_i) / leverage_i  (= the margin allocated at open)
 if intended_margin > available_balance: SKIP trade (insufficient margin)
-qty = (intended_margin × leverage) / entry_price
+# qty is sized off the UN-SLIPPED mark price, matching production
+# (qty = usdt_amount × leverage / mark_price) — NOT the slipped fill.
+# mark_price = the NEXT BAR'S OPEN (next-bar-open convention): the open of the first
+# candle whose open_time >= signal_time. This is the first tradeable price strictly
+# after the decision instant — using that bar's CLOSE would be look-ahead (the close
+# is the end-of-bar price, and that bar's high/low are evaluated for TP/SL, so a
+# pre-entry intrabar move could fabricate an exit). See Known Modeling Approximations.
+mark_price = next_bar.open   # first candle with open_time >= signal_time, its OPEN
+qty = (intended_margin × leverage) / mark_price
 qty = floor(qty / qty_step) × qty_step  # Round to instrument precision
 if qty < min_qty: SKIP trade
 
-# Entry price (no look-ahead)
-entry_price = candle.close × (1 + slippage_bps/10000) for Buy
-entry_price = candle.close × (1 - slippage_bps/10000) for Sell
+# Entry FILL price (no look-ahead) — the order fills at the slipped next-bar OPEN
+# (production fills a market order at avgPrice). This slipped fill is used for PnL,
+# entry fee, locked margin, and the liquidation anchor.
+entry_price = mark_price × (1 + slippage_bps/10000) for Buy
+entry_price = mark_price × (1 - slippage_bps/10000) for Sell
 
-# TP/SL levels
-tp_price = entry × (1 + tp_pct / leverage / 100) for Buy
-tp_price = entry × (1 - tp_pct / leverage / 100) for Sell
-sl_price = entry × (1 - sl_pct / leverage / 100) for Buy
-sl_price = entry × (1 + sl_pct / leverage / 100) for Sell
+# TP/SL TRIGGERS — anchored to the UN-SLIPPED mark, matching production
+# (tp = mark_price × (1 ± tp_pct/leverage/100)). The exit then fills with adverse
+# slippage (see Exit price rules above).
+tp_price = mark_price × (1 + tp_pct / leverage / 100) for Buy
+tp_price = mark_price × (1 - tp_pct / leverage / 100) for Sell
+sl_price = mark_price × (1 - sl_pct / leverage / 100) for Buy
+sl_price = mark_price × (1 + sl_pct / leverage / 100) for Sell
 
-# Liquidation price (isolated margin, tier 1 MMR=0.5%)
+# Liquidation price (isolated margin, tier 1 MMR=0.5%) — anchored to the SLIPPED entry
+# fill (Bybit liquidates off the average fill price / avgPrice).
 liq_price = entry × (1 - (1/leverage - 0.005)) for Buy
 liq_price = entry × (1 + (1/leverage - 0.005)) for Sell
 
@@ -252,7 +293,7 @@ cycle_pnl_pct = ((equity - cycle_start_equity) / cycle_start_equity) × 100
 **Edge Cases:**
 - Zero trades: Return `status=completed` with `warnings=['no_trades_matched']`. All ratios = null. Equity = flat line.
 - One trade: Sharpe/Sortino = null (insufficient data). Other metrics computed normally.
-- All wins or all losses: Profit factor = infinity or 0. Sortino uses min downside of 0.0001.
+- All wins or all losses: Profit factor = null (no losses → "∞"/"N/A" in UI) or 0. Sortino = null when there are no downside periods (downside deviation undefined → "∞"/"N/A"), consistent with the profit-factor convention. *(Revised during Phase 4 review: returning null is JSONB-safe and avoids emitting a meaningless giant ratio from an arbitrary 0.0001 floor.)*
 
 ### FR-007: Kline Cache
 
@@ -418,3 +459,121 @@ See Architecture §3.1 for complete DDL. Tables:
 | AC-008 | Kline cache survives across runs (no re-download) | Regression test |
 | AC-009 | Cancel button stops running backtest within 200 candles | Threading.Event + unit test |
 | AC-010 | Comparison view shows overlaid equity curves | E2E test |
+
+---
+
+## Known Modeling Approximations
+
+These are intentional, documented deltas from live trading — surfaced here (and, where
+user-visible, via result warnings or field labels) so results are not silently misread.
+None individually exceeds the <1% deviation budget for typical configs.
+
+1. **Sharpe / Sortino annualization.** Returns are resampled to daily and annualized by
+   √365. TradingView's Strategy Tester reports a non-annualized, per-period Sharpe, so the
+   backtest's Sharpe is several× larger than TV shows for the same run — the *ranking* is
+   consistent, but do not expect bit-for-bit TV parity on the absolute number. On gap-heavy
+   or sub-day windows the daily resampling is approximate.
+
+2. **`max_signal_age_minutes` is a near-no-op in replay.** Production measures age as
+   `now − completed_at` (real execution latency); the backtest executes at the scan
+   timestamp, so age ≈ 0 and the filter rarely rejects. The per-ticker `completed_at` is not
+   stored in `scan_results`, so a faithful per-signal age cannot be reconstructed. A config
+   relying on a tight age filter will admit more signals in backtest than in production.
+
+3. **`max_same_sector` is not enforced** (the sector service is IO-bound and the engine is
+   pure/synchronous). Surfaced via the `max_same_sector_not_enforced` warning and the form
+   field label "Max Same Sector (not simulated)".
+
+4. **Batch ranking tie-break.** Production ranks tied-score signals by `completed_at`; the
+   backtest ranks by `abs(score)` only (stable/insertion order on ties). At the `max_trades`
+   boundary with coarse integer scores, a different tied signal may be admitted.
+
+5. **Scan-boundary candle.** A candle whose `open_time` equals an interior scan timestamp is
+   excluded from both the preceding and following close-rule windows, so a TP/SL/funding that
+   would land exactly on that one candle is deferred one candle. One candle per interior
+   boundary (sub-1% at 5m granularity).
+
+6. **`qty_step` / `min_qty` / `tick_size` / `max_leverage`** come from a best-effort Bybit
+   instrument cache; on a refresh failure or an unlisted symbol they fall back to no-op
+   defaults (no lot rounding, no tick rounding, no leverage cap) rather than imposing a
+   possibly-wrong constraint.
+
+7. **`slippage_bps` is a round-trip cost** applied adversely on both the entry and exit fill
+   (production closes via market reduce-only orders that slip). This overrides the original
+   spec's exact-exit-fill wording.
+
+8. **`post_scan_recheck` is modeled by the per-scan `completed_at` anchor, not a re-trade
+   loop.** Production's `post_scan_recheck` runs ONCE per scan, synchronously at scan
+   completion (scanner_service invokes it right after `execute_batch`; the method itself is a
+   single non-looping pass that re-trades the freed account only if positions have already
+   cleared at that instant). Because the backtest anchors every scan to its `completed_at`
+   timestamp — the same instant production runs the recheck — the per-scan open branch already
+   reproduces the post-recheck book. The engine deliberately does NOT re-open a scan's signals
+   when its positions close LATER in the window: production would not re-trade them until the
+   next scheduled scan (with that scan's own signals). The only unmodeled case is a position
+   closing in the sub-second gap between the batch-skip and the recheck call, which is far
+   below 5-minute candle resolution. (Earlier drafts REQ-GAP-010/011 assumed an iterative
+   recheck loop with a configurable iteration cap; that model was corrected against production
+   source — there is no such loop and no `max_recheck_iterations` field.)
+
+9. **Intra-candle equity is evaluated at candle boundaries.** Close rules (TP/SL, equity
+   drawdown, trailing, time rules) are checked once per candle using that candle's
+   high/low/close, not on every tick. Within a candle the order of a wick touching TP vs SL is
+   resolved by a fixed convention (favorable-first is NOT assumed; the engine checks SL on the
+   adverse wick), and equity-based rules see the candle close. Marks use the kline close as a
+   proxy for Bybit's mark/index price (the backtest does not have a separate mark-price feed),
+   so liquidation and equity rules can differ from live by the last-vs-mark basis. Both are
+   inherent to candle-resolution replay and are sub-1% at 5m granularity for typical configs.
+
+10. **Entry uses next-bar-open (no look-ahead).** A signal fires at a wall-clock instant
+    (its scan's `completed_at`) that is almost never candle-aligned. The trade fills at the
+    OPEN of the first candle whose `open_time >= signal_time` — the first tradeable price
+    strictly after the decision. That bar's high/low are therefore legitimately post-entry and
+    are evaluated for TP/SL. (A prior implementation filled at that bar's CLOSE while also
+    evaluating its high/low, which fabricated exits from pre-entry intrabar moves; fixed.) The
+    residual approximation is sub-candle: the true fill in live trading is the mark at the exact
+    sub-bar instant, between the bar's open and its first tick.
+
+11. **Stop-loss fills at the trigger price, not the gap-through price.** When a candle gaps
+    THROUGH the stop (opens far past `sl_price`), the engine fills at `sl_price` (+ adverse
+    slippage), but a live stop fills at the worse gap/open price (sometimes at/through
+    liquidation). On gap-heavy days backtest losses are therefore slightly UNDERSTATED vs live.
+    Sub-1% for liquid majors; larger on illiquid/gappy symbols.
+
+12. **`fees_paid` / `total_commission` include funding.** Each trade's `fees_paid` is
+    `entry_fee + exit_fee + funding_paid`, and `total_commission` sums it. Funding can be
+    negative (a short that RECEIVES funding), so reported "commission" can read lower than the
+    true taker fees — or negative — when funding credits exceed fees. This is a LABELING note
+    only: `pnl` is net of fees AND funding, and `net_profit = Σ pnl` reconciles exactly with
+    `final_equity − starting_capital`; funding is never double-counted. (TradingView separates
+    Commission from Funding; the combined memo here is intentional and does not affect any
+    money-reconciling metric.)
+
+13. **CAGR / Calmar are N/A for sub-day backtests.** Annualizing a span shorter than one day
+    would project a few hours of return over 365 days and report a multi-million-percent
+    "growth rate". For spans under 24h, `cagr` (and therefore `calmar`) is `None` (UI shows
+    N/A) rather than a fabricated number. Over multi-day windows CAGR is reported normally,
+    capped at `CAGR_CAP_PCT` for JSON-safety under extreme growth.
+
+14. **Max drawdown is realized-equity drawdown (per-trade-close granularity).** The equity
+    curve samples wallet at each CLOSE, so an open position's intra-trade unrealized dip is not
+    in the curve — true peak-to-trough equity drawdown (which TradingView tracks including open
+    P&L) is UNDERSTATED, and `recovery_factor`/`calmar` (which divide by max-$/%-drawdown) are
+    correspondingly optimistic. A strategy that sat at −40% unrealized before closing +5% shows
+    ≈0% drawdown here. Inherent to a realized-equity curve at candle resolution.
+
+15. **`close_on_profit_pct` is evaluated every candle, not only at scan boundaries.**
+    Production checks the close-on-profit force-close as a per-scan pre-pass / recheck (at scan
+    time), so a book crossing the threshold mid-window is force-closed only at the NEXT scan.
+    The backtest evaluates it each candle (like the continuous EQUITY_RISE_PCT goal it
+    resembles), so on a fast intra-window spike it can exit EARLIER than production — at a
+    different price/time, though for the same reason. Requires `target_goal_value` to be set
+    (production parity); the threshold is `(close_on_profit_pct/100) × target_goal_value`.
+
+16. **Batch tie-break on exactly-equal scores.** Production ranks tied-`abs(score)` signals by
+    `completed_at`, but `scan_results` stores no per-ticker `completed_at` (only the scan-level
+    one, identical for all signals in a scan), so that tiebreak is a no-op even in production
+    within one scan. The backtest ranks by `abs(score)` then `sr.id` (deterministic, stable).
+    At the `max_trades` boundary with discrete integer scores a different tied signal may be
+    admitted — but the discriminating field does not survive to replay, so this cannot be made
+    more faithful.

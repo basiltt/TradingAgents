@@ -5,6 +5,8 @@ import {
   createRoute,
   createRouter,
   useParams,
+  useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { RootLayout, NotFound } from "@/components/layout/RootLayout";
@@ -94,6 +96,26 @@ const TradesPageComponent = lazy(() => import("@/components/trades/TradesPage"))
 const SignalAnalyticsPageComponent = lazy(() =>
   import("@/components/signal-analytics/SignalAnalyticsPage").then((module) => ({
     default: module.SignalAnalyticsPage,
+  })),
+);
+const BacktestListPageComponent = lazy(() =>
+  import("@/components/backtest/BacktestListPage").then((module) => ({
+    default: module.BacktestListPage,
+  })),
+);
+const BacktestNewForm = lazy(() =>
+  import("@/components/backtest/BacktestNewForm").then((module) => ({
+    default: module.BacktestNewForm,
+  })),
+);
+const BacktestResultsPageComponent = lazy(() =>
+  import("@/components/backtest/BacktestResultsPage").then((module) => ({
+    default: module.BacktestResultsPage,
+  })),
+);
+const BacktestComparePageComponent = lazy(() =>
+  import("@/components/backtest/BacktestComparePage").then((module) => ({
+    default: module.BacktestComparePage,
   })),
 );
 
@@ -297,6 +319,73 @@ function SignalAnalyticsPageWrapper() {
   );
 }
 
+function BacktestListRoutePage() {
+  const navigate = useNavigate();
+  return (
+    <RouteSuspense>
+      <BacktestListPageComponent
+        onOpen={(runId) => navigate({ to: "/backtest/$runId", params: { runId } })}
+        onCreate={() => navigate({ to: "/backtest/new" })}
+        onCompare={(runIds) =>
+          navigate({ to: "/backtest/compare", search: { runs: runIds.join(",") } })
+        }
+      />
+    </RouteSuspense>
+  );
+}
+
+function BacktestNewRoutePage() {
+  const navigate = useNavigate();
+  const search = useSearch({ from: "/backtest/new" }) as { seed?: string };
+  // A "Retry"/"Backtest these settings" entry may carry a JSON-encoded seed config.
+  let seed: Record<string, unknown> | undefined;
+  if (search.seed) {
+    try {
+      seed = JSON.parse(search.seed);
+    } catch {
+      seed = undefined;
+    }
+  }
+  return (
+    <RouteSuspense>
+      <div className="mx-auto w-full max-w-5xl py-2 sm:py-4">
+        <BacktestNewForm
+          seed={seed}
+          onCreated={(runId) => navigate({ to: "/backtest/$runId", params: { runId } })}
+        />
+      </div>
+    </RouteSuspense>
+  );
+}
+
+function BacktestRunRoutePage() {
+  const { runId } = useParams({ from: "/backtest/$runId" });
+  const navigate = useNavigate();
+  return (
+    <RouteSuspense>
+      <BacktestResultsPageComponent
+        runId={runId}
+        onBack={() => navigate({ to: "/backtest" })}
+        onCompare={(runIds) =>
+          navigate({ to: "/backtest/compare", search: { runs: runIds.join(",") } })
+        }
+        onRetry={(config) => navigate({ to: "/backtest/new", search: { seed: JSON.stringify(config) } })}
+      />
+    </RouteSuspense>
+  );
+}
+
+function BacktestCompareRoutePage() {
+  const navigate = useNavigate();
+  const search = useSearch({ from: "/backtest/compare" }) as { runs?: string };
+  const runIds = (search.runs ?? "").split(",").filter(Boolean);
+  return (
+    <RouteSuspense>
+      <BacktestComparePageComponent runIds={runIds} onBack={() => navigate({ to: "/backtest" })} />
+    </RouteSuspense>
+  );
+}
+
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -406,6 +495,36 @@ const signalAnalyticsRoute = createRoute({
   component: SignalAnalyticsPageWrapper,
 });
 
+const backtestListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/backtest",
+  component: BacktestListRoutePage,
+});
+
+const backtestNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/backtest/new",
+  component: BacktestNewRoutePage,
+  validateSearch: (search: Record<string, unknown>): { seed?: string } => ({
+    seed: typeof search.seed === "string" ? search.seed : undefined,
+  }),
+});
+
+const backtestCompareRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/backtest/compare",
+  component: BacktestCompareRoutePage,
+  validateSearch: (search: Record<string, unknown>): { runs?: string } => ({
+    runs: typeof search.runs === "string" ? search.runs : undefined,
+  }),
+});
+
+const backtestRunRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/backtest/$runId",
+  component: BacktestRunRoutePage,
+});
+
 
 export const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -426,6 +545,10 @@ export const routeTree = rootRoute.addChildren([
   cycleDetailRoute,
   tradesRoute,
   signalAnalyticsRoute,
+  backtestNewRoute,
+  backtestCompareRoute,
+  backtestRunRoute,
+  backtestListRoute,
 ]);
 
 export function createAppRouter() {

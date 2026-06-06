@@ -12,6 +12,13 @@ import type {
   TradeStatsResponse,
   TradeEventsResponse,
 } from "@/components/trades/types";
+import type {
+  BacktestRun,
+  BacktestCreateRequest,
+  BacktestTradesResponse,
+  BacktestCompareResponse,
+  CacheStatusResponse,
+} from "@/components/backtest/types";
 
 /** Typed error for non-2xx API responses. Contains HTTP status and detail message. */
 export class ApiError extends Error {
@@ -1454,4 +1461,115 @@ export const aiManagerApi = {
 
   getAnalysisContext: (accountId: string): Promise<Record<string, unknown>> =>
     request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/analysis-context`),
+};
+
+/** API methods for the backtesting feature — lifecycle, results, trades, comparison, cache. */
+export const backtestApi = {
+  /** POST /api/v1/backtest — create + launch a backtest. Returns the new run_id. */
+  create: (body: BacktestCreateRequest, signal?: AbortSignal) =>
+    mutate<{ run_id: string }>("POST", "/api/v1/backtest", body, signal),
+
+  /** GET /api/v1/backtest — list runs (newest first), optional status filter. */
+  list: (params?: { status?: string; limit?: number }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    if (params?.status) sp.set("status", params.status);
+    if (params?.limit) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request<BacktestRun[]>(`/api/v1/backtest${qs ? `?${qs}` : ""}`, undefined, signal);
+  },
+
+  /** GET /api/v1/backtest/:id — a single run with results (equity curve downsampled). */
+  get: (runId: string, signal?: AbortSignal) =>
+    request<BacktestRun>(`/api/v1/backtest/${encodeURIComponent(runId)}`, undefined, signal),
+
+  /** GET /api/v1/backtest/:id/trades — paginated, filterable trade list. */
+  getTrades: (
+    runId: string,
+    params?: {
+      page?: number;
+      limit?: number;
+      sort_by?: string;
+      side?: string;
+      close_reason?: string;
+    },
+    signal?: AbortSignal,
+  ) => {
+    const sp = new URLSearchParams();
+    if (params?.page) sp.set("page", String(params.page));
+    if (params?.limit) sp.set("limit", String(params.limit));
+    if (params?.sort_by) sp.set("sort_by", params.sort_by);
+    if (params?.side) sp.set("side", params.side);
+    if (params?.close_reason) sp.set("close_reason", params.close_reason);
+    const qs = sp.toString();
+    return request<BacktestTradesResponse>(
+      `/api/v1/backtest/${encodeURIComponent(runId)}/trades${qs ? `?${qs}` : ""}`,
+      undefined,
+      signal,
+    );
+  },
+
+  /** POST /api/v1/backtest/:id/cancel — cancel a pending/running run. */
+  cancel: (runId: string, signal?: AbortSignal) =>
+    mutate<{ cancelled: boolean; run_id: string }>(
+      "POST",
+      `/api/v1/backtest/${encodeURIComponent(runId)}/cancel`,
+      {},
+      signal,
+    ),
+
+  /** DELETE /api/v1/backtest/:id — delete a terminal run (204). */
+  remove: (runId: string, signal?: AbortSignal) =>
+    mutate<void>("DELETE", `/api/v1/backtest/${encodeURIComponent(runId)}`, undefined, signal),
+
+  /** GET /api/v1/backtest/compare?run_ids=… — compare 2-4 completed runs. */
+  compare: (runIds: string[], signal?: AbortSignal) => {
+    const sp = new URLSearchParams();
+    for (const id of runIds) sp.append("run_ids", id);
+    return request<BacktestCompareResponse>(
+      `/api/v1/backtest/compare?${sp.toString()}`,
+      undefined,
+      signal,
+    );
+  },
+
+  /** GET /api/v1/backtest-cache/status — kline-cache coverage for the requested range. */
+  cacheStatus: (
+    symbols: string[],
+    interval: string,
+    start: string,
+    end: string,
+    signal?: AbortSignal,
+  ) => {
+    const sp = new URLSearchParams();
+    for (const s of symbols) sp.append("symbols", s);
+    sp.set("interval", interval);
+    sp.set("start", start);
+    sp.set("end", end);
+    return request<CacheStatusResponse>(
+      `/api/v1/backtest-cache/status?${sp.toString()}`,
+      undefined,
+      signal,
+    );
+  },
+
+  /** POST /api/v1/backtest-cache/warmup — fetch missing klines for the range (202). */
+  warmupCache: (
+    symbols: string[],
+    interval: string,
+    start: string,
+    end: string,
+    signal?: AbortSignal,
+  ) => {
+    const sp = new URLSearchParams();
+    for (const s of symbols) sp.append("symbols", s);
+    sp.set("interval", interval);
+    sp.set("start", start);
+    sp.set("end", end);
+    return mutate<{ cached: number; fetched: number; failed: number }>(
+      "POST",
+      `/api/v1/backtest-cache/warmup?${sp.toString()}`,
+      {},
+      signal,
+    );
+  },
 };

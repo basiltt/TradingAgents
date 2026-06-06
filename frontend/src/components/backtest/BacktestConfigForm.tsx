@@ -1,0 +1,504 @@
+import * as React from "react";
+import { useForm, Controller, type Control, type FieldPath } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
+import type { BacktestCreateRequest } from "./types";
+import {
+  backtestConfigSchema,
+  buildDefaults,
+  toCreateRequest,
+  type BacktestConfigFormValues,
+} from "./configSchema";
+
+/* ----------------------------- small field helpers ----------------------------- */
+
+interface NumFieldProps {
+  control: Control<BacktestConfigFormValues>;
+  name: FieldPath<BacktestConfigFormValues>;
+  label: string;
+  step?: string;
+  placeholder?: string;
+  nullable?: boolean;
+  error?: string;
+}
+
+function NumberField({ control, name, label, step, placeholder, nullable, error }: NumFieldProps) {
+  const errorId = `${name}-error`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={name}>{label}</Label>
+      <Controller
+        control={control}
+        name={name}
+        render={({ field }) => (
+          <Input
+            id={name}
+            type="number"
+            step={step ?? "any"}
+            placeholder={placeholder}
+            value={field.value == null ? "" : String(field.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              // Clearing a NULLABLE field → null (an explicit "unset"). Clearing a
+              // NON-nullable field → undefined, NOT "" — an empty string coerces to 0
+              // via z.coerce.number(), which for cost/rate fields (fee, slippage)
+              // silently means "zero-cost trading" and inflates PnL. undefined lets
+              // the schema's .default() restore the production value on submit.
+              if (v === "") field.onChange(nullable ? null : undefined);
+              else field.onChange(v);
+            }}
+            onBlur={field.onBlur}
+            aria-invalid={!!error}
+            aria-describedby={error ? errorId : undefined}
+          />
+        )}
+      />
+      {error ? (
+        <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+interface SelectFieldProps {
+  control: Control<BacktestConfigFormValues>;
+  name: FieldPath<BacktestConfigFormValues>;
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  /** Map the empty-string option to null on change (for nullable enum fields). */
+  emptyToNull?: boolean;
+}
+
+function SelectField({ control, name, label, options, emptyToNull }: SelectFieldProps) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={name}>{label}</Label>
+      <Controller
+        control={control}
+        name={name}
+        render={({ field }) => (
+          <select
+            id={name}
+            value={String(field.value ?? "")}
+            onChange={(e) => {
+              const v = e.target.value;
+              field.onChange(emptyToNull && v === "" ? null : v);
+            }}
+            onBlur={field.onBlur}
+            className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm text-[var(--neu-text-strong)]"
+          >
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        )}
+      />
+    </div>
+  );
+}
+
+interface CheckFieldProps {
+  control: Control<BacktestConfigFormValues>;
+  name: FieldPath<BacktestConfigFormValues>;
+  label: string;
+}
+
+function CheckField({ control, name, label }: CheckFieldProps) {
+  return (
+    <Controller
+      control={control}
+      name={name}
+      render={({ field }) => (
+        <label className="flex cursor-pointer items-center gap-2.5 py-1 text-[0.85rem] text-[var(--neu-text-strong)]">
+          <Checkbox
+            checked={!!field.value}
+            onCheckedChange={(checked) => field.onChange(checked === true)}
+          />
+          {label}
+        </label>
+      )}
+    />
+  );
+}
+
+/** A comma/space-separated text field that maps to a string[] | null form value
+ * (used for symbol blacklist/whitelist). Empty input → null. */
+function SymbolListField({
+  control,
+  name,
+  label,
+  placeholder,
+  error,
+}: {
+  control: Control<BacktestConfigFormValues>;
+  name: FieldPath<BacktestConfigFormValues>;
+  label: string;
+  placeholder?: string;
+  error?: string;
+}) {
+  const errorId = `${name}-error`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={name}>{label}</Label>
+      <Controller
+        control={control}
+        name={name}
+        render={({ field }) => {
+          const arr = Array.isArray(field.value) ? (field.value as string[]) : [];
+          return (
+            <Input
+              id={name}
+              type="text"
+              placeholder={placeholder ?? "e.g. BTCUSDT, ETHUSDT"}
+              defaultValue={arr.join(", ")}
+              aria-invalid={!!error}
+              aria-describedby={error ? errorId : undefined}
+              onBlur={(e) => {
+                // Dedupe so repeated symbols don't inflate the count past the
+                // backend's 200-element cap when there are <200 unique symbols.
+                const symbols = Array.from(
+                  new Set(
+                    e.target.value
+                      .split(/[\s,]+/)
+                      .map((s) => s.trim().toUpperCase())
+                      .filter(Boolean),
+                  ),
+                );
+                field.onChange(symbols.length ? symbols : null);
+                field.onBlur();
+              }}
+            />
+          );
+        }}
+      />
+      {error ? (
+        <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function Section({
+  title,
+  children,
+  defaultOpen = true,
+  forceOpen = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  /** When true (e.g. the section contains a validation error), force it open. */
+  forceOpen?: boolean;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  // A failed submit inside a collapsed section must reveal its errors.
+  React.useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+  return (
+    <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 text-sm font-bold text-[var(--neu-text-strong)]"
+        aria-expanded={open}
+      >
+        <span className={cn("transition-transform", open ? "rotate-90" : "")}>›</span>
+        {title}
+      </button>
+      {open ? <div className="mt-4">{children}</div> : null}
+    </div>
+  );
+}
+
+const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3";
+
+/* --------------------------------- main form --------------------------------- */
+
+export interface ScheduleOption {
+  value: string;
+  label: string;
+}
+
+export interface BacktestConfigFormProps {
+  /** Pre-fill the form (e.g. "Backtest these settings" from the scanner). */
+  seed?: Partial<BacktestCreateRequest>;
+  /** Available schedules for the scan-source picker. */
+  schedules?: ScheduleOption[];
+  /** Called with the validated, API-ready request body. */
+  onSubmit: (request: BacktestCreateRequest) => void;
+  isSubmitting?: boolean;
+  className?: string;
+}
+
+export function BacktestConfigForm({
+  seed,
+  schedules = [],
+  onSubmit,
+  isSubmitting = false,
+  className,
+}: BacktestConfigFormProps) {
+  const {
+    control,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useForm<BacktestConfigFormValues>({
+    // zod v4 resolver: cast to keep RHF's generic happy across input/output types.
+    resolver: zodResolver(backtestConfigSchema) as never,
+    defaultValues: buildDefaults(seed),
+    mode: "onBlur",
+  });
+
+  const scanMode = watch("scan_source.mode");
+  const formRef = React.useRef<HTMLFormElement>(null);
+
+  const submit = handleSubmit(
+    (values) => {
+      const parsed = backtestConfigSchema.parse(values);
+      onSubmit(toCreateRequest(parsed));
+    },
+    () => {
+      // On invalid submit, collapsed sections auto-open (forceOpen) on the next
+      // render; RHF's own focus fires too early against the still-unmounted field.
+      // Move focus to the first invalid control after the DOM updates.
+      requestAnimationFrame(() => {
+        const el = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+        el?.focus();
+      });
+    },
+  );
+
+  const fieldError = (path: string): string | undefined => {
+    // errors is a nested object; support dotted paths for scan_source.* too.
+    const parts = path.split(".");
+    let node: unknown = errors;
+    for (const p of parts) {
+      if (node && typeof node === "object" && p in node) {
+        node = (node as Record<string, unknown>)[p];
+      } else {
+        return undefined;
+      }
+    }
+    if (node && typeof node === "object" && "message" in node) {
+      return String((node as { message?: unknown }).message ?? "");
+    }
+    return undefined;
+  };
+
+  const anyError = (...paths: string[]) => paths.some((p) => !!fieldError(p));
+  const closeRulesHasError = anyError(
+    "max_drawdown_pct",
+    "breakeven_timeout_hours",
+    "max_trade_duration_hours",
+    "trailing_profit_pct",
+    "close_on_profit_pct",
+  );
+  const riskLimitsHasError = anyError(
+    "max_same_direction",
+    "max_same_sector",
+    "max_signal_age_minutes",
+    "max_price_drift_pct",
+  );
+
+  return (
+    <form ref={formRef} onSubmit={submit} className={cn("flex flex-col gap-4", className)} aria-label="Backtest configuration">
+      <Section title="Capital & Time Range">
+        <div className={GRID}>
+          <NumberField control={control} name="starting_capital" label="Starting Capital ($)" error={fieldError("starting_capital")} />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="date_range_start">Start</Label>
+            <Controller
+              control={control}
+              name="date_range_start"
+              render={({ field }) => (
+                <Input id="date_range_start" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_start")} aria-describedby={fieldError("date_range_start") ? "date_range_start-error" : undefined} />
+              )}
+            />
+            {fieldError("date_range_start") ? (
+              <span id="date_range_start-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("date_range_start")}</span>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="date_range_end">End</Label>
+            <Controller
+              control={control}
+              name="date_range_end"
+              render={({ field }) => (
+                <Input id="date_range_end" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_end")} aria-describedby={fieldError("date_range_end") ? "date_range_end-error" : undefined} />
+              )}
+            />
+            {fieldError("date_range_end") ? (
+              <span id="date_range_end-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("date_range_end")}</span>
+            ) : null}
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Signal Source">
+        <div className={GRID}>
+          <SelectField
+            control={control}
+            name="scan_source.mode"
+            label="Source Mode"
+            options={[
+              { value: "date_range", label: "All scans in date range" },
+              { value: "schedule", label: "Specific schedule" },
+            ]}
+          />
+          {scanMode === "schedule" ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="scan_source.schedule_id">Schedule</Label>
+              <Controller
+                control={control}
+                name="scan_source.schedule_id"
+                render={({ field }) => (
+                  <select
+                    id="scan_source.schedule_id"
+                    value={String(field.value ?? "")}
+                    onChange={field.onChange}
+                    className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {schedules.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              />
+              {fieldError("scan_source.schedule_id") ? (
+                <span className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.schedule_id")}</span>
+              ) : null}
+              {schedules.length === 0 ? (
+                <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
+                  No schedules available — create one in Scheduled Scans, or use “All scans in date range”.
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Section>
+
+      <Section title="Execution Model">
+        <div className={GRID}>
+          <SelectField control={control} name="simulation_interval" label="Simulation Interval" options={[
+            { value: "5m", label: "5 minutes" },
+            { value: "15m", label: "15 minutes" },
+            { value: "1h", label: "1 hour" },
+            { value: "4h", label: "4 hours" },
+          ]} />
+          <NumberField control={control} name="fee_rate_pct" label="Fee Rate (%)" error={fieldError("fee_rate_pct")} />
+          <NumberField control={control} name="slippage_bps" label="Slippage (bps)" error={fieldError("slippage_bps")} />
+          <SelectField control={control} name="funding_rate_model" label="Funding Model" options={[
+            { value: "none", label: "None" },
+            { value: "fixed_8h", label: "Fixed (8h)" },
+          ]} />
+          <NumberField control={control} name="funding_rate_fixed_pct" label="Funding Rate (%/8h)" error={fieldError("funding_rate_fixed_pct")} />
+        </div>
+      </Section>
+
+      <Section title="Trade Decisions">
+        <div className={GRID}>
+          <SelectField control={control} name="direction" label="Direction" options={[
+            { value: "straight", label: "Straight (follow signal)" },
+            { value: "reverse", label: "Reverse (invert signal)" },
+          ]} />
+          <NumberField control={control} name="leverage" label="Leverage" error={fieldError("leverage")} />
+          <NumberField control={control} name="capital_pct" label="Capital per Trade (%)" error={fieldError("capital_pct")} />
+          <NumberField control={control} name="take_profit_pct" label="Take Profit (%)" error={fieldError("take_profit_pct")} />
+          <NumberField control={control} name="stop_loss_pct" label="Stop Loss (%)" error={fieldError("stop_loss_pct")} />
+          <NumberField control={control} name="min_score" label="Min Signal Score" error={fieldError("min_score")} />
+          <SelectField control={control} name="confidence_filter" label="Confidence Filter" options={[
+            { value: "any", label: "Any" },
+            { value: "high", label: "High only" },
+            { value: "moderate", label: "Moderate+" },
+            { value: "low", label: "Low+" },
+          ]} />
+          <SelectField control={control} name="signal_sides" label="Signal Sides" options={[
+            { value: "both", label: "Both" },
+            { value: "buy", label: "Buy only" },
+            { value: "sell", label: "Sell only" },
+          ]} />
+          <NumberField control={control} name="max_trades" label="Max Trades / Cycle" error={fieldError("max_trades")} />
+          <SelectField control={control} name="execution_mode" label="Execution Mode" options={[
+            { value: "immediate", label: "Immediate" },
+            { value: "batch", label: "Batch" },
+          ]} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-6">
+          <CheckField control={control} name="fill_to_max_trades" label="Fill to max trades" />
+          <CheckField control={control} name="skip_if_positions_open" label="Skip if positions open" />
+        </div>
+      </Section>
+
+      <Section title="Close Rules" defaultOpen={false} forceOpen={closeRulesHasError}>
+        <div className={GRID}>
+          <NumberField control={control} name="max_drawdown_pct" label="Max Drawdown (%)" error={fieldError("max_drawdown_pct")} />
+          <NumberField control={control} name="breakeven_timeout_hours" label="Breakeven Timeout (h)" nullable error={fieldError("breakeven_timeout_hours")} />
+          <NumberField control={control} name="max_trade_duration_hours" label="Max Duration (h)" nullable error={fieldError("max_trade_duration_hours")} />
+          <NumberField control={control} name="trailing_profit_pct" label="Trailing Profit (%)" nullable error={fieldError("trailing_profit_pct")} />
+          <NumberField control={control} name="close_on_profit_pct" label="Close on Profit (%)" nullable error={fieldError("close_on_profit_pct")} />
+        </div>
+        <div className="mt-3">
+          <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown close" />
+        </div>
+      </Section>
+
+      <Section title="Risk Limits" defaultOpen={false} forceOpen={riskLimitsHasError}>
+        <div className={GRID}>
+          <NumberField control={control} name="max_same_direction" label="Max Same Direction" nullable error={fieldError("max_same_direction")} />
+          <NumberField control={control} name="max_same_sector" label="Max Same Sector (not simulated)" nullable error={fieldError("max_same_sector")} />
+          <NumberField control={control} name="max_signal_age_minutes" label="Max Signal Age (min)" nullable error={fieldError("max_signal_age_minutes")} />
+          <NumberField control={control} name="max_price_drift_pct" label="Max Price Drift (%)" nullable error={fieldError("max_price_drift_pct")} />
+        </div>
+      </Section>
+
+      <Section title="Symbol Filters" defaultOpen={false} forceOpen={anyError("symbol_whitelist", "symbol_blacklist")}>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SymbolListField control={control} name="symbol_whitelist" label="Whitelist (only these)" error={fieldError("symbol_whitelist")} />
+          <SymbolListField control={control} name="symbol_blacklist" label="Blacklist (never these)" error={fieldError("symbol_blacklist")} />
+        </div>
+      </Section>
+
+      <Section title="Target Goal" defaultOpen={false}>
+        <div className={GRID}>
+          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull options={[
+            { value: "", label: "None" },
+            { value: "trade_count", label: "Trade count" },
+            { value: "profit_pct", label: "Profit %" },
+          ]} />
+          <NumberField control={control} name="target_goal_value" label="Goal Value" nullable error={fieldError("target_goal_value")} />
+        </div>
+      </Section>
+
+      <Section title="Adaptive Blacklist" defaultOpen={false}>
+        <div className="mb-3">
+          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" />
+        </div>
+        <div className={GRID}>
+          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min Trades" error={fieldError("adaptive_blacklist_min_trades")} />
+          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max Win Rate (%)" error={fieldError("adaptive_blacklist_max_win_rate")} />
+          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (h)" error={fieldError("adaptive_blacklist_lookback_hours")} />
+        </div>
+      </Section>
+
+      <div className="flex items-center justify-end gap-3">
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Running…" : "Run Backtest"}
+        </Button>
+      </div>
+    </form>
+  );
+}
