@@ -302,9 +302,24 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Optional
 
 import asyncpg
+
+
+def _num(x):
+    """Coerce a numeric value to Decimal exactly (via str) for NUMERIC COPY columns.
+
+    asyncpg's binary COPY accepts a float for NUMERIC but coerces via Decimal(float),
+    capturing IEEE-754 error — wrong on a money path. Decimal(str(x)) is exact.
+    Passes None through unchanged. Used by bulk_insert (Task 3).
+    """
+    if x is None:
+        return None
+    if isinstance(x, Decimal):
+        return x
+    return Decimal(str(x))
 
 
 class DebugTraceRepository:
@@ -411,7 +426,9 @@ async def test_bulk_insert_events_and_read_back(pool):
             "run_id": run_id, "account_id": "acc-1", "account_label": "Dad - Demo",
             "execution_mode": "batch", "final_stopped_reason": None,
             "gate_that_stopped": None, "rescued_by_recheck": True,
-            "base_capital": 500.0, "equity_at_start": 510.0, "positions_at_start_count": 3,
+            # 500.1 is a classic float→Decimal trap: Decimal(500.1) != Decimal('500.1').
+            # The _num(str(x)) coercion must store it exactly.
+            "base_capital": 500.1, "equity_at_start": 510.0, "positions_at_start_count": 3,
             "trades_executed": 3, "trades_failed": 0, "trades_skipped": 54,
             "rules_created": [{"rule_id": "r1", "trigger_type": "EQUITY_RISE_PCT"}],
             "config_snapshot": {"max_trades": 3},
@@ -444,13 +461,21 @@ async def test_bulk_insert_events_and_read_back(pool):
         snap_json = await conn.fetchval(
             "SELECT positions FROM debug_exchange_snapshots WHERE run_id=$1", run_id
         )
+        # NUMERIC precision must survive (float 500.1 stored exactly via Decimal(str)).
+        base_cap = await conn.fetchval(
+            "SELECT base_capital FROM debug_account_traces WHERE run_id=$1", run_id
+        )
     assert (a, l, s, x) == (1, 1, 1, 1)
     import json as _json
+    from decimal import Decimal as _D
     # asyncpg returns jsonb as str (built-in binary codec); it must parse back to our data.
     rules = _json.loads(rules_json) if isinstance(rules_json, str) else rules_json
     snap = _json.loads(snap_json) if isinstance(snap_json, str) else snap_json
     assert rules[0]["trigger_type"] == "EQUITY_RISE_PCT"
     assert snap[0]["symbol"] == "AAPLUSDT"
+    # Exact money: NUMERIC(20,8) of 500.1 → Decimal('500.10000000'); the float-coercion
+    # bug would have stored 500.09999999... Assert no IEEE-754 drift leaked through.
+    assert base_cap == _D("500.1")
 
 
 @pytest.mark.asyncio
@@ -476,7 +501,9 @@ Expected: FAIL with `AttributeError: 'DebugTraceRepository' object has no attrib
 
 > **JSONB-over-COPY contract (verified).** `copy_records_to_table` uses asyncpg's binary protocol. asyncpg's built-in `jsonb` codec is **binary** and accepts a Python `str`, so passing `json.dumps(...)` strings for JSONB columns is correct and matches how the rest of `async_persistence.py` writes JSONB (lines 2005/2045/2077/2425). **Do NOT** register a global text json/jsonb codec via `set_type_codec(..., format='text')` / pool `init=` — a *text* codec is explicitly unsupported by COPY and would break this method. `copy_records_to_table` also does not support per-column `::jsonb` casts (none are needed). The repository round-trip test in Step 1 (`test_bulk_insert_events_and_read_back`) is the regression guard; if anyone later adds a text json codec, that test fails loudly.
 
-Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_repository.py`:
+> **NUMERIC-over-COPY contract (verified — money correctness).** asyncpg's binary COPY accepts a Python `float` for a `NUMERIC` column but coerces it via `Decimal(float)`, which captures IEEE-754 error (`Decimal(500.1)` → `Decimal('500.0999…')`). On a money system this can store a wrong rounded value for large `NUMERIC(20,8)` figures. **Coerce every NUMERIC value with `Decimal(str(x))`** — the `_num()` helper (already added to the file header in Task 2) does this and passes `None` through. Integer columns must stay `int` (a stray `float` is silently truncated by asyncpg's int codec). Timestamps must be timezone-aware `datetime` (the recorder always builds aware datetimes).
+
+Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_repository.py` (the `_num` helper and `Decimal` import are already present from Task 2):
 
 ```python
     # ── bulk event insert ─────────────────────────────────────
@@ -502,7 +529,7 @@ Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_
                         r["run_id"], r["account_id"], r.get("account_label"),
                         r.get("execution_mode"), r.get("final_stopped_reason"),
                         r.get("gate_that_stopped"), bool(r.get("rescued_by_recheck", False)),
-                        r.get("base_capital"), r.get("equity_at_start"),
+                        _num(r.get("base_capital")), _num(r.get("equity_at_start")),
                         r.get("positions_at_start_count"),
                         int(r.get("trades_executed", 0)), int(r.get("trades_failed", 0)),
                         int(r.get("trades_skipped", 0)),
@@ -543,7 +570,7 @@ Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_
                     records=[(
                         r["run_id"], r["account_id"], r["gate"],
                         json.dumps(r.get("positions", [])), int(r.get("position_count", 0)),
-                        json.dumps(r.get("wallet", {})), r.get("equity"),
+                        json.dumps(r.get("wallet", {})), _num(r.get("equity")),
                         r.get("ts") or datetime.now(timezone.utc),
                     ) for r in exchange_snapshots],
                 )
@@ -634,6 +661,35 @@ def test_emit_lifecycle_buffers_event():
     rec.emit_lifecycle(ctx, account_id="a1", phase="init_balances", event_type="marked_stopped",
                        detail={"reason": "positions_already_open"})
     assert rec.buffered_count() == 1
+
+
+def test_exchange_snapshot_sanitizes_wallet_to_allowlist():
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="scheduled")
+    ctx.run_id = 1
+    rec.emit_exchange_snapshot(
+        ctx, account_id="a1", gate="scan_start",
+        positions=[{"symbol": "AAPLUSDT", "size": "1"}],
+        wallet={"totalEquity": "510", "totalAvailableBalance": "200",
+                "apiKey": "SECRET", "some_other_field": "x"},
+        equity=510.0,
+    )
+    snap = [e for e in rec.snapshot_buffer() if e["_table"] == "exchange_snapshots"][0]
+    # Only allow-listed balance fields are retained; arbitrary/sensitive keys are dropped.
+    assert snap["wallet"] == {"totalEquity": "510", "totalAvailableBalance": "200"}
+    assert "apiKey" not in snap["wallet"]
+    # positions list is shallow-copied (mutating the source must not change the snapshot).
+
+
+def test_exchange_snapshot_is_point_in_time_copy():
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="scheduled")
+    ctx.run_id = 1
+    live_positions = [{"symbol": "AAPLUSDT", "size": "1"}]
+    rec.emit_exchange_snapshot(ctx, account_id="a1", gate="scan_start", positions=live_positions)
+    live_positions.append({"symbol": "MUUSDT", "size": "2"})  # mutate after capture
+    snap = [e for e in rec.snapshot_buffer() if e["_table"] == "exchange_snapshots"][0]
+    assert snap["position_count"] == 1  # snapshot froze the pre-mutation view
 
 
 def test_emit_never_raises_on_bad_input():
@@ -819,7 +875,10 @@ class DebugTraceRecorder:
             # otherwise retroactively change this captured snapshot. Copies are cheap
             # (a few dozen small dicts) and keep the snapshot a true point-in-time view.
             pos = list(positions) if positions else []
-            wal = dict(wallet) if wallet else {}
+            # Sanitize the wallet to a balance allow-list (spec §10): the wallet payload
+            # never contains secrets, but we store only the fields we need for forensics,
+            # which both satisfies the "sanitize before persisting" requirement and bounds size.
+            wal = _sanitize_wallet(wallet)
             self._append(ctx, {
                 "_table": "exchange_snapshots", "run_id": ctx.run_id,
                 "account_id": account_id, "gate": gate, "positions": pos,
@@ -838,6 +897,22 @@ class DebugTraceRecorder:
             self._append(ctx, rec)
         except Exception:
             logger.debug("emit_account_trace_failed", exc_info=True)
+```
+
+Add this module-level helper near the top of `backend/services/debug_trace_recorder.py` (after the imports, before `RunContext`):
+
+```python
+# Wallet fields retained in snapshots (spec §10 — sanitize before persisting).
+_WALLET_FIELDS = (
+    "totalEquity", "totalWalletBalance", "totalAvailableBalance",
+    "totalMarginBalance", "totalPerpUPL", "totalInitialMargin", "totalMaintenanceMargin",
+)
+
+def _sanitize_wallet(wallet) -> dict:
+    """Keep only known balance fields from a wallet payload. Defensive allow-list."""
+    if not isinstance(wallet, dict):
+        return {}
+    return {k: wallet.get(k) for k in _WALLET_FIELDS if k in wallet}
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -1270,10 +1345,26 @@ git commit -m "feat(debug): emit per-symbol decisions from _try_trade"
 
 Add these emits (additive only):
 
+> **De-duplication (important).** `init_balances` iterates `for key, state in self._state.items()` — and **multiple states can share the same `account_id`** (sibling configs for one account; see the existing test that passes two configs with `account_id="acc_1"`). The codebase already de-dupes account-level work with `account_id`-keyed sets (`rules_created_for`, `force_closed_accounts`, `positions_cache`). The account-level emits below (the `scan_start` snapshot and `marked_stopped`) must follow the same pattern, or you'll write duplicate rows per sibling config. Add one local set at the top of `init_balances` — `emitted_scan_start: set = set()` — and guard the snapshot emit with it. The `marked_stopped` event is naturally bounded (the skip branch `continue`s, and `rules_created_for`-style dedup isn't needed because each account hits the skip at most once across its states only if not already stopped — but to be safe, also guard it with a `marked_stopped_for: set`). Per-symbol decisions (Task 7) are correctly per-state and need no dedup.
+
 In `init_balances`:
-- At the skip branch (positions open, ~202-206): `self._emit_snapshot(account_id, "scan_start", positions, ...)` then `self._emit_life(account_id, "init_balances", "marked_stopped", reason="positions_already_open", position_count=len(positions))`.
-- After recording existing-position symbols (~228): `self._emit_snapshot(account_id, "scan_start", positions_cache[account_id], equity=state.base_capital)`.
-- After successful rule creation block (~341, `rules_created_for.add(account_id)`): `self._emit_life(account_id, "init_balances", "rules_created", rule_ids=list(state.created_rule_ids))`.
+- At the top, add: `emitted_scan_start: set = set()` and `marked_stopped_for: set = set()`.
+- At the skip branch (positions open, ~202-206), guard with the set:
+  ```python
+                  if account_id not in marked_stopped_for:
+                      marked_stopped_for.add(account_id)
+                      self._emit_snapshot(account_id, "scan_start", positions)
+                      self._emit_life(account_id, "init_balances", "marked_stopped",
+                                      reason="positions_already_open", position_count=len(positions))
+                      emitted_scan_start.add(account_id)
+  ```
+- After recording existing-position symbols (~228), emit the snapshot only once per account:
+  ```python
+                  if account_id not in emitted_scan_start:
+                      emitted_scan_start.add(account_id)
+                      self._emit_snapshot(account_id, "scan_start", positions_cache[account_id], equity=state.base_capital)
+  ```
+- After the rule creation block (~341, where `rules_created_for.add(account_id)` runs — already account-deduped), emit: `self._emit_life(account_id, "init_balances", "rules_created", rule_ids=list(state.created_rule_ids))`.
 
 In `post_scan_recheck`:
 - On entry to per-account loop (~648): `self._emit_snapshot(account_id, "recheck", positions)` and `self._emit_life(account_id, "post_scan_recheck", "recheck_entered", position_count=len(positions))`.
@@ -1317,7 +1408,7 @@ Add a new method `emit_account_summaries(self)` called at finalize that, for eac
 
 > **`rescued_by_recheck` must be a real flag, not inferred.** Inferring it from `stopped_reason is None and trades_executed > 0` would be TRUE for every normal account that simply traded — wrong. Instead, add a field to `_AccountState` (Task: the dataclass near line 1142) — `rescued_by_recheck: bool = False` — and set it to `True` inside `post_scan_recheck` at the point where a previously `positions_already_open` account is reset and goes on to place at least one trade (right after the state reset / successful placement in the recheck loop, ~line 760-890). `emit_account_summaries` then reads that real flag.
 
-Because `emit_account_summaries` is now `async`, update its single call site in the scanner finalize block (Task 11d) to `await executor.emit_account_summaries()` (already shown with `await` there).
+Because `emit_account_summaries` is now `async`, both call sites must `await` it: the scanner finalize block (Task 11d) and the manual route (Task 11e) — both shown with `await executor.emit_account_summaries()`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1944,15 +2035,18 @@ and after `self._sector_service = sector_service` (line 327) add:
         self._debug_recorder = debug_recorder
 ```
 
-(b) At the scheduled executor construction (lines 416-419), replace with:
+(b) At the scheduled executor construction (lines 416-419), replace with the following. **IMPORTANT:** the in-memory `scan` dict does **NOT** contain `schedule_id` (it is only persisted to the DB at line ~429). Use `start_scan`'s `schedule_id` and `triggered_by` **parameters** directly — reading `scan.get("schedule_id")` would always be `None` and mislabel every scheduled run.
 
 ```python
+            # trigger_source: scan_scheduler calls start_scan(triggered_by="scheduled");
+            # the API run-now path uses triggered_by="run_now"; manual default is "manual".
+            _trigger = triggered_by if triggered_by in ("scheduled", "manual", "run_now") else "manual"
             debug_ctx = None
             if self._debug_recorder is not None:
                 debug_ctx = self._debug_recorder.new_run_context(
                     scan_id=scan_id,
-                    trigger_source=("scheduled" if scan.get("schedule_id") else "run_now"),
-                    schedule_id=scan.get("schedule_id"),
+                    trigger_source=_trigger,
+                    schedule_id=schedule_id,   # the start_scan PARAMETER, not scan.get(...)
                 )
             executor = AutoTradeExecutor(
                 self._accounts, self._close_svc, self._ai_manager_service,
@@ -1970,7 +2064,7 @@ and after `self._sector_service = sector_service` (line 327) add:
             scan["debug_ctx"] = debug_ctx
 ```
 
-The `config_snapshot` deliberately stores only `{"num_configs": ...}` (a count, not the raw configs) to avoid persisting any per-account config containing potentially sensitive fields; per-account sanitized config is captured separately by `emit_account_summaries` in Task 8.
+> Verify `triggered_by` is a parameter of `start_scan` (it is: `async def start_scan(self, config, schedule_id=None, triggered_by="manual")`). Confirm the scan_scheduler passes `triggered_by="scheduled"` (it does, in `scan_scheduler_service.py`). The run-now API path may pass `"run_now"`; if it passes something else, the `_trigger` guard falls back to `"manual"`.
 
 (c) The second executor construction (line 576, resume path, inside `resume_incomplete_scans`) — apply the same pattern, with these specifics: the resume `scan` dict does **not** carry a `schedule_id`, so build the ctx as:
 ```python
@@ -2022,7 +2116,52 @@ In the finalize block, after `scan["auto_trade_summaries"] = executor.get_summar
 
 > Note: `final_completed` / `final_failed` are guaranteed defined (top-level init at ~773-774). `scan_error` is in scope throughout `_run_scan`. This avoids the `total` NameError entirely.
 
-(e) In `backend/routers/scanner.py` `_run_auto_trade` (~205): construct the recorder ctx and open/close a run around the manual executor, mirroring (b)+(d). Get the recorder via `getattr(request.app.state, "debug_trace_recorder", None)`. Trigger source = `"manual"`. This guarantees a manual re-trigger creates a NEW run (never overwrites).
+(e) In `backend/routers/scanner.py` `_run_auto_trade` (~185-264): wire the recorder so a manual re-trigger creates a **new** run (never overwrites the scheduled run's record). The recorder is on `request.app.state`; capture it before the inner async function (the closure already captures `scanner_service`, `accounts_service`, etc.).
+
+Just before `async def _run_auto_trade():` (~line 185), capture the recorder:
+```python
+    debug_recorder = getattr(request.app.state, "debug_trace_recorder", None)
+```
+
+Replace the executor construction + init (lines 204-207) with:
+```python
+            # Create executor and initialize (with debug tracing).
+            debug_ctx = None
+            if debug_recorder is not None:
+                debug_ctx = debug_recorder.new_run_context(
+                    scan_id=scan_id, trigger_source="manual", schedule_id=None,
+                )
+            executor = AutoTradeExecutor(
+                accounts_service, close_svc, ai_manager_service,
+                sector_service=sector_service,
+                recorder=debug_recorder, debug_ctx=debug_ctx,
+            )
+            if debug_recorder is not None and debug_ctx is not None:
+                await debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "manual": True})
+            executor.init_configs(auto_configs)
+            await executor.init_balances()
+```
+
+After `summaries = executor.get_summaries()` and the `db.update_scan(...)` (line 253), add the close (inside the `try`, before the `except`):
+```python
+            # Debug: emit account summaries and close the manual debug run.
+            try:
+                await executor.emit_account_summaries()
+            except Exception:
+                pass
+            if debug_recorder is not None and debug_ctx is not None:
+                try:
+                    num_accounts = len({s.config.get("account_id") for s in executor._state.values()})
+                    await debug_recorder.close_run(
+                        debug_ctx, phase_reached="finalized",
+                        total_symbols=len(results), completed_symbols=len(results),
+                        failed_symbols=0, num_accounts=num_accounts,
+                    )
+                except Exception:
+                    logger.warning("debug_manual_close_run_failed", extra={"scan_id": scan_id})
+```
+
+> The manual route already has `results`, `auto_configs`, `accounts_service`, `close_svc`, `ai_manager_service`, `sector_service`, and `scan_id` in scope (verified). `len(results)` is the symbol count for this manual run. Because immediate-mode configs trade inside `execute_batch`/`fill_immediate_remaining`/`post_scan_recheck` (all called between open_run and close_run), their emits land under this run automatically.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -2495,6 +2634,15 @@ These are non-obvious correctness decisions made during a verification review ag
 5. **Linked records (`close_rules`, `close_executions`, `trades`) are joined into the tree** (spec §6.1): trades by placed `order_id` (precise), rules/closes by `account_id` within `[exec_started_at, exec_completed_at + 5min]`.
 6. **Immediate-mode needs no second run**: immediate configs trade during the scan via `evaluate_result`; the executor already holds `debug_ctx` (set before `init_balances`), so those emits land under the same run.
 7. **`schedule_execution_id` is left NULL** in this iteration (the scanner does not thread the schedule-execution id into the scan dict). The `schedule_id` + timing window is sufficient for correlation; wiring the exec id is a future enhancement, not a gap that blocks forensics.
+
+### Iteration-2 review additions
+
+8. **`trigger_source` / `schedule_id` come from `start_scan` PARAMETERS, not the scan dict** (Task 11b). The in-memory `scan` dict has **no** `schedule_id` key (it's only persisted to the DB at ~line 429). Reading `scan.get("schedule_id")` would label every scheduled run as `run_now` and lose the schedule id. Use the `schedule_id` / `triggered_by` parameters of `start_scan` directly.
+9. **NUMERIC columns are coerced with `Decimal(str(x))`** via the `_num()` helper (Task 3). asyncpg's binary COPY accepts a `float` for NUMERIC but coerces via `Decimal(float)`, capturing IEEE-754 error — wrong on a money path. `Decimal(str(x))` stores the exact value. The `base_capital == Decimal("500.1")` assertion guards this.
+10. **`init_balances` account-level emits are de-duplicated** (Task 8). That loop is per-`state`, and sibling configs share an `account_id`; without `emitted_scan_start` / `marked_stopped_for` sets, snapshots and `marked_stopped` events would duplicate per sibling config. `post_scan_recheck` is already account-grouped and needs no dedup.
+11. **Wallet snapshots are sanitized to a balance allow-list** (`_sanitize_wallet`, spec §10). Only known balance fields are retained; any other/sensitive key is dropped. Test: `test_exchange_snapshot_sanitizes_wallet_to_allowlist`.
+12. **Read API returns plain dicts, not typed Pydantic response models** (spec §6.3 describes `DebugRunDetail`/`DebugAccountTrace`). Deliberate: FastAPI serializes the repo dicts directly, avoiding a large model layer that would duplicate the SQL shape. `DebugConfigUpdate` is the only request model (it needs validation). If strict response typing is later required, add response_model classes over the same dicts — no data-layer change needed.
+13. **Manual-route wiring is specified with full code** (Task 11e), not "mirror (b)+(d)". It opens a run before `init_balances`, closes it after `get_summaries`, and uses `len(results)` for the symbol count — guaranteeing a manual re-trigger creates a NEW run instead of overwriting the scheduled run's record (the original RCA pain point).
 
 
 
