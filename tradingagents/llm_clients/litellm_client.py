@@ -97,7 +97,20 @@ class NormalizedChatLiteLLM(ChatLiteLLM):
         return params
 
     def invoke(self, input, config=None, **kwargs):
+        if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
+            input = self._inject_cache_control(input)
         return normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+
+    def _inject_cache_control(self, input):
+        """Rewrite the first system message to a cache_control block (Anthropic only).
+        Handles ChatPromptValue / list[BaseMessage] / list[dict]. Other shapes pass
+        through unchanged (no-op)."""
+        from tradingagents.agents.utils.prompt_cache import apply_cache_control_to_messages
+        if hasattr(input, "to_messages"):
+            return apply_cache_control_to_messages(input.to_messages())
+        if isinstance(input, list):
+            return apply_cache_control_to_messages(input)
+        return input
 
     def __iter__(self):
         with _serialize_lock:
