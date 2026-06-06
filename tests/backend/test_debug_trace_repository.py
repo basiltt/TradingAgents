@@ -39,6 +39,12 @@ async def pool():
     yield p
     async with p.acquire() as conn:
         await conn.execute("DELETE FROM debug_runs")
+        # Reset the debug_config singleton to schema defaults so the suite is
+        # re-run-safe (test_update_config_persists mutates this row).
+        await conn.execute(
+            "UPDATE debug_config SET tracing_enabled=TRUE, retention_days=60, "
+            "symbol_decision_cap=200, updated_at=now() WHERE id=1"
+        )
     await p.close()
 
 
