@@ -59,14 +59,23 @@ def test_fixtures_span_regimes_and_symbols():
     ("final transaction proposal: buy", "BUY"),                  # lowercase
     ("FINAL TRANSACTION PROPOSAL:   SELL", "SELL"),              # no emphasis
     ("FINAL TRANSACTION PROPOSAL:**hold**", "HOLD"),            # tight spacing
-    ("I think we should hold for now.", "HOLD"),                 # fallback token
-    ("First buy, then later sell the rest", "SELL"),            # fallback = last
 ])
 def test_parse_decision_extracts_label(text, expected):
     assert cpe.parse_decision(text) == expected
 
 
-@pytest.mark.parametrize("text", [None, "", "no decision token here at all"])
+@pytest.mark.parametrize("text", [
+    None,
+    "",
+    "no decision token here at all",
+    # STRICT parser: prose without the explicit proposal line => None (NOT a
+    # guessed label). These previously triggered the removed last-token fallback.
+    "I think we should hold for now.",
+    "First buy, then later sell the rest",
+    # The exact real-world misfire that motivated the strict parser: an analyst
+    # saying RSI is NOT a sell signal must never parse as a SELL decision.
+    "RSI at 68.4 is a yellow flag but is not a sell signal yet.",
+])
 def test_parse_decision_returns_none_when_absent(text):
     assert cpe.parse_decision(text) is None
 

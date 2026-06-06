@@ -419,31 +419,27 @@ _LABELS = ("BUY", "HOLD", "SELL")
 def parse_decision(text: Optional[str]) -> Optional[str]:
     """Extract a BUY / HOLD / SELL label from a model response.
 
-    Strategy (most-authoritative first):
-      1. The explicit ``FINAL TRANSACTION PROPOSAL: **LABEL**`` line.
-      2. The same line without the ``**`` emphasis.
-      3. Fallback: the LAST standalone BUY/HOLD/SELL token in the text.
-    Returns the upper-cased label, or ``None`` if no label is found.
+    STRICT: only the explicit ``FINAL TRANSACTION PROPOSAL: **LABEL**`` line
+    counts (with or without ``**`` emphasis). Returns the upper-cased label, or
+    ``None`` if that line is absent.
+
+    The earlier "last standalone BUY/HOLD/SELL token anywhere" fallback was
+    REMOVED: against real analyst prose it misfired badly (e.g. it parsed the
+    word in "RSI is not a *sell* signal" as a SELL decision). A response without
+    the explicit proposal line is treated as "no decision" (None) — the harness
+    counts None as a non-agreement, so an unparseable reply can never silently
+    masquerade as a real decision. The task prompt instructs the model to end
+    with the proposal line, so a well-behaved reply always parses.
     """
     if not text:
         return None
     import re
 
-    upper = text.upper()
-
-    # 1 + 2: the FINAL TRANSACTION PROPOSAL line, with or without ** emphasis.
     m = re.search(
         r"FINAL\s+TRANSACTION\s+PROPOSAL\s*:\s*\*{0,2}\s*(BUY|HOLD|SELL)",
-        upper,
+        text.upper(),
     )
-    if m:
-        return m.group(1)
-
-    # 3: fallback — last standalone label token anywhere in the response.
-    last: Optional[str] = None
-    for tok in re.finditer(r"\b(BUY|HOLD|SELL)\b", upper):
-        last = tok.group(1)
-    return last
+    return m.group(1) if m else None
 
 
 # ---------------------------------------------------------------------------
