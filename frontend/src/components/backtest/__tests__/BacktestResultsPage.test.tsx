@@ -339,4 +339,30 @@ describe("BacktestResultsPage", () => {
     });
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
+
+  it("shows a 'no trades' explanation for a completed run with empty metrics", async () => {
+    // A no-signals run yields metrics={} which the service augments with a few
+    // buy&hold keys → truthy but field-less. The page must route this to the
+    // explanatory fallback (not a wall of N/A tiles) and surface the warning.
+    server.use(
+      http.get("/api/v1/backtest/run-123", () =>
+        HttpResponse.json(
+          run({
+            results: {
+              metrics: { buy_hold_return_pct: 0, excess_return: 0 } as unknown as BacktestMetrics,
+              equity_curve: [],
+              summary: {},
+              warnings: ["no_signals_found"],
+            },
+          }),
+        ),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    await waitFor(() => expect(screen.getByTestId("no-results")).toBeInTheDocument());
+    expect(screen.getByText(/No trades were simulated/i)).toBeInTheDocument();
+    expect(screen.getByText(/No scan signals matched/i)).toBeInTheDocument();
+    // The metrics grid must NOT render for the empty case.
+    expect(screen.queryByTestId("metrics-grid")).not.toBeInTheDocument();
+  });
 });

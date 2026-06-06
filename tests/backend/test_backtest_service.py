@@ -133,6 +133,25 @@ class TestGetBacktest:
         # metrics flow through _build_results
         assert result["results"]["metrics"]["net_profit"] == 100.0
 
+    def test_downsample_preserves_drawdown_trough(self):
+        """The min-equity point (drawdown trough) must survive downsampling so the
+        chart's visible low matches the max_dd_pct metric tile. LTTB alone can drop
+        a sharp narrow trough."""
+        from backend.services.backtest_service import (
+            BacktestService,
+            _EQUITY_TARGET_POINTS,
+        )
+        n = _EQUITY_TARGET_POINTS + 500
+        curve = [{"ts": None, "equity": 10000.0 + (i % 7), "drawdown_pct": 0.0} for i in range(n)]
+        # A sharp, narrow trough in the middle that LTTB would otherwise smooth over.
+        curve[1234]["equity"] = 5000.0
+        out = BacktestService._downsample_equity(curve)
+        assert len(out) <= _EQUITY_TARGET_POINTS + 1
+        # The global minimum survived and the curve stays index-ordered.
+        assert min(p["equity"] for p in out) == 5000.0
+        equities_ts_order = [p["equity"] for p in out]
+        assert 5000.0 in equities_ts_order
+
     @pytest.mark.asyncio
     async def test_get_run_without_results(self, mock_db):
         from backend.services.backtest_service import BacktestService

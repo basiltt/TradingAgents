@@ -251,6 +251,22 @@ class BacktestEngine:
                 "drawdown_pct": 0.0,
             })
 
+        # Backfill real drawdown-from-peak on every equity point. The points were
+        # appended with a 0.0 placeholder; compute the actual running-peak
+        # drawdown so the persisted curve drives the frontend drawdown chart
+        # correctly (the frontend only derives drawdown when the field is absent,
+        # so a 0.0 placeholder would otherwise render a flat-zero overlay).
+        _peak = float("-inf")
+        for _pt in state.equity_curve:
+            _eq = _pt.get("equity")
+            if _eq is None:
+                continue
+            if _eq > _peak:
+                _peak = _eq
+            _pt["drawdown_pct"] = (
+                round(((_eq - _peak) / _peak) * 100.0, 4) if _peak > 0 else 0.0
+            )
+
         # Compute all metrics from trades + equity curve
         from backend.services.backtest_metrics import compute_all_metrics
         metrics = compute_all_metrics(state.closed_trades, state.equity_curve, config)

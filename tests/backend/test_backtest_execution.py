@@ -191,6 +191,43 @@ class TestExecution:
         assert service._active_slots == 0
 
     @pytest.mark.asyncio
+    async def test_persist_json_safes_equity_curve(self, mock_db):
+        """_persist_results must route the equity curve through _json_safe: raw
+        datetimes become ISO-8601 with a 'T' separator (Safari-parseable) and any
+        non-finite equity becomes None (so a NaN/Inf can't emit invalid JSON that
+        asyncpg would reject). Guards the engine→persistence serialization."""
+        import json
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+        service = BacktestService(db=mock_db, kline_cache=None)
+        conn = _wire_transaction(mock_db)
+
+        sim_result = SimulationResult(
+            trades=[],
+            equity_curve=[
+                {"ts": datetime(2026, 1, 1, tzinfo=timezone.utc), "equity": 10000.0, "drawdown_pct": 0.0},
+                {"ts": datetime(2026, 1, 2, tzinfo=timezone.utc), "equity": float("inf"), "drawdown_pct": -5.0},
+            ],
+            metrics={"net_profit": 0.0},
+            warnings=[],
+            filter_stats={},
+        )
+        await service._persist_results("run-1", sim_result)
+
+        # The results INSERT positional args: (query, run_id, metrics_json,
+        # equity_json, summary_json, warnings_json) → equity_curve is index 3.
+        results_call = next(
+            c for c in conn.execute.call_args_list if "backtest_results" in str(c[0][0])
+        )
+        equity_json = results_call[0][3]
+        parsed = json.loads(equity_json)
+        # Datetime serialized with the 'T' separator (not "2026-01-01 00:00:00").
+        assert parsed[0]["ts"] == "2026-01-01T00:00:00+00:00"
+        # Non-finite equity coerced to None (no literal Infinity in the JSON).
+        assert parsed[1]["equity"] is None
+        assert "Infinity" not in equity_json
+
+    @pytest.mark.asyncio
     async def test_failed_run_records_error(self, mock_db):
         from backend.services.backtest_service import BacktestService
         service = BacktestService(db=mock_db, kline_cache=None)

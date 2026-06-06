@@ -293,10 +293,15 @@ class BacktestService:
         ev = self._cancel_events.get(run_id)
         if ev is not None:
             ev.set()
-        # Mark cancelled (the background task will also transition, but be eager)
+        # Mark cancelled eagerly (the background task will also transition). Guard
+        # against the completion-wins race: if results already exist, the run
+        # finished between our status SELECT and here, so DON'T flip it to
+        # cancelled (that would contradict the atomic "results ⟺ completed"
+        # invariant and could leave the UI showing 'cancelled' for a completed run).
         await self._db.pool.execute(
             "UPDATE backtest_runs SET status = 'cancelled', completed_at = now() "
-            "WHERE id = $1 AND status IN ('pending','running')",
+            "WHERE id = $1 AND status IN ('pending','running') "
+            "AND NOT EXISTS (SELECT 1 FROM backtest_results WHERE run_id = $1)",
             run_id,
         )
         return True
@@ -454,6 +459,11 @@ class BacktestService:
 
         The curve uses {ts, equity, ...} dicts; lttb_downsample wants {x, y}.
         We map index->x and equity->y, then restore the original dicts.
+
+        The minimum-equity point (the drawdown trough) is force-included so the
+        chart's visible low always matches the max_dd_pct metric tile — LTTB
+        otherwise picks largest-triangle points and can drop a sharp, narrow
+        trough, making the chart understate the drawdown the tile reports.
         """
         if len(equity) <= _EQUITY_TARGET_POINTS:
             return equity
@@ -461,6 +471,14 @@ class BacktestService:
         indexed = [{"x": i, "y": (p.get("equity") or 0.0), "_orig": p}
                    for i, p in enumerate(equity)]
         sampled = lttb_downsample(indexed, _EQUITY_TARGET_POINTS)
+        sampled_indices = {s["x"] for s in sampled}
+
+        # Force-include the global-min equity index (drawdown trough) if LTTB
+        # dropped it, then re-sort by original index to keep the curve ordered.
+        trough_idx = min(range(len(equity)), key=lambda i: equity[i].get("equity") or 0.0)
+        if trough_idx not in sampled_indices:
+            sampled.append(indexed[trough_idx])
+            sampled.sort(key=lambda s: s["x"])
         return [s["_orig"] for s in sampled]
 
     async def _load_signals(
@@ -898,7 +916,13 @@ class BacktestService:
         # JSONB cell would duplicate the trades table and bloat every results read.
         metrics = dict(result.metrics or {})
         metrics.pop("per_trade", None)
-        equity_curve = result.equity_curve or []
+        # Route the equity curve through _json_safe (same as metrics) before
+        # serialization: it normalizes datetimes to ISO-8601 with a 'T' separator
+        # (consistent with the rest of the payload; the raw str(datetime) "space"
+        # form fails Date parsing in Safari) and coerces any non-finite equity to
+        # None so a NaN/Inf can never emit invalid JSON that asyncpg would reject.
+        from backend.services.backtest_metrics import _json_safe
+        equity_curve = _json_safe(result.equity_curve or [])
         warnings = result.warnings or []
         summary = result.filter_stats or {}
         trades = result.trades or []
@@ -929,7 +953,7 @@ class BacktestService:
                     run_id,
                     json.dumps(metrics, default=str),
                     json.dumps(equity_curve, default=str),
-                    json.dumps(summary, default=str),
+                    json.dumps(_json_safe(summary), default=str),
                     json.dumps(warnings, default=str),
                 )
                 # Idempotent: clear any prior trades for this run before inserting.

@@ -166,8 +166,9 @@ async def cache_status(
 ):
     """Report kline-cache coverage for the requested symbols/range (read-only).
 
-    Used by the config form to show whether a backtest can run immediately or
-    needs a cache warm-up first.
+    Available for a future config-form coverage banner showing whether a backtest
+    can run immediately or needs a cache warm-up. Not yet wired into the UI —
+    backtests currently fill the kline cache lazily at run time.
     """
     svc = _get_service(request)
     from datetime import datetime

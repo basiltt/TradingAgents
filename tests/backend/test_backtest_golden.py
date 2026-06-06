@@ -243,6 +243,13 @@ class TestGoldenScenarios:
         # risk ratios must be computed (not None from a degenerate curve).
         assert result.metrics["max_dd_pct"] > 0
         assert result.metrics["sharpe"] is not None
+        # Each equity point must carry a real (non-placeholder) drawdown_pct so the
+        # frontend drawdown chart renders correctly. At least one point is below
+        # peak → has a negative drawdown_pct, and the deepest matches max_dd_pct.
+        dds = [p.get("drawdown_pct") for p in result.equity_curve]
+        assert all(d is not None for d in dds)
+        assert any(d < 0 for d in dds)
+        assert min(dds) == pytest.approx(-result.metrics["max_dd_pct"], rel=1e-3)
         _assert_reconciles(result, cfg)
 
     def test_golden_multi_symbol_uneven_coverage_reconciles(self):

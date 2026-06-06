@@ -193,8 +193,16 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
     );
   }
 
-  const metrics = run.results?.metrics;
+  // Treat metrics as present only when they carry real content. A run with no
+  // matching signals yields metrics={} which the service then augments with a
+  // few buy&hold keys — making it truthy but field-less. Gating on a required
+  // metric field (total_trades) routes that case to the "no results" fallback
+  // instead of rendering a wall of N/A tiles.
+  const rawMetrics = run.results?.metrics;
+  const metrics =
+    rawMetrics && rawMetrics.total_trades != null ? rawMetrics : undefined;
   const equityCurve = run.results?.equity_curve ?? [];
+  const resultWarnings = run.results?.warnings ?? [];
 
   return (
     <div className="flex flex-col gap-5" data-testid="backtest-results-page">
@@ -334,13 +342,26 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
         </Tabs>
       ) : null}
 
-      {/* Defensive: a completed run with no results payload (backend contract
-          violation) would otherwise render a blank body. */}
+      {/* Completed but no usable metrics — most commonly a run whose date
+          range / filters matched no scan signals. Explain it (and surface any
+          engine warnings) rather than showing a wall of N/A tiles. */}
       {completed && !metrics ? (
-        <div className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-6">
-          <p className="text-sm text-[var(--neu-text-muted)]">
-            This backtest completed but no results are available.
+        <div className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)] p-6" data-testid="no-results">
+          <p className="text-sm font-medium text-[var(--neu-text-strong)]">
+            No trades were simulated
           </p>
+          <p className="mt-1 text-sm text-[var(--neu-text-muted)]">
+            {resultWarnings.includes("no_signals_found")
+              ? "No scan signals matched this date range and filters. Widen the range, relax the filters, or pick a different signal source."
+              : "This backtest completed but produced no usable results."}
+          </p>
+          {resultWarnings.length > 0 ? (
+            <ul className="mt-3 list-inside list-disc text-[0.78rem] text-[var(--neu-text-soft)]">
+              {resultWarnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
     </div>

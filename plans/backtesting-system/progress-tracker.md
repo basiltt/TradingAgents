@@ -22,8 +22,8 @@
 | Step 10: Validate Plan | COMPLETED | Migration 37, all files exist, trading_rules.py done |
 | Step 11: Implementation Tracker | COMPLETED | |
 | Step 12: Per-Phase Implementation | IN_PROGRESS | P1-P5 ALL GATES PASSED. P4 committed b7cd140. P5 committed 7cbd9e5. **P6 Frontend ALL 4 GATES PASSED** — 12a/12b impl+validate (Tasks 6.1-6.8 + 6.5b, 210 tests), 12c-12f review cycle ran 12 rounds across correctness/a11y/contract/security/testing/plan-compliance/adversarial lenses, **2 consecutive clean rounds (R11+R12) → CONVERGED ship-ready**. tsc+build clean. NEXT: P6 12g commit, then P7 Integration. |
-| Step 13: Cross-Phase Validation | PENDING | 10-15 rounds |
-| Step 14: Final Review | PENDING | 20-25 rounds |
+| Step 13: Cross-Phase Validation | COMPLETED | 6 rounds; found+fixed 8 cross-phase bugs (drawdown flat-zero, NUMERIC overflow x2+migration40, cancel race, equity/summary json-safe, empty-signals UX, downsample trough). 2 clean rounds. |
+| Step 14: Final Review | IN_PROGRESS | 20-25 rounds (2 clean exit) |
 | Step 15: Final Validation | PENDING | |
 | Step 16: Traceability | PENDING | |
 | Step 17: Readiness Check | PENDING | |
@@ -49,6 +49,8 @@
 | 2026-06-06 | 12 | P7 Integration 12c-12f review | IN_PROGRESS — R1-R3 fixed entry-fee/price-drift/funding/equity-curve-points. R4 (3 agents): equity-curve fix VERIFIED + adversarial found follow-on HIGH — curve started at first trade's CLOSE not the starting-capital anchor (single-trade run → degenerate drawdown); + MED non-chronological force-close tail. FIXED: seed (start, starting_capital) anchor before scan loop; stable-sort equity curve by ts before metrics; removed dead wallet_delta. Single losing trade now shows max_dd 5.11%. 214 BE backtest tests. NEXT: R5 verify.
 
 ---
+
+| 2026-06-06 | 13 | Cross-Phase Validation R1 (5 agents) | Found 3 cross-phase bugs: (1) HIGH engine wrote drawdown_pct=0.0 placeholder → frontend drawdown chart flat-zero (fixed: backfill real drawdown-from-peak); (2) MED-HIGH mfe_pct/pnl_pct NUMERIC(8,4) overflow at high leverage → persist crash (fixed: migration 40 widen to NUMERIC(12,4)); (3) MED cancel→complete race (fixed: eager-cancel NOT EXISTS results guard). Architecture coherent, all suites green (215 BE/199 FE). |
 
 ## Key Decisions
 

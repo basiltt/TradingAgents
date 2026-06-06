@@ -656,16 +656,16 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     side            TEXT NOT NULL CHECK(side IN ('Buy','Sell')),
     entry_price     NUMERIC(20,8) NOT NULL,
     exit_price      NUMERIC(20,8),
-    qty             NUMERIC(20,8) NOT NULL,
+    qty             NUMERIC(30,8) NOT NULL,
     leverage        SMALLINT NOT NULL,
     entry_time      TIMESTAMPTZ NOT NULL,
     exit_time       TIMESTAMPTZ,
     pnl             NUMERIC(20,8),
-    pnl_pct         NUMERIC(8,4),
+    pnl_pct         NUMERIC(12,4),
     fees_paid       NUMERIC(20,8),
     close_reason    TEXT,
-    mfe_pct         NUMERIC(8,4),
-    mae_pct         NUMERIC(8,4),
+    mfe_pct         NUMERIC(12,4),
+    mae_pct         NUMERIC(12,4),
     signal_score    SMALLINT,
     signal_confidence TEXT,
     scan_id         TEXT,
@@ -1097,6 +1097,19 @@ ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
 """),
     (38, _create_backtest_tables),
     (39, """ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS analysis_price NUMERIC(20,8)"""),
+    (40, """
+-- Widen backtest_trades percent columns: mfe_pct/pnl_pct are leverage-scaled
+-- (value × leverage, up to 125×) and can exceed NUMERIC(8,4)'s 9999.9999 cap on
+-- a large favorable move, which would crash _persist_results and lose a
+-- completed simulation. NUMERIC(12,4) matches realized_pnl_pct elsewhere.
+ALTER TABLE backtest_trades ALTER COLUMN pnl_pct TYPE NUMERIC(12,4);
+ALTER TABLE backtest_trades ALTER COLUMN mfe_pct TYPE NUMERIC(12,4);
+ALTER TABLE backtest_trades ALTER COLUMN mae_pct TYPE NUMERIC(12,4);
+-- Widen qty: it is a UNIT COUNT (notional / price), which for an ultra-cheap
+-- token (e.g. price 1e-8) can reach ~1e13 units and overflow NUMERIC(20,8)
+-- (max ~1e12), crashing the persist transaction. NUMERIC(30,8) covers it.
+ALTER TABLE backtest_trades ALTER COLUMN qty TYPE NUMERIC(30,8);
+"""),
 ]
 
 
