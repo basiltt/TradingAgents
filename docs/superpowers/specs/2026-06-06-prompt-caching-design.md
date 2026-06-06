@@ -678,8 +678,11 @@ and the scan request type (`:290`) take an extra boolean with no runtime allowli
   `_extract_llm_identity` (`:774`) must include it in the identity hash so a toggle
   change rebuilds the callable. The httpx Anthropic payload (`:281-287`) reads it.
 
-**OFF path = byte-identical to today** (original prompt assembly, no `cache_control`),
-verified by test §8.8.
+**OFF path (unconditional-restructure decision, see plan P3):** with the flag OFF,
+no `cache_control` is emitted — but prompts **are** still restructured (role-moved).
+The OFF guarantee is "**no `cache_control`**," not "byte-identical to pre-refactor
+prompts." The restructure's behavior safety comes from the P6 eval (which gates the
+restructure itself, since it ships unconditionally). Verified by test §8.8.
 
 > **Scope honesty (M1):** the **UI toggle plumbing (P8) is plausibly larger than the
 > caching change itself** — 3 React forms, schema on 2–3 models, TS types, 2 backend
@@ -737,9 +740,11 @@ verified by test §8.8.
    (b) **once, offline**: against recorded live `usage`, confirm `cache_read > 0` on a
    repeat call. Do **not** claim CI proves `cache_read > 0` (it can't — that needs a
    live second call).
-8. **OFF-path identity** — with the global flag OFF, prompts/payloads are
-   byte-identical to today (no `cache_control`, original prompt structure) — proving
-   the design is dark until deliberately enabled.
+8. **OFF-path (no-cache_control) test** — with the flag OFF, the outgoing payload
+   carries **no `cache_control`** (and no metric lines with `cache_read>0`). Note:
+   prompts are restructured even when OFF (unconditional-restructure decision), so
+   this asserts absence of `cache_control`, **not** byte-equality with pre-refactor
+   prompts. The restructure itself is gated by the P6 eval, not the flag.
 9. **Pattern coverage (§4) + no-op safety** — assert the transform attaches
    `cache_control` for Pattern A (`ChatPromptValue`) and Pattern B (`list[dict]` with
    leading `{"role":"system"}`), and is a **clean no-op** for Pattern C/D (bare `str`

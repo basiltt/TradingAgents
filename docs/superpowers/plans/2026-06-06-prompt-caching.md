@@ -522,23 +522,21 @@ git commit -m "fix(litellm): use adaptive thinking for Opus 4.7/4.8 (budget_toke
 > Provider-agnostic: this makes the system prefix byte-stable so automatic caching
 > works on every provider, and sets up the `cache_control` breakpoint for P4.
 >
-> **⚠️ DESIGN FORK — resolve before implementing P3 (see "Open implementation
-> decision" at the top of P4).** The agent state built by `propagation.py:create_initial_state`
-> does **not** carry a per-run flag, and threading one through ~24 agent nodes is
-> invasive. Two options:
-> - **(Recommended) Unconditional restructure + gate only the `cache_control` at the
->   client.** P3 restructures Pattern-A prompts unconditionally (behavior-preserving
->   content reorder); the *caching* is gated in `NormalizedChatLiteLLM` (P4/P7). The
->   global flag's OFF state means "no `cache_control` emitted" — prompts are still
->   restructured. This is simpler and avoids state plumbing. The role-move is then
->   covered by the P6 behavioral-parity eval regardless of flag.
-> - **Gated restructure** keeps OLD vs NEW prompt both live, switched per-run — but
->   requires adding `prompt_cache_enabled` to `create_initial_state` and every
->   analyst reading it. More code, more surface.
->
-> **The tasks below are written for the Recommended (unconditional) option.** If the
-> user picks gated, add a Task 3.0 to thread the flag through `propagation.py` +
-> `trading_graph.propagate(...)` and restore the `if cache_enabled:` branch.
+> **DESIGN DECISION (resolved — unconditional restructure).** The prompt
+> restructuring applies **unconditionally**; only the `cache_control` marker is gated
+> (at the client, P4/P7). This avoids threading a flag through ~24 agent nodes (the
+> agent state from `propagation.py:create_initial_state` doesn't carry one).
+> Consequences:
+> - With caching OFF, prompts are **still restructured** (role-moved) but carry **no
+>   `cache_control`**. The OFF-path guarantee is "no `cache_control` emitted," NOT
+>   "byte-identical to today's prompts."
+> - The behavior-sensitive part is the **role-move**, which is live regardless of the
+>   flag — so the **P6 behavioral-parity eval gates the restructure itself**, not just
+>   caching. **P6 must pass before this lands in production** (the restructure ships
+>   with the feature, dark only in the sense of no cache_control).
+> - For the P6 old-vs-new comparison, the **pre-P3 prompt builder must be recoverable**
+>   — capture it (git tag the pre-P3 commit, or keep a `_legacy_prompt()` helper) so
+>   the eval can run both. This is the only reason to retain the old builder.
 
 ### Task 3.1: Create the prompt-cache helper (split + cache_control transform)
 
@@ -874,10 +872,9 @@ git commit -m "refactor(caching): cacheable prompt split for market_analyst"
 
 ## Phase P4 — `cache_control` injection (the heart)
 
-> **Open implementation decision (resolve before P3/P4):** the P3 design fork
-> (unconditional vs gated restructure). The tasks assume **unconditional restructure
-> + client-gated `cache_control`**. The flag reaches the client via config (Task 4.2),
-> NOT via agent state.
+> **Resolved (unconditional restructure, see P3):** the flag reaches the client via
+> config (Task 4.2), NOT via agent state. P3 restructures prompts unconditionally;
+> P4 gates only the `cache_control` marker.
 
 ### Task 4.1: Add the `cache_control` transform to `NormalizedChatLiteLLM.invoke`
 
@@ -1614,8 +1611,11 @@ git commit -m "feat(caching): per-run prompt caching toggle in the 3 LLM-setting
 
 - [ ] Run the full backend suite: `python -m pytest tests/ -q` — all pass.
 - [ ] Frontend type-check + build: `cd frontend && npx tsc --noEmit && npm run build`.
-- [ ] Confirm OFF-path: with `prompt_cache_enabled` unset, grep a real run's logs —
-  no `cache_control` in outgoing payloads, no `LLM cache` lines with `cache_read>0`.
+- [ ] Confirm OFF-path: with `prompt_cache_enabled` unset/False, grep a real run's
+  logs — **no `cache_control` in outgoing payloads** and no `LLM cache` lines with
+  `cache_read>0`. (Note: prompts are still restructured when OFF — the OFF guarantee
+  is "no cache_control," not "byte-identical to pre-P3 prompts." The restructure's
+  behavior safety comes from the P6 eval, which must have passed.)
 - [ ] Confirm the progress tracker shows all phases DONE and records the P1 GO/NO-GO
   and P6 PASS/FAIL artifacts.
 - [ ] Update `CLAUDE.md` "Recent Changes" with a one-line summary.
