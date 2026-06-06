@@ -576,17 +576,31 @@ Append these methods to `DebugTraceRepository` in `backend/services/debug_trace_
                 )
 
     # ── retention ─────────────────────────────────────────────
-    async def delete_runs_older_than(self, retention_days: int) -> int:
-        async with self._pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM debug_runs WHERE created_at < now() - ($1 || ' days')::interval",
-                str(int(retention_days)),
-            )
-        # result like "DELETE 5"
-        try:
-            return int(result.split()[-1])
-        except (ValueError, IndexError):
-            return 0
+    async def delete_runs_older_than(self, retention_days: int, *, batch_size: int = 500) -> int:
+        """Delete expired runs (CASCADE removes child rows). Deletes in capped batches
+        so a large backlog doesn't cascade millions of child rows in one statement
+        (which would hold locks / bloat WAL). Each batch is its own transaction."""
+        total_deleted = 0
+        while True:
+            async with self._pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    DELETE FROM debug_runs WHERE id IN (
+                        SELECT id FROM debug_runs
+                        WHERE created_at < now() - ($1 || ' days')::interval
+                        ORDER BY id LIMIT $2
+                    )
+                    """,
+                    str(int(retention_days)), batch_size,
+                )
+            try:
+                n = int(result.split()[-1])  # "DELETE N"
+            except (ValueError, IndexError):
+                n = 0
+            total_deleted += n
+            if n < batch_size:
+                break
+        return total_deleted
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -788,6 +802,14 @@ class DebugTraceRecorder:
         self._drainer_task = None
         self._cleanup_task = None
         self._running = False
+        self._drain_lock = None          # lazily created asyncio.Lock (no loop at __init__)
+        self._drain_count = 0            # drains since last config refresh (cadence control)
+
+    @property
+    def repo(self) -> Any:
+        """Public accessor for the repository (read-side API uses this; avoids
+        reaching into the private attribute from the router)."""
+        return self._repo
 
     # ── introspection (used by tests) ─────────────────────────
     def buffered_count(self) -> int:
@@ -960,6 +982,31 @@ async def test_drain_flushes_buffer_to_repo():
 
 
 @pytest.mark.asyncio
+async def test_drain_isolates_failing_table():
+    """One table's bulk_insert failure must not discard the other tables' rows."""
+    rec, repo = _recorder()
+    ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
+    ctx.run_id = 1
+    # symbol_decisions insert fails; lifecycle + snapshots must still be attempted.
+    inserted_tables = []
+    async def _bulk(**kwargs):
+        table = next(iter(kwargs))
+        if table == "symbol_decisions":
+            raise RuntimeError("poison")
+        inserted_tables.append(table)
+    repo.bulk_insert = AsyncMock(side_effect=_bulk)
+    rec.emit_lifecycle(ctx, account_id="a1", phase="batch", event_type="x")
+    rec.emit_symbol_decision(ctx, account_id="a1", phase="batch", symbol="FOO",
+                             decision="skipped", reason_code="min_score", reason_detail={})
+    rec.emit_exchange_snapshot(ctx, account_id="a1", gate="scan_start", positions=[])
+    await rec.drain_once()  # must NOT raise despite the poison table
+    # The two healthy tables were still persisted.
+    assert "lifecycle_events" in inserted_tables
+    assert "exchange_snapshots" in inserted_tables
+    assert rec.buffered_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_close_run_finalizes_with_dropped_count():
     rec, repo = _recorder(buffer_max=1)
     ctx = rec.new_run_context(scan_id="s1", trigger_source="manual")
@@ -1026,26 +1073,36 @@ Append to `DebugTraceRecorder` in `backend/services/debug_trace_recorder.py`:
 
     # ── drainer ───────────────────────────────────────────────
     async def drain_once(self) -> None:
-        if not self._buffer:
-            return
-        # Snapshot and clear quickly (single-threaded event loop — safe).
-        batch = list(self._buffer)
-        self._buffer.clear()
-        grouped: dict[str, list[dict]] = {
-            "account_traces": [], "lifecycle_events": [],
-            "symbol_decisions": [], "exchange_snapshots": [],
-        }
-        for rec in batch:
-            grouped.get(rec["_table"], []).append(rec)
-        try:
-            await self._repo.bulk_insert(
-                account_traces=grouped["account_traces"] or None,
-                lifecycle_events=grouped["lifecycle_events"] or None,
-                symbol_decisions=grouped["symbol_decisions"] or None,
-                exchange_snapshots=grouped["exchange_snapshots"] or None,
-            )
-        except Exception:
-            logger.warning("debug_drain_failed", exc_info=True)  # data lost; trading unaffected
+        # Serialize drains: drain_once is called from the periodic loop, close_run,
+        # and shutdown. Without this lock, two drains could run overlapping bulk
+        # inserts on the pool. The lock is created lazily (no event loop at __init__).
+        if self._drain_lock is None:
+            import asyncio
+            self._drain_lock = asyncio.Lock()
+        async with self._drain_lock:
+            if not self._buffer:
+                return
+            # Snapshot and clear quickly (single-threaded event loop — safe; the
+            # snapshot+clear has no await between the two statements).
+            batch = list(self._buffer)
+            self._buffer.clear()
+            grouped: dict[str, list[dict]] = {
+                "account_traces": [], "lifecycle_events": [],
+                "symbol_decisions": [], "exchange_snapshots": [],
+            }
+            for rec in batch:
+                grouped.get(rec["_table"], []).append(rec)
+            # Insert each table INDEPENDENTLY so a failure in one table (poison record
+            # or transient error) does not discard the other three. bulk_insert itself
+            # also isolates per-table (see Task 3). Data for a failed table is lost for
+            # this batch — logged — but trading is unaffected and the rest is persisted.
+            for table, rows in grouped.items():
+                if not rows:
+                    continue
+                try:
+                    await self._repo.bulk_insert(**{table: rows})
+                except Exception:
+                    logger.warning("debug_drain_table_failed", extra={"table": table, "count": len(rows)}, exc_info=True)
 
     async def refresh_config(self) -> None:
         try:
@@ -1078,10 +1135,16 @@ Append to `DebugTraceRecorder` in `backend/services/debug_trace_recorder.py`:
 
     async def _drain_loop(self, interval_s: float) -> None:
         import asyncio
+        # Refresh config roughly every ~30s (every Nth drain), not every drain — the
+        # PUT /config endpoint already refreshes immediately, so the loop only needs a
+        # slow safety re-sync. At interval_s=3 this is ~10 drains; min 1.
+        refresh_every = max(1, int(30 / interval_s)) if interval_s > 0 else 1
         while self._running:
             try:
                 await asyncio.sleep(interval_s)
-                await self.refresh_config()
+                self._drain_count += 1
+                if self._drain_count % refresh_every == 0:
+                    await self.refresh_config()
                 await self.drain_once()
             except asyncio.CancelledError:
                 break
@@ -1372,13 +1435,16 @@ In `post_scan_recheck`:
 - After state reset (~771): `self._emit_life(account_id, "post_scan_recheck", "state_reset", new_balance=new_balance)`.
 - Trades placed in recheck call `_try_trade(state, result, phase="post_scan_recheck")` (pass the phase).
 
-Add a new method `emit_account_summaries(self)` called at finalize that, for each state, emits an account-trace record. It is **async** so it can resolve the human-readable account label off the hot path (finalize only):
+Add a new method `emit_account_summaries(self)` called at finalize that, for each state, emits an account-trace record. It is **async** so it can resolve the human-readable account label off the hot path (finalize only). It **returns the distinct account count**, so callers don't need to reach into `executor._state`:
 
 ```python
-    async def emit_account_summaries(self) -> None:
+    async def emit_account_summaries(self) -> int:
+        """Emit one account-trace per state. Returns the distinct account count.
+        Safe to call even when tracing is off (returns the count without emitting)."""
+        seen_accounts = {s.config.get("account_id", "") for s in self._state.values()}
         rec, ctx = self._recorder, self._debug_ctx
         if rec is None or ctx is None:
-            return
+            return len(seen_accounts)
         # Resolve labels once per account (off the hot path — finalize only). Best-effort.
         label_cache: Dict[str, Optional[str]] = {}
         for state in self._state.values():
@@ -1404,6 +1470,7 @@ Add a new method `emit_account_summaries(self)` called at finalize that, for eac
                 rules_created=[{"rule_id": r} for r in state.created_rule_ids],
                 config_snapshot=_sanitize_config(state.config),
             )
+        return len(seen_accounts)
 ```
 
 > **`rescued_by_recheck` must be a real flag, not inferred.** Inferring it from `stopped_reason is None and trades_executed > 0` would be TRUE for every normal account that simply traded — wrong. Instead, add a field to `_AccountState` (Task: the dataclass near line 1142) — `rescued_by_recheck: bool = False` — and set it to `True` inside `post_scan_recheck` at the point where a previously `positions_already_open` account is reset and goes on to place at least one trade (right after the state reset / successful placement in the recheck loop, ~line 760-890). `emit_account_summaries` then reads that real flag.
@@ -1442,10 +1509,11 @@ async def test_emit_account_summaries_emits_one_per_state():
     accounts.get_account.return_value = {"id": "acc_1", "label": "Dad - Demo"}
     ex = AutoTradeExecutor(accounts, None, recorder=rec, debug_ctx=ctx)
     ex._state = {"acc_1_0": _AccountState(config={"account_id": "acc_1", "execution_mode": "batch"})}
-    await ex.emit_account_summaries()
+    count = await ex.emit_account_summaries()
     rec.emit_account_trace.assert_called_once()
     _, kwargs = rec.emit_account_trace.call_args
     assert kwargs["account_label"] == "Dad - Demo"   # label resolved off the hot path
+    assert count == 1   # returns distinct account count (callers avoid touching _state)
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1816,7 +1884,7 @@ from backend.routers.debug import router as debug_router
 def _app(repo, recorder):
     app = FastAPI()
     app.state.debug_trace_recorder = recorder
-    recorder._repo = repo
+    recorder.repo = repo   # router reads the public `repo` accessor
     app.include_router(debug_router, prefix="/api/v1")
     return app
 
@@ -1903,9 +1971,9 @@ router = APIRouter(tags=["debug"])
 
 def _repo(request: Request):
     recorder = getattr(request.app.state, "debug_trace_recorder", None)
-    if recorder is None or getattr(recorder, "_repo", None) is None:
+    if recorder is None or getattr(recorder, "repo", None) is None:
         raise HTTPException(503, detail="Debug tracing not available")
-    return recorder, recorder._repo
+    return recorder, recorder.repo
 
 
 @router.get("/debug/scan/{scan_id}")
@@ -2091,22 +2159,36 @@ and after `self._sector_service = sector_service` (line 327) add:
 
 (d) **CRITICAL — variable scope.** `final_completed` and `final_failed` are top-level locals (assigned at lines 773-774 and reassigned ~848-849), so they are always in scope at the `if executor:` block (~853). But `total` is assigned **only inside** the `if not scan_error:` block (~line 784), so referencing `total` at the `if executor:` block raises `NameError` whenever `scan_error` is truthy (the executor can still be truthy on the error path because it is re-read at ~834). **Do not use `total`.** Capture the symbol count from the `scan` dict under the finalize lock instead.
 
-In the finalize block, after `scan["auto_trade_summaries"] = executor.get_summaries()` (~862), add:
+In the finalize block, the existing code is (lines 853-862):
+```python
+        if executor:
+            try:
+                await executor.cleanup_unused_rules()
+            except Exception:
+                pass
+            async with self._lock:
+                scan = self._scans.get(scan_id)
+                if scan:
+                    scan["auto_trade_summaries"] = executor.get_summaries()
+```
+Add the debug close **after** that `async with self._lock:` block closes (line 862) — i.e. still inside `if executor:` but **dedented OUT of the lock**, so the async DB I/O of `emit_account_summaries`/`close_run` never runs inside the scanner lock:
 
 ```python
             # Debug: emit account summaries and close the debug run.
-            try:
-                await executor.emit_account_summaries()
-            except Exception:
-                pass
+            # NOTE: this is OUTSIDE the `async with self._lock` above — do not indent
+            # it into the lock; emit_account_summaries does account-label DB lookups.
             debug_ctx = scan.get("debug_ctx") if scan else None
             if self._debug_recorder is not None and debug_ctx is not None:
-                # Read symbol counts from the scan dict (NOT `total`, which is only
-                # defined inside the `if not scan_error:` block above).
+                num_accounts = 0
+                try:
+                    num_accounts = await executor.emit_account_summaries()
+                except Exception:
+                    pass
+                # Read symbol count from the scan dict (NOT `total` — only defined inside
+                # the `if not scan_error:` block above; would NameError on the error path).
                 async with self._lock:
                     _scan = self._scans.get(scan_id)
                     _total = (_scan.get("total", 0) if _scan else 0)
-                num_accounts = len({s.config.get("account_id") for s in executor._state.values()})
                 await self._debug_recorder.close_run(
                     debug_ctx, phase_reached=("failed" if scan_error else "finalized"),
                     total_symbols=_total, completed_symbols=final_completed,
@@ -2145,13 +2227,13 @@ Replace the executor construction + init (lines 204-207) with:
 After `summaries = executor.get_summaries()` and the `db.update_scan(...)` (line 253), add the close (inside the `try`, before the `except`):
 ```python
             # Debug: emit account summaries and close the manual debug run.
-            try:
-                await executor.emit_account_summaries()
-            except Exception:
-                pass
             if debug_recorder is not None and debug_ctx is not None:
+                num_accounts = 0
                 try:
-                    num_accounts = len({s.config.get("account_id") for s in executor._state.values()})
+                    num_accounts = await executor.emit_account_summaries()
+                except Exception:
+                    pass
+                try:
                     await debug_recorder.close_run(
                         debug_ctx, phase_reached="finalized",
                         total_symbols=len(results), completed_symbols=len(results),
@@ -2617,7 +2699,7 @@ After deploying, validate the feature end-to-end:
 
 ## Notes for the implementer
 - **Never alter existing trade control flow** in `auto_trade_service.py` — only ADD emit calls. Every emit is additive and fail-open.
-- The recorder's `_enabled` flag is refreshed by the drainer loop every few seconds and on every `PUT /debug/config`, so the kill-switch takes effect within one drain interval.
+- The recorder's `_enabled` kill-switch takes effect **immediately** on `PUT /debug/config` (the endpoint calls `refresh_config()`), and the drain loop also re-syncs config roughly every ~30s as a safety net (not every drain — see iteration-3 finding #16).
 - `account_label` resolution happens off the hot path: `emit_account_summaries` (async, called at finalize) resolves labels via `accounts_service.get_account(aid)["label"]`, cached per account, best-effort/try-except.
 - Storage: with the default 200 symbol-decision cap and 60-day retention, a 21-account / 3-hourly schedule produces bounded growth; the nightly cleanup keeps it in check.
 
@@ -2643,6 +2725,16 @@ These are non-obvious correctness decisions made during a verification review ag
 11. **Wallet snapshots are sanitized to a balance allow-list** (`_sanitize_wallet`, spec §10). Only known balance fields are retained; any other/sensitive key is dropped. Test: `test_exchange_snapshot_sanitizes_wallet_to_allowlist`.
 12. **Read API returns plain dicts, not typed Pydantic response models** (spec §6.3 describes `DebugRunDetail`/`DebugAccountTrace`). Deliberate: FastAPI serializes the repo dicts directly, avoiding a large model layer that would duplicate the SQL shape. `DebugConfigUpdate` is the only request model (it needs validation). If strict response typing is later required, add response_model classes over the same dicts — no data-layer change needed.
 13. **Manual-route wiring is specified with full code** (Task 11e), not "mirror (b)+(d)". It opens a run before `init_balances`, closes it after `get_summaries`, and uses `len(results)` for the symbol count — guaranteeing a manual re-trigger creates a NEW run instead of overwriting the scheduled run's record (the original RCA pain point).
+
+### Iteration-3 review additions (reliability / contention / efficiency)
+
+14. **Drain failures are isolated per-table** (Task 5 `drain_once`). Each of the 4 tables is inserted via its own `bulk_insert(**{table: rows})` call wrapped in try/except. A poison record or transient error in one table no longer discards the other three (or other runs' events in the same drain window). Test: `test_drain_isolates_failing_table`. Trade-off: 4 `pool.acquire()` per drain instead of 1 — negligible, drain is fully off-path.
+15. **`drain_once` is serialized with an `asyncio.Lock`** (`self._drain_lock`, lazily created). It is called from the periodic loop, `close_run`, and `shutdown`; without the lock those could run overlapping `bulk_insert`s. The lock is created lazily because there is no event loop at `__init__`.
+16. **Config is re-synced ~every 30s, not every drain** (Task 5 `_drain_loop`). Refreshing on every 3s drain meant ~28,800 needless `SELECT`s/day. The `PUT /debug/config` endpoint still refreshes immediately, so the kill-switch is instant; the loop refresh is only a slow safety net.
+17. **`num_accounts` comes from `emit_account_summaries()`'s return value**, not `executor._state` (Tasks 8, 11d, 11e). The method already iterates `_state` internally (legitimate, same class) and returns the distinct account count, eliminating cross-module private-attribute access from the scanner/manual route.
+18. **Router uses the public `recorder.repo` property**, not `recorder._repo` (Task 4 adds the property; Task 10 router + test use it). Removes a cross-module private access.
+19. **Finalize debug-close is explicitly placed OUTSIDE the scanner `self._lock`** (Task 11d). `emit_account_summaries` does account-label DB lookups; nesting it inside the lock that serializes scans would add network I/O to a hot lock. The plan shows the exact dedent and warns against indenting it in.
+20. **Retention DELETE is batched** (Task 3 `delete_runs_older_than`, `batch_size=500`). A 60-day backlog could otherwise cascade millions of child rows in a single statement, holding locks and bloating WAL. Each batch is its own transaction; loops until drained.
 
 
 
