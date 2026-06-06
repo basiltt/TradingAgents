@@ -182,7 +182,8 @@ class DebugTraceRepository:
                     ],
                     records=[(
                         r["run_id"], r["account_id"], r.get("phase", "unknown"), r["symbol"],
-                        r.get("scan_score"), r.get("scan_confidence"), r.get("scan_direction"),
+                        (int(r["scan_score"]) if r.get("scan_score") is not None else None),
+                        r.get("scan_confidence"), r.get("scan_direction"),
                         r["decision"], r["reason_code"], json.dumps(r.get("reason_detail", {}), default=str),
                         r.get("order_id"), r.get("ts") or datetime.now(timezone.utc),
                     ) for r in symbol_decisions],

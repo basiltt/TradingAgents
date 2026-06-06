@@ -156,6 +156,36 @@ async def test_bulk_insert_events_and_read_back(pool):
 
 
 @pytest.mark.asyncio
+async def test_bulk_insert_coerces_float_scan_score_to_int(pool):
+    """scan_score maps to an INT column; a stray float would fail asyncpg's binary
+    COPY for the WHOLE batch. bulk_insert coerces it via int() for COPY-safety, while
+    None still passes through unchanged. Without the coercion this call would raise."""
+    repo = DebugTraceRepository(pool)
+    run_id = await repo.create_run(scan_id="scan-score-coerce", trigger_source="manual")
+    await repo.bulk_insert(
+        symbol_decisions=[
+            {"run_id": run_id, "account_id": "acc-1", "phase": "batch",
+             "symbol": "FLOATUSDT", "scan_score": 7.0, "scan_confidence": "high",
+             "scan_direction": "buy", "decision": "placed", "reason_code": "placed_ok",
+             "reason_detail": {}, "order_id": "o1"},
+            {"run_id": run_id, "account_id": "acc-1", "phase": "batch",
+             "symbol": "NONEUSDT", "scan_score": None, "scan_confidence": "low",
+             "scan_direction": "sell", "decision": "skipped", "reason_code": "low_score",
+             "reason_detail": {}},
+        ],
+    )
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT symbol, scan_score FROM debug_symbol_decisions WHERE run_id=$1 ORDER BY symbol",
+            run_id,
+        )
+    by_symbol = {r["symbol"]: r["scan_score"] for r in rows}
+    assert by_symbol["FLOATUSDT"] == 7
+    assert isinstance(by_symbol["FLOATUSDT"], int)
+    assert by_symbol["NONEUSDT"] is None
+
+
+@pytest.mark.asyncio
 async def test_delete_runs_older_than(pool):
     repo = DebugTraceRepository(pool)
     run_id = await repo.create_run(scan_id="scan-old", trigger_source="scheduled")
