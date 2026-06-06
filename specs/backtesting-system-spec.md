@@ -122,10 +122,15 @@ The engine processes scan results chronologically, applying the full auto-trade 
   (no carried positions) uPnL=0 and locked=0 → the reference reduces to the full wallet.
   The skip_if_positions_open=True path (open book) preserves the prior anchor, matching
   production's only no-recreate case.
-- For EQUITY_DROP_PCT_SMART: ref resets to current equity immediately after closing losing positions
+- For EQUITY_DROP_PCT_SMART: closes only the LOSING positions ONCE per scan window
+  (production marks the rule "executed" after firing and does not re-arm until the
+  next scan re-creates it); surviving winners are NOT re-closed mid-window even if
+  they later turn losing. The no-losers case re-anchors the reference to current
+  equity without consuming the one-shot (it can still fire later if a position turns
+  negative), matching production.
 
 **Price drift check:**
-- If `max_price_drift_pct` is set: `drift = (candle.close - signal.analysis_price) / signal.analysis_price × 100`
+- If `max_price_drift_pct` is set: `drift = (next_bar.open − signal.analysis_price) / signal.analysis_price × 100`
   (SIGNED, direction-aware — matches production). Reject only when the price has already
   moved too far IN the signal's direction (the move is "consumed"/chasing):
   - buy/long signal → skip if `drift > max_price_drift_pct`
@@ -189,16 +194,21 @@ intended_margin = sizing_capital × capital_pct / 100
 available_balance = wallet_balance - Σ(locked_margin_i)  # for sufficiency check only
 # locked_margin_i = (qty_i × entry_price_i) / leverage_i  (= the margin allocated at open)
 if intended_margin > available_balance: SKIP trade (insufficient margin)
-# qty is sized off the UN-SLIPPED mark price (candle.close), matching production
+# qty is sized off the UN-SLIPPED mark price, matching production
 # (qty = usdt_amount × leverage / mark_price) — NOT the slipped fill.
-mark_price = candle.close
+# mark_price = the NEXT BAR'S OPEN (next-bar-open convention): the open of the first
+# candle whose open_time >= signal_time. This is the first tradeable price strictly
+# after the decision instant — using that bar's CLOSE would be look-ahead (the close
+# is the end-of-bar price, and that bar's high/low are evaluated for TP/SL, so a
+# pre-entry intrabar move could fabricate an exit). See Known Modeling Approximations.
+mark_price = next_bar.open   # first candle with open_time >= signal_time, its OPEN
 qty = (intended_margin × leverage) / mark_price
 qty = floor(qty / qty_step) × qty_step  # Round to instrument precision
 if qty < min_qty: SKIP trade
 
-# Entry FILL price (no look-ahead) — the order fills at the slipped price (production
-# fills a market order at avgPrice). This slipped fill is used for PnL, entry fee,
-# locked margin, and the liquidation anchor.
+# Entry FILL price (no look-ahead) — the order fills at the slipped next-bar OPEN
+# (production fills a market order at avgPrice). This slipped fill is used for PnL,
+# entry fee, locked margin, and the liquidation anchor.
 entry_price = mark_price × (1 + slippage_bps/10000) for Buy
 entry_price = mark_price × (1 - slippage_bps/10000) for Sell
 
@@ -514,3 +524,56 @@ None individually exceeds the <1% deviation budget for typical configs.
    proxy for Bybit's mark/index price (the backtest does not have a separate mark-price feed),
    so liquidation and equity rules can differ from live by the last-vs-mark basis. Both are
    inherent to candle-resolution replay and are sub-1% at 5m granularity for typical configs.
+
+10. **Entry uses next-bar-open (no look-ahead).** A signal fires at a wall-clock instant
+    (its scan's `completed_at`) that is almost never candle-aligned. The trade fills at the
+    OPEN of the first candle whose `open_time >= signal_time` — the first tradeable price
+    strictly after the decision. That bar's high/low are therefore legitimately post-entry and
+    are evaluated for TP/SL. (A prior implementation filled at that bar's CLOSE while also
+    evaluating its high/low, which fabricated exits from pre-entry intrabar moves; fixed.) The
+    residual approximation is sub-candle: the true fill in live trading is the mark at the exact
+    sub-bar instant, between the bar's open and its first tick.
+
+11. **Stop-loss fills at the trigger price, not the gap-through price.** When a candle gaps
+    THROUGH the stop (opens far past `sl_price`), the engine fills at `sl_price` (+ adverse
+    slippage), but a live stop fills at the worse gap/open price (sometimes at/through
+    liquidation). On gap-heavy days backtest losses are therefore slightly UNDERSTATED vs live.
+    Sub-1% for liquid majors; larger on illiquid/gappy symbols.
+
+12. **`fees_paid` / `total_commission` include funding.** Each trade's `fees_paid` is
+    `entry_fee + exit_fee + funding_paid`, and `total_commission` sums it. Funding can be
+    negative (a short that RECEIVES funding), so reported "commission" can read lower than the
+    true taker fees — or negative — when funding credits exceed fees. This is a LABELING note
+    only: `pnl` is net of fees AND funding, and `net_profit = Σ pnl` reconciles exactly with
+    `final_equity − starting_capital`; funding is never double-counted. (TradingView separates
+    Commission from Funding; the combined memo here is intentional and does not affect any
+    money-reconciling metric.)
+
+13. **CAGR / Calmar are N/A for sub-day backtests.** Annualizing a span shorter than one day
+    would project a few hours of return over 365 days and report a multi-million-percent
+    "growth rate". For spans under 24h, `cagr` (and therefore `calmar`) is `None` (UI shows
+    N/A) rather than a fabricated number. Over multi-day windows CAGR is reported normally,
+    capped at `CAGR_CAP_PCT` for JSON-safety under extreme growth.
+
+14. **Max drawdown is realized-equity drawdown (per-trade-close granularity).** The equity
+    curve samples wallet at each CLOSE, so an open position's intra-trade unrealized dip is not
+    in the curve — true peak-to-trough equity drawdown (which TradingView tracks including open
+    P&L) is UNDERSTATED, and `recovery_factor`/`calmar` (which divide by max-$/%-drawdown) are
+    correspondingly optimistic. A strategy that sat at −40% unrealized before closing +5% shows
+    ≈0% drawdown here. Inherent to a realized-equity curve at candle resolution.
+
+15. **`close_on_profit_pct` is evaluated every candle, not only at scan boundaries.**
+    Production checks the close-on-profit force-close as a per-scan pre-pass / recheck (at scan
+    time), so a book crossing the threshold mid-window is force-closed only at the NEXT scan.
+    The backtest evaluates it each candle (like the continuous EQUITY_RISE_PCT goal it
+    resembles), so on a fast intra-window spike it can exit EARLIER than production — at a
+    different price/time, though for the same reason. Requires `target_goal_value` to be set
+    (production parity); the threshold is `(close_on_profit_pct/100) × target_goal_value`.
+
+16. **Batch tie-break on exactly-equal scores.** Production ranks tied-`abs(score)` signals by
+    `completed_at`, but `scan_results` stores no per-ticker `completed_at` (only the scan-level
+    one, identical for all signals in a scan), so that tiebreak is a no-op even in production
+    within one scan. The backtest ranks by `abs(score)` then `sr.id` (deterministic, stable).
+    At the `max_trades` boundary with discrete integer scores a different tied signal may be
+    admitted — but the discriminating field does not survive to replay, so this cannot be made
+    more faithful.

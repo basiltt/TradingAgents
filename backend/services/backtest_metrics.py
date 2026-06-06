@@ -558,8 +558,14 @@ def _compute_cagr(
     """Compound annual growth rate (%), or None if not computable.
 
     Computed in log space (expm1/log) for numerical stability and wrapped so
-    extreme short-span growth (e.g. 1000x in <1 day) can never overflow to
-    Infinity. Result is clamped to [-100, CAGR_CAP_PCT] to stay JSON-safe.
+    extreme short-span growth can never overflow to Infinity. Result is clamped
+    to [-100, CAGR_CAP_PCT] to stay JSON-safe.
+
+    Returns None for spans under one day. Annualizing a sub-day run (e.g. a +5%
+    move over 2 hours) would project it over 365/(<1) days and report a nonsensical
+    multi-million-percent CAGR. CAGR is only meaningful over multi-day horizons, so
+    below a day we report N/A rather than a fabricated number the UI would show as
+    a real growth rate.
     """
     if len(equity_curve) < 2 or starting_capital <= 0 or final_equity <= 0:
         return None
@@ -568,7 +574,9 @@ def _compute_cagr(
     hours = _hours_between(first_ts, last_ts)
     if hours is None:
         return None
-    days = max(hours / 24.0, 1)
+    days = hours / 24.0
+    if days < 1.0:
+        return None  # sub-day span — annualized CAGR is not meaningful
     ratio = final_equity / starting_capital
     try:
         cagr = math.expm1((ANNUALIZATION_DAYS / days) * math.log(ratio)) * 100

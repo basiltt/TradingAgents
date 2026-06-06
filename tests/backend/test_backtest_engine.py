@@ -187,3 +187,91 @@ class TestSimulationState:
         result = engine.run(config, [], {})
         assert result.trades == []
         assert "no_signals_found" in result.warnings or len(result.warnings) == 0
+
+
+def _laconfig(**overrides):
+    base = {
+        "starting_capital": 10000.0, "leverage": 10, "capital_pct": 20.0,
+        "take_profit_pct": 50.0, "stop_loss_pct": 900.0, "direction": "straight",
+        "fee_rate_pct": 0.0, "slippage_bps": 0, "execution_mode": "batch",
+        "max_trades": 1, "skip_if_positions_open": False, "min_score": 0.0,
+        "confidence_filter": "any", "signal_sides": "both", "max_same_direction": None,
+        "max_same_sector": None, "symbol_blacklist": None, "symbol_whitelist": None,
+        "max_signal_age_minutes": None, "max_price_drift_pct": None,
+        "adaptive_blacklist_enabled": False, "fill_to_max_trades": False,
+        "target_goal_type": None, "target_goal_value": None, "simulation_interval": "5m",
+        "max_drawdown_pct": 100.0, "smart_drawdown_close": False,
+        "breakeven_timeout_hours": None, "max_trade_duration_hours": None,
+        "trailing_profit_pct": None, "close_on_profit_pct": None,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestEntryNoLookAhead:
+    """Entry must NOT use look-ahead: a position fills at the next tradeable bar's
+    OPEN (the first price available after the decision instant), and that same bar's
+    high/low — which occur AFTER the open — are then legitimately evaluated for TP/SL.
+
+    The prior bug filled at the entry bar's CLOSE (the end-of-bar price, ~one full
+    candle into the future) while ALSO evaluating that bar's high/low (price action
+    that PRECEDED the close-fill), fabricating exits from pre-entry price moves.
+    """
+
+    def test_long_into_falling_entry_bar_is_a_loss_not_a_fabricated_tp(self):
+        """A long whose entry bar is RED (open 100, high 100, low 95, close 95) and
+        whose price then stays at 95 must book a LOSS. The bug filled at close=95 and
+        fired TP=99.75 on the bar's pre-entry high of 100 — a fabricated +win on a
+        trade that lost money in reality."""
+        from backend.services.backtest_engine import BacktestEngine
+        # signal at 12:03:47 (UNALIGNED) → entry bar is the 12:05 candle
+        sig_t = datetime(2026, 1, 1, 12, 3, 47, tzinfo=timezone.utc)
+        signals = [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                    "score": 8, "signal_time": sig_t, "scan_id": "s1",
+                    "signal_source": "structured", "analysis_price": 100.0}]
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        candles = []
+        for i in range(30):
+            t = base + timedelta(minutes=i * 5)
+            if i == 0:      # 12:00 (pre-signal) flat 100
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            elif i == 1:    # 12:05 ENTRY bar — RED: open 100, high 100, low 95, close 95
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 95.0, "close": 95.0, "volume": 100.0})
+            else:           # flat at 95 afterward → no TP ever (TP would be 100*1.05=105)
+                candles.append({"open_time": t, "open": 95.0, "high": 95.0, "low": 95.0, "close": 95.0, "volume": 100.0})
+        result = BacktestEngine().run(_laconfig(), signals, {"BTCUSDT": candles})
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        # Entry fills at the entry bar's OPEN (100), not its close (95).
+        assert trade["entry_price"] == pytest.approx(100.0)
+        # Price never rose above 100, TP target is 105 → this CANNOT be a TP.
+        assert trade["close_reason"] != "tp", "TP fabricated from pre-entry price action"
+        # It is a real loss (force-closed at 95 at end of data).
+        assert trade["pnl"] < 0
+
+    def test_no_exit_on_the_entry_bar_itself(self):
+        """A position must never close on the very bar it entered on using that bar's
+        own high/low — those extremes are not all post-entry relative to a close-fill.
+        With next-bar-open fill, an exit on the entry bar is only legitimate if driven
+        by post-open action; here the entry bar is flat so no same-bar exit can occur."""
+        from backend.services.backtest_engine import BacktestEngine
+        sig_t = datetime(2026, 1, 1, 12, 3, 47, tzinfo=timezone.utc)
+        signals = [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                    "score": 8, "signal_time": sig_t, "scan_id": "s1",
+                    "signal_source": "structured", "analysis_price": 100.0}]
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        candles = []
+        for i in range(20):
+            t = base + timedelta(minutes=i * 5)
+            # entry bar (12:05) is flat 100; a later bar spikes to TP
+            if i == 5:
+                candles.append({"open_time": t, "open": 100.0, "high": 106.0, "low": 100.0, "close": 106.0, "volume": 100.0})
+            else:
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+        result = BacktestEngine().run(_laconfig(), signals, {"BTCUSDT": candles})
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        assert trade["entry_price"] == pytest.approx(100.0)
+        # TP (105) is hit on the 12:25 bar, NOT the 12:05 entry bar.
+        assert trade["close_reason"] == "tp"
+        assert trade["exit_time"] == base + timedelta(minutes=5 * 5)

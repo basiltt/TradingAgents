@@ -110,6 +110,15 @@ class BacktestCreateRequest(BaseModel):
             raise ValueError(
                 "breakeven_timeout_hours must be less than max_trade_duration_hours"
             )
+        # close_on_profit_pct requires target_goal_value (production parity:
+        # auto_trade gates close_on_profit on `close_pct and target_goal`, and the
+        # live request schema enforces the same requirement). Without target_goal_value
+        # the effective threshold is undefined; the engine would otherwise have to
+        # invent a default, diverging from live trading.
+        if self.close_on_profit_pct is not None and not self.target_goal_value:
+            raise ValueError(
+                "close_on_profit_pct requires target_goal_value to be set"
+            )
         return self
 
 

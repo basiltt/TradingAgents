@@ -80,6 +80,11 @@ class SimulationState:
                                # UNDER-trades vs reality; surfaced as a warning, not a silent skip.
     slippage_bps: int = 0  # round-trip slippage; applied adversely on BOTH entry fill and exit fill
                            # (production closes via Bybit market reduce-only orders that slip)
+    smart_drawdown_fired: bool = False  # EQUITY_DROP_PCT_SMART is ONE-SHOT per scan
+                           # window: production closes losers once, marks the rule
+                           # "executed", and never re-arms it until the next scan
+                           # re-creates it. Reset each scan; gates re-firing so the
+                           # backtest can't over-close winners-turned-losers mid-window.
     # Last 8h funding boundary already charged, as (date, hour) — guards against
     # charging funding more than once per 0/8/16h event regardless of candle density
     # (so a finer interval than 5m can't multi-charge a single boundary).
@@ -566,12 +571,15 @@ class BacktestEngine:
         if max_drift is not None:
             analysis_price = signal.get("analysis_price")
             if analysis_price and analysis_price > 0:
-                # Get price at signal time (NOT end of dataset — avoid look-ahead bias)
+                # Compare analysis_price against the price the trade would FILL at —
+                # the next bar's OPEN (same next-bar-open basis as _open_position, no
+                # look-ahead). Using the bar's close here would drift-check against a
+                # price ~one candle in the future AND disagree with the actual fill.
                 symbol_klines = klines.get(ticker, [])
                 current_price = None
                 for k in symbol_klines:
                     if k["open_time"] >= current_time:
-                        current_price = k["close"]
+                        current_price = k["open"]
                         break
                 if current_price is not None:
                     drift_pct = (current_price - analysis_price) / analysis_price * 100
@@ -612,11 +620,21 @@ class BacktestEngine:
             state.signals_no_kline += 1
             return False
 
-        # Find the kline at or near signal_time (use last available candle close)
+        # Entry fills at the NEXT BAR'S OPEN — the first tradeable price strictly
+        # after the decision instant (next-bar-open convention). The signal fires at
+        # current_time (= the scan's completed_at, a wall-clock instant almost never
+        # candle-aligned); we fill at the open of the first candle whose open_time is
+        # >= current_time. Using that candle's CLOSE instead would be LOOK-AHEAD: the
+        # close is the end-of-bar price (~one full candle in the future), yet the SAME
+        # candle's high/low are evaluated for TP/SL below — so a pre-entry intrabar
+        # spike could fabricate an exit on a move that happened BEFORE the fill. Filling
+        # at the open makes that bar's high/low strictly post-entry, so evaluating them
+        # is correct. Fallback: a signal after the last candle has no future bar to fill
+        # against → use the last available close (the only price we have).
         entry_base_price = symbol_klines[-1]["close"]
         for k in symbol_klines:
             if k["open_time"] >= current_time:
-                entry_base_price = k["close"]
+                entry_base_price = k["open"]
                 break
 
         # Apply slippage to get the actual ENTRY FILL price (used for PnL, fee, and
@@ -644,9 +662,27 @@ class BacktestEngine:
             leverage = max_leverage
         capital_pct = config.get("capital_pct", 5.0)
 
-        # Available balance = wallet - locked margins
+        # Available-balance basis for the margin-affordability check. Use the SAME
+        # totalAvailableBalance basis the per-scan sizing uses (wallet + carried
+        # unrealised PnL − locked margin), not wallet−locked alone — otherwise the
+        # check and the sizing capital disagree on what "available" means, and a book
+        # carrying a winning position would be under-credited (the gate would reject a
+        # trade the real account, whose availableBalance includes that uPnL, could
+        # afford). Bybit's totalAvailableBalance = walletBalance + unrealisedPnL −
+        # initialMargin, so mirror that. carried_upnl is marked to each position's last
+        # close at/before now (no look-ahead), matching _open_scan_signals.
+        from backend.services.trading_rules import compute_unrealized_pnl as _cu_avail
         locked = sum(p.locked_margin for p in state.open_positions)
-        available = state.wallet_balance - locked
+        carried_upnl = 0.0
+        for _p in state.open_positions:
+            _mark = _p.entry_price
+            for _k in klines.get(_p.symbol, []):
+                if _k["open_time"] <= current_time:
+                    _mark = _k["close"]
+                else:
+                    break
+            carried_upnl += _cu_avail(_p.entry_price, _mark, _p.qty, _p.side)
+        available = state.wallet_balance + carried_upnl - locked
 
         # Size off the UN-SLIPPED mark (entry_base_price), matching production, which
         # computes qty = usdt_amount × leverage / mark_price (accounts_service), NOT
@@ -789,6 +825,10 @@ class BacktestEngine:
         carried_upnl=0 and locked=0 → it reduces to the full wallet.
         """
         from backend.services.trading_rules import compute_unrealized_pnl as _cu
+        # A non-skipped scan re-creates the close rules in production, including a
+        # fresh EQUITY_DROP_PCT_SMART. Re-arm the one-shot SMART guard here (NOT on a
+        # skipped scan, which preserves the prior rule's executed state).
+        state.smart_drawdown_fired = False
         carried_upnl = 0.0
         for _p in state.open_positions:
             _ks = klines.get(_p.symbol, [])
@@ -1132,18 +1172,29 @@ class BacktestEngine:
         if max_drawdown_pct < 100.0:
             if check_equity_drop(equity, state.cycle_start_equity, max_drawdown_pct):
                 if config.get("smart_drawdown_close"):
-                    # SMART: close only LOSING positions, keep others active
-                    if losing_positions:
+                    # SMART is ONE-SHOT per scan window. Production closes the losing
+                    # symbols once, transitions the rule to "executed", and does NOT
+                    # re-arm or re-anchor it (close_rule_evaluator.py:314) — surviving
+                    # winners get no further drawdown protection until the NEXT scan
+                    # re-creates the rule. The old backtest re-anchored cycle_start_equity
+                    # and stayed active, letting SMART re-fire on a winner that later
+                    # turned losing within the same window — closing positions
+                    # production would have held. Gate on the fired-flag for parity.
+                    if state.smart_drawdown_fired:
+                        pass  # already fired this scan window — production holds
+                    elif losing_positions:
                         for pos in list(losing_positions):
                             self._close_position(state, pos, "equity_drop_smart", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
-                        # Reset reference equity (prevents immediate re-trigger)
-                        new_equity = state.wallet_balance + sum(
-                            compute_unrealized_pnl(p.entry_price, latest_prices.get(p.symbol, p.entry_price), p.qty, p.side)
-                            for p in state.open_positions
-                        )
-                        state.cycle_start_equity = new_equity
+                        # Mark one-shot fired. Do NOT re-anchor cycle_start_equity:
+                        # production leaves the (now-executed) rule's reference
+                        # untouched, and the shared reference still feeds the
+                        # close_on_profit / equity_rise goals unchanged.
+                        state.smart_drawdown_fired = True
                     else:
-                        # No losers → reset reference, don't close anything
+                        # No losers: production resets the reference to current equity
+                        # to prevent immediate re-trigger (close_rule_evaluator.py:292),
+                        # WITHOUT marking executed — so it can still fire later if a
+                        # position turns losing. Mirror that: re-anchor, don't set flag.
                         state.cycle_start_equity = equity
                 else:
                     # Non-SMART: close ALL positions, deactivate cycle
@@ -1153,10 +1204,16 @@ class BacktestEngine:
                 return  # Don't evaluate further rules after equity drop
 
         # --- close_on_profit_pct ---
+        # Production gates this on `if close_pct and target_goal` (auto_trade_service:
+        # both must be truthy) — a missing/zero target_goal_value means NO close_on_profit
+        # at all. The backtest must NOT silently default target to 100, or it would fire
+        # a force-close that production never would. (Production's request schema also
+        # REQUIRES target_goal_value when close_on_profit_pct is set; the backtest schema
+        # now enforces the same cross-field rule, but defend in depth here too.)
         close_on_profit = config.get("close_on_profit_pct")
-        target_goal_value = config.get("target_goal_value", 100.0)
-        if close_on_profit and state.cycle_start_equity > 0:
-            if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value or 100.0):
+        target_goal_value = config.get("target_goal_value")
+        if close_on_profit and target_goal_value and state.cycle_start_equity > 0:
+            if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value):
                 for pos in list(state.open_positions):
                     self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
                 state.cycle_start_equity = 0  # Cycle terminated
@@ -1221,12 +1278,14 @@ class BacktestEngine:
 
             # Step 2: Check activation (price move % >= threshold AND upnl > 0)
             if not check_trailing_activation(close_price, pos.entry_price, trailing_pct, upnl):
-                # Below activation — DO NOT clear peak (preserve from prior activation)
-                # BUT: if already trailing, still check trigger (price retraced below activation)
-                if pos.trailing_active and pos.trailing_peak > 0:
-                    per_unit_pnl = upnl / pos.qty if pos.qty > 0 else 0.0
-                    if per_unit_pnl < pos.trailing_peak * 0.5:
-                        positions_to_close.append(pos)
+                # Below activation: production (_evaluate_trailing_profit) `continue`s
+                # here WITHOUT checking the retracement trigger — a position whose
+                # current profit% has fallen below the activation threshold is NEVER
+                # trailing-closed (close_rule_evaluator.py: `if profit_pct <
+                # activation_pct: continue`). It only re-arms if price rises back above
+                # activation. Preserve the peak (do NOT clear it) but do NOT trigger —
+                # mirroring production exactly. The old code checked the trigger here,
+                # closing positions production would have held.
                 continue
 
             # Position is profitable and above activation threshold

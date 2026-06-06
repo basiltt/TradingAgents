@@ -240,6 +240,58 @@ class TestEquityCloseRules:
             assert eth_trade["close_reason"] == "equity_drop_smart"
             assert eth_trade["pnl"] < 0
 
+    def test_smart_drawdown_is_one_shot_per_scan_window(self):
+        """EQUITY_DROP_PCT_SMART fires AT MOST ONCE per scan window. Production closes
+        the losing symbols once, marks the rule 'executed', and never re-arms it until
+        the next scan re-creates it — so a winner that later turns losing within the
+        same window is NOT smart-closed. The old backtest re-anchored the reference and
+        re-fired, over-closing positions production would have held.
+
+        Scenario (single scan, 3 symbols): AAA and BBB lose early → SMART closes both
+        once. CCC is a winner that later craters in the same window. Faithful behavior:
+        CCC is NOT closed by a second SMART fire (it rides to end-of-data force-close)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            max_drawdown_pct=3.0, smart_drawdown_close=True, leverage=10,
+            take_profit_pct=500.0, stop_loss_pct=500.0, slippage_bps=0, max_trades=5,
+            fee_rate_pct=0.0, capital_pct=20.0,
+        )
+        signals = [
+            _make_signal(ticker="AAAUSDT", direction="buy", score=9, id=1, analysis_price=100.0),
+            _make_signal(ticker="BBBUSDT", direction="buy", score=8, id=2, analysis_price=100.0),
+            _make_signal(ticker="CCCUSDT", direction="buy", score=7, id=3, analysis_price=100.0),
+        ]
+        bt = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+        def bars(seq):
+            # seq: list of close prices; flat OHLC per bar (no look-ahead), first bar = entry
+            out = []
+            for i, px in enumerate(seq):
+                out.append({"open_time": bt + timedelta(minutes=i * 5),
+                            "open": px, "high": px, "low": px, "close": px, "volume": 100.0})
+            return out
+
+        klines = {
+            # AAA, BBB dip -5% at bar 1 (losers → first SMART fire). -5% stays above the
+            # ~-9.5% liquidation distance at 10x, so they close via SMART, not liquidation.
+            "AAAUSDT": bars([100.0, 95.0, 95.0, 95.0, 95.0]),
+            "BBBUSDT": bars([100.0, 95.0, 95.0, 95.0, 95.0]),
+            # CCC flat through the first fire (winner/breakeven survives), then dips -5%
+            # at bar 3. A second SMART fire would close it; faithful behavior holds it.
+            "CCCUSDT": bars([100.0, 100.0, 100.0, 95.0, 95.0]),
+        }
+        result = engine.run(config, signals, klines)
+        by_symbol = {t["symbol"]: t for t in result.trades}
+        # AAA and BBB closed by the single SMART fire.
+        assert by_symbol["AAAUSDT"]["close_reason"] == "equity_drop_smart"
+        assert by_symbol["BBBUSDT"]["close_reason"] == "equity_drop_smart"
+        # CCC must NOT be smart-closed by a second fire — it rides to the end.
+        assert by_symbol["CCCUSDT"]["close_reason"] != "equity_drop_smart", \
+            "SMART re-fired within one scan window — production is one-shot"
+        assert by_symbol["CCCUSDT"]["close_reason"] == "backtest_end"
+
     def test_equity_drop_reference_reanchors_each_cycle(self):
         """cycle_start_equity must re-anchor to the CURRENT wallet at the start of
         each fresh cycle — matching production, which re-reads the wallet balance
@@ -381,7 +433,16 @@ class TestTrailingProfit:
     """Test TRAILING_PROFIT close rule state machine."""
 
     def test_trailing_activates_and_closes_on_pullback(self):
-        """Trailing activates at threshold, then closes when profit drops 50% from peak."""
+        """Trailing activates at threshold, then closes when profit drops 50% from peak
+        WHILE STILL ABOVE the activation threshold.
+
+        Production (close_rule_evaluator._evaluate_trailing_profit) only checks the
+        50%-retracement trigger when the position's current profit% is >= activation%
+        (`if profit_pct < activation_pct: continue`). So the trigger must fire at a
+        price that is BOTH below peak*0.5 AND still above activation. Here: entry
+        50000, activation 3%, peak ~+10% (per-unit peak from the 55000 high), so the
+        trigger level peak*0.5 corresponds to ~+5% — comfortably above the 3%
+        activation. The position retraces to +5% (close 52500) and closes there."""
         from backend.services.backtest_engine import BacktestEngine
 
         engine = BacktestEngine()
@@ -395,25 +456,56 @@ class TestTrailingProfit:
         signals = [_make_signal()]
 
         base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        # Price rises past 3% (activates trailing), peaks, then drops 50% from peak
+        # Flat entry bar (no look-ahead), rise to a +10% peak, then retrace to +5%
+        # (still above the 3% activation) where per_unit < peak*0.5 → CLOSE.
         klines = {"BTCUSDT": [
-            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
-            # +2% (not yet activated)
-            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 51100.0, "low": 50000.0, "close": 51000.0, "volume": 100.0},
-            # +4% (activated! profit_pct=4 > threshold=3)
-            {"open_time": base_time + timedelta(minutes=10), "open": 51000.0, "high": 52100.0, "low": 51000.0, "close": 52000.0, "volume": 100.0},
-            # +6% peak
-            {"open_time": base_time + timedelta(minutes=15), "open": 52000.0, "high": 53100.0, "low": 52000.0, "close": 53000.0, "volume": 100.0},
-            # Pullback — profit drops but not yet 50% from peak
-            {"open_time": base_time + timedelta(minutes=20), "open": 53000.0, "high": 53000.0, "low": 51800.0, "close": 52000.0, "volume": 100.0},
-            # Further pullback — per_unit_pnl drops below 50% of peak → CLOSE
-            {"open_time": base_time + timedelta(minutes=25), "open": 52000.0, "high": 52000.0, "low": 50800.0, "close": 51000.0, "volume": 100.0},
+            {"open_time": base_time, "open": 50000.0, "high": 50000.0, "low": 50000.0, "close": 50000.0, "volume": 100.0},
+            # +4% (activates: profit_pct=4 > threshold=3)
+            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 52000.0, "low": 50000.0, "close": 52000.0, "volume": 100.0},
+            # +10% peak (per-unit peak from the high)
+            {"open_time": base_time + timedelta(minutes=10), "open": 52000.0, "high": 55000.0, "low": 52000.0, "close": 55000.0, "volume": 100.0},
+            # retrace to +4% — strictly below peak*0.5 (peak per-unit 5000 → half 2500;
+            # +4% close 52000 → per_unit 2000 < 2500) AND still above the 3% activation
+            # (profit_pct 4% >= 3%) → trigger fires here.
+            {"open_time": base_time + timedelta(minutes=15), "open": 55000.0, "high": 55000.0, "low": 52000.0, "close": 52000.0, "volume": 100.0},
         ]}
 
         result = engine.run(config, signals, klines)
         assert len(result.trades) >= 1
         assert result.trades[0]["close_reason"] == "trailing_profit"
         assert result.trades[0]["pnl"] > 0  # still profitable (just less than peak)
+
+    def test_trailing_does_not_close_below_activation(self):
+        """Production parity: a position that retraces BELOW the activation threshold
+        is NOT trailing-closed — production `continue`s without checking the trigger
+        (close_rule_evaluator: `if profit_pct < activation_pct: continue`). It rides
+        until upnl<=0 or rises back above activation. The prior backtest bug closed it
+        the moment per_unit dropped below peak*0.5 even while below activation."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            trailing_profit_pct=3.0, take_profit_pct=500.0, stop_loss_pct=500.0, slippage_bps=0,
+        )
+        signals = [_make_signal()]
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        # Rise to +6% peak, then retrace to +2% (BELOW the 3% activation). per_unit at
+        # +2% is below peak*0.5 (peak ~+6% → half ~+3%), so the BUGGY code would close
+        # "trailing_profit" here. Production holds → no trailing close this window.
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50000.0, "low": 50000.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 52000.0, "low": 50000.0, "close": 52000.0, "volume": 100.0},
+            # +6% peak
+            {"open_time": base_time + timedelta(minutes=10), "open": 52000.0, "high": 53000.0, "low": 52000.0, "close": 53000.0, "volume": 100.0},
+            # retrace to +2% (below 3% activation) — must NOT trailing-close
+            {"open_time": base_time + timedelta(minutes=15), "open": 53000.0, "high": 53000.0, "low": 51000.0, "close": 51000.0, "volume": 100.0},
+            # stays at +2% to end of data
+            {"open_time": base_time + timedelta(minutes=20), "open": 51000.0, "high": 51000.0, "low": 51000.0, "close": 51000.0, "volume": 100.0},
+        ]}
+        result = engine.run(config, signals, klines)
+        # The only close is the end-of-data force-close, NOT a trailing_profit.
+        trailing_closes = [t for t in result.trades if t.get("close_reason") == "trailing_profit"]
+        assert len(trailing_closes) == 0, "must not trailing-close below activation"
 
     def test_trailing_not_activated_when_in_loss(self):
         """Trailing does NOT activate when upnl <= 0 (even if price moved far in abs terms)."""

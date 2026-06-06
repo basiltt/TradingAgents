@@ -126,6 +126,36 @@ class TestBacktestCreateRequest:
         assert req.target_goal_value == 10.0
 
 
+    def test_close_on_profit_requires_target_goal_value(self):
+        """close_on_profit_pct without target_goal_value must be REJECTED — production
+        gates close_on_profit on `close_pct and target_goal` and the live request schema
+        requires the goal value. The effective threshold is
+        (close_on_profit_pct/100)·target_goal_value, undefined without the goal."""
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        with pytest.raises(ValidationError):
+            BacktestCreateRequest(
+                starting_capital=10000.0,
+                date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+                scan_source=ScanSource(mode="date_range"),
+                close_on_profit_pct=50.0,  # no target_goal_value → invalid
+            )
+
+    def test_close_on_profit_with_target_goal_value_accepted(self):
+        """close_on_profit_pct WITH target_goal_value is valid."""
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        req = BacktestCreateRequest(
+            starting_capital=10000.0,
+            date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+            scan_source=ScanSource(mode="date_range"),
+            close_on_profit_pct=50.0,
+            target_goal_value=10.0,
+        )
+        assert req.close_on_profit_pct == 50.0
+        assert req.target_goal_value == 10.0
+
+
 class TestScanSource:
     """Test ScanSource validation."""
 

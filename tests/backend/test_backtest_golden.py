@@ -550,9 +550,12 @@ class TestGoldenScenarios:
         exact-reconciliation guard the other close rules get."""
         # effective threshold = (close_on_profit_pct/100) * target_goal_value
         #                     = (5/100) * 100 = 5.0  → fires at +5% cycle equity.
+        # target_goal_value is now REQUIRED with close_on_profit_pct (production parity:
+        # the threshold is undefined without it), so set it explicitly to 100.
         # A long at lev 10 / 10% capital holds 0.2 BTC; a ~$2.5k price rise yields
         # ~+$500 (>5% of 10k) before the wide 500% TP (needs +50% price) is reached.
-        cfg = _config(take_profit_pct=500.0, stop_loss_pct=500.0, close_on_profit_pct=5.0)
+        cfg = _config(take_profit_pct=500.0, stop_loss_pct=500.0,
+                      close_on_profit_pct=5.0, target_goal_value=100.0)
         result = BacktestEngine().run(cfg, [_signal()], _rising_klines())
         assert len(result.trades) == 1
         assert result.trades[0]["close_reason"] == "close_on_profit"

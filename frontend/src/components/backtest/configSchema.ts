@@ -111,6 +111,18 @@ export const backtestConfigSchema = z
       message: "Breakeven timeout must be less than max duration",
       path: ["breakeven_timeout_hours"],
     },
+  )
+  .refine(
+    // close_on_profit_pct requires target_goal_value (backend + live-trading parity:
+    // the effective threshold is (close_on_profit_pct/100)·target_goal_value, so the
+    // goal value must be set, or the rule has no defined trigger level).
+    (c) =>
+      c.close_on_profit_pct == null ||
+      (c.target_goal_value != null && c.target_goal_value > 0),
+    {
+      message: "Close on Profit requires a Goal Value",
+      path: ["target_goal_value"],
+    },
   );
 
 export type BacktestConfigFormValues = z.input<typeof backtestConfigSchema>;

@@ -605,6 +605,24 @@ class TestRound4Metrics:
         assert m["cagr"] is not None
         assert abs(m["cagr"] - 45.0) < 0.5  # ~45%, uncapped
 
+    def test_cagr_sub_day_span_is_none_not_fabricated(self):
+        """A modest gain over a sub-day span must report CAGR=None, NOT a giant
+        annualized number. Annualizing a +5% move over 6 hours would project it over
+        365/0.25 days → a multi-million-percent 'growth rate' that misleads. CAGR is
+        only meaningful over multi-day horizons; below a day it is N/A. (calmar, which
+        divides by CAGR, must then also be None.)"""
+        from backend.services.backtest_metrics import compute_all_metrics
+        start = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+        end = start + timedelta(hours=6)
+        equity = [
+            {"ts": start, "equity": 10000.0, "drawdown_pct": 0.0},
+            {"ts": end, "equity": 10500.0, "drawdown_pct": 0.0},  # +5% in 6h
+        ]
+        trades = [_make_trade(pnl=500.0, entry_time=start, exit_time=end)]
+        m = compute_all_metrics(trades, equity, {"starting_capital": 10000.0})
+        assert m["cagr"] is None, "sub-day CAGR must be N/A, not an annualized fabrication"
+        assert m["calmar"] is None
+
     def test_max_run_up(self):
         from backend.services.backtest_metrics import compute_run_up
         base = datetime(2026, 1, 1, tzinfo=timezone.utc)
