@@ -126,8 +126,8 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
   const [activeTab, setActiveTab] = React.useState("overview");
 
   // Trades are fetched lazily — once the run is completed AND the user opens a
-  // tab that needs them (Trades or Analysis). Avoids parsing up to 1000 rows for
-  // tabs that may never open.
+  // tab that needs them (Trades or Analysis). Avoids parsing up to TRADES_PAGE_LIMIT
+  // rows for tabs that may never open.
   const needsTrades = activeTab === "trades" || activeTab === "analysis";
   const tradesQuery = useQuery({
     queryKey: ["backtest", runId, "trades"],
