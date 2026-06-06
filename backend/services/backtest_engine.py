@@ -206,22 +206,49 @@ class BacktestEngine:
             # scan that carries open positions (e.g. ~capital_pct% per carried
             # position), breaking the <1% deviation requirement. Clamp to >= 0 so a
             # negative available balance can't produce negative position sizes.
+            # Refresh the per-scan AVAILABLE balance, mirroring production's
+            # totalAvailableBalance = totalWalletBalance + unrealised_pnl − initial_margin.
+            # Both the new-position sizing basis AND the equity-rule reference derive
+            # from this SAME value in production (base_capital), so compute it once and
+            # feed both. Three components:
+            #   • wallet_balance ≈ totalWalletBalance (margin is never deducted here,
+            #     only entry fees),
+            #   • carried_upnl = marked-to-market unrealised PnL of still-open positions
+            #     (production's +totalPerpUPL term — omitting it over/under-states the
+            #     basis by the carried uPnL on every scan that carries a position),
+            #   • locked_margin = Σ entry-time initial margin of open positions.
+            # The mark price is the candle at/just-before current_time (the scan
+            # timestamp) — the same information production reads as the live mark at
+            # scan start, so there is no look-ahead. Clamp to >= 0 so a depleted
+            # available balance can't produce negative sizes or references.
+            from backend.services.trading_rules import compute_unrealized_pnl as _cu
+            carried_upnl = 0.0
+            for _p in state.open_positions:
+                _ks = klines.get(_p.symbol, [])
+                _mark = _p.entry_price
+                for _k in _ks:
+                    if _k["open_time"] <= current_time:
+                        _mark = _k["close"]
+                    else:
+                        break
+                carried_upnl += _cu(_p.entry_price, _mark, _p.qty, _p.side)
             locked_margin = sum(p.locked_margin for p in state.open_positions)
-            state.sizing_capital = max(0.0, state.wallet_balance - locked_margin)
+            available_balance = max(0.0, state.wallet_balance + carried_upnl - locked_margin)
+            state.sizing_capital = available_balance
 
-            # Re-anchor the equity-rule reference EVERY executed scan, to the SAME
-            # available-balance basis as sizing. Production builds a fresh
-            # AutoTradeExecutor per scan and recreates the EQUITY_DROP/RISE rule each
-            # scan with reference_value = totalAvailableBalance (wallet − locked
-            # margin) — it does NOT preserve a prior cycle's reference while positions
-            # carry over (the only preservation case is skip_if_positions_open=True
-            # with an open book, which early-continues above before reaching here).
-            # The evaluated equity (wallet + unrealized PnL) already mirrors production's
-            # totalEquity, so matching the reference to totalAvailableBalance makes
-            # equity_drop / close_on_profit fire at the same level as live trading.
-            # On an empty book locked=0 → this reduces to the full wallet (the prior
-            # first-open seed value), so single-cycle behaviour is unchanged.
-            state.cycle_start_equity = state.sizing_capital
+            # Re-anchor the equity-rule reference EVERY executed scan to that same
+            # available balance. Production builds a fresh AutoTradeExecutor per scan
+            # and recreates the EQUITY_DROP/RISE rule each scan with reference_value =
+            # totalAvailableBalance — it does NOT preserve a prior cycle's reference
+            # while positions carry over (the only preservation case is
+            # skip_if_positions_open=True with an open book, which early-continues
+            # above before reaching here). The evaluated equity (wallet + unrealized
+            # PnL) mirrors production's totalEquity, so anchoring the reference to
+            # totalAvailableBalance makes equity_drop / close_on_profit fire at the
+            # same level as live trading. On an empty book (no carried positions)
+            # carried_upnl=0 and locked=0 → this reduces to the full wallet, so
+            # single-cycle behaviour is unchanged.
+            state.cycle_start_equity = available_balance
 
             # Process signals through filter chain
             if execution_mode == "batch":

@@ -318,6 +318,59 @@ class TestSizingBasisAvailableBalance:
         # Hard upper bound: must be well below the full-wallet size (~6.66).
         assert eth["qty"] < 6.0
 
+    def test_sizing_basis_includes_carried_unrealized_pnl(self):
+        """The per-scan available balance must mark carried positions to market —
+        production's totalAvailableBalance = wallet + unrealised_pnl − initial_margin,
+        so a carried WINNER raises the basis (and a loser lowers it). Both the new
+        position's size AND the equity-rule reference derive from this same value.
+
+        Regression guard: the basis previously used wallet − locked_margin only,
+        omitting the +unrealised_pnl term, so every scan carrying a position with
+        non-zero uPnL sized (and referenced) off the wrong balance.
+
+        Scenario: scan-1 opens BTC at 50000; it rises to 50750 by scan-2 (a carried
+        WINNER worth +$300 unrealised: qty 0.4 × $750). scan-2 then opens ETH. With
+        leverage 5 / capital_pct 40% and BTC margin = $4000, the available basis is
+        wallet 10000 + carried uPnL 300 − margin 4000 = $6300 (NOT $6000). ETH sizes
+        off 6300 → qty = 40% × 6300 × 5 / 3000 = 4.2 (the bug, off 6000, gives 4.0).
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            leverage=5, capital_pct=40.0,
+            take_profit_pct=500.0, stop_loss_pct=500.0,  # wide → BTC stays open
+            skip_if_positions_open=False, slippage_bps=0, fee_rate_pct=0.0, max_trades=999,
+        )
+
+        scan1 = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan2 = datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, scan_id="scan-1", signal_time=scan1, analysis_price=50000.0),
+            _make_signal(ticker="ETHUSDT", id=2, scan_id="scan-2", signal_time=scan2, analysis_price=3000.0),
+        ]
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        btc, eth = [], []
+        span = (scan2 - scan1).total_seconds()
+        for i in range(600):
+            t = base + timedelta(minutes=i * 5)
+            # BTC rises linearly 50000 → 50750 by scan-2, then holds (a carried winner).
+            px = 50000.0 + 750.0 * min(1.0, (t - scan1).total_seconds() / span)
+            btc.append({"open_time": t, "open": px, "high": px + 10, "low": px - 10, "close": px, "volume": 100.0})
+            eth.append({"open_time": t, "open": 3000.0, "high": 3001.0, "low": 2999.0, "close": 3000.0, "volume": 100.0})
+        klines = {"BTCUSDT": btc, "ETHUSDT": eth}
+
+        result = engine.run(config, signals, klines)
+        eth_trade = [t for t in result.trades if t["symbol"] == "ETHUSDT"][0]
+        # ETH sized off available = wallet 10000 + carried uPnL 300 − BTC margin 4000
+        # = 6300 → qty 4.2. The bug (omitting +uPnL → 6000) would give 4.0.
+        assert eth_trade["qty"] == pytest.approx(4.2, rel=1e-3), (
+            f"ETH qty {eth_trade['qty']} — the available basis did not include the "
+            "carried position's unrealised PnL (production's +totalPerpUPL term)"
+        )
+        assert eth_trade["qty"] > 4.1  # strictly above the no-uPnL size (4.0)
+
 
 class TestImmediateModeFillToMaxTrades:
     """Immediate mode must honor fill_to_max_trades with a relaxed backfill pass,

@@ -111,14 +111,16 @@ The engine processes scan results chronologically, applying the full auto-trade 
 
 **Equity reference for EQUITY_RISE/DROP/SMART rules:**
 - `ref` = cycle_start_equity, re-anchored EVERY (non-skipped) scan to the AVAILABLE
-  balance = `wallet_balance − Σ(locked_margin of open positions)`. This mirrors
-  production, which rebuilds the executor each scan and sets the EQUITY_DROP/RISE
-  `reference_value = totalAvailableBalance`. The evaluated equity is
-  `wallet_balance + Σ(unrealized_pnl)` (≈ production `totalEquity`), so a carried
-  position's locked margin lowers the reference but its unrealized PnL still counts in
-  equity — matching live drawdown semantics. On an empty book (no locked margin) the
-  reference reduces to the full wallet. The skip_if_positions_open=True path (open book)
-  preserves the prior anchor, matching production's only no-recreate case.
+  balance = `wallet_balance + Σ(unrealised_pnl of open positions) − Σ(locked_margin)`.
+  This mirrors production's `totalAvailableBalance = totalWalletBalance + totalPerpUPL
+  − totalInitialMargin`, which production reads each scan and uses as the
+  EQUITY_DROP/RISE `reference_value` AND as the new-position sizing basis (so the
+  backtest derives both from this one value too). The carried unrealised PnL is marked
+  to the candle at/just-before the scan timestamp (no look-ahead). The evaluated equity
+  is `wallet_balance + Σ(unrealized_pnl)` (≈ production `totalEquity`). On an empty book
+  (no carried positions) uPnL=0 and locked=0 → the reference reduces to the full wallet.
+  The skip_if_positions_open=True path (open book) preserves the prior anchor, matching
+  production's only no-recreate case.
 - For EQUITY_DROP_PCT_SMART: ref resets to current equity immediately after closing losing positions
 
 **Price drift check:**
