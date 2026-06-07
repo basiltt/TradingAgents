@@ -53,6 +53,25 @@ async def run_sweep_inproc(
             {"config": cfg, "config_hash": config_hash(cfg), "metrics": metrics}
         )
 
+    return _rank_and_crown(
+        results, total_combos=len(combos), objective=objective,
+        constraints=constraints, baseline_metrics=baseline_metrics,
+        min_trades=min_trades, min_uplift_pct=min_uplift_pct,
+    )
+
+
+def _rank_and_crown(
+    results: list[dict[str, Any]],
+    *,
+    total_combos: int,
+    objective: str,
+    constraints: dict[str, Any] | None,
+    baseline_metrics: dict[str, Any] | None,
+    min_trades: int,
+    min_uplift_pct: float,
+) -> dict[str, Any]:
+    """Shared rank + winner-crown tail used by the in-process AND pooled paths
+    (identical ranking/robustness semantics regardless of how combos executed)."""
     ranked = rank_results(results, objective=objective, constraints=constraints)
 
     winner: Optional[dict[str, Any]] = None
@@ -96,10 +115,59 @@ async def run_sweep_inproc(
         "ranked": ranked,
         "winner": winner,
         "keep_current": keep_current,
-        "total_combos": len(combos),
+        "total_combos": total_combos,
         "objective": objective,
         "fidelity_caveat": (
             "Backtest is a candle-resolution simulation (~1% deviation from live; "
             "in-sample only for MVP). Treat the projected edge as approximate."
         ),
     }
+
+
+async def run_sweep_pooled(
+    *,
+    space: dict[str, list[Any]],
+    base: dict[str, Any],
+    strategy: str,
+    objective: str,
+    signals: list[dict[str, Any]],
+    snapshot: dict[str, list[dict[str, Any]]],
+    instrument_info: dict[str, Any],
+    constraints: dict[str, Any] | None = None,
+    baseline_metrics: dict[str, Any] | None = None,
+    n: int = 100,
+    seed: int = 0,
+    min_trades: int = 30,
+    min_uplift_pct: float = 5.0,
+    max_workers: int | None = None,
+) -> dict[str, Any]:
+    """Run a sweep with combo CPU work offloaded to a spawn ProcessPool so the
+    live event loop is never CPU-starved (FR-036). The PARENT collects each
+    worker's metrics (workers are DB-less). Falls back to nothing here — the
+    caller chooses pooled vs in-process via supports_process_pool().
+    """
+    import asyncio
+
+    from backend.mcp.tools.optimizer.runner_pool import _run_combo, make_sweep_pool
+
+    combos = generate_combos(space, strategy=strategy, base=base, n=n, seed=seed)
+    loop = asyncio.get_running_loop()
+    pool = make_sweep_pool(max_workers=max_workers)
+    results: list[dict[str, Any]] = []
+    try:
+        futures = [
+            loop.run_in_executor(pool, _run_combo, cfg, signals, snapshot, instrument_info)
+            for cfg in combos
+        ]
+        metrics_list = await asyncio.gather(*futures, return_exceptions=True)
+        for cfg, metrics in zip(combos, metrics_list):
+            m = metrics if isinstance(metrics, dict) else {}
+            results.append({"config": cfg, "config_hash": config_hash(cfg), "metrics": m})
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    return _rank_and_crown(
+        results, total_combos=len(combos), objective=objective,
+        constraints=constraints, baseline_metrics=baseline_metrics,
+        min_trades=min_trades, min_uplift_pct=min_uplift_pct,
+    )

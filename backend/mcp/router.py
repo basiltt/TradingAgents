@@ -72,12 +72,31 @@ async def patch_config(request: Request, body: ConfigPatch) -> dict[str, Any]:
 @router.post("/mcp/enable")
 async def enable(request: Request) -> dict[str, Any]:
     mgr = _manager(request)
+    from backend.mcp.core.dbfloor import compute_mcp_acquire_cap, db_budget_ok
     from backend.mcp.core.preflight import run_preflight
     from backend.mcp.core.registry import ToolGroup
 
     cfg = await mgr.config_repo.get()
     optimizer_on = ToolGroup.OPTIMIZER.value in cfg.enabled_groups
-    result = run_preflight(cfg, schema_version=44, optimizer_enabled=optimizer_on)
+
+    # Compute the real DB-pool budget (FR-035): reserve a live floor for the
+    # trading loop; the MCP cap is pool_max - floor. Enable is refused if the
+    # floor + MCP cap would exceed the pool.
+    db = getattr(request.app.state, "db", None)
+    pool = getattr(db, "pool", None) if db is not None else None
+    pool_max = getattr(pool, "_maxsize", 0) or getattr(pool, "maxsize", 0) or 10
+    live_floor = max(2, int(pool_max * 0.4))  # measured-ish reserve for trading
+    mcp_cap = compute_mcp_acquire_cap(pool_max=pool_max, live_floor=live_floor)
+    budget_ok = db_budget_ok(pool_max=pool_max, live_floor=live_floor, mcp_cap=mcp_cap) and mcp_cap >= 1
+
+    # Live-SLI presence: the breaker needs live signals when the optimizer is on.
+    # Absent → fail-closed (preflight refuses) unless a real SLI source is wired.
+    slis_present = getattr(request.app.state, "mcp_live_slis", None) is not None or not optimizer_on
+
+    result = run_preflight(
+        cfg, schema_version=44, optimizer_enabled=optimizer_on,
+        db_budget_ok=budget_ok, live_slis_present=slis_present,
+    )
     if not result.ok:
         raise HTTPException(422, detail={"preflight_failed": result.failed_invariant})
     await mgr.enable()

@@ -115,7 +115,8 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
     if runner is None:
         raise MCPServiceUnavailableError("optimizer execution backend unavailable")
 
-    from backend.mcp.tools.optimizer.orchestrator import run_sweep_inproc
+    from backend.mcp.tools.optimizer.orchestrator import run_sweep_inproc, run_sweep_pooled
+    from backend.mcp.tools.optimizer.runner_pool import supports_process_pool
 
     # Load the historical signals + klines + instrument params ONCE for the
     # window, then replay every combo against that in-sample snapshot. When a
@@ -150,20 +151,45 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
             baseline = None
 
     try:
-        result = await run_sweep_inproc(
-            runner=runner,
-            space=args.space,
-            base=base_cfg,
-            strategy=args.strategy,
-            objective=args.objective,
-            constraints=args.constraints,
-            signals=signals,
-            snapshot=snapshot,
-            instrument_info=instrument_info,
-            baseline_metrics=baseline,
-            n=args.n,
-            seed=args.seed,
+        # Offload combo CPU work to a spawn ProcessPool when supported (POSIX) so
+        # the live event loop is never starved (FR-036). On Windows / no-pool,
+        # fall back to the in-process path — same pure engine. The pooled path
+        # needs a real (picklable) runner's engine, which lives in runner_pool;
+        # when the caller injected a non-real runner (tests), stay in-process.
+        use_pool = (
+            supports_process_pool()
+            and bool(signals or snapshot)
+            and hasattr(runner, "load_inputs")  # the real BacktestService
         )
+        if use_pool:
+            result = await run_sweep_pooled(
+                space=args.space,
+                base=base_cfg,
+                strategy=args.strategy,
+                objective=args.objective,
+                constraints=args.constraints,
+                signals=signals,
+                snapshot=snapshot,
+                instrument_info=instrument_info,
+                baseline_metrics=baseline,
+                n=args.n,
+                seed=args.seed,
+            )
+        else:
+            result = await run_sweep_inproc(
+                runner=runner,
+                space=args.space,
+                base=base_cfg,
+                strategy=args.strategy,
+                objective=args.objective,
+                constraints=args.constraints,
+                signals=signals,
+                snapshot=snapshot,
+                instrument_info=instrument_info,
+                baseline_metrics=baseline,
+                n=args.n,
+                seed=args.seed,
+            )
     except ComboGenerationError as exc:
         raise MCPValidationError(str(exc)) from exc
 
