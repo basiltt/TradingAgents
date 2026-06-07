@@ -32,6 +32,26 @@ describe("computeConcentration", () => {
     expect(computeConcentration(accounts).warn).toBe(false); // 50%
   });
 
+  it("does not warn at exactly 70% (boundary is strictly > 70%)", () => {
+    // 7 of 10 trend = 0.70 exactly -> must NOT warn (AC-014 says > threshold).
+    const accounts = [
+      ...Array.from({ length: 7 }, (_, i) => acct(`t${i}`)),
+      ...Array.from({ length: 3 }, (_, i) => acct(`m${i}`, "mean_reversion")),
+    ];
+    const c = computeConcentration(accounts);
+    expect(c.fraction).toBeCloseTo(0.7, 5);
+    expect(c.warn).toBe(false);
+  });
+
+  it("warns just above 70%", () => {
+    // 8 of 11 trend = 0.7272 -> warn.
+    const accounts = [
+      ...Array.from({ length: 8 }, (_, i) => acct(`t${i}`)),
+      ...Array.from({ length: 3 }, (_, i) => acct(`m${i}`, "mean_reversion")),
+    ];
+    expect(computeConcentration(accounts).warn).toBe(true);
+  });
+
   it("treats missing cohort as trend", () => {
     expect(computeConcentration([acct("1")]).trend).toBe(1);
   });

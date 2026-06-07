@@ -503,8 +503,10 @@ class AutoTradeConfig(BaseModel):
     mr_capital_pct: float = Field(default=2.0, gt=0, le=100)   # conservative default
     mr_leverage: int = Field(default=10, ge=1, le=125)        # conservative default
     mr_max_trades: int = Field(default=2, ge=1, le=999)       # conservative default
-    # F3 — Strategy-Cohort
-    strategy_cohort: Literal["trend", "mean_reversion"] = "trend"
+    # F3 — Strategy-Cohort. None = "inherit the account's stored cohort" (the
+    # tri-state that lets an explicit per-scan "trend" be a real override, distinct
+    # from "didn't choose"). Resolved to a concrete value in start_scan.
+    strategy_cohort: Optional[Literal["trend", "mean_reversion"]] = None
     # common / classifier-tuning
     regime_staleness_minutes: int = Field(default=30, ge=5, le=240)
     regime_volatile_atr: float = Field(default=2.0, gt=0, le=10)

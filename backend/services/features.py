@@ -38,16 +38,38 @@ def feature_for_cohort(cohort: str) -> str:
 def resolve_cohort(scan_cohort: Optional[str], stored_cohort: Optional[str]) -> str:
     """Resolve an account's effective cohort for a scan (F3 precedence, FR-040).
 
-    Precedence: an explicit per-scan override wins; otherwise the stored account
-    field; otherwise the default. Because the per-scan ``AutoTradeConfig.strategy_cohort``
-    defaults to "trend" (indistinguishable from an untouched form), we treat the
-    per-scan value as an override ONLY when it escalates to a non-default cohort.
-    A stored "mean_reversion" therefore drives routing for a fleet assigned via the
-    roster UI, while a per-scan explicit "mean_reversion" still works. A stored value
-    can never silently override a per-scan non-default choice.
+    Tri-state precedence: an EXPLICIT per-scan choice wins; else the stored account
+    field; else the default. The per-scan ``AutoTradeConfig.strategy_cohort`` is
+    ``None`` when the form was left to inherit, so any non-None value — INCLUDING an
+    explicit "trend" — is a real override (this is what makes "run trend this scan
+    even though the account is stored mean_reversion" expressible). A stored cohort
+    drives routing only when the scan defers (None). Invalid values are ignored.
     """
-    if scan_cohort and scan_cohort != DEFAULT_COHORT and scan_cohort in COHORTS:
+    if scan_cohort is not None and scan_cohort in COHORTS:
         return scan_cohort
     if stored_cohort and stored_cohort in COHORTS:
         return stored_cohort
     return DEFAULT_COHORT
+
+
+# Triggers on which the one-time F1 session-filter override is honoured (FR-066/SD20).
+# Deliberately excludes "scheduled" so a saved schedule can't carry a persistent bypass.
+SESSION_OVERRIDE_TRIGGERS: frozenset[str] = frozenset({"manual", "run_now"})
+
+
+def apply_session_override(config: dict, auto_configs: list, trigger: str) -> int:
+    """Stamp the one-time F1 session-filter override onto eligible per-scan configs.
+
+    Honoured ONLY on a manual/run-now scan (FR-066). Marks each F1-enabled config so
+    its gates bypass for THIS scan only (non-persistent — the flag rides the per-scan
+    config copy). Returns the count stamped. Single source of truth shared by start_scan
+    and its tests, so the scheduled-bypass guard can't drift. In-place; skips non-dicts.
+    """
+    if not config.get("session_filter_override") or trigger not in SESSION_OVERRIDE_TRIGGERS:
+        return 0
+    n = 0
+    for cfg in auto_configs:
+        if isinstance(cfg, dict) and cfg.get("regime_filter_enabled"):
+            cfg["_session_filter_override_active"] = True
+            n += 1
+    return n

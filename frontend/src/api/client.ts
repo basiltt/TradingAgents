@@ -305,8 +305,9 @@ export interface AutoTradeConfig {
   mr_capital_pct?: number;
   mr_leverage?: number;
   mr_max_trades?: number;
-  // F3 — Strategy-Cohort
-  strategy_cohort?: "trend" | "mean_reversion";
+  // F3 — Strategy-Cohort. null/undefined = inherit the account's stored cohort;
+  // an explicit value (incl "trend") overrides for this scan.
+  strategy_cohort?: "trend" | "mean_reversion" | null;
   // common / classifier-tuning
   regime_staleness_minutes?: number;
   regime_volatile_atr?: number;

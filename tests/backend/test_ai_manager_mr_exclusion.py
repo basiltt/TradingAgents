@@ -109,3 +109,122 @@ async def test_get_open_mr_symbols_failopen():
             raise RuntimeError("db down")
     repo = AIManagerRepository(_BoomPool())
     assert await repo.get_open_mr_symbols("acct1") == set()
+
+
+# --- _build_graph_state refresh: retain-last-known on query error (fail-closed) -----
+
+class _FakeRepo:
+    def __init__(self, result=None, boom=False):
+        self._result = result if result is not None else set()
+        self._boom = boom
+        self.calls = 0
+
+    async def get_open_mr_symbols(self, account_id):
+        self.calls += 1
+        if self._boom:
+            raise RuntimeError("db down")
+        return set(self._result)
+
+
+class _FakeService:
+    def __init__(self, repo):
+        self._repo = repo
+
+
+async def _call_mr_refresh(task):
+    """Run only the FR-052 refresh block of _build_graph_state (the part under test)."""
+    try:
+        task._mr_symbols = await task._service._repo.get_open_mr_symbols(task._account_id)
+        task._mr_symbols_primed = True
+    except Exception:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_refresh_updates_mr_symbols():
+    t = _task()
+    t._account_id = "acct1"
+    t._mr_symbols_primed = False
+    t._service = _FakeService(_FakeRepo({"ETHUSDT"}))
+    await _call_mr_refresh(t)
+    assert t._mr_symbols == {"ETHUSDT"}
+    assert t._mr_symbols_primed is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_retains_last_known_on_error():
+    # A transient query error must NOT blank the set (fail-closed: exclusion stays).
+    t = _task()
+    t._account_id = "acct1"
+    t._mr_symbols = {"ETHUSDT"}      # last-known
+    t._mr_symbols_primed = True
+    t._service = _FakeService(_FakeRepo(boom=True))
+    await _call_mr_refresh(t)
+    assert t._mr_symbols == {"ETHUSDT"}  # retained, not emptied
+
+
+# --- emergency close excludes MR positions (+ cold-start prime) ---------------------
+
+def _emergency_task(positions, *, mr_symbols=None, primed=True, repo=None):
+    t = object.__new__(AIManagerTask)
+    t._log = logging.getLogger("test.ai_emergency")
+    t._account_id = "acct1"
+    t._killed = False
+    t._emergency_in_progress = False
+    t._emergency_cooldown_until = 0.0
+    t._emergency_closed_symbols = {}
+    t._mr_symbols = set(mr_symbols or set())
+    t._mr_symbols_primed = primed
+    t._service = _FakeService(repo or _FakeRepo(set()))
+    t._ws_buffer = {
+        "positions": positions,
+        "equity": 1000.0,
+        "_emergency_ref_equity": 2000.0,  # 50% drop -> equity-drop trigger
+    }
+
+    class _Cfg:
+        emergency_close_enabled = True
+        dry_run = False
+        excluded_symbols: list = []
+        locked_positions: list = []
+        emergency_equity_drop_pct = 10.0
+        emergency_pnl_velocity_pct = 5.0
+    t._config = _Cfg()
+
+    closed = {}
+
+    async def _fake_batch_close(symbols, reason):
+        closed["symbols"] = list(symbols)
+        closed["reason"] = reason
+        return True
+    t._execute_emergency_batch_close = _fake_batch_close
+    t._post_emergency_close = lambda *a, **k: None
+    return t, closed
+
+
+@pytest.mark.asyncio
+async def test_emergency_close_excludes_mr_position():
+    # A losing MR position must NOT be emergency-closed (F2 owns MR exits).
+    positions = [
+        {"symbol": "BTCUSDT", "unrealisedPnl": "-50"},  # trend loser -> close
+        {"symbol": "ETHUSDT", "unrealisedPnl": "-80"},  # MR loser -> MUST be spared
+    ]
+    t, closed = _emergency_task(positions, mr_symbols={"ETHUSDT"})
+    await t._check_emergency_close()
+    assert closed.get("symbols") == ["BTCUSDT"]  # MR symbol excluded
+
+
+@pytest.mark.asyncio
+async def test_emergency_cold_start_primes_mr_symbols():
+    # If an emergency fires before the first eval (primed=False, set empty), it must
+    # prime _mr_symbols from the repo so the MR exclusion still holds on the first tick.
+    positions = [
+        {"symbol": "BTCUSDT", "unrealisedPnl": "-50"},
+        {"symbol": "ETHUSDT", "unrealisedPnl": "-80"},
+    ]
+    repo = _FakeRepo({"ETHUSDT"})
+    t, closed = _emergency_task(positions, mr_symbols=set(), primed=False, repo=repo)
+    await t._check_emergency_close()
+    assert repo.calls == 1                      # primed from the repo
+    assert closed.get("symbols") == ["BTCUSDT"]  # MR still excluded on cold start
+

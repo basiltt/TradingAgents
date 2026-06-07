@@ -50,7 +50,7 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   mr_short_enabled: true,
   mr_long_enabled: false,
   mr_long_ack_requested: false,
-  strategy_cohort: "trend",
+  strategy_cohort: null,
 };
 
 const SEGMENT_CONTAINER_CLASS = "grid grid-cols-2 gap-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 shadow-[var(--neu-shadow-inset)] border-none";

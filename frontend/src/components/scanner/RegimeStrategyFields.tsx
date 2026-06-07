@@ -140,19 +140,30 @@ export function RegimeStrategyFields({ config, onChange }: Props) {
       {/* ── F3: Strategy Cohort ── */}
       <div className="mb-3">
         <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Strategy cohort (F3)</Label>
-        <div className="mt-2 grid grid-cols-2 gap-1.5">
-          {(["trend", "mean_reversion"] as const).map((c) => (
-            <button key={c} type="button"
-              className={`min-h-9 rounded px-3 py-2 text-[11px] font-bold uppercase tracking-wider border-none ${
-                (config.strategy_cohort ?? "trend") === c
-                  ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
-                  : "text-[var(--neu-text-muted)]"
-              }`}
-              onClick={() => onChange({ strategy_cohort: c })}>
-              {c === "trend" ? "Trend" : "Mean-Reversion"}
-            </button>
-          ))}
+        <div className="mt-2 grid grid-cols-3 gap-1.5">
+          {([
+            [null, "Inherit"],
+            ["trend", "Trend"],
+            ["mean_reversion", "Mean-Rev"],
+          ] as const).map(([value, label]) => {
+            const selected = (config.strategy_cohort ?? null) === value;
+            return (
+              <button key={label} type="button"
+                className={`min-h-9 rounded px-2 py-2 text-[11px] font-bold uppercase tracking-wider border-none ${
+                  selected
+                    ? "bg-[var(--neu-surface-base)] text-[var(--neu-text-strong)] shadow-[var(--neu-shadow-raised-soft)]"
+                    : "text-[var(--neu-text-muted)]"
+                }`}
+                onClick={() => onChange({ strategy_cohort: value })}>
+                {label}
+              </button>
+            );
+          })}
         </div>
+        <p className="mt-1 text-[10px] leading-4 text-[var(--neu-text-muted)]">
+          Inherit uses the account's saved cohort (set in Accounts → Fleet). Pick Trend or
+          Mean-Rev to override just this scan.
+        </p>
       </div>
 
       {/* ── F2: Mean-Reversion Strategy ── */}

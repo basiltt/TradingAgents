@@ -17,7 +17,7 @@ def test_config_defaults_all_off():
     assert c.btc_vol_filter_enabled is False
     assert c.mean_reversion_enabled is False
     assert c.mr_long_enabled is False
-    assert c.strategy_cohort == "trend"
+    assert c.strategy_cohort is None  # tri-state default = inherit stored cohort
     # conservative MR defaults
     assert c.mr_capital_pct == 2.0
     assert c.mr_leverage == 10
@@ -57,7 +57,9 @@ def test_old_config_without_new_fields_loads():
     c = AutoTradeConfig(account_id="legacy", leverage=20, capital_pct=5)
     assert c.regime_filter_enabled is False
     assert c.mean_reversion_enabled is False
-    assert c.strategy_cohort == "trend"
+    # F3 tri-state: absent cohort is None ("inherit the account's stored cohort"),
+    # resolved to a concrete value at scan time.
+    assert c.strategy_cohort is None
 
 
 def test_field_bounds_reject_out_of_range():

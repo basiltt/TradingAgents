@@ -1176,7 +1176,9 @@ class AutoTradeExecutor:
 
         # ── Regime Multi-Strategy gates (all no-ops when no feature is enabled) ──
         ctx = self._scan_context
-        cohort = cfg.get("strategy_cohort", "trend")
+        # cohort is normally resolved to a concrete value in start_scan; coerce a
+        # missing/None (tri-state "inherit") to the safe default so routing is defined.
+        cohort = cfg.get("strategy_cohort") or "trend"
         # C5: a single coherent "MR account" rule — cohort says mean_reversion AND the
         # strategy is actually enabled. This couples strategy_cohort and
         # mean_reversion_enabled so neither (a) a trend account with a stray
@@ -1435,12 +1437,16 @@ class AutoTradeExecutor:
             state.executions.append(execution)
             state.existing_symbols.add(symbol)
             if mr_fade:
-                # FR-051: trade row now exists -> remove the pre-submit intent.
+                # FR-051: trade row now exists -> remove the pre-submit intent. Shield
+                # the delete so a cancellation HERE (e.g. scan cancel / wait_for timeout
+                # at this await) can't skip it and leave a stale intent that would later
+                # mislabel a different orphan on the same (account,symbol,side). The
+                # trade row already exists, so the intent is no longer needed.
                 try:
                     from backend.services import pending_intents as _pi
                     _db = getattr(self._accounts, "_db", None)
                     _mr_side = "Buy" if place_signal_direction == "long" else "Sell"
-                    await _pi.delete_intent(_db, account_id, symbol, _mr_side)
+                    await asyncio.shield(_pi.delete_intent(_db, account_id, symbol, _mr_side))
                 except Exception:
                     pass
             if mr_fade and self._close_svc and not state.mr_duration_rule_created:

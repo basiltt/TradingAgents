@@ -338,29 +338,33 @@ class ScannerService:
                 pass
 
     async def _resolve_account_cohorts(self, auto_configs: List[Dict[str, Any]]) -> None:
-        """Merge each account's STORED strategy_cohort into its per-scan config (F3/FR-040).
+        """Resolve each per-scan config's effective strategy_cohort (F3/FR-040).
 
-        Without this the fleet-roster bulk-assign (which writes trading_accounts.
-        strategy_cohort) would be inert: the executor only reads cfg["strategy_cohort"],
-        which defaults to "trend". Resolution precedence is per-scan override > stored
-        account field > default (see features.resolve_cohort). Fail-soft: a lookup error
-        leaves the per-scan value untouched (never downgrades a chosen cohort). Mutates
-        cfg in place — done once per scan, before routing/blacklist/context.
+        Tri-state: a None cfg cohort inherits the account's STORED
+        trading_accounts.strategy_cohort (so the fleet-roster bulk-assign actually
+        drives routing); an explicit per-scan value (incl "trend") overrides. Writes a
+        CONCRETE value back so the executor never sees None. One batched list_accounts()
+        lookup (not per-account get_account) so a default-off / trend-only fleet pays a
+        single query, not N. Fail-soft: on a lookup error each cfg keeps its own value
+        coerced to a concrete default. Mutates cfg in place, once per scan.
         """
         if not self._db:
+            # No DB to read stored cohorts — still coerce None -> default so the
+            # executor sees a concrete value.
+            from backend.services.features import DEFAULT_COHORT as _default_cohort
+            for cfg in auto_configs:
+                if isinstance(cfg, dict):
+                    cfg["strategy_cohort"] = cfg.get("strategy_cohort") or _default_cohort
             return
         from backend.services import features as _feat
+        try:
+            accounts = {a["id"]: a for a in await self._db.list_accounts()}
+        except Exception:
+            accounts = {}
         for cfg in auto_configs:
             if not isinstance(cfg, dict):
                 continue
-            acct_id = cfg.get("account_id")
-            if not acct_id:
-                continue
-            try:
-                account = await self._db.get_account(acct_id)
-            except Exception:
-                continue
-            stored = (account or {}).get("strategy_cohort")
+            stored = (accounts.get(cfg.get("account_id")) or {}).get("strategy_cohort")
             cfg["strategy_cohort"] = _feat.resolve_cohort(cfg.get("strategy_cohort"), stored)
 
     async def _set_executor_scan_context(self, executor, auto_configs: List[Dict[str, Any]]) -> None:
@@ -533,11 +537,8 @@ class ScannerService:
             # f1 before/after efficacy stats. Audit-logged for the operator trail.
             if config.get("session_filter_override") and _trigger in ("manual", "run_now"):
                 try:
-                    _n = 0
-                    for cfg in auto_configs:
-                        if isinstance(cfg, dict) and cfg.get("regime_filter_enabled"):
-                            cfg["_session_filter_override_active"] = True
-                            _n += 1
+                    from backend.services import features as _feat
+                    _n = _feat.apply_session_override(config, auto_configs, _trigger)
                     if _n:
                         logger.warning(
                             "f1_session_filter_override_engaged",

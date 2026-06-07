@@ -57,27 +57,49 @@ def test_vol_gate_also_bypassed_with_override():
     assert rf.gate_btc_vol(cfg, _ctx_vol(2.0)) is None
 
 
-# --- non-persistence / trigger gating (mirrors the start_scan stamping rule) ------
+# --- non-persistence / trigger gating (the REAL start_scan stamping helper) --------
+
+from backend.services.features import apply_session_override as _stamp_impl
+
 
 def _stamp(config, auto_configs, trigger):
-    """Mirror of the FR-066 stamping logic in ScannerService.start_scan."""
-    if config.get("session_filter_override") and trigger in ("manual", "run_now"):
-        for cfg in auto_configs:
-            if cfg.get("regime_filter_enabled"):
-                cfg["_session_filter_override_active"] = True
+    # Imports the REAL helper start_scan calls (no mirrored copy that could drift from
+    # the scheduled-bypass guard).
+    return _stamp_impl(config, auto_configs, trigger)
 
 
 def test_override_stamped_on_manual_scan():
     cfgs = [_f1_cfg()]
-    _stamp({"session_filter_override": True}, cfgs, "manual")
+    n = _stamp({"session_filter_override": True}, cfgs, "manual")
+    assert cfgs[0]["_session_filter_override_active"] is True
+    assert n == 1
+
+
+def test_override_stamped_on_run_now_scan():
+    cfgs = [_f1_cfg()]
+    _stamp({"session_filter_override": True}, cfgs, "run_now")
     assert cfgs[0]["_session_filter_override_active"] is True
 
 
 def test_override_ignored_on_scheduled_scan():
     # A saved schedule must NOT be able to carry a persistent bypass.
     cfgs = [_f1_cfg()]
-    _stamp({"session_filter_override": True}, cfgs, "scheduled")
+    n = _stamp({"session_filter_override": True}, cfgs, "scheduled")
     assert "_session_filter_override_active" not in cfgs[0]
+    assert n == 0
+
+
+def test_override_not_stamped_when_flag_absent():
+    cfgs = [_f1_cfg()]
+    _stamp({}, cfgs, "manual")
+    assert "_session_filter_override_active" not in cfgs[0]
+
+
+def test_override_skips_non_f1_configs():
+    cfgs = [{"regime_filter_enabled": False}]  # F1 off -> nothing to bypass
+    n = _stamp({"session_filter_override": True}, cfgs, "manual")
+    assert "_session_filter_override_active" not in cfgs[0]
+    assert n == 0
 
 
 def test_override_auto_reverts_next_scan():

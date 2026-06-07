@@ -108,6 +108,9 @@ class AIManagerTask:
         # FR-052/AC-015: symbols of open mean-reversion positions the AI manager must
         # NOT manage (F2 owns their exit). Refreshed from the trades table each eval.
         self._mr_symbols: set = set()
+        # True once _mr_symbols has been loaded at least once (eval or emergency prime),
+        # so an empty set is known-empty rather than not-yet-loaded (cold start).
+        self._mr_symbols_primed: bool = False
         self._is_hedge_mode: bool = False
         self._cleanup_task: Optional[asyncio.Task] = None
         # Event-driven evaluation trigger
@@ -1161,6 +1164,7 @@ class AIManagerTask:
         # empty set and the snapshot filter becomes a no-op.
         try:
             self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
+            self._mr_symbols_primed = True
         except Exception:
             self._log.debug("get_open_mr_symbols failed; retaining last-known MR set")
         episodic = []
@@ -1462,8 +1466,19 @@ class AIManagerTask:
         if not triggered:
             return False
 
-        # Determine which symbols to close based on trigger type
-        excluded = set(self._config.excluded_symbols or [])
+        # Determine which symbols to close based on trigger type.
+        # FR-052/AC-015: mean-reversion positions are EXCLUDED here too — the emergency
+        # fast-path bypasses the snapshot filter, so without this an MR position with
+        # negative UPnL would be force-closed, violating "F2 owns MR exits". _mr_symbols
+        # is refreshed on each eval; prime it here if a WS-driven emergency fires before
+        # the first eval (cold start) so the exclusion holds from the very first tick.
+        if self._mr_symbols is None or (not self._mr_symbols and not self._mr_symbols_primed):
+            try:
+                self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
+            except Exception:
+                pass
+            self._mr_symbols_primed = True
+        excluded = set(self._config.excluded_symbols or []) | set(self._mr_symbols)
         locked = set(self._config.locked_positions or [])
 
         if trigger_reason.startswith("equity_drop"):

@@ -24,19 +24,24 @@ def test_strategy_router_delegates_to_registry():
     assert feature_for("trend") == feat.feature_for_cohort("trend")
 
 
-# ── resolve_cohort precedence (per-scan override > stored > default) ──
+# ── resolve_cohort precedence (tri-state: explicit per-scan > stored > default) ──
 
-def test_stored_cohort_drives_routing_when_scan_is_default():
-    # The fleet-roster bug: account stored as mean_reversion, scan cfg left at default.
-    assert feat.resolve_cohort("trend", "mean_reversion") == "mean_reversion"
+def test_inherit_uses_stored_cohort():
+    # The fleet-roster case: account stored mean_reversion, scan defers (None) -> MR.
+    assert feat.resolve_cohort(None, "mean_reversion") == "mean_reversion"
+
+
+def test_explicit_scan_trend_overrides_stored_mr():
+    # The bug the tri-state fixes: an EXPLICIT per-scan "trend" must beat a stored MR.
+    assert feat.resolve_cohort("trend", "mean_reversion") == "trend"
 
 
 def test_scan_explicit_mr_overrides_stored_trend():
     assert feat.resolve_cohort("mean_reversion", "trend") == "mean_reversion"
 
 
-def test_both_trend_resolves_trend():
-    assert feat.resolve_cohort("trend", "trend") == "trend"
+def test_inherit_with_stored_trend_resolves_trend():
+    assert feat.resolve_cohort(None, "trend") == "trend"
 
 
 def test_no_stored_falls_back_to_scan_or_default():
@@ -45,10 +50,7 @@ def test_no_stored_falls_back_to_scan_or_default():
     assert feat.resolve_cohort(None, None) == "trend"
 
 
-def test_none_scan_uses_stored():
-    assert feat.resolve_cohort(None, "mean_reversion") == "mean_reversion"
-
-
 def test_invalid_values_ignored():
     assert feat.resolve_cohort("bogus", "mean_reversion") == "mean_reversion"  # bad scan -> stored
-    assert feat.resolve_cohort("trend", "bogus") == "trend"                    # bad stored -> default
+    assert feat.resolve_cohort("trend", "bogus") == "trend"                    # bad stored ignored
+    assert feat.resolve_cohort(None, "bogus") == "trend"                       # bad stored -> default

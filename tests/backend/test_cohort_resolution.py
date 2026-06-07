@@ -1,8 +1,9 @@
 """Integration test for F3 stored-cohort resolution in the scan path (FR-040).
 
-The bug this guards: FleetCohortView bulk-assign writes trading_accounts.strategy_cohort,
-but the executor only read cfg["strategy_cohort"] (default "trend"), so a stored cohort
-never influenced routing. _resolve_account_cohorts merges the stored field in.
+Guards two bugs: (1) the stored trading_accounts.strategy_cohort must influence
+routing (FleetCohortView bulk-assign was inert); (2) the resolver must use ONE
+batched list_accounts() lookup (not an N+1 per-account get_account loop). Tri-state:
+None cfg cohort inherits stored; an explicit per-scan value (incl "trend") overrides.
 """
 
 from __future__ import annotations
@@ -14,10 +15,13 @@ from backend.services.scanner_service import ScannerService
 
 class _FakeDB:
     def __init__(self, accounts):
-        self._accounts = accounts
+        # accounts: list of account dicts (as list_accounts returns)
+        self._accounts = list(accounts)
+        self.list_calls = 0
 
-    async def get_account(self, account_id):
-        return self._accounts.get(account_id)
+    async def list_accounts(self):
+        self.list_calls += 1
+        return list(self._accounts)
 
 
 def _svc(accounts):
@@ -25,65 +29,117 @@ def _svc(accounts):
 
 
 @pytest.mark.asyncio
-async def test_stored_mr_cohort_merged_when_scan_default():
-    # Account stored as mean_reversion; the per-scan cfg left at the default "trend".
-    svc = _svc({"a1": {"id": "a1", "strategy_cohort": "mean_reversion"}})
-    cfgs = [{"account_id": "a1", "strategy_cohort": "trend"}]
-    await svc._resolve_account_cohorts(cfgs)
-    assert cfgs[0]["strategy_cohort"] == "mean_reversion"  # stored field now drives routing
-
-
-@pytest.mark.asyncio
-async def test_scan_explicit_mr_preserved_over_stored_trend():
-    svc = _svc({"a1": {"id": "a1", "strategy_cohort": "trend"}})
-    cfgs = [{"account_id": "a1", "strategy_cohort": "mean_reversion"}]
+async def test_inherit_uses_stored_mr_cohort():
+    # cfg defers (None) -> inherits the account's stored mean_reversion.
+    svc = _svc([{"id": "a1", "strategy_cohort": "mean_reversion"}])
+    cfgs = [{"account_id": "a1", "strategy_cohort": None}]
     await svc._resolve_account_cohorts(cfgs)
     assert cfgs[0]["strategy_cohort"] == "mean_reversion"
 
 
 @pytest.mark.asyncio
-async def test_missing_account_leaves_cfg_untouched():
-    svc = _svc({})  # no such account
-    cfgs = [{"account_id": "ghost", "strategy_cohort": "mean_reversion"}]
-    await svc._resolve_account_cohorts(cfgs)
-    assert cfgs[0]["strategy_cohort"] == "mean_reversion"  # never downgraded
-
-
-@pytest.mark.asyncio
-async def test_db_error_does_not_raise_or_downgrade():
-    class _BoomDB:
-        async def get_account(self, account_id):
-            raise RuntimeError("db down")
-    svc = ScannerService(analysis_service=object(), db=_BoomDB())
-    cfgs = [{"account_id": "a1", "strategy_cohort": "mean_reversion"}]
-    await svc._resolve_account_cohorts(cfgs)  # no raise
-    assert cfgs[0]["strategy_cohort"] == "mean_reversion"
-
-
-@pytest.mark.asyncio
-async def test_no_db_is_noop():
-    svc = ScannerService(analysis_service=object(), db=None)
+async def test_explicit_scan_trend_overrides_stored_mr():
+    # An EXPLICIT per-scan "trend" beats a stored mean_reversion (the tri-state fix).
+    svc = _svc([{"id": "a1", "strategy_cohort": "mean_reversion"}])
     cfgs = [{"account_id": "a1", "strategy_cohort": "trend"}]
     await svc._resolve_account_cohorts(cfgs)
     assert cfgs[0]["strategy_cohort"] == "trend"
 
 
 @pytest.mark.asyncio
-async def test_resolved_cohort_reaches_executor_routing():
-    # End-to-end: a stored mean_reversion cohort (scan cfg at default "trend") must,
-    # after resolution + init_configs, make the executor treat the account as MR.
-    from backend.services.auto_trade_service import AutoTradeExecutor
-
-    svc = _svc({"a1": {"id": "a1", "strategy_cohort": "mean_reversion"}})
-    cfgs = [{"account_id": "a1", "strategy_cohort": "trend",
-             "mean_reversion_enabled": True, "mr_regime": "ranging"}]
+async def test_explicit_scan_mr_preserved_over_stored_trend():
+    svc = _svc([{"id": "a1", "strategy_cohort": "trend"}])
+    cfgs = [{"account_id": "a1", "strategy_cohort": "mean_reversion"}]
     await svc._resolve_account_cohorts(cfgs)
+    assert cfgs[0]["strategy_cohort"] == "mean_reversion"
 
-    ex = AutoTradeExecutor(object())
+
+@pytest.mark.asyncio
+async def test_single_query_for_many_configs_no_n_plus_1():
+    # 21 configs must trigger exactly ONE list_accounts() call (not 21 get_account).
+    accts = [{"id": f"a{i}", "strategy_cohort": "mean_reversion"} for i in range(21)]
+    svc = _svc(accts)
+    cfgs = [{"account_id": f"a{i}", "strategy_cohort": None} for i in range(21)]
+    await svc._resolve_account_cohorts(cfgs)
+    assert svc._db.list_calls == 1
+    assert all(c["strategy_cohort"] == "mean_reversion" for c in cfgs)
+
+
+@pytest.mark.asyncio
+async def test_missing_account_inherit_resolves_default():
+    svc = _svc([])  # no such account
+    cfgs = [{"account_id": "ghost", "strategy_cohort": None}]
+    await svc._resolve_account_cohorts(cfgs)
+    assert cfgs[0]["strategy_cohort"] == "trend"  # no stored -> default, never None
+
+
+@pytest.mark.asyncio
+async def test_db_error_coerces_to_concrete_default():
+    class _BoomDB:
+        async def list_accounts(self):
+            raise RuntimeError("db down")
+    svc = ScannerService(analysis_service=object(), db=_BoomDB())
+    cfgs = [{"account_id": "a1", "strategy_cohort": None},
+            {"account_id": "a2", "strategy_cohort": "mean_reversion"}]
+    await svc._resolve_account_cohorts(cfgs)  # no raise
+    assert cfgs[0]["strategy_cohort"] == "trend"          # inherit + no data -> default
+    assert cfgs[1]["strategy_cohort"] == "mean_reversion"  # explicit preserved
+
+
+@pytest.mark.asyncio
+async def test_no_db_coerces_none_to_default():
+    svc = ScannerService(analysis_service=object(), db=None)
+    cfgs = [{"account_id": "a1", "strategy_cohort": None}]
+    await svc._resolve_account_cohorts(cfgs)
+    assert cfgs[0]["strategy_cohort"] == "trend"  # executor never sees None
+
+
+@pytest.mark.asyncio
+async def test_resolved_cohort_reaches_executor_routing():
+    # End-to-end through the REAL _try_trade: stored mean_reversion + cfg inherit
+    # (None) must, after resolution, make the executor place a MEAN-REVERSION trade
+    # (strategy_kind='mean_reversion'). This exercises the actual routing path, not a
+    # reimplemented predicate — if routing drifts, the placed strategy_kind changes.
+    from datetime import datetime, timezone
+    from backend.services.auto_trade_service import AutoTradeExecutor
+    from backend.services.scan_context import ScanContext
+
+    class _StubAccounts:
+        def __init__(self):
+            self.calls = []
+
+        async def get_mark_price(self, account_id, symbol):
+            return 102.0
+
+        async def place_trade(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"trade_id": "t1", "side": kwargs.get("signal_direction")}
+
+    svc = _svc([{"id": "a1", "strategy_cohort": "mean_reversion"}])
+    cfgs = [{
+        "account_id": "a1", "strategy_cohort": None,          # inherit
+        "mean_reversion_enabled": True, "mr_regime": "ranging",
+        "min_score": 6, "mr_extreme_min_abs_score": 5.0, "mr_mean_period": 20,
+        "mr_mean_interval": "1h", "mr_leverage": 10, "mr_capital_pct": 2.0,
+        "mr_target_capture_pct": 60.0, "mr_tight_stop_pct": 6.0, "mr_min_edge_pct": 1.0,
+        "mr_short_enabled": True, "mr_long_enabled": False, "mr_max_trades": 2,
+        "regime_staleness_minutes": 30,
+    }]
+    await svc._resolve_account_cohorts(cfgs)
+    assert cfgs[0]["strategy_cohort"] == "mean_reversion"
+
+    ex = AutoTradeExecutor(_StubAccounts())
     ex.init_configs(cfgs)
     st = list(ex._state.values())[0]
-    cohort = st.config.get("strategy_cohort")
-    is_mr_account = cohort == "mean_reversion" and bool(st.config.get("mean_reversion_enabled"))
-    assert cohort == "mean_reversion"
-    assert is_mr_account is True  # the executor's own is_mr_account predicate
+    st.base_capital = 1000.0
+    ex.set_scan_context(ScanContext(
+        btc={("1h", 14): {"regime": "ranging", "vol_value": 1.0, "unavailable": False}},
+        means={("BTCUSDT", 20, "1h"): 100.0}, prices={"BTCUSDT": 102.0},
+        computed_at=datetime.now(timezone.utc)))
+
+    # overbought sell signal -> MR fades to a short toward the mean
+    await ex._try_trade(st, {"status": "completed", "ticker": "BTC",
+                             "direction": "sell", "score": 8, "id": "r1"}, phase="batch")
+    assert len(ex._accounts.calls) == 1
+    assert ex._accounts.calls[0]["strategy_kind"] == "mean_reversion"  # routed as MR
 
