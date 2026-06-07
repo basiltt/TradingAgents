@@ -362,3 +362,37 @@ Documented acceptable (not changed): admin GET/POST nesting cosmetic; f2_long_ac
 
 Validation: 283 backend regime + 386 AI/scanner + 673 frontend all green; golden
 snapshot byte-identical; tsc clean. Commit 1dc2ce9.
+
+## Backtester Regime-Awareness (F1/F2/F3) — 2026-06-07
+
+The 3 features were excluded from the backtester (it 422-rejected F1/F2/F3 fields).
+This makes the backtester replay all three faithfully so they can be validated on
+history BEFORE live funding (the whole point of backtesting). User decisions: all 3
+features; F2-long allowed via mr_long_enabled (ack bypassed, no live account);
+full-stack.
+
+Key design: the pure engine takes a per-scan {scan_id: ScanContext} built by the async
+service (same pattern as live build_scan_context). Every decision reuses the SAME pure
+fns as live (regime_filter, market_data, strategy_router, features,
+mean_reversion_math.compute_mr_placement) so backtest+live cannot drift.
+
+| Phase | What | Tests |
+|-------|------|-------|
+| 0 | schema accepts F1/F2/F3 (was a rejecter) + 3 validators | test_backtest_schemas |
+| 3 | shared pure compute_mr_placement (live now calls it too) | test_mr_placement_core |
+| 1 | _build_scan_contexts (historical BTC+MR-mean klines, per-scan slice) | test_backtest_scan_context |
+| 2 | engine scan_contexts param + _resolve_strategy + MR open + per-position time-stop + strategy_kind | test_backtest_regime |
+| 4 | by_strategy metrics + modeling-note warnings | test_backtest_by_strategy |
+| 5 | form F1/F2/F3 controls + per-strategy results panel | configSchema/MetricsGrid tests |
+
+Adversarial review found + fixed TWO returns-inflating CRITICAL bugs:
+- LOOK-AHEAD: scan-context slices included the in-progress (not-yet-closed) candle
+  whose stored close is a future price. Fixed: require open_time+interval <= scan_time.
+- mr_max_trades PARITY: engine used generic max_trades (999) for MR instead of the
+  concurrent mr_max_trades cap (2). Fixed: enforce concurrent MR cap.
+Both locked with regression tests.
+
+Guarantees: default-off backtest byte-identical (golden 22/22 unchanged); no drift
+(shared pure fns); no look-ahead (closed-candle slices + next-bar-open fill).
+Validation: 535 backtest+regime+live backend + 681 frontend green; tsc clean.
+Commits: backend integration, frontend UI, critical fixes.
