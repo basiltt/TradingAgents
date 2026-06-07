@@ -114,6 +114,29 @@ class ToolSpec:
 
 _REGISTRY: dict[str, ToolSpec] = {}
 
+_DISCOVERED = False
+
+
+def discover_tools() -> None:
+    """Import every tool module so its `@tool` decorator runs and registers.
+
+    Idempotent. Import-scans `backend.mcp.tools.*`. Kept lazy so importing the
+    package does not eagerly construct services.
+    """
+    global _DISCOVERED
+    if _DISCOVERED:
+        return
+    import importlib
+    import pkgutil
+
+    import backend.mcp.tools as tools_pkg
+
+    for mod in pkgutil.walk_packages(tools_pkg.__path__, tools_pkg.__name__ + "."):
+        if mod.ispkg:
+            continue
+        importlib.import_module(mod.name)
+    _DISCOVERED = True
+
 
 def tool(
     *,
