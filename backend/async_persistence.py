@@ -1221,6 +1221,22 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     # resolve a version collision with the backtesting feature, which already
     # owns v38–v41 and is applied to the live DB).
     (42, _SCHEMA_DEBUG_V42),
+    # ── Regime Multi-Strategy (3 optional features). ASYNC-ONLY: the sync
+    # persistence._MIGRATIONS registry is dead (stuck at v35, AnalysisDB unused),
+    # so these are not mirrored there (PD2). All catalog-only on boot (PG11+),
+    # constant-default ADD COLUMN => no table rewrite. Single statements, no inner
+    # semicolons (the runner splits on ';').
+    (43, "ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS strategy_cohort TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_cohort IN ('trend','mean_reversion'))"),
+    (44, "ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy_kind TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion')), ADD COLUMN IF NOT EXISTS strategy_cohort TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_cohort IN ('trend','mean_reversion')), ADD COLUMN IF NOT EXISTS f1_active BOOLEAN NOT NULL DEFAULT false"),
+    # v45 — per-strategy analytics index. NOTE: built inline (brief SHARE lock).
+    # For a very large production `trades` table, the hardening is a
+    # CREATE INDEX CONCURRENTLY run OUTSIDE this transactional runner (the runner
+    # wraps every migration in conn.transaction(), which PG rejects for
+    # CONCURRENTLY). The startup healthcheck (mark_index_health) warns if absent.
+    (45, "CREATE INDEX IF NOT EXISTS idx_trades_account_strategy_kind ON trades(account_id, strategy_kind, status)"),
+    (46, "CREATE TABLE IF NOT EXISTS f2_long_ack (account_id TEXT PRIMARY KEY, acked_at TIMESTAMPTZ NOT NULL, acked_leverage INT NOT NULL, acked_capital_pct REAL NOT NULL, acked_max_trades INT NOT NULL)"),
+    (47, "CREATE TABLE IF NOT EXISTS pending_trade_intents (account_id TEXT NOT NULL, symbol TEXT NOT NULL, side TEXT NOT NULL, strategy_kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (account_id, symbol, side))"),
+    (48, "CREATE TABLE IF NOT EXISTS feature_kill_switches (feature_name TEXT PRIMARY KEY, killed BOOLEAN NOT NULL DEFAULT false, updated_by TEXT, updated_at TIMESTAMPTZ)"),
 ]
 
 

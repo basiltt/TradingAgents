@@ -462,6 +462,65 @@ class AutoTradeConfig(BaseModel):
     adaptive_blacklist_lookback_hours: int = Field(default=48, ge=1, le=720)
     ai_pause_cycles: Optional[int] = Field(None, ge=1, le=10)
 
+    # ── Regime Multi-Strategy (3 optional features, all default-off) ──
+    # F1 — Regime/Session Entry Filter
+    regime_filter_enabled: bool = False                      # umbrella master for F1
+    session_filter_enabled: bool = False
+    session_blocked_hours_utc: Optional[List[int]] = None    # each 0-23 (blocklist mode)
+    session_allowed_hours_utc: Optional[List[int]] = None    # each 0-23 (allowlist mode, mutually exclusive)
+    btc_vol_filter_enabled: bool = False
+    btc_vol_min_threshold: Optional[float] = Field(None, ge=0)   # atr_ratio units
+    btc_vol_max_threshold: Optional[float] = Field(None, ge=0)   # atr_ratio units
+    btc_vol_interval: Literal["15m", "1h", "4h"] = "1h"
+    btc_vol_lookback_candles: int = Field(default=14, ge=2, le=200)
+    # F2 — Mean-Reversion Strategy
+    mean_reversion_enabled: bool = False
+    mr_short_enabled: bool = True
+    mr_long_enabled: bool = False
+    mr_long_ack_requested: bool = False                      # UI-intent only; ignored server-side
+    mr_regime: Literal["ranging"] = "ranging"
+    mr_mean_period: int = Field(default=20, ge=2, le=200)
+    mr_mean_interval: Literal["15m", "1h", "4h"] = "1h"
+    mr_target_capture_pct: float = Field(default=60.0, gt=0, le=100)
+    mr_tight_stop_pct: Optional[float] = Field(None, gt=0, le=1000)
+    mr_time_stop_minutes: int = Field(default=120, ge=5, le=1440)
+    mr_min_edge_pct: float = Field(default=1.0, ge=0, le=100)
+    mr_extreme_min_abs_score: float = Field(default=5.0, ge=0, le=10)
+    mr_capital_pct: float = Field(default=2.0, gt=0, le=100)   # conservative default
+    mr_leverage: int = Field(default=10, ge=1, le=125)        # conservative default
+    mr_max_trades: int = Field(default=2, ge=1, le=999)       # conservative default
+    # F3 — Strategy-Cohort
+    strategy_cohort: Literal["trend", "mean_reversion"] = "trend"
+    # common / classifier-tuning
+    regime_staleness_minutes: int = Field(default=30, ge=5, le=240)
+    regime_volatile_atr: float = Field(default=2.0, gt=0, le=10)
+    regime_trend_ema_dist_pct: float = Field(default=1.0, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def validate_session_exclusive(self) -> "AutoTradeConfig":
+        if self.session_blocked_hours_utc is not None and self.session_allowed_hours_utc is not None:
+            raise ValueError("session_blocked_hours_utc and session_allowed_hours_utc are mutually exclusive")
+        for fld in ("session_blocked_hours_utc", "session_allowed_hours_utc"):
+            hrs = getattr(self, fld)
+            if hrs is not None:
+                for h in hrs:
+                    if not (0 <= h <= 23):
+                        raise ValueError(f"{fld} hours must be 0-23, got {h}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_vol_band(self) -> "AutoTradeConfig":
+        lo, hi = self.btc_vol_min_threshold, self.btc_vol_max_threshold
+        if lo is not None and hi is not None and lo >= hi:
+            raise ValueError("btc_vol_min_threshold must be < btc_vol_max_threshold")
+        return self
+
+    @model_validator(mode="after")
+    def validate_mr_direction(self) -> "AutoTradeConfig":
+        if self.mean_reversion_enabled and not (self.mr_short_enabled or self.mr_long_enabled):
+            raise ValueError("mean_reversion_enabled requires at least one of mr_short_enabled / mr_long_enabled")
+        return self
+
     @model_validator(mode="after")
     def validate_target_goal(self) -> "AutoTradeConfig":
         if self.target_goal_type and not self.target_goal_value:
