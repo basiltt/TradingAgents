@@ -168,6 +168,81 @@ class TestShutdown:
         assert len(svc._clients) == 0
 
 
+# ── Client lifecycle (aiohttp session leak regression) ────────────────────────
+
+
+class TestClientLifecycle:
+    """invalidate_cache must NOT tear down the reusable BybitClient.
+
+    Regression: invalidate_cache used to pop+close the pooled client on every trade
+    and every position close, scheduling client.close() as a fire-and-forget task held
+    only by a local var. The event loop keeps weak refs to tasks, so under load the GC
+    reclaimed the close task before it ran — leaking the aiohttp ClientSession/connector
+    ("Unclosed client session" / "Unclosed connector"). Concurrent trades on one account
+    also orphaned a session when one trade closed the shared client mid-flight of another.
+
+    Teardown that IS legitimate (credential rotation, deactivation, deletion) now goes
+    through discard_client, which clears the cache AND awaits close() deterministically.
+    """
+
+    def _make_svc(self):
+        db = AsyncMock()
+        return AccountsService(db=db)
+
+    def test_invalidate_cache_preserves_client(self):
+        svc = self._make_svc()
+        mock_client = AsyncMock()
+        svc._clients["acc1"] = mock_client
+        svc._cache["acc1:wallet"] = (time.monotonic() + 60, "data")
+        svc._refresh_locks["acc1"] = time.monotonic()
+
+        svc.invalidate_cache("acc1")
+
+        # Stale data is cleared so the next poll refetches…
+        assert "acc1:wallet" not in svc._cache
+        assert "acc1" not in svc._refresh_locks
+        # …but the healthy, reusable client is left intact and never torn down.
+        assert svc._clients.get("acc1") is mock_client
+        mock_client.close.assert_not_called()
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_discard_client_closes_and_removes(self):
+        svc = self._make_svc()
+        mock_client = AsyncMock()
+        svc._clients["acc1"] = mock_client
+        svc._cache["acc1:wallet"] = (time.monotonic() + 60, "data")
+        svc._refresh_locks["acc1"] = time.monotonic()
+
+        await svc.discard_client("acc1")
+
+        assert "acc1:wallet" not in svc._cache
+        assert "acc1" not in svc._refresh_locks
+        assert "acc1" not in svc._clients
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_discard_client_without_cached_client_is_noop(self):
+        svc = self._make_svc()
+        svc._cache["acc1:wallet"] = (time.monotonic() + 60, "data")
+
+        # No cached client for acc1 — must clear data and not raise.
+        await svc.discard_client("acc1")
+
+        assert "acc1:wallet" not in svc._cache
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_discard_client_swallows_close_error(self):
+        svc = self._make_svc()
+        mock_client = AsyncMock()
+        mock_client.close.side_effect = Exception("close failed")
+        svc._clients["acc1"] = mock_client
+
+        # A failing close must not propagate, and the client must still be removed.
+        await svc.discard_client("acc1")
+
+        assert "acc1" not in svc._clients
+
+
 # ── Trade dependencies ────────────────────────────────────────────────────────
 
 

@@ -106,19 +106,35 @@ class AccountsService:
         self._cache[key] = (time.monotonic() + ttl, data)
 
     def invalidate_cache(self, account_id: str) -> None:
-        """Remove all cached data and close the exchange client for an account."""
+        """Clear cached wallet/position/order data so the next poll refetches.
+
+        Does NOT touch the pooled BybitClient — the exchange client is a long-lived,
+        reusable connection and is safe (indeed required) to keep across trades and
+        position closes. Tearing it down here previously leaked aiohttp sessions
+        (fire-and-forget close() tasks were GC'd before running, and concurrent
+        trades orphaned a shared client mid-flight). To intentionally retire a
+        client (credential rotation, deactivation, deletion) use discard_client.
+        """
         keys_to_remove = [k for k in self._cache if k.startswith(f"{account_id}:")]
         for k in keys_to_remove:
             del self._cache[k]
         self._refresh_locks.pop(account_id, None)
+
+    async def discard_client(self, account_id: str) -> None:
+        """Clear cached data and deterministically close the account's exchange client.
+
+        Use when the client must actually be retired — credentials changed, account
+        deactivated/deleted — so a subsequent call rebuilds a fresh client. Awaits
+        close() so the underlying aiohttp session/connector is released before
+        returning (no fire-and-forget GC race).
+        """
+        self.invalidate_cache(account_id)
         client = self._clients.pop(account_id, None)
         if client:
             try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(client.close())
-                task.add_done_callback(lambda t: logger.warning("client_close_failed", exc_info=t.exception()) if not t.cancelled() and t.exception() else None)
-            except RuntimeError:
-                pass
+                await client.close()
+            except Exception:
+                logger.warning("client_close_failed", extra={"account_id": account_id})
 
     def invalidate_all_caches(self) -> None:
         """Clear all cached wallet/position data so the next poll fetches fresh state."""
@@ -434,7 +450,7 @@ class AccountsService:
             fields["is_active"] = 1 if is_active else 0
         await self._db.update_account(account_id, **fields)
         if is_active is False:
-            self.invalidate_cache(account_id)
+            await self.discard_client(account_id)
         return await self._db.get_account(account_id)
 
     async def rotate_credentials(
@@ -460,7 +476,7 @@ class AccountsService:
             encrypt_value(api_secret),
             _now_iso(),
         )
-        self.invalidate_cache(account_id)
+        await self.discard_client(account_id)
         logger.info("rotate_credentials_done", extra={"account_id": account_id})
         return await self._db.get_account(account_id)
 
@@ -468,7 +484,7 @@ class AccountsService:
         """Soft-delete an account and invalidate its cache/client."""
         result = await self._db.soft_delete_account(account_id, _now_iso())
         if result:
-            self.invalidate_cache(account_id)
+            await self.discard_client(account_id)
             if self._ws_manager:
                 asyncio.ensure_future(self._ws_manager.stop_account(account_id))
             try:
