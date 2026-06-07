@@ -183,6 +183,13 @@ class MCPManager:
             await self._start_transport(cfg)
         if self.server is None:
             raise RuntimeError(f"mcp transport failed to start: {self.last_error}")
+        # Dry-connect self-test (FR-003): the just-built server must initialize +
+        # list tools cleanly before we persist enabled=True. If it can't, tear
+        # down and stay OFF rather than advertise a broken server.
+        if not self.server.self_test():
+            await self._stop_transport()
+            self.server = None
+            raise RuntimeError("mcp self-test failed; staying disabled")
         await self.config_repo.update({"enabled": True}, expected_row_version=cfg.row_version)
 
     async def disable(self, *, kill: bool = False) -> None:

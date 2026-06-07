@@ -86,6 +86,18 @@ class MCPServer:
         """The enabled ToolSpecs (for transport registration)."""
         return list(self._enabled.values())
 
+    def self_test(self) -> bool:
+        """Dry-connect self-test (FR-003): prove the server is functional by
+        negotiating the protocol and enumerating tools without raising. Returns
+        True on success; the enable flow rolls back if this fails."""
+        try:
+            info = self.initialize()
+            assert info.get("protocolVersion")
+            _ = self.list_tools()  # advertised set must build cleanly
+            return True
+        except Exception:  # noqa: BLE001 — any failure means do-not-enable
+            return False
+
     def principal_hint(self) -> str:
         """A stable non-secret principal id for HTTP-delegated calls (the bearer
         is validated at the transport guard; this only labels the audit record)."""

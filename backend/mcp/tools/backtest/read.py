@@ -128,3 +128,76 @@ async def backtest_compare(args: BacktestCompareIn, ctx: Any) -> BacktestCompare
         raise MCPServiceUnavailableError("backtest service unavailable")
     result = await svc.compare_backtests(args.run_ids)
     return BacktestCompareOut(comparison=result)
+
+
+# --- kline cache tools (FR-014) ---
+
+class CacheStatusIn(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=200)
+    interval: str = "5m"
+    start: str = Field(description="ISO date/datetime start of the range")
+    end: str = Field(description="ISO date/datetime end of the range")
+
+
+class CacheStatusOut(BaseModel):
+    symbols_total: int
+    symbols_cached: int
+    symbols_with_gaps: list[str]
+    ready: bool
+
+
+def _parse_dt(s: str):
+    from datetime import datetime
+
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+@tool(
+    name="cache_status",
+    group=ToolGroup.BACKTEST,
+    input_schema=CacheStatusIn,
+    output_schema=CacheStatusOut,
+    safety_class=SafetyClass.BACKTEST,
+)
+async def cache_status(args: CacheStatusIn, ctx: Any) -> CacheStatusOut:
+    """Report kline-cache coverage for symbols/range — which symbols need warm-up before a backtest/sweep (no exchange fetch)."""
+    svc = ctx.services.backtest_service
+    if svc is None:
+        raise MCPServiceUnavailableError("backtest service unavailable")
+    try:
+        result = await svc.cache_status(args.symbols, args.interval, _parse_dt(args.start), _parse_dt(args.end))
+    except ValueError as exc:
+        raise MCPValidationError(str(exc)) from exc
+    return CacheStatusOut(**result)
+
+
+class CacheWarmupIn(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=100)
+    interval: str = "5m"
+    start: str
+    end: str
+
+
+class CacheWarmupOut(BaseModel):
+    result: dict[str, Any]
+
+
+@tool(
+    name="cache_warmup",
+    group=ToolGroup.BACKTEST,
+    input_schema=CacheWarmupIn,
+    output_schema=CacheWarmupOut,
+    safety_class=SafetyClass.BACKTEST,
+    mutating=True,
+    exchange_facing=True,
+)
+async def cache_warmup(args: CacheWarmupIn, ctx: Any) -> CacheWarmupOut:
+    """Warm the kline cache for symbols/range (fetches missing candles from the exchange, bounded). Run before a large sweep to avoid coverage gaps."""
+    svc = ctx.services.backtest_service
+    if svc is None:
+        raise MCPServiceUnavailableError("backtest service unavailable")
+    try:
+        result = await svc.warmup_cache(args.symbols, args.interval, _parse_dt(args.start), _parse_dt(args.end))
+    except ValueError as exc:
+        raise MCPValidationError(str(exc)) from exc
+    return CacheWarmupOut(result=result if isinstance(result, dict) else {"status": str(result)})
