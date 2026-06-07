@@ -34,8 +34,9 @@ import { MCPMasterControl } from "./MCPMasterControl";
 import { MCPToolBudget } from "./MCPToolBudget";
 import { MCPConnectionPanel } from "./MCPConnectionPanel";
 import { MCPProposals } from "./MCPProposals";
+import { MCPSweepBrowser } from "./MCPSweepBrowser";
 
-export function MCPPage() {
+export function MCPPage({ onOpenProposal }: { onOpenProposal?: (id: string) => void } = {}) {
   const configQ = useMCPConfig();
   const statusQ = useMCPStatus();
   const registryQ = useMCPRegistry();
@@ -161,10 +162,13 @@ export function MCPPage() {
                 isLoading={proposalsQ.isLoading}
                 isError={proposalsQ.isError}
                 busyId={proposalBusyId}
+                onOpenReview={onOpenProposal}
                 onApprove={(id) => runProposalAction(id, () => mcpApi.approveProposal(id), "Proposal applied to live config")}
                 onReject={(id) => runProposalAction(id, () => mcpApi.rejectProposal(id), "Proposal rejected")}
                 onRevert={(id) => runProposalAction(id, () => mcpApi.revertProposal(id), "Proposal reverted")}
               />
+
+              <MCPSweepBrowser />
             </div>
 
             <MCPConnectionPanel

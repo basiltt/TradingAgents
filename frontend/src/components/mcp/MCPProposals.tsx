@@ -41,6 +41,7 @@ export function MCPProposals({
   onApprove,
   onReject,
   onRevert,
+  onOpenReview,
 }: {
   proposals: MCPProposal[];
   isLoading: boolean;
@@ -49,6 +50,7 @@ export function MCPProposals({
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onRevert: (id: string) => void;
+  onOpenReview?: (id: string) => void;
 }) {
   const [confirmApprove, setConfirmApprove] = useState<MCPProposal | null>(null);
 
@@ -101,6 +103,7 @@ export function MCPProposals({
                 onApprove={() => setConfirmApprove(p)}
                 onReject={() => onReject(p.id)}
                 onRevert={() => onRevert(p.id)}
+                onOpenReview={onOpenReview}
               />
             ))}
             {others.length > 0 ? (
@@ -188,12 +191,14 @@ function ProposalCard({
   onApprove,
   onReject,
   onRevert,
+  onOpenReview,
 }: {
   proposal: MCPProposal;
   busy: boolean;
   onApprove: () => void;
   onReject: () => void;
   onRevert: () => void;
+  onOpenReview?: (id: string) => void;
 }) {
   const isPending = proposal.status === "pending";
   const isApplied = proposal.status === "applied";
@@ -276,6 +281,14 @@ function ProposalCard({
               <X className="size-4" />
               Reject
             </Button>
+            {onOpenReview ? (
+              <button
+                onClick={() => onOpenReview(proposal.id)}
+                className="ml-auto text-[11px] font-semibold text-[var(--neu-accent)] hover:underline"
+              >
+                Full review →
+              </button>
+            ) : null}
           </>
         ) : isApplied ? (
           <Button variant="outline" size="sm" onClick={onRevert} disabled={busy}>

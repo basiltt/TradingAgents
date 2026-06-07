@@ -25,6 +25,8 @@ import type {
   MCPRegistry,
   MCPProposal,
   MCPAuditEntry,
+  MCPSweepJob,
+  MCPSweepResult,
 } from "@/components/mcp/types";
 
 /** Typed error for non-2xx API responses. Contains HTTP status and detail message. */
@@ -1677,6 +1679,27 @@ export const mcpApi = {
     request<{ items: MCPAuditEntry[] }>(
       `/api/v1/mcp/audit?limit=${limit}`,
       undefined,
+      signal,
+    ),
+
+  listSweeps: (limit = 50, signal?: AbortSignal) =>
+    request<{ items: MCPSweepJob[] }>(`/api/v1/mcp/sweeps?limit=${limit}`, undefined, signal),
+
+  getSweep: (id: string, signal?: AbortSignal) =>
+    request<MCPSweepJob>(`/api/v1/mcp/sweeps/${encodeURIComponent(id)}`, undefined, signal),
+
+  getSweepResults: (id: string, objective?: string, signal?: AbortSignal) =>
+    request<{ items: MCPSweepResult[]; reranked_by: string | null }>(
+      `/api/v1/mcp/sweeps/${encodeURIComponent(id)}/results${objective ? `?objective=${encodeURIComponent(objective)}` : ""}`,
+      undefined,
+      signal,
+    ),
+
+  cancelSweep: (id: string, signal?: AbortSignal) =>
+    mutate<{ sweep_id: string; cancelled: boolean }>(
+      "POST",
+      `/api/v1/mcp/sweeps/${encodeURIComponent(id)}/cancel`,
+      {},
       signal,
     ),
 };

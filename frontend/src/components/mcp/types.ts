@@ -128,3 +128,37 @@ export const PRESET_LABELS: Record<string, string> = {
   standard: "Standard",
   full: "Full (no live money)",
 };
+
+/** A persisted async sweep job (GET /api/v1/mcp/sweeps). */
+export interface MCPSweepJob {
+  id: string;
+  status: "queued" | "running" | "completed" | "cancelled" | "failed" | "interrupted";
+  strategy?: string | null;
+  objective_metric: string;
+  total_combos: number;
+  completed_combos: number;
+  best_result_id?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  results?: MCPSweepResult[];
+}
+
+/** One stored sweep result row. */
+export interface MCPSweepResult {
+  id: string;
+  config: Record<string, unknown>;
+  config_hash: string;
+  metrics: Record<string, unknown>;
+  objective_value?: number | null;
+  result_rank?: number | null;
+}
+
+/** Fields whose increase (or removal) is high-risk and needs explicit ack. */
+export const HIGH_RISK_FIELDS: Record<string, string> = {
+  leverage: "Leverage increase",
+  capital_pct: "Capital allocation increase",
+  stop_loss_pct: "Stop-loss change",
+  max_trades: "Max concurrent trades increase",
+  max_drawdown_pct: "Max drawdown increase",
+};
