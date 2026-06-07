@@ -23,8 +23,9 @@ def test_margin_tp_oracle_short_fade():
 
 def test_margin_tp_oracle_long_fade():
     # entry 98, mean 100 => distance 2/98, capture 50%, leverage 20
+    # hand-computed: 0.50 * (2/98) * 20 * 100 = 20.40816327%
     val = margin_tp_pct(entry=98.0, mean=100.0, capture_pct=50.0, leverage=20.0)
-    assert val == pytest.approx(0.50 * (2.0 / 98.0) * 20.0 * 100.0, rel=1e-9)
+    assert val == pytest.approx(20.40816327, rel=1e-6)
 
 
 def test_margin_tp_clamped_to_distance_implied_max():

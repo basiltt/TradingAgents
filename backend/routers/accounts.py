@@ -216,6 +216,13 @@ async def acknowledge_f2_long(request: Request, account_id: str):
     if not (1 <= leverage <= 125 and 0 < capital_pct <= 100 and 1 <= max_trades <= 999):
         return JSONResponse({"detail": "exposure out of bounds", "code": "VALIDATION_ERROR"}, 422)
 
+    # SD28 / IR5 known limitation: a fully server-derived snapshot would read the
+    # account's CURRENT persisted MR config (in scheduled-scan JSON) and reject a
+    # client ceiling. v1 records the client-supplied exposure as the consent
+    # high-water mark; the placement gate enforces acked >= live config, so a normal
+    # escalation (ack 10x then run 20x) is still blocked. The residual gap is an
+    # operator deliberately acking the {125,100,999} ceiling on their OWN account —
+    # tracked for a follow-up that snapshots live config or 422s on body != persisted.
     from backend.services import f2_long_ack as _ack
     actor = getattr(request.state, "user", None) or request.headers.get("x-actor")
     await _ack.record_ack(db, account_id, leverage=leverage, capital_pct=capital_pct,

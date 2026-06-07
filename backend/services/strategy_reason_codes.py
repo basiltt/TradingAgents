@@ -44,6 +44,7 @@ class ReasonCode(str, Enum):
     # ── F2 — Mean-Reversion strategy ──
     MR_REGIME_EXCLUDED = "mr_regime_excluded"
     MR_LONG_DISABLED = "mr_long_disabled"
+    MR_SHORT_DISABLED = "mr_short_disabled"
     MR_LONG_UNACKNOWLEDGED = "mr_long_unacknowledged"
     MR_NO_EDGE = "mr_no_edge"
     MR_DEGENERATE_TARGET = "mr_degenerate_target"

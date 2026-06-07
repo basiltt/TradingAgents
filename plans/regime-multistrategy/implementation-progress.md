@@ -41,7 +41,43 @@
 | 25 | 15:22 | AI-mgr MR exclusion + f2-long-ack endpoint (TDD) | DONE — 137 green |
 | 26 | 15:40 | Frontend: client.ts mirror + RegimeStrategyFields + mount | DONE — tsc 0 errors |
 | 27 | 15:45 | FULL-STACK FUNCTIONALLY COMPLETE | DONE |
-| 28 | 15:48 | Next: Phase 5 E2E/coverage + review gates + final hardening | IN_PROGRESS |
+| 28 | 15:48 | E2E all-on + coverage (95%) | DONE |
+| 29 | 16:10 | Step 12c review gate (3 agents on REAL code) | DONE — 1 CRITICAL, 2 HIGH, ~15 Med/Low |
+| 30 | 16:15 | Fix review findings (IR1-IR12) | DONE — 268 tests green |
+| 31 | 16:45 | Review-fix regression tests (IR1/2/3/6/7) | DONE — 6/6 |
+| 32 | 16:50 | Next: re-review (2nd round) then cross-phase + final hardening | IN_PROGRESS |
+
+## Step 12c review fixes APPLIED (268 tests green, golden + tsc clean)
+- IR1 CRITICAL: lazy MR mean (per-scan cached, kline-cache fetcher) — F2 now reachable.
+- IR2 HIGH: place_trade gets strategy_cohort + f1_active (cohort no longer always 'trend').
+- IR3 HIGH: check_geometry takes capture_pct, validates ACTUAL placed TP (not full-capture).
+- IR4 MED: position_directions records the MR fade side (not LLM dir+reverse).
+- IR6 MED: mr_max_trades enforced as MR position cap.
+- IR7 MED: SL-vs-liquidation guard implemented (MR_SL_LIQUIDATION now emitted).
+- IR9 LOW: scanner kill read fail-CLOSED when _db falsy.
+- IR10 LOW: kline window sized from interval*depth (not hardcoded 30d).
+- IR11 LOW: long-fade TP oracle now asserts independent hand-computed value.
+- IR12 LOW: MR_SHORT_DISABLED enum (no magic string); float-None guard via `is not None`.
+- IR5 documented as known v1 limitation (ack ceiling; SD28 follow-up) in endpoint comment.
+- IR8 deferred-low: resolve_final_side kept (tested); unused `direction` param left (stable signature).
+
+## Step 12c Implementation Review Findings (real code audit)
+**CRITICAL:**
+- IR1 [backend F1]: build_scan_context called with EMPTY scan_results (scanner_service.py:363) → MR means/prices NEVER computed → every MR trade skips mr_mean_unavailable → F2 DEAD in production. FIX: build/refresh ScanContext AFTER scan results exist (or compute mean lazily in _compute_mr_params from kline cache).
+**HIGH:**
+- IR2 [backend F2]: executor passes only strategy_kind to place_trade, NOT strategy_cohort/f1_active → cohort always "trend", f1_active always False (contradictory pair for MR). FIX: pass strategy_cohort=cohort + f1_active.
+- IR3 [maint F1/sec F7]: check_geometry validates FULL-capture TP but placed TP is capture-scaled (0.6×) → SL in band (actual_TP, full_TP] passes guard with reward<risk. FIX: pass capture_pct into check_geometry; compare against actual placed TP.
+**MEDIUM:**
+- IR4 [backend F3]: position_directions recorded from LLM direction+reverse, NOT the MR fade side → max_same_direction enforced against wrong value for MR. FIX: record place_signal_direction for MR.
+- IR5 [sec F2]: ack at ceiling {125,100,999} permanently defeats escalation-staleness. FIX: re-ack on any change OR validate ack against live config not schema maxima.
+- IR6 [sec F3]: mr_max_trades in consent tuple but NEVER enforced as a position cap → 999 MR longs despite consenting to 2. FIX: enforce MR-long cap = mr_max_trades.
+- IR7 [maint F2]: SL-vs-liquidation guard (FR-025/MR_SL_LIQUIDATION) NOT implemented (reason code defined, never emitted). FIX: implement liquidation-distance check or descope+delete code.
+- IR8 [maint F3]: resolve_final_side is DEAD (never called; impl uses price-vs-mean per FR-021). FR-005/FR-021 conflict. FIX: reconcile — delete resolve_final_side + truth-table OR document; drop unused `direction` param.
+**LOW:**
+- IR9 [sec F5]: scanner kill read fail-OPEN when _db falsy (`if self._db else {}`). FIX: else {"__all__": True}.
+- IR10 [backend F5/sec F6]: _fetch hardcodes 30d window regardless of interval/depth; DB configs not re-validated. FIX: size window from interval*depth; re-validate.
+- IR11 [maint F4/F5]: long-fade TP oracle circular + long-fade TP value asserted nowhere. FIX: add hand-computed long oracle value + assert long-fade TP.
+- IR12 [maint F6/F8/F9/F10/F11]: magic "mr_short_disabled" string; float(None) crash on explicit None; dead `side` param in mr_target_price; `or 8.0` rewrites 0.0; dead manifest local; dead enum members. FIX: cleanup.
 
 ## FULL STACK FUNCTIONALLY COMPLETE (137 backend tests + tsc clean)
 Backend: scan -> ScanContext -> gates/route/F2 placement -> strategy-tagged trade.

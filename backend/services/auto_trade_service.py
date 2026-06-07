@@ -61,6 +61,32 @@ class AutoTradeExecutor:
     def set_scan_context(self, ctx: ScanContext) -> None:
         self._scan_context = ctx
 
+    def set_mean_fetcher(self, fetcher) -> None:
+        """fetcher(symbol, interval, depth) -> list[kline]; used for the lazy MR mean."""
+        self._mean_fetcher = fetcher
+
+    async def _lazy_mr_mean(self, symbol: str, period: int, interval: str):
+        """Compute (and per-scan cache) the EMA mean for an MR symbol when the
+        scan-init ScanContext didn't precompute it (IR1). One fetch per
+        (symbol, period, interval) per scan; bounded, never raises."""
+        fetcher = getattr(self, "_mean_fetcher", None)
+        if fetcher is None:
+            return None
+        cache = getattr(self, "_mr_mean_cache", None)
+        if cache is None:
+            cache = self._mr_mean_cache = {}
+        key = (symbol, period, interval)
+        if key in cache:
+            return cache[key]
+        try:
+            from backend.services.market_data import compute_ema_mean
+            klines = await fetcher(symbol, interval, period + 1)
+            mean = compute_ema_mean(klines, period)
+        except Exception:
+            mean = None
+        cache[key] = mean
+        return mean
+
     def _emit_life(self, account_id: str, phase: str, event_type: str, **detail: Any) -> None:
         """Fail-open lifecycle emit helper. Never raises, never blocks."""
         rec, ctx = self._recorder, self._debug_ctx
@@ -87,6 +113,7 @@ class AutoTradeExecutor:
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
         self._state.clear()
+        self._mr_mean_cache = {}  # reset the per-scan MR mean cache (IR1)
         for i, cfg in enumerate(configs):
             key = f"{cfg['account_id']}_{i}"
             self._state[key] = _AccountState(config=cfg)
@@ -1030,10 +1057,20 @@ class AutoTradeExecutor:
         interval = cfg.get("mr_mean_interval", "1h")
         mean = ctx.get_mean(symbol, period, interval)
         if mean is None:
+            # IR1: the scan-init ScanContext has no results-derived means, so fall
+            # back to a lazy, per-scan-cached compute from the kline cache. Without
+            # this, every MR trade would skip mr_mean_unavailable (F2 unreachable).
+            mean = await self._lazy_mr_mean(symbol, period, interval)
+        if mean is None:
             self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_MEAN_UNAVAILABLE, result)
             state.trades_skipped += 1
             return None
         entry = ctx.get_price(symbol)
+        if entry is None:
+            try:
+                entry = await self._accounts.get_mark_price(account_id, symbol)
+            except Exception:
+                entry = None
         if entry is None:
             self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_PRICE_UNAVAILABLE, result)
             state.trades_skipped += 1
@@ -1051,18 +1088,32 @@ class AutoTradeExecutor:
             state.trades_skipped += 1
             return None
         if side == "short" and not cfg.get("mr_short_enabled", True):
-            self._emit_decision(account_id, phase, symbol, "skipped", "mr_short_disabled", result)
+            self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_SHORT_DISABLED, result)
+            state.trades_skipped += 1
+            return None
+
+        # IR6: enforce the consented MR position cap. mr_max_trades is part of the
+        # long-ack consent tuple, so MR placements must be counted against it (the
+        # generic max_trades is too coarse for a cohort where every trade is MR).
+        mr_cap = int(cfg.get("mr_max_trades", 2))
+        mr_open = sum(1 for s in state.existing_symbols if s != symbol)  # MR-cohort: all positions are MR
+        if mr_open >= mr_cap:
+            self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MAX_TRADES, result, mr_cap=mr_cap)
             state.trades_skipped += 1
             return None
 
         leverage = int(cfg.get("mr_leverage", 10))
         # MR uses its own tight SL; do NOT inherit the trend stop_loss_pct (100% margin),
         # which would be wider than the mean-target TP and trip the inverted-geometry
-        # guard. Default to a tight 8% margin when mr_tight_stop_pct is unset.
-        tight_sl = cfg.get("mr_tight_stop_pct") or 8.0
-        # geometry guards (fire even under relaxed)
+        # guard. Default to a tight 8% margin when mr_tight_stop_pct is explicitly unset.
+        _sl_cfg = cfg.get("mr_tight_stop_pct")
+        tight_sl = _sl_cfg if (_sl_cfg is not None and _sl_cfg > 0) else 8.0
+        capture = float(cfg.get("mr_target_capture_pct", 60.0))
+        # geometry guards (fire even under relaxed) — measured against the ACTUAL
+        # capture-scaled placed TP (IR3), incl. the SL-vs-liquidation guard (IR7).
         guard = _mr.check_geometry(entry, mean, side, float(tight_sl), float(leverage),
-                                   min_edge_pct=float(cfg.get("mr_min_edge_pct", 1.0)))
+                                   min_edge_pct=float(cfg.get("mr_min_edge_pct", 1.0)),
+                                   capture_pct=capture)
         if guard is not None:
             self._emit_decision(account_id, phase, symbol, "skipped", guard, result)
             state.trades_skipped += 1
@@ -1076,7 +1127,7 @@ class AutoTradeExecutor:
                 state.trades_skipped += 1
                 return None
 
-        tp = _mr.margin_tp_pct(entry, mean, float(cfg.get("mr_target_capture_pct", 60.0)), float(leverage))
+        tp = _mr.margin_tp_pct(entry, mean, capture, float(leverage))
         return {
             "signal_direction": side,
             "leverage": leverage,
@@ -1311,6 +1362,8 @@ class AutoTradeExecutor:
                     source="scanner",
                     scan_result_id=result.get("id"),
                     strategy_kind=strategy_kind,
+                    strategy_cohort=cohort,
+                    f1_active=bool(cfg.get("regime_filter_enabled")),
                 ),
                 timeout=30.0,
             )
@@ -1335,9 +1388,14 @@ class AutoTradeExecutor:
                     )
                 except Exception:
                     pass
-            _is_rev = cfg.get("direction") == "reverse"
-            _sig_dir = "short" if direction in ("short", "sell") else "long"
-            state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+            if mr_fade:
+                # IR4: MR side is the fade side (price-vs-mean), unrelated to the LLM
+                # signal direction or the trend reverse knob. Record the real side.
+                state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
+            else:
+                _is_rev = cfg.get("direction") == "reverse"
+                _sig_dir = "short" if direction in ("short", "sell") else "long"
+                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
             logger.info("auto_trade_executed", extra={
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,

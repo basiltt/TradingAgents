@@ -343,7 +343,7 @@ class ScannerService:
         from backend.services.kill_switch import read_kill_switches
         from backend.services import market_data as _md
 
-        kill = await read_kill_switches(self._db) if self._db else {}
+        kill = await read_kill_switches(self._db) if self._db else {"__all__": True}
 
         async def _fetch(symbol: str, interval: str, depth: int):
             # Adapt the kline cache to (symbol, interval, depth) -> list[kline].
@@ -352,9 +352,12 @@ class ScannerService:
                 return []
             try:
                 from datetime import timedelta
-                # Approximate window from depth; the cache returns what it has.
+                # Size the window from interval*depth (IR10) so non-default intervals
+                # (4h/1d) still fetch enough candles, with generous margin.
+                _mins = {"15m": 15, "1h": 60, "4h": 240}.get(interval, 60)
+                span_min = max(_mins * (depth + 5), _mins * 35)
                 end = datetime.now(timezone.utc)
-                start = end - timedelta(days=30)
+                start = end - timedelta(minutes=span_min)
                 klines = await kc.get_klines(symbol, interval, start, end)
                 return klines[-depth:] if depth and len(klines) > depth else klines
             except Exception:
@@ -364,6 +367,7 @@ class ScannerService:
             auto_configs, [], now=datetime.now(timezone.utc), kill=kill, fetcher=_fetch,
         )
         executor.set_scan_context(ctx)
+        executor.set_mean_fetcher(_fetch)   # IR1: lazy MR mean source
 
     async def _compute_adaptive_blacklist(self, auto_configs: List[Dict[str, Any]]) -> set:
         """Query signal_performance to find symbols with consistently poor win rates."""
