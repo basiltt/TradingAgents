@@ -24,6 +24,44 @@ from backend.mcp.tools.optimizer.combos import (
 from backend.mcp.tools.optimizer.ranker import OBJECTIVE_METRICS
 
 
+def _validate_scan_source(scan_source: Optional[dict[str, Any]]) -> None:
+    """Reject a malformed scan_source so the sweep doesn't silently run on empty
+    signals (→ a misleading 'keep_current'). Empty/None is allowed (date-range
+    default). 'schedule' mode requires schedule_id; 'explicit' requires scan_ids."""
+    if not scan_source:
+        return
+    if not isinstance(scan_source, dict):
+        raise MCPValidationError("scan_source must be an object")
+    mode = scan_source.get("mode")
+    if mode in (None, "date_range"):
+        return
+    if mode == "schedule" and not scan_source.get("schedule_id"):
+        raise MCPValidationError("scan_source mode 'schedule' requires a schedule_id")
+    if mode == "explicit" and not scan_source.get("scan_ids"):
+        raise MCPValidationError("scan_source mode 'explicit' requires scan_ids")
+    if mode not in ("date_range", "schedule", "explicit"):
+        raise MCPValidationError(f"unknown scan_source mode {mode!r}")
+
+
+async def _live_target_config(db: Any, schedule_id: str, config_index: int) -> Optional[dict[str, Any]]:
+    """Read the REAL live auto-trade config at (schedule_id, config_index) to use
+    as a proposal's drift baseline — never trust the agent-supplied `base`."""
+    try:
+        row = await db.get_scheduled_scan(schedule_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if not row:
+        return None
+    scan_config = row.get("scan_config") or {}
+    if not isinstance(scan_config, dict):
+        return None
+    configs = scan_config.get("auto_trade_configs") or []
+    if not (0 <= config_index < len(configs)):
+        return None
+    cfg = configs[config_index]
+    return dict(cfg) if isinstance(cfg, dict) else None
+
+
 class SweepEstimateIn(BaseModel):
     space: dict[str, list[Any]] = Field(default_factory=dict)
     strategy: str = "grid"
@@ -127,6 +165,7 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
     snapshot: dict[str, Any] = {}
     instrument_info: dict[str, Any] = {}
     base_cfg = dict(args.base or {})
+    _validate_scan_source(args.scan_source)
     if args.date_range_start and args.date_range_end and hasattr(runner, "load_inputs"):
         load_cfg = {
             **base_cfg,
@@ -213,10 +252,22 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
                     create_proposal_from_winner,
                 )
 
+                # The proposal baseline + drift-guard must be the REAL live config
+                # at the target, NOT agent-supplied `base` (which the agent could
+                # fabricate to make the diff look benign). Fetch it now; approval
+                # re-verifies drift against the live row atomically anyway.
+                prior_for_target = await _live_target_config(
+                    db, args.target_schedule_id, args.target_config_index
+                )
+                if prior_for_target is None:
+                    raise ProposalApplyError(
+                        "target schedule/config not found for proposal baseline"
+                    )
+
                 repo = ProposalRepository(db.pool)
                 proposal_id = await create_proposal_from_winner(
                     proposal_repo=repo,
-                    prior_config=args.base or {},
+                    prior_config=prior_for_target,
                     winner_config=winner.get("config", {}),
                     target_schedule_id=args.target_schedule_id,
                     target_config_index=args.target_config_index,

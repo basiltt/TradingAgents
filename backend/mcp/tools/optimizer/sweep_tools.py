@@ -54,9 +54,12 @@ class SweepRunOut(BaseModel):
 async def _execute_sweep(
     *, sweep_id: str, repo: Any, runner: Any, args: SweepRunIn,
     signals: list[Any], snapshot: dict[str, Any], instrument_info: dict[str, Any],
+    manager: Any = None,
 ) -> None:
     """Background sweep body: run each combo, persist per-combo, finish the job.
-    Resumable — skips config hashes already stored (crash recovery)."""
+    Resumable — skips config hashes already stored (crash recovery). Yields to
+    the live-trading breaker: when SLIs degrade (manager.mcp_permitted() False)
+    it pauses rather than competing with order placement (FR-037/NFR-002)."""
     try:
         combos = generate_combos(
             args.space, strategy=args.strategy, base=args.base or {}, n=args.n, seed=args.seed
@@ -67,7 +70,13 @@ async def _execute_sweep(
             h = config_hash(cfg)
             if h in done:
                 continue
-            metrics = await runner.run_one(cfg, signals, snapshot, instrument_info)
+            # Live-protection gate: if the breaker is OPEN (trading SLIs degraded),
+            # back off before doing more CPU/DB work. Bounded so a stuck breaker
+            # can't hang the sweep forever — it ends as 'failed' via the timeout.
+            await _await_breaker_clear(manager)
+            import time as _t
+            deadline = _t.monotonic() + 120.0  # per-combo timeout (runaway guard)
+            metrics = await runner.run_one(cfg, signals, snapshot, instrument_info, deadline=deadline)
             obj = _objective_value(metrics, args.objective)
             await repo.write_result(
                 sweep_id=sweep_id, config=cfg, config_hash=h, metrics=metrics,
@@ -88,6 +97,19 @@ async def _execute_sweep(
         raise
     except Exception:  # noqa: BLE001 — record failure, never crash the loop
         await repo.finish_job(sweep_id, status="failed")
+
+
+async def _await_breaker_clear(manager: Any, *, max_wait_s: float = 60.0) -> None:
+    """Block (bounded) while the live-SLI breaker is OPEN. Raises TimeoutError if
+    it stays open past max_wait_s so the sweep ends rather than hanging."""
+    if manager is None or getattr(manager, "mcp_permitted", None) is None:
+        return
+    waited = 0.0
+    while not manager.mcp_permitted():
+        if waited >= max_wait_s:
+            raise TimeoutError("live-SLI breaker stayed open; sweep shed")
+        await asyncio.sleep(1.0)
+        waited += 1.0
 
 
 @tool(
@@ -141,19 +163,22 @@ async def sweep_run(args: SweepRunIn, ctx: Any) -> SweepRunOut:
         total_combos=len(combos), principal_token_id=ctx.principal, session_id=ctx.session_id,
     )
 
-    # fire-and-forget background task tracked on app.state for lifecycle/cancel
+    # fire-and-forget background task tracked on app.state for lifecycle/cancel.
+    # The manager handle lets the sweep yield to the live-SLI breaker.
+    state = getattr(ctx.services, "_state", None)
+    manager = getattr(state, "mcp_manager", None) if state is not None else None
     task = asyncio.create_task(
         _execute_sweep(
             sweep_id=sweep_id, repo=repo, runner=runner, args=args,
             signals=signals, snapshot=snapshot, instrument_info=instrument_info,
+            manager=manager,
         )
     )
-    tasks = getattr(ctx.services, "_state", None)
-    if tasks is not None:
-        registry = getattr(tasks, "mcp_sweep_tasks", None)
+    if state is not None:
+        registry = getattr(state, "mcp_sweep_tasks", None)
         if registry is None:
             registry = {}
-            tasks.mcp_sweep_tasks = registry
+            state.mcp_sweep_tasks = registry
         registry[sweep_id] = task
         task.add_done_callback(lambda _t, sid=sweep_id: registry.pop(sid, None))
 

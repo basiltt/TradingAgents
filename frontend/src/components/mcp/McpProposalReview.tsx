@@ -65,6 +65,9 @@ export function McpProposalReview({
   const verdict = (proposal.risk_verdict ?? {}) as Record<string, unknown>;
   const robustness = typeof verdict.robustness === "string" ? verdict.robustness : null;
   const rationale = typeof verdict.rationale === "string" ? verdict.rationale : null;
+  const uplift = (verdict.uplift && typeof verdict.uplift === "object" ? verdict.uplift : null) as
+    | Record<string, unknown>
+    | null;
 
   return (
     <div className="space-y-5 pb-7">
@@ -204,11 +207,23 @@ export function McpProposalReview({
           <div className="rounded-[var(--neu-radius-lg)] border border-dashed border-warning/40 bg-warning/6 p-4">
             <div className="flex items-center gap-2 text-warning">
               <Bot className="size-4" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.14em]">Agent-generated · unverified</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.14em]">
+                {rationale ? "Agent-generated · unverified" : "No agent rationale"}
+              </span>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-[var(--neu-text-muted)]">
-              {rationale ?? "The agent did not provide a rationale. Judge the change on the server verdict and the diff above, not on agent prose."}
+              {rationale ??
+                "The agent provided no written rationale. Judge this change on the server-computed verdict and the diff — not on agent prose."}
             </p>
+            {uplift && Object.keys(uplift).length > 0 ? (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {Object.entries(uplift).map(([k, v]) => (
+                  <span key={k} className="rounded-full bg-[var(--neu-surface-inset)] px-2 py-0.5 text-[10px] font-medium text-[var(--neu-text-strong)]">
+                    {k}: {fmt(v)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4 shadow-[var(--neu-shadow-float)]">

@@ -27,6 +27,12 @@ async def app_with_mcp(mcp_pool):
 
     app = FastAPI()
     app.state.db = _DB(mcp_pool)
+    # backing services so backtest/optimizer tools resolve as available
+    app.state.backtest_service = object()
+    app.state.mcp_backtest_runner = object()
+    app.state.accounts_service = object()
+    app.state.trade_repo = object()
+    app.state.mcp_sweep_repo = object()
     register_mcp(app)
     mgr = MCPManager(app)
     app.state.mcp_manager = mgr

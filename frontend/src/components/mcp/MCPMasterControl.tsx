@@ -101,6 +101,16 @@ export function MCPMasterControl({
         </div>
       ) : null}
 
+      {status?.last_error ? (
+        <div className="mt-3 flex items-start gap-2 rounded-[var(--neu-radius-md)] border border-destructive/30 bg-destructive/6 px-3.5 py-2.5">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <div className="text-[11px] leading-relaxed text-[var(--neu-text-muted)]">
+            <span className="font-semibold text-destructive">Last error: </span>
+            <code className="break-all">{status.last_error}</code>
+          </div>
+        </div>
+      ) : null}
+
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>

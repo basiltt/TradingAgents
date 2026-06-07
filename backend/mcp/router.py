@@ -21,6 +21,32 @@ def _manager(request: Request):
     return mgr
 
 
+async def _audit_control_plane(
+    mgr, *, action: str, outcome: str, mutating: bool, detail: Optional[dict] = None
+) -> None:
+    """Record a control-plane action (enable/disable/approve/reject/revert/token)
+    into the SAME hash-chained audit when the writer is running. Best-effort:
+    these human actions must never fail because audit is unavailable, but when
+    the server is on they belong in the tamper-evident chain alongside tool calls.
+    """
+    writer = getattr(mgr, "audit_writer", None)
+    if writer is None:
+        return  # server off → no live writer; the action's own row (proposal/config) is the record
+    try:
+        await writer.enqueue({
+            "tool_name": f"control_plane:{action}",
+            "tool_group": "control_plane",
+            "safety_class": "live_money" if mutating else "read_only",
+            "mutating": mutating,
+            "principal_token_id": "operator",
+            "session_id": "control-plane",
+            "status": outcome,
+            "args_redacted": detail or {},
+        })
+    except Exception:  # noqa: BLE001 — audit best-effort; never block the action
+        pass
+
+
 class ConfigPatch(BaseModel):
     enabled: Optional[bool] = None
     capability_tier: Optional[str] = None
@@ -75,10 +101,27 @@ async def enable(request: Request) -> dict[str, Any]:
     mgr = _manager(request)
     from backend.mcp.core.dbfloor import compute_mcp_acquire_cap, db_budget_ok
     from backend.mcp.core.preflight import run_preflight
-    from backend.mcp.core.registry import ToolGroup
+    from backend.mcp.core.registry import (
+        MCPConfigView,
+        ToolGroup,
+        resolve_enabled,
+    )
 
     cfg = await mgr.config_repo.get()
-    optimizer_on = ToolGroup.OPTIMIZER.value in cfg.enabled_groups
+    # Derive optimizer-on from the RESOLVED enabled set, not enabled_groups alone:
+    # a preset enables optimizer tools via per-tool overrides with empty groups,
+    # which would otherwise bypass the optimizer-only SLI/shm preflight invariants.
+    view = MCPConfigView(
+        capability_tier=cfg.capability_tier,
+        enabled_groups=cfg.enabled_groups,
+        enabled_tools=cfg.enabled_tools,
+    )
+    resolved = resolve_enabled(
+        view,
+        available=lambda g: _service_available(request, g),
+        debug_allowed=bool(cfg.safe_mode_flags.get("allow_debug", False)),
+    )
+    optimizer_on = any(s.group is ToolGroup.OPTIMIZER for s in resolved)
 
     # Compute the real DB-pool budget (FR-035): reserve a live floor for the
     # trading loop; the MCP cap is pool_max - floor. Enable is refused if the
@@ -418,23 +461,29 @@ async def approve_proposal_endpoint(request: Request, proposal_id: str) -> dict[
             proposal_repo=repo, db=db, proposal_id=proposal_id, approver="operator",
         )
     except ProposalApplyError as exc:
+        await _audit_control_plane(mgr, action="proposal_approve", outcome="rejected",
+                                   mutating=True, detail={"proposal_id": proposal_id, "error": str(exc)})
         raise HTTPException(409, detail=str(exc))
+    await _audit_control_plane(mgr, action="proposal_approve", outcome="applied",
+                               mutating=True, detail={"proposal_id": proposal_id})
     return {"applied": True, **summary}
 
 
 @router.post("/mcp/proposals/{proposal_id}/reject")
 async def reject_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
-    repo, _ = _proposal_repo(request)
+    repo, mgr = _proposal_repo(request)
     try:
         await repo.transition(proposal_id, to_status="rejected", approver="operator")
     except ValueError as exc:
         raise HTTPException(409, detail=str(exc))
+    await _audit_control_plane(mgr, action="proposal_reject", outcome="rejected",
+                               mutating=False, detail={"proposal_id": proposal_id})
     return {"rejected": True}
 
 
 @router.post("/mcp/proposals/{proposal_id}/revert")
 async def revert_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
-    repo, _ = _proposal_repo(request)
+    repo, mgr = _proposal_repo(request)
     db = getattr(request.app.state, "db", None)
     if db is None:
         raise HTTPException(503, detail="storage unavailable")
@@ -449,4 +498,6 @@ async def revert_proposal_endpoint(request: Request, proposal_id: str) -> dict[s
         )
     except ProposalApplyError as exc:
         raise HTTPException(409, detail=str(exc))
+    await _audit_control_plane(mgr, action="proposal_revert", outcome="reverted",
+                               mutating=True, detail={"proposal_id": proposal_id})
     return summary

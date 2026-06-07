@@ -10,6 +10,7 @@ import { ChevronDown, FlaskConical, Loader2 } from "lucide-react";
 import { mcpApi } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { mcpErrorMessage } from "./hooks";
 import { OBJECTIVE_OPTIONS } from "./sweepConstants";
 import type { MCPSweepJob } from "./types";
 
@@ -47,6 +48,10 @@ export function MCPSweepBrowser() {
       <div className="mt-4 space-y-2">
         {sweepsQ.isLoading ? (
           <div className="flex justify-center py-8 text-[var(--neu-text-muted)]"><Loader2 className="size-5 animate-spin" /></div>
+        ) : sweepsQ.isError ? (
+          <p className="rounded-[var(--neu-radius-md)] border border-destructive/30 bg-destructive/6 py-6 text-center text-xs text-destructive">
+            {mcpErrorMessage(sweepsQ.error)}
+          </p>
         ) : sweeps.length === 0 ? (
           <p className="rounded-[var(--neu-radius-md)] border border-dashed border-[var(--neu-stroke-soft)] py-8 text-center text-xs text-[var(--neu-text-muted)]">
             No sweeps yet. When the agent runs an optimization, it appears here.
@@ -106,6 +111,8 @@ function SweepRow({ sweep }: { sweep: MCPSweepJob }) {
           </div>
           {resultsQ.isLoading ? (
             <div className="flex justify-center py-4 text-[var(--neu-text-muted)]"><Loader2 className="size-4 animate-spin" /></div>
+          ) : resultsQ.isError ? (
+            <p className="py-2 text-[11px] text-destructive">{mcpErrorMessage(resultsQ.error)}</p>
           ) : rows.length === 0 ? (
             <p className="py-2 text-[11px] text-[var(--neu-text-muted)]">No results yet.</p>
           ) : (

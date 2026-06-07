@@ -243,8 +243,10 @@ def _read_only(spec: ToolSpec) -> bool:
 
 
 def _backtest_only(spec: ToolSpec) -> bool:
-    return spec.safety_class in (SafetyClass.READ_ONLY, SafetyClass.BACKTEST) and (
-        spec.group in (ToolGroup.BACKTEST, ToolGroup.OPTIMIZER) or _read_only(spec)
+    return (
+        spec.safety_class in (SafetyClass.READ_ONLY, SafetyClass.BACKTEST)
+        and not spec.exchange_facing  # cache_warmup hits the exchange — exclude
+        and (spec.group in (ToolGroup.BACKTEST, ToolGroup.OPTIMIZER) or _read_only(spec))
     )
 
 

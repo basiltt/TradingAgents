@@ -23,7 +23,16 @@ export function mcpErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 503) return "The MCP module is not available in this build.";
     if (err.status === 409) return "Config changed in another tab — refresh and retry.";
-    return err.detail || err.message;
+    // The backend returns structured 422 details (preflight/preset/objective);
+    // ApiError stringifies them — translate the known shapes to a sentence.
+    const d = err.detail || "";
+    if (d.includes("preflight_failed")) {
+      const m = d.match(/preflight_failed["':\s]+([a-z_]+)/i);
+      return `Can't enable: preflight check failed${m ? ` (${m[1]})` : ""}.`;
+    }
+    if (d.includes("unknown_preset")) return "That preset is not recognized.";
+    if (d.includes("unsupported_objective")) return "That objective metric is not supported.";
+    return d || err.message;
   }
   return err instanceof Error ? err.message : String(err);
 }
@@ -65,6 +74,8 @@ export function useMCPProposals(status?: string) {
     // manual refresh — keeps this list in sync with the polled pending count.
     refetchInterval: 8_000,
     staleTime: 4_000,
+    // Don't hammer when the module is absent (503) — same guard as the others.
+    retry: (count, err) => !(err instanceof ApiError && err.status === 503) && count < 1,
   });
 }
 
@@ -117,9 +128,14 @@ export function useApplyPreset() {
     mutationFn: (vars: { preset: string; rowVersion: number }) =>
       mcpApi.applyPreset(vars.preset, vars.rowVersion),
     onSuccess: (registry) => {
-      // The preset endpoint returns the fresh registry; seed it and refresh
-      // config so its row_version matches for the next mutation.
+      // The preset endpoint returns the fresh registry (with the bumped
+      // row_version). Seed the registry AND patch config's row_version
+      // synchronously so a follow-up tool toggle uses the fresh version and
+      // does NOT self-inflict a 409 before the config refetch lands.
       qc.setQueryData(KEYS.registry, registry);
+      qc.setQueryData(KEYS.config, (old: MCPConfig | undefined) =>
+        old ? { ...old, row_version: registry.row_version, capability_tier: registry.capability_tier } : old,
+      );
       qc.invalidateQueries({ queryKey: KEYS.config });
       toast.success("Preset applied");
     },

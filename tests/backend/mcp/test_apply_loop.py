@@ -181,7 +181,7 @@ async def test_create_approve_revert_round_trip(mcp_pool):
     pid = await create_proposal_from_winner(
         proposal_repo=repo, prior_config=prior, winner_config=winner,
         target_schedule_id=sid, target_config_index=0,
-        risk_verdict={"robustness": "HARD"},
+        risk_verdict={"robustness": "robust"},
     )
     stored = await repo.get(pid)
     assert stored["status"] == "pending"

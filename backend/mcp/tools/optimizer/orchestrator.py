@@ -41,14 +41,19 @@ async def run_sweep_inproc(
     seed: int = 0,
     min_trades: int = 30,
     min_uplift_pct: float = 5.0,
+    per_combo_timeout_s: float | None = 120.0,
 ) -> dict[str, Any]:
     """Run a full sweep in-process. Returns ranked results + the robust winner
-    (or keep_current=True)."""
+    (or keep_current=True). `per_combo_timeout_s` bounds each combo so one
+    pathological config cannot hang the sweep (passed as run_one's deadline)."""
+    import time
+
     combos = generate_combos(space, strategy=strategy, base=base, n=n, seed=seed)
 
     results: list[dict[str, Any]] = []
     for cfg in combos:
-        metrics = await runner.run_one(cfg, signals, snapshot, instrument_info)
+        deadline = (time.monotonic() + per_combo_timeout_s) if per_combo_timeout_s else None
+        metrics = await runner.run_one(cfg, signals, snapshot, instrument_info, deadline=deadline)
         results.append(
             {"config": cfg, "config_hash": config_hash(cfg), "metrics": metrics}
         )

@@ -60,6 +60,7 @@ markers = [
     "unit: fast isolated unit tests",
     "integration: tests requiring external services",
     "smoke: quick sanity-check tests",
+    "slow: long-running tests (perf/load gates)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

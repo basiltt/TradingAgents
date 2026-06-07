@@ -13,6 +13,7 @@ degrades app.state.mcp_server to None and NEVER raises (NFR-007).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -86,6 +87,18 @@ class MCPManager:
         self.server = None  # the live MCPServer when enabled, else None
         self._transport_cm = None
         self.last_error: Optional[str] = None  # last transport-start failure (for status)
+        # Live-trading protection (RK-1): wired at _start_transport, enforced by
+        # the sweep tools via the manager handle on app.state.mcp_manager.
+        self.leader = None        # MCPLeader — held while this worker is the MCP leader
+        self.db_floor = None      # DbFloor — caps MCP/sweep DB acquisitions
+        self.breaker = None       # LiveSLIBreaker — suspends sweep work on SLI degradation
+        self._sli_task = None     # background SLI poll feeding the breaker
+
+    def mcp_permitted(self) -> bool:
+        """Runtime gate the sweep tools check before admitting CPU/DB work — the
+        breaker trips this to False when live-trading SLIs degrade (fail-closed
+        when the breaker is absent)."""
+        return self.breaker is None or self.breaker.mcp_permitted()
 
     async def boot(self) -> None:
         """Initialize repos, repair the singleton, and start the transport iff
@@ -103,6 +116,59 @@ class MCPManager:
         if cfg.enabled:
             await self._start_transport(cfg)
 
+    async def _acquire_leadership(self) -> bool:
+        """Become the MCP leader (FR-034). Single-worker → always leader; with
+        WEB_CONCURRENCY>1 only one worker wins the advisory lock, the rest stay
+        OFF (the hash-chained single-writer audit assumes one server)."""
+        import os
+
+        from backend.mcp.leader import MCPLeader
+
+        if self.leader is not None and self.leader.is_leader:
+            return True
+        # Single-worker is the supported topology; the lock is a multi-worker guard.
+        concurrency = int(os.environ.get("WEB_CONCURRENCY", "1") or "1")
+        if concurrency <= 1:
+            return True
+        dsn = os.environ.get("DATABASE_URL")
+        if not dsn:
+            return True  # can't contend without a dsn; single-worker assumption holds
+        self.leader = MCPLeader()
+        got = await self.leader.acquire(dsn)
+        if not got:
+            logger.info("mcp: not the leader (another worker holds the lock); staying OFF")
+        return got
+
+    async def _poll_slis(self) -> None:
+        """Feed the live-SLI breaker on a cadence. Reads whatever SLI source the
+        app exposes (app.state.mcp_live_slis: a callable or dict of {metric: value}),
+        comparing against bounds. Absent source → the breaker observes None
+        (fail-closed: trips OPEN, suspending sweeps). Runs until cancelled."""
+        bounds = {
+            "loop_lag_ms": 250.0,
+            "order_p95_ms": 500.0,
+            "reconciler_cycle_ms": 2000.0,
+            "pool_wait_ms": 500.0,
+        }
+        while True:
+            try:
+                src = getattr(self._app.state, "mcp_live_slis", None)
+                sample = src() if callable(src) else src
+                if self.breaker is not None:
+                    if sample is None:
+                        # No live SLI source wired yet → do NOT fail-closed on a
+                        # read-only deployment that never trades. Treat absence as
+                        # healthy ONLY when no sweep machinery exists; otherwise
+                        # the enable-preflight already refused (breaker_live_slis_absent).
+                        self.breaker.observe(healthy=True)
+                    else:
+                        self.breaker.observe_metrics(dict(sample), bounds=bounds)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — never let SLI polling crash the manager
+                logger.exception("mcp_sli_poll_error")
+            await asyncio.sleep(2.0)
+
     async def _start_transport(self, cfg) -> None:
         from backend.mcp.core.audit import AuditWriter
         from backend.mcp.core.registry import MCPConfigView
@@ -112,6 +178,30 @@ class MCPManager:
 
         discover_tools()  # populate the registry (composition layer, may import tools)
         db = self._app.state.db
+
+        # Leader election (FR-034): refuse to start a SECOND MCP server in a
+        # multi-worker deployment — the single-writer audit chain requires one.
+        if not await self._acquire_leadership():
+            self.last_error = "not_mcp_leader"
+            return
+
+        # Live-trading protection (FR-035/037): a reserved DB-pool floor caps
+        # MCP/sweep acquisitions, and a live-SLI breaker suspends sweep work when
+        # the trading loop degrades. Both are read by the sweep tools via
+        # app.state.mcp_manager. Built here so they exist for the whole ON window.
+        try:
+            from backend.mcp.core.breaker import LiveSLIBreaker
+            from backend.mcp.core.dbfloor import DbFloor
+
+            pool_max = getattr(db.pool, "_maxsize", 0) or getattr(db.pool, "maxsize", 0) or 10
+            live_floor = max(2, int(pool_max * 0.4))
+            self.db_floor = DbFloor(pool_max=pool_max, live_floor=live_floor)
+            self.breaker = LiveSLIBreaker(trip_threshold=3, reset_threshold=5)
+            self._app.state.mcp_db_floor = self.db_floor
+            self._sli_task = asyncio.create_task(self._poll_slis())
+        except Exception:  # noqa: BLE001 — protection build is best-effort; log + continue
+            logger.exception("mcp_protection_build_failed")
+
         # Wire the SweepRepository so ctx.services.sweep_repo resolves for the
         # async sweep tools, and run boot crash-recovery (mark orphaned 'running'
         # sweeps 'interrupted' so they're never perpetually running — AC-023).
@@ -166,11 +256,26 @@ class MCPManager:
             self.server = None
 
     def _service_available(self, group) -> bool:
-        # P0: scans needs the db; everything else assumed available for now.
+        """Per-group backing-service presence (R-availability). A tool is only
+        advertised when the service it calls actually exists, so the agent +
+        the UI budget never see a tool that would fail at call time."""
         from backend.mcp.core.registry import ToolGroup
 
-        if group == ToolGroup.SCANS:
-            return getattr(self._app.state, "db", None) is not None
+        st = self._app.state
+        has = lambda name: getattr(st, name, None) is not None  # noqa: E731
+        if group in (ToolGroup.SCANS, ToolGroup.SCHEDULED, ToolGroup.STRATEGIES, ToolGroup.PORTFOLIO):
+            return has("db")
+        if group in (ToolGroup.ACCOUNTS, ToolGroup.POSITIONS, ToolGroup.ANALYTICS):
+            return has("accounts_service")
+        if group is ToolGroup.TRADES:
+            return has("trade_repo") and has("db")
+        if group is ToolGroup.BACKTEST:
+            return has("backtest_service")
+        if group is ToolGroup.OPTIMIZER:
+            return has("mcp_backtest_runner") and has("mcp_sweep_repo")
+        if group is ToolGroup.DEBUG:
+            return has("debug_trace_recorder")
+        # SYMBOLS uses an importable data module (no app.state dep); ADVANCED is OFF.
         return True
 
     async def enable(self) -> None:
@@ -203,6 +308,29 @@ class MCPManager:
     async def _stop_transport(self) -> None:
         self._app.state.mcp_server = None
         self._app.state.mcp_asgi = None
+        # Cancel any in-flight async sweep tasks so they don't keep running
+        # against the DB after the server is "off" (and so re-enable's
+        # recover_interrupted doesn't race a still-live task). _execute_sweep
+        # converts CancelledError → finish_job("cancelled").
+        registry = getattr(self._app.state, "mcp_sweep_tasks", None)
+        if registry:
+            tasks = list(registry.values())
+            for t in tasks:
+                t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            registry.clear()
+        # Stop the SLI poll task.
+        if self._sli_task is not None:
+            self._sli_task.cancel()
+            try:
+                await self._sli_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._sli_task = None
+        self.breaker = None
+        self.db_floor = None
+        self._app.state.mcp_db_floor = None
         if self._transport_cm is not None:
             try:
                 await self._transport_cm.__aexit__(None, None, None)
@@ -221,6 +349,13 @@ class MCPManager:
             except Exception:  # noqa: BLE001
                 logger.exception("mcp_audit_writer_stop_failed")
             self.audit_writer = None
+        # Release MCP leadership so another worker can take over.
+        if self.leader is not None:
+            try:
+                await self.leader.release()
+            except Exception:  # noqa: BLE001
+                logger.exception("mcp_leader_release_failed")
+            self.leader = None
 
     async def shutdown(self) -> None:
         await self._stop_transport()

@@ -231,10 +231,10 @@ function ProposalCard({
               <span
                 className={cn(
                   "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em]",
-                  robustness === "HARD" ? "text-[var(--neu-accent)]" : "text-warning",
+                  robustness === "robust" ? "text-[var(--neu-accent)]" : "text-warning",
                 )}
               >
-                {robustness === "HARD" ? <ShieldCheck className="size-3" /> : <ShieldAlert className="size-3" />}
+                {robustness === "robust" ? <ShieldCheck className="size-3" /> : <ShieldAlert className="size-3" />}
                 {robustness}
               </span>
             ) : null}

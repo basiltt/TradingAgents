@@ -34,7 +34,8 @@ export interface MCPStatus {
   enabled: boolean;
   active_tools: number;
   pending_proposals: number;
-  last_error_at: string | null;
+  last_error?: string | null;
+  last_error_at?: string | null;
 }
 
 /** One tool in the budget catalog (GET /api/v1/mcp/registry). */
