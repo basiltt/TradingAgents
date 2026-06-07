@@ -646,6 +646,13 @@ class ScannerService:
                     sector_service=self._sector_service,
                     recorder=self._debug_recorder, debug_ctx=debug_ctx,
                 )
+                # Regime Multi-Strategy: rebuild the ScanContext on resume too, else
+                # MR would be silently inert (and the kill-switch unread) for resumed
+                # scans. Fail-safe: a degraded context just keeps MR fail-closed.
+                try:
+                    await self._set_executor_scan_context(executor, auto_configs)
+                except Exception:
+                    logger.warning("scan_context_setup_failed_on_resume", exc_info=True)
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB
                 prior_auto_results = (db_results or {}).get("auto_trade_results", [])

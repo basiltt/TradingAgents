@@ -45,7 +45,15 @@
 | 29 | 16:10 | Step 12c review gate (3 agents on REAL code) | DONE — 1 CRITICAL, 2 HIGH, ~15 Med/Low |
 | 30 | 16:15 | Fix review findings (IR1-IR12) | DONE — 268 tests green |
 | 31 | 16:45 | Review-fix regression tests (IR1/2/3/6/7) | DONE — 6/6 |
-| 32 | 16:50 | Next: re-review (2nd round) then cross-phase + final hardening | IN_PROGRESS |
+| 32 | 16:50 | Step 12c review R2 (verify fixes) | DONE — all 6 VERIFIED, no new bugs |
+| 33 | 17:00 | Carry-over fixes: MR timeout-path direction + resume-path ScanContext | DONE |
+| 34 | 17:05 | Next: cross-phase validation + final hardening (20-25 rounds) | IN_PROGRESS |
+
+## Step 12c Review R2: ALL 6 FIXES VERIFIED (no new bugs)
+Backend reviewer confirmed IR1/2/3/4/6/7 all correct; duplicate mr_target_price removed;
+new kwargs backward-compatible. 2 carry-overs fixed:
+- MR timeout path now records the fade side in position_directions (was trend dir).
+- resume_incomplete_scans now rebuilds ScanContext (MR no longer inert + kill read on resume).
 
 ## Step 12c review fixes APPLIED (268 tests green, golden + tsc clean)
 - IR1 CRITICAL: lazy MR mean (per-scan cached, kline-cache fetcher) — F2 now reachable.

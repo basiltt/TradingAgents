@@ -1433,9 +1433,13 @@ class AutoTradeExecutor:
             # Order may have been submitted to exchange before timeout.
             # Add to existing_symbols AND position_directions to prevent duplicate/excess trades.
             state.existing_symbols.add(symbol)
-            _is_rev = cfg.get("direction") == "reverse"
-            _sig_dir = "short" if direction in ("short", "sell") else "long"
-            state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+            if mr_fade:
+                # IR4: record the real MR fade side, not the trend signal+reverse.
+                state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
+            else:
+                _is_rev = cfg.get("direction") == "reverse"
+                _sig_dir = "short" if direction in ("short", "sell") else "long"
+                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
             execution = TradeExecution(
                 account_id=account_id,
                 symbol=symbol,
