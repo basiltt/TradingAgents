@@ -1234,7 +1234,7 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     # wraps every migration in conn.transaction(), which PG rejects for
     # CONCURRENTLY). The startup healthcheck (mark_index_health) warns if absent.
     (45, "CREATE INDEX IF NOT EXISTS idx_trades_account_strategy_kind ON trades(account_id, strategy_kind, status)"),
-    (46, "CREATE TABLE IF NOT EXISTS f2_long_ack (account_id TEXT PRIMARY KEY, acked_at TIMESTAMPTZ NOT NULL, acked_leverage INT NOT NULL, acked_capital_pct REAL NOT NULL, acked_max_trades INT NOT NULL)"),
+    (46, "CREATE TABLE IF NOT EXISTS f2_long_ack (account_id TEXT PRIMARY KEY, acked_at TIMESTAMPTZ NOT NULL, acked_leverage INT NOT NULL, acked_capital_pct DOUBLE PRECISION NOT NULL, acked_max_trades INT NOT NULL, updated_by TEXT)"),
     (47, "CREATE TABLE IF NOT EXISTS pending_trade_intents (account_id TEXT NOT NULL, symbol TEXT NOT NULL, side TEXT NOT NULL, strategy_kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (account_id, symbol, side))"),
     (48, "CREATE TABLE IF NOT EXISTS feature_kill_switches (feature_name TEXT PRIMARY KEY, killed BOOLEAN NOT NULL DEFAULT false, updated_by TEXT, updated_at TIMESTAMPTZ)"),
 ]

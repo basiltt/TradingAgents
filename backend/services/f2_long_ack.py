@@ -43,10 +43,11 @@ async def record_ack(db: Any, account_id: str, *, leverage: int, capital_pct: fl
     """Upsert the ack row from the SERVER-SIDE current config snapshot (never the
     client request body — SD28). Caller passes the persisted config values."""
     await db.pool.execute(
-        "INSERT INTO f2_long_ack (account_id, acked_at, acked_leverage, acked_capital_pct, acked_max_trades) "
-        "VALUES ($1, $2, $3, $4, $5) "
+        "INSERT INTO f2_long_ack (account_id, acked_at, acked_leverage, acked_capital_pct, acked_max_trades, updated_by) "
+        "VALUES ($1, $2, $3, $4, $5, $6) "
         "ON CONFLICT (account_id) DO UPDATE SET "
         "acked_at = EXCLUDED.acked_at, acked_leverage = EXCLUDED.acked_leverage, "
-        "acked_capital_pct = EXCLUDED.acked_capital_pct, acked_max_trades = EXCLUDED.acked_max_trades",
-        account_id, datetime.now(timezone.utc), leverage, capital_pct, max_trades,
+        "acked_capital_pct = EXCLUDED.acked_capital_pct, acked_max_trades = EXCLUDED.acked_max_trades, "
+        "updated_by = EXCLUDED.updated_by",
+        account_id, datetime.now(timezone.utc), leverage, capital_pct, max_trades, updated_by,
     )

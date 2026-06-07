@@ -317,7 +317,7 @@ class ScannerService:
 
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, debug_recorder: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, debug_recorder: Any = None, kline_cache: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
@@ -326,6 +326,7 @@ class ScannerService:
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
         self._debug_recorder = debug_recorder
+        self._kline_cache = kline_cache  # for Regime Multi-Strategy BTC/MR-mean fetches
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -471,6 +472,11 @@ class ScannerService:
                 await self._set_executor_scan_context(executor, auto_configs)
             except Exception:
                 logger.warning("scan_context_setup_failed", exc_info=True)
+                # C2: if context setup itself throws (before set_scan_context ran),
+                # install a fail-CLOSED context so the master kill is honored and MR
+                # stays disabled, rather than running on the permissive default.
+                from backend.services.scan_context import ScanContext as _SC
+                executor.set_scan_context(_SC.empty(degraded=True, kill={"__all__": True}))
             if self._debug_recorder is not None and debug_ctx is not None:
                 await self._debug_recorder.open_run(
                     debug_ctx,
@@ -653,6 +659,8 @@ class ScannerService:
                     await self._set_executor_scan_context(executor, auto_configs)
                 except Exception:
                     logger.warning("scan_context_setup_failed_on_resume", exc_info=True)
+                    from backend.services.scan_context import ScanContext as _SC
+                    executor.set_scan_context(_SC.empty(degraded=True, kill={"__all__": True}))
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB
                 prior_auto_results = (db_results or {}).get("auto_trade_results", [])

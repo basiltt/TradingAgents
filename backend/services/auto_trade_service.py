@@ -87,6 +87,22 @@ class AutoTradeExecutor:
         cache[key] = mean
         return mean
 
+    async def _lazy_mark_price(self, account_id: str, symbol: str):
+        """Per-scan-cached mark price for the MR entry (P2: mark price is a market
+        value, so one fetch per symbol per scan is shared across all accounts rather
+        than fetched per (account, symbol)). Never raises."""
+        cache = getattr(self, "_mr_price_cache", None)
+        if cache is None:
+            cache = self._mr_price_cache = {}
+        if symbol in cache:
+            return cache[symbol]
+        try:
+            price = await self._accounts.get_mark_price(account_id, symbol)
+        except Exception:
+            price = None
+        cache[symbol] = price
+        return price
+
     def _emit_life(self, account_id: str, phase: str, event_type: str, **detail: Any) -> None:
         """Fail-open lifecycle emit helper. Never raises, never blocks."""
         rec, ctx = self._recorder, self._debug_ctx
@@ -113,7 +129,8 @@ class AutoTradeExecutor:
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
         self._state.clear()
-        self._mr_mean_cache = {}  # reset the per-scan MR mean cache (IR1)
+        self._mr_mean_cache = {}   # reset the per-scan MR mean cache (IR1)
+        self._mr_price_cache = {}  # reset the per-scan MR mark-price cache (P2)
         for i, cfg in enumerate(configs):
             key = f"{cfg['account_id']}_{i}"
             self._state[key] = _AccountState(config=cfg)
@@ -1067,10 +1084,7 @@ class AutoTradeExecutor:
             return None
         entry = ctx.get_price(symbol)
         if entry is None:
-            try:
-                entry = await self._accounts.get_mark_price(account_id, symbol)
-            except Exception:
-                entry = None
+            entry = await self._lazy_mark_price(account_id, symbol)
         if entry is None:
             self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_PRICE_UNAVAILABLE, result)
             state.trades_skipped += 1
@@ -1121,6 +1135,12 @@ class AutoTradeExecutor:
 
         # long-ack gate (server-authoritative; relaxed-proof)
         if side == "long":
+            # C1: the f2_long kill switch lets an operator emergency-stop the riskier
+            # long-fade entries independently while leaving shorts running.
+            if ctx.is_killed("f2_long"):
+                self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.FEATURE_KILLED, result, feature="f2_long")
+                state.trades_skipped += 1
+                return None
             ok = await _ack.is_long_acknowledged(self._accounts, account_id, cfg)
             if not ok:
                 self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_LONG_UNACKNOWLEDGED, result)
@@ -1152,11 +1172,13 @@ class AutoTradeExecutor:
         # ── Regime Multi-Strategy gates (all no-ops when no feature is enabled) ──
         ctx = self._scan_context
         cohort = cfg.get("strategy_cohort", "trend")
-        regime_active = (
-            cfg.get("regime_filter_enabled")
-            or cfg.get("mean_reversion_enabled")
-            or cohort == "mean_reversion"
-        )
+        # C5: a single coherent "MR account" rule — cohort says mean_reversion AND the
+        # strategy is actually enabled. This couples strategy_cohort and
+        # mean_reversion_enabled so neither (a) a trend account with a stray
+        # mean_reversion_enabled gets kill-gated/routed, nor (b) an mr-cohort with the
+        # strategy disabled silently keeps trading MR.
+        is_mr_account = cohort == "mean_reversion" and bool(cfg.get("mean_reversion_enabled"))
+        regime_active = bool(cfg.get("regime_filter_enabled")) or is_mr_account
         mr_fade = False  # set True only on the F2 placement path (Phase 4)
         if regime_active:
             # (0) master kill-switch (only __all__ is knowable before routing)
@@ -1164,23 +1186,24 @@ class AutoTradeExecutor:
                 self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.FEATURE_KILLED, result)
                 state.trades_skipped += 1
                 return None
-            # (1b) per-feature kill, keyed by cohort
-            feat = _router.feature_for(cohort)
+            # (1b) per-feature kill: f2 for an MR account, else f1.
+            feat = "f2" if is_mr_account else "f1"
             if ctx.is_killed(feat):
                 self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.FEATURE_KILLED, result, feature=feat)
                 state.trades_skipped += 1
                 return None
-            # (2) strategy routing — trend-cohort runs trend in all regimes; mean_reversion
-            #     only in mr_regime, else skip. (F2 placement is wired in Phase 4.)
-            regime = ctx.routing_regime(
-                cfg.get("btc_vol_interval", "1h"), cfg.get("btc_vol_lookback_candles", 14)
-            )
-            strategy = _router.route_strategy(cohort, regime, mr_regime=cfg.get("mr_regime", "ranging"))
-            if strategy == "none":
-                self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_REGIME_EXCLUDED, result, regime=regime)
-                state.trades_skipped += 1
-                return None
-            mr_fade = strategy == "mean_reversion"
+            # (2) strategy routing — an MR account runs MR only in mr_regime, else skip;
+            #     everything else runs trend. (F2 placement is wired in Phase 4.)
+            if is_mr_account:
+                regime = ctx.routing_regime(
+                    cfg.get("btc_vol_interval", "1h"), cfg.get("btc_vol_lookback_candles", 14)
+                )
+                strategy = _router.route_strategy("mean_reversion", regime, mr_regime=cfg.get("mr_regime", "ranging"))
+                if strategy == "none":
+                    self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_REGIME_EXCLUDED, result, regime=regime)
+                    state.trades_skipped += 1
+                    return None
+                mr_fade = strategy == "mean_reversion"
             # (4) F1 market-condition gates (apply to BOTH strategies; subtractive)
             session_skip = _f1.gate_session(cfg, datetime.now(timezone.utc))
             if session_skip is not None:
@@ -1228,7 +1251,11 @@ class AutoTradeExecutor:
             return None
 
         max_same_dir = cfg.get("max_same_direction")
-        if max_same_dir:
+        if max_same_dir and not mr_fade:
+            # C3: this gate counts position_directions in SIGNAL space. MR places in
+            # FADE space (side from price-vs-mean), so applying it to MR would count
+            # the wrong axis. MR's own mr_max_trades cap governs concentration; skip
+            # this trend-oriented gate for MR-routed candidates.
             is_reverse = cfg.get("direction") == "reverse"
             signal_dir = "short" if direction in ("short", "sell") else "long"
             actual_dir = ("long" if signal_dir == "short" else "short") if is_reverse else signal_dir
@@ -1261,7 +1288,10 @@ class AutoTradeExecutor:
 
         # Apply filters (skipped in relaxed/fill mode)
         signal_sides = cfg.get("signal_sides", "both")
-        if signal_sides != "both":
+        if signal_sides != "both" and not mr_fade:
+            # C4: signal_sides filters the LLM signal direction, but MR places on the
+            # FADE side (decoupled from the signal). Applying it to MR would block/admit
+            # the wrong side. MR side is governed by mr_short_enabled/mr_long_enabled.
             _norm = {"long": "buy", "short": "sell", "Long": "buy", "Short": "sell"}
             normalized_side = _norm.get(signal_sides, signal_sides)
             normalized_dir = _norm.get(direction, direction)

@@ -47,7 +47,29 @@
 | 31 | 16:45 | Review-fix regression tests (IR1/2/3/6/7) | DONE — 6/6 |
 | 32 | 16:50 | Step 12c review R2 (verify fixes) | DONE — all 6 VERIFIED, no new bugs |
 | 33 | 17:00 | Carry-over fixes: MR timeout-path direction + resume-path ScanContext | DONE |
-| 34 | 17:05 | Next: cross-phase validation + final hardening (20-25 rounds) | IN_PROGRESS |
+| 34 | 17:05 | Step 14 hardening review (perf/data on fixed code) | DONE — 1 CRITICAL (kline cache unwired) + meds |
+| 35 | 17:30 | Fix hardening findings (P1/P2/D2/D4/D5) | DONE — 5 regression tests green |
+| 36 | 17:35 | Step 14 adversarial correctness pass | DONE — 7 findings (2 kill-safety, 3 filter/coupling) |
+| 37 | 17:55 | Fix adversarial findings (C1-C5) | DONE — 3 regression tests green |
+| 38 | 18:00 | Next: full suite + final validation + traceability + merge | IN_PROGRESS |
+
+## Step 14 Adversarial Findings + Fixes
+- C1 HIGH: f2_long kill documented but NEVER checked → inert. FIX: is_killed("f2_long") on the long-fade path before the ack gate.
+- C2 MED(HIGH-impact): master kill fails OPEN if _set_executor_scan_context THROWS (before set_scan_context). FIX: except branch installs ScanContext.empty(degraded=True, kill={"__all__":True}) on both main + resume paths.
+- C3 MED: max_same_direction counts SIGNAL-space but MR places FADE-space → cap never trips. FIX: skip max_same_direction for mr_fade (mr_max_trades governs MR concentration).
+- C4 MED-LOW: signal_sides filters LLM signal but MR places fade side → wrong block/admit. FIX: skip signal_sides for mr_fade (mr_short/long_enabled govern MR side).
+- C5 MED: strategy_cohort vs mean_reversion_enabled divergence — (A) trend+stray mr_enabled got kill-gated; (B) mr-cohort+mr_disabled still traded MR. FIX: single is_mr_account rule = (cohort==mean_reversion AND mean_reversion_enabled); regime_active = regime_filter_enabled OR is_mr_account; routing only for is_mr_account.
+- C6/C7 LOW (documented, fail-safe): mr_max_trades over-counts non-MR positions (fail-safe, fewer trades); __all__ only halts regime-active accounts (documented as regime-scoped, not legacy-trend global stop).
+- Golden snapshot still byte-identical; 27 integration tests green after the restructure.
+
+## Step 14 Hardening Findings + Fixes
+**CRITICAL P1 (root of IR1):** ScannerService had NO _kline_cache attribute + nothing assigned it → _fetch always returned [] → feature silently inert in production. FIX: kline_cache ctor param + main.py wires app.state.scanner_service._kline_cache = kline_cache_service. (regression-tested both ways)
+**MED P2:** mark price fetched per (account,symbol) on MR path → linear in accounts. FIX: _lazy_mark_price per-scan symbol cache (shared across accounts), reset in init_configs.
+**LOW D2:** create_trade now validates strategy_kind/strategy_cohort against allowlist BEFORE insert (prevents DB CHECK trip after a live order exists).
+**LOW D4:** f2_long_ack.acked_capital_pct REAL→DOUBLE PRECISION (float4/float8 boundary).
+**LOW D5:** f2_long_ack +updated_by audit column; record_ack persists it.
+**Verified sound by reviewers:** migrations idempotent/no-inner-semicolon/constant-default; INSERT alignment (25/28 cols); CHECK==Literal; fail-closed reads; cache keyed (symbol,period,interval) shared across accounts; Wilder ATR O(n) negligible; scales to 50 accounts.
+**Deferred (documented):** D1 index-CONCURRENTLY for large trades table (ops runbook); D3 rollback runbook; D6 pending_trade_intents PK semantics (table unused in v1).
 
 ## Step 12c Review R2: ALL 6 FIXES VERIFIED (no new bugs)
 Backend reviewer confirmed IR1/2/3/4/6/7 all correct; duplicate mr_target_price removed;

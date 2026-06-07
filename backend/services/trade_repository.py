@@ -132,6 +132,12 @@ class TradeRepository:
             raise ValueError(f"Invalid symbol: {symbol}")
         if side not in VALID_SIDES:
             raise ValueError(f"Invalid side: {side}")
+        # D2: validate strategy enums before the INSERT so a bad value can't trip the
+        # DB CHECK *after* a live order was placed (which would orphan the position).
+        if strategy_kind not in ("trend", "mean_reversion"):
+            raise ValueError(f"Invalid strategy_kind: {strategy_kind}")
+        if strategy_cohort not in ("trend", "mean_reversion"):
+            raise ValueError(f"Invalid strategy_cohort: {strategy_cohort}")
         if metadata:
             self._validate_metadata(metadata)
         order_link_id = str(uuid.uuid4())
