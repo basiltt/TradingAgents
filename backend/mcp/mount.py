@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 _GATE_BODY = b'{"detail":"feature disabled","code":"MCP_DISABLED"}'
 
 
+def _make_resource_provider():
+    from backend.mcp.resources.catalog import ResourceProvider
+
+    return ResourceProvider()
+
+
+def _make_prompt_provider():
+    from backend.mcp.resources.catalog import PromptProvider
+
+    return PromptProvider()
+
+
 async def _gate_503(scope, receive, send) -> None:
     """ASGI app that returns 503 for http and acks lifespan; the default target
     of the /mcp/rpc indirection mount when MCP is disabled."""
@@ -110,6 +122,8 @@ class MCPManager:
             app_state=self._app.state,
             audit_writer=self.audit_writer,
             available=self._service_available,
+            resource_provider=_make_resource_provider(),
+            prompt_provider=_make_prompt_provider(),
         )
         self._app.state.mcp_server = self.server
 

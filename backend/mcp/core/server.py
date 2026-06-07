@@ -45,6 +45,8 @@ class MCPServer:
         available: Callable[[Any], bool] | None = None,
         clock: Clock | None = None,
         server_version: str = "0.1.0",
+        resource_provider: Any | None = None,
+        prompt_provider: Any | None = None,
     ) -> None:
         self._config_view = config_view
         self._services = ServiceAccessors(app_state)
@@ -52,6 +54,8 @@ class MCPServer:
         self._available = available or (lambda group: True)
         self._clock = clock or RealClock()
         self._server_version = server_version
+        self._resources = resource_provider
+        self._prompts = prompt_provider
         self._enabled: dict[str, ToolSpec] = {
             s.name: s for s in resolve_enabled(config_view, available=self._available)
         }
@@ -91,6 +95,28 @@ class MCPServer:
                 }
             )
         return out
+
+    # --- resources / prompts (P1) — providers injected at composition time ---
+
+    def list_resources(self) -> list[dict[str, str]]:
+        if self._resources is None:
+            return []
+        return list(self._resources.resources)
+
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        if self._resources is None:
+            raise ValueError("resources not available")
+        return await self._resources.read(uri, self._services, self._server_version)
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        if self._prompts is None:
+            return []
+        return self._prompts.list()
+
+    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self._prompts is None:
+            raise ValueError("prompts not available")
+        return self._prompts.get(name, arguments)
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any], *, principal: str, session_id: str
