@@ -38,7 +38,22 @@
 | 22 | 15:00 | Persistence tagging: place_trade + create_trade + create_child_trade INSERTs | DONE — 145 green |
 | 23 | 15:15 | start_scan wiring: kill-switch read + build_scan_context + set_scan_context | DONE — 132 scanner green, no-op for non-regime |
 | 24 | 15:20 | BACKEND FUNCTIONALLY COMPLETE end-to-end | DONE |
-| 25 | 15:22 | Next: reconciler/AI-exclusion/endpoints, frontend, Phase 5 tests | IN_PROGRESS |
+| 25 | 15:22 | AI-mgr MR exclusion + f2-long-ack endpoint (TDD) | DONE — 137 green |
+| 26 | 15:40 | Frontend: client.ts mirror + RegimeStrategyFields + mount | DONE — tsc 0 errors |
+| 27 | 15:45 | FULL-STACK FUNCTIONALLY COMPLETE | DONE |
+| 28 | 15:48 | Next: Phase 5 E2E/coverage + review gates + final hardening | IN_PROGRESS |
+
+## FULL STACK FUNCTIONALLY COMPLETE (137 backend tests + tsc clean)
+Backend: scan -> ScanContext -> gates/route/F2 placement -> strategy-tagged trade.
+Frontend: 3 feature toggles on the shared AutoTradeSection (both forms), 28-field
+client.ts mirror, F2-long danger ack. All default-off; golden snapshot byte-identical.
+
+## Remaining (verification + review + merge)
+- Phase 5: E2E all-on integration test, perf-bound test, coverage gate
+- Per-phase review gates (12c security/arch/backend/qa/perf), cross-phase (13)
+- Final hardening (14, 20-25 rounds), traceability (16), merge (18)
+- Deferred-but-noted: reconciler pending-intent writes, admin kill-switch endpoint,
+  StrategyChip/PnL-view UI, fleet bulk-assign (v1-optional polish; backend core done)
 
 ## BACKEND END-TO-END COMPLETE
 scan -> _set_executor_scan_context (kill read + build_scan_context BTC regime/means)
