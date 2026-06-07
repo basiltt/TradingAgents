@@ -84,6 +84,75 @@ class BacktestCreateRequest(BaseModel):
     adaptive_blacklist_max_win_rate: float = Field(default=30.0, ge=0, le=100)
     adaptive_blacklist_lookback_hours: int = Field(default=48, ge=1, le=720)
 
+    # ── Regime Multi-Strategy (F1/F2/F3) — accepted so the backtester can validate
+    # these features on historical data BEFORE live funding. Defaults mirror
+    # production AutoTradeConfig exactly (all default-off / inherit), so a backtest
+    # that doesn't set them behaves identically to a plain-trend backtest (the
+    # byte-identical golden guarantee). See backtest_engine for the replay. The
+    # F2-long server-ack gate is bypassed in the backtester (no live account) — honored
+    # via mr_long_enabled and surfaced as a modeling note by the service.
+    # F1 — Regime/Session Entry Filter
+    regime_filter_enabled: bool = False
+    session_filter_enabled: bool = False
+    session_blocked_hours_utc: Optional[list[int]] = None
+    session_allowed_hours_utc: Optional[list[int]] = None
+    btc_vol_filter_enabled: bool = False
+    btc_vol_min_threshold: Optional[float] = Field(None, ge=0)
+    btc_vol_max_threshold: Optional[float] = Field(None, ge=0)
+    btc_vol_interval: Literal["15m", "1h", "4h"] = "1h"
+    btc_vol_lookback_candles: int = Field(default=14, ge=2, le=200)
+    # F2 — Mean-Reversion Strategy
+    mean_reversion_enabled: bool = False
+    mr_short_enabled: bool = True
+    mr_long_enabled: bool = False
+    mr_long_ack_requested: bool = False  # UI-intent only; ack gate is bypassed in backtest
+    mr_regime: Literal["ranging"] = "ranging"
+    mr_mean_period: int = Field(default=20, ge=2, le=200)
+    mr_mean_interval: Literal["15m", "1h", "4h"] = "1h"
+    mr_target_capture_pct: float = Field(default=60.0, gt=0, le=100)
+    mr_tight_stop_pct: Optional[float] = Field(None, gt=0, le=1000)
+    mr_time_stop_minutes: int = Field(default=120, ge=5, le=1440)
+    mr_min_edge_pct: float = Field(default=1.0, ge=0, le=100)
+    mr_extreme_min_abs_score: float = Field(default=5.0, ge=0, le=10)
+    mr_capital_pct: float = Field(default=2.0, gt=0, le=100)
+    mr_leverage: int = Field(default=10, ge=1, le=125)
+    mr_max_trades: int = Field(default=2, ge=1, le=999)
+    # F3 — Strategy-Cohort (tri-state; None inherits, but a backtest has no stored
+    # account so the engine resolves None -> "trend").
+    strategy_cohort: Optional[Literal["trend", "mean_reversion"]] = None
+    # common / classifier-tuning
+    regime_staleness_minutes: int = Field(default=30, ge=5, le=240)
+    regime_volatile_atr: float = Field(default=2.0, gt=0, le=10)
+    regime_trend_ema_dist_pct: float = Field(default=1.0, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def validate_session_exclusive(self) -> "BacktestCreateRequest":
+        # Mirrors AutoTradeConfig.validate_session_exclusive.
+        if self.session_blocked_hours_utc is not None and self.session_allowed_hours_utc is not None:
+            raise ValueError("session_blocked_hours_utc and session_allowed_hours_utc are mutually exclusive")
+        for fld in ("session_blocked_hours_utc", "session_allowed_hours_utc"):
+            hrs = getattr(self, fld)
+            if hrs is not None:
+                for h in hrs:
+                    if not (0 <= h <= 23):
+                        raise ValueError(f"{fld} hours must be 0-23, got {h}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_vol_band(self) -> "BacktestCreateRequest":
+        # Mirrors AutoTradeConfig.validate_vol_band.
+        lo, hi = self.btc_vol_min_threshold, self.btc_vol_max_threshold
+        if lo is not None and hi is not None and lo >= hi:
+            raise ValueError("btc_vol_min_threshold must be < btc_vol_max_threshold")
+        return self
+
+    @model_validator(mode="after")
+    def validate_mr_direction(self) -> "BacktestCreateRequest":
+        # Mirrors AutoTradeConfig.validate_mr_direction.
+        if self.mean_reversion_enabled and not (self.mr_short_enabled or self.mr_long_enabled):
+            raise ValueError("mean_reversion_enabled requires at least one of mr_short_enabled / mr_long_enabled")
+        return self
+
     @model_validator(mode="after")
     def validate_dates(self) -> "BacktestCreateRequest":
         if self.date_range_end <= self.date_range_start:
@@ -158,6 +227,7 @@ class BacktestTradeResponse(BaseModel):
     signal_score: Optional[int] = None
     signal_confidence: Optional[str] = None
     scan_id: Optional[str] = None
+    strategy_kind: str = "trend"  # "trend" | "mean_reversion" — F2 validation tag
 
 
 class BacktestResultsResponse(BaseModel):

@@ -121,6 +121,9 @@ class TradeRepository:
         trade_direction: str | None = None,
         take_profit_pct: float | None = None,
         stop_loss_pct: float | None = None,
+        strategy_kind: str = "trend",
+        strategy_cohort: str = "trend",
+        f1_active: bool = False,
         metadata: dict | None = None,
         actor: str = "user",
     ) -> dict:
@@ -129,6 +132,12 @@ class TradeRepository:
             raise ValueError(f"Invalid symbol: {symbol}")
         if side not in VALID_SIDES:
             raise ValueError(f"Invalid side: {side}")
+        # D2: validate strategy enums before the INSERT so a bad value can't trip the
+        # DB CHECK *after* a live order was placed (which would orphan the position).
+        if strategy_kind not in ("trend", "mean_reversion"):
+            raise ValueError(f"Invalid strategy_kind: {strategy_kind}")
+        if strategy_cohort not in ("trend", "mean_reversion"):
+            raise ValueError(f"Invalid strategy_cohort: {strategy_cohort}")
         if metadata:
             self._validate_metadata(metadata)
         order_link_id = str(uuid.uuid4())
@@ -138,16 +147,17 @@ class TradeRepository:
                 position_idx, stop_loss_price, take_profit_price, mark_price_at_open,
                 capital_pct, base_capital, signal_direction, trade_direction,
                 take_profit_pct, stop_loss_pct, source, source_id, scan_result_id,
-                order_link_id, metadata
+                order_link_id, metadata, strategy_kind, strategy_cohort, f1_active
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                $16, $17, $18, $19, $20, $21, $22
+                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
             ) RETURNING *""",
             account_id, symbol, side, order_type, qty, leverage, margin_mode,
             position_idx, stop_loss_price, take_profit_price, mark_price_at_open,
             capital_pct, base_capital, signal_direction, trade_direction,
             take_profit_pct, stop_loss_pct, source, source_id, scan_result_id,
             order_link_id, json.dumps(metadata or {}),
+            strategy_kind, strategy_cohort, f1_active,
         )
         trade = dict(row)
         await conn.execute(
@@ -655,6 +665,49 @@ class TradeRepository:
             "total_pnl": float(row["total_pnl"] or 0),
         }
 
+    async def get_stats_by_strategy(
+        self, conn, *, account_ids: list[str],
+    ) -> list[dict]:
+        """Per-(strategy_kind, direction) PnL breakdown for the per-strategy view (FR-052/AC-016).
+
+        Groups closed trades by ``strategy_kind`` × ``side`` (Buy=long / Sell=short) so the
+        UI can render strategy × direction × {PnL, win-rate, count, avg-hold}. Parent/child
+        accounting mirrors ``get_stats_cross_account`` (exclude partial-close parents).
+        """
+        rows = await conn.fetch(
+            """SELECT
+                strategy_kind,
+                side,
+                COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) as count,
+                COALESCE(SUM(net_pnl) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL), 0) as total_pnl,
+                COALESCE(AVG(net_pnl) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL), 0) as avg_pnl,
+                COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - opened_at)) / 60.0)
+                    FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL
+                            AND closed_at IS NOT NULL AND opened_at IS NOT NULL), 0) as avg_hold_minutes,
+                CASE WHEN COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) > 0
+                    THEN COUNT(*) FILTER (WHERE status = 'closed' AND net_pnl > 0 AND exit_price > 0 AND parent_trade_id IS NULL)::float
+                         / COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL)
+                    ELSE 0 END as win_rate
+            FROM trades
+            WHERE account_id = ANY($1::text[])
+            GROUP BY strategy_kind, side
+            HAVING COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) > 0
+            ORDER BY strategy_kind, side""",
+            account_ids,
+        )
+        return [
+            {
+                "strategy_kind": r["strategy_kind"],
+                "direction": "long" if r["side"] == "Buy" else "short",
+                "count": int(r["count"]),
+                "total_pnl": float(r["total_pnl"] or 0),
+                "avg_pnl": float(r["avg_pnl"] or 0),
+                "avg_hold_minutes": float(r["avg_hold_minutes"] or 0),
+                "win_rate": float(r["win_rate"] or 0),
+            }
+            for r in rows
+        ]
+
     async def create_child_trade(
         self, conn, *, parent_trade: dict,
         closed_qty: float, exit_price: float,
@@ -672,10 +725,12 @@ class TradeRepository:
                 stop_loss_price, take_profit_price,
                 status, parent_trade_id, realized_pnl, realized_pnl_pct,
                 fees, net_pnl, close_reason, close_rule_id, closed_at, opened_at,
-                source, source_id, scan_result_id, signal_direction, order_link_id
+                source, source_id, scan_result_id, signal_direction, order_link_id,
+                strategy_kind, strategy_cohort
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                'closed', $14, $15, $16, $17, $18, $19, $20, NOW(), $21, $22, $23, $24, $25, $26
+                'closed', $14, $15, $16, $17, $18, $19, $20, NOW(), $21, $22, $23, $24, $25, $26,
+                $27, $28
             ) RETURNING *""",
             parent_trade["account_id"], parent_trade["symbol"],
             parent_trade["side"], parent_trade["order_type"],
@@ -691,6 +746,8 @@ class TradeRepository:
             parent_trade.get("scan_result_id"),
             parent_trade.get("signal_direction"),
             str(uuid.uuid4()),
+            parent_trade.get("strategy_kind", "trend"),
+            parent_trade.get("strategy_cohort", "trend"),
         )
         child_dict = dict(child)
 

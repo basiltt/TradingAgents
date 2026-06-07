@@ -47,6 +47,8 @@ export interface Trade {
   closed_at: string | null;
   created_at: string;
   updated_at: string;
+  strategy_kind?: "trend" | "mean_reversion";
+  f1_active?: boolean;
 }
 
 export interface TradeListResponse {
@@ -55,12 +57,23 @@ export interface TradeListResponse {
   has_more: boolean;
 }
 
+export interface StrategyDirectionStats {
+  strategy_kind: "trend" | "mean_reversion";
+  direction: "long" | "short";
+  count: number;
+  total_pnl: number;
+  avg_pnl: number;
+  avg_hold_minutes: number;
+  win_rate: number;
+}
+
 export interface TradeStatsResponse {
   total_trades: number;
   open_count: number;
   win_rate: number;
   avg_pnl: number;
   total_pnl: number;
+  by_strategy?: StrategyDirectionStats[];
 }
 
 export interface TradeEvent {

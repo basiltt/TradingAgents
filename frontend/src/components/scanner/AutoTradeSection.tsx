@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { NeuSwitch } from "@/design-system/neumorphism";
+import { RegimeStrategyFields } from "./RegimeStrategyFields";
 
 const STORAGE_KEY = "tradingagents_auto_trade_configs";
 
@@ -40,6 +41,16 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   trailing_profit_pct: null,
   max_same_direction: null,
   ai_pause_cycles: null,
+  // Regime Multi-Strategy — all default-off (current behavior preserved)
+  regime_filter_enabled: false,
+  session_filter_enabled: false,
+  session_blocked_hours_utc: null,
+  btc_vol_filter_enabled: false,
+  mean_reversion_enabled: false,
+  mr_short_enabled: true,
+  mr_long_enabled: false,
+  mr_long_ack_requested: false,
+  strategy_cohort: null,
 };
 
 const SEGMENT_CONTAINER_CLASS = "grid grid-cols-2 gap-1.5 rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] p-1 shadow-[var(--neu-shadow-inset)] border-none";
@@ -811,6 +822,8 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
             </div>
           ) : null}
         </div>
+
+        <RegimeStrategyFields config={config} onChange={onChange} />
       </div>
     </article>
   );

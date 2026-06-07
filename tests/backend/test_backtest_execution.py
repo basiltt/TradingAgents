@@ -321,7 +321,7 @@ class TestExecution:
                 pass
             daemon = True
 
-        def _engine_run(config, signals, klines, cancel_event, on_progress, instrument_info=None):
+        def _engine_run(config, signals, klines, cancel_event, on_progress, instrument_info=None, scan_contexts=None):
             raise BacktestCancelled()  # cancel_event already set by the instant timer
 
         with patch.object(service, "_load_signals", new=AsyncMock(return_value=[])):
@@ -712,6 +712,8 @@ class TestPersistResults:
         assert isinstance(row[4], Decimal)
         assert isinstance(row[5], Decimal)
         assert isinstance(row[9], Decimal)
+        # index 18 = strategy_kind, defaulting to 'trend' when the trade carries no tag.
+        assert row[18] == "trend"
 
     @pytest.mark.asyncio
     async def test_persist_coerces_non_finite_trade_numerics_to_none(self, mock_db):
@@ -882,13 +884,16 @@ class TestPaginatedTrades:
              "exit_price": 51000.0, "qty": 0.1, "leverage": 20, "entry_time": base,
              "exit_time": base, "pnl": 100.0, "pnl_pct": 2.0, "fees_paid": 2.0,
              "close_reason": "tp", "mfe_pct": 5.0, "mae_pct": -1.0,
-             "signal_score": 8, "signal_confidence": "high", "scan_id": "s1"},
+             "signal_score": 8, "signal_confidence": "high", "scan_id": "s1",
+             "strategy_kind": "mean_reversion"},
         ])
         result = await service.get_backtest_trades("run-1", page=2, limit=50)
         assert result["total"] == 120
         assert result["page"] == 2
         assert len(result["trades"]) == 1
         assert result["trades"][0]["symbol"] == "BTCUSDT"
+        # strategy_kind round-trips from the row into the API dict (F2 validation tag).
+        assert result["trades"][0]["strategy_kind"] == "mean_reversion"
 
     @pytest.mark.asyncio
     async def test_get_trades_filters_by_side(self, mock_db):

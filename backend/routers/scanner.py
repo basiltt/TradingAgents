@@ -199,6 +199,13 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                     if cfg.get("adaptive_blacklist_enabled"):
                         existing = set(cfg.get("_computed_adaptive_blacklist") or [])
                         cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
+            # FR-030: MR-scoped blacklist parity on the auto-trade re-run path.
+            mr_bl = await scanner_service._compute_adaptive_blacklist(auto_configs, "mean_reversion", require_mr=True)
+            if mr_bl:
+                for cfg in auto_configs:
+                    if cfg.get("adaptive_blacklist_enabled") and cfg.get("mean_reversion_enabled"):
+                        existing = set(cfg.get("_computed_mr_adaptive_blacklist") or [])
+                        cfg["_computed_mr_adaptive_blacklist"] = list(existing | mr_bl)
 
             # Pre-classify symbols for sector service
             if sector_service:

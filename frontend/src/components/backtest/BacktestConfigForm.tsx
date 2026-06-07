@@ -129,6 +129,63 @@ function CheckField({ control, name, label }: CheckFieldProps) {
   );
 }
 
+/** A comma/space-separated text field that maps to a number[] | null form value of
+ * UTC hours (0-23) — for the F1 session blocked/allowed hours. Empty → null. */
+function HoursListField({
+  control,
+  name,
+  label,
+  placeholder,
+  error,
+}: {
+  control: Control<BacktestConfigFormValues>;
+  name: FieldPath<BacktestConfigFormValues>;
+  label: string;
+  placeholder?: string;
+  error?: string;
+}) {
+  const errorId = `${name}-error`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={name}>{label}</Label>
+      <Controller
+        control={control}
+        name={name}
+        render={({ field }) => {
+          const arr = Array.isArray(field.value) ? (field.value as number[]) : [];
+          return (
+            <Input
+              id={name}
+              type="text"
+              placeholder={placeholder ?? "e.g. 1, 6, 7, 8"}
+              defaultValue={arr.join(", ")}
+              aria-invalid={!!error}
+              aria-describedby={error ? errorId : undefined}
+              onBlur={(e) => {
+                const hours = Array.from(
+                  new Set(
+                    e.target.value
+                      .split(/[\s,]+/)
+                      .map((s) => parseInt(s.trim(), 10))
+                      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 23),
+                  ),
+                ).sort((a, b) => a - b);
+                field.onChange(hours.length ? hours : null);
+                field.onBlur();
+              }}
+            />
+          );
+        }}
+      />
+      {error ? (
+        <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /** A comma/space-separated text field that maps to a string[] | null form value
  * (used for symbol blacklist/whitelist). Empty input → null. */
 function SymbolListField({
@@ -261,6 +318,7 @@ export function BacktestConfigForm({
   });
 
   const scanMode = watch("scan_source.mode");
+  const mrLongEnabled = watch("mr_long_enabled");
   const formRef = React.useRef<HTMLFormElement>(null);
 
   const submit = handleSubmit(
@@ -492,6 +550,69 @@ export function BacktestConfigForm({
           <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max Win Rate (%)" error={fieldError("adaptive_blacklist_max_win_rate")} />
           <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (h)" error={fieldError("adaptive_blacklist_lookback_hours")} />
         </div>
+      </Section>
+
+      <Section title="Market Regime & Strategy (F1/F2/F3)" defaultOpen={false}
+               forceOpen={anyError("session_blocked_hours_utc", "btc_vol_min_threshold", "mr_short_enabled")}>
+        <p className="mb-3 text-[0.72rem] leading-5 text-[var(--neu-text-muted)]">
+          Replay the regime features on history. All off by default. Modeling notes:
+          F2-long honors mr_long_enabled (the live server-ack is bypassed — no live
+          account); BTC vol uses historical klines at each scan time; MR entries fill at
+          the next bar&apos;s open.
+        </p>
+
+        {/* F1 — Regime / Session Filter */}
+        <div className="mb-2">
+          <CheckField control={control} name="regime_filter_enabled" label="Regime / Session Filter (F1)" />
+        </div>
+        <div className={GRID}>
+          <CheckField control={control} name="session_filter_enabled" label="Session hour filter" />
+          <HoursListField control={control} name="session_blocked_hours_utc" label="Blocked UTC hours" error={fieldError("session_blocked_hours_utc")} />
+          <HoursListField control={control} name="session_allowed_hours_utc" label="Allowed UTC hours (alt)" error={fieldError("session_allowed_hours_utc")} />
+          <CheckField control={control} name="btc_vol_filter_enabled" label="BTC volatility band" />
+          <NumberField control={control} name="btc_vol_min_threshold" label="BTC vol min (atr ratio)" nullable error={fieldError("btc_vol_min_threshold")} />
+          <NumberField control={control} name="btc_vol_max_threshold" label="BTC vol max (atr ratio)" nullable error={fieldError("btc_vol_max_threshold")} />
+          <SelectField control={control} name="btc_vol_interval" label="BTC vol interval" options={[
+            { value: "15m", label: "15m" }, { value: "1h", label: "1h" }, { value: "4h", label: "4h" },
+          ]} />
+          <NumberField control={control} name="btc_vol_lookback_candles" label="BTC vol lookback" error={fieldError("btc_vol_lookback_candles")} />
+        </div>
+
+        {/* F3 — Strategy Cohort */}
+        <div className="mt-4">
+          <SelectField control={control} name="strategy_cohort" label="Strategy cohort (F3)" emptyToNull options={[
+            { value: "", label: "Inherit (trend)" },
+            { value: "trend", label: "Trend" },
+            { value: "mean_reversion", label: "Mean-Reversion" },
+          ]} />
+        </div>
+
+        {/* F2 — Mean-Reversion */}
+        <div className="mb-2 mt-4">
+          <CheckField control={control} name="mean_reversion_enabled" label="Mean-Reversion Strategy (F2)" />
+        </div>
+        <div className={GRID}>
+          <CheckField control={control} name="mr_short_enabled" label="MR short side" />
+          <CheckField control={control} name="mr_long_enabled" label="MR long side (neg. expectancy)" />
+          <NumberField control={control} name="mr_leverage" label="MR leverage" error={fieldError("mr_leverage")} />
+          <NumberField control={control} name="mr_capital_pct" label="MR capital / trade (%)" error={fieldError("mr_capital_pct")} />
+          <NumberField control={control} name="mr_max_trades" label="MR max trades" error={fieldError("mr_max_trades")} />
+          <NumberField control={control} name="mr_mean_period" label="MR mean period" error={fieldError("mr_mean_period")} />
+          <SelectField control={control} name="mr_mean_interval" label="MR mean interval" options={[
+            { value: "15m", label: "15m" }, { value: "1h", label: "1h" }, { value: "4h", label: "4h" },
+          ]} />
+          <NumberField control={control} name="mr_target_capture_pct" label="MR target capture (%)" error={fieldError("mr_target_capture_pct")} />
+          <NumberField control={control} name="mr_tight_stop_pct" label="MR tight stop (%)" nullable error={fieldError("mr_tight_stop_pct")} />
+          <NumberField control={control} name="mr_time_stop_minutes" label="MR time-stop (min)" error={fieldError("mr_time_stop_minutes")} />
+          <NumberField control={control} name="mr_min_edge_pct" label="MR min edge (%)" error={fieldError("mr_min_edge_pct")} />
+        </div>
+        {mrLongEnabled ? (
+          <p className="mt-2 text-[0.72rem] leading-5 text-[var(--neu-danger)]" role="note" data-testid="mr-long-danger">
+            Research shows the MR long side is net-negative (≈55% win rate, −$0.57/trade).
+            The backtest honors it (no live ack) precisely so you can measure that — expect
+            the long-side results to confirm the negative expectancy.
+          </p>
+        ) : null}
       </Section>
 
       <div className="flex items-center justify-end gap-3">

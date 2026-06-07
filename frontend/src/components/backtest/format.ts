@@ -73,6 +73,26 @@ export function formatInt(value: number | null | undefined): string {
   return Math.round(value).toLocaleString("en-US");
 }
 
+/** Friendly labels for engine close-reason codes (raw code shown for any unknown
+ * code so nothing is silently hidden). Keeps the trade list + filter readable. */
+const CLOSE_REASON_LABELS: Record<string, string> = {
+  tp: "Take Profit",
+  sl: "Stop Loss",
+  liquidation: "Liquidation",
+  max_duration: "Max Duration",
+  mr_time_stop: "MR Time Stop",
+  trailing_profit: "Trailing Profit",
+  breakeven_timeout: "Breakeven Timeout",
+  equity_drop: "Equity Drop",
+  equity_rise: "Equity Rise",
+  backtest_end: "Backtest End",
+};
+
+export function formatCloseReason(code: string | null | undefined): string {
+  if (!code) return DASH;
+  return CLOSE_REASON_LABELS[code] ?? code.replace(/_/g, " ");
+}
+
 /** Sign of a value for color coding: "pos" | "neg" | "zero". */
 export function signOf(value: number | null | undefined): "pos" | "neg" | "zero" {
   if (value == null || !Number.isFinite(value) || value === 0) return "zero";

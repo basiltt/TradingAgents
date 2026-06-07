@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { BacktestTrade } from "./types";
-import { formatUsd, formatPct, formatDateTime, pnlColorClass, TH_CLASS } from "./format";
+import { StrategyChip } from "@/components/trades/StrategyChip";
+import { formatUsd, formatPct, formatDateTime, pnlColorClass, TH_CLASS, formatCloseReason } from "./format";
 import {
   type TradeSortKey,
   type SortDirection,
@@ -172,7 +173,7 @@ export function TradeListTable({ trades, className, totalCount, onExport }: Trad
           <option value="all">All close reasons</option>
           {closeReasons.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {formatCloseReason(r)}
             </option>
           ))}
         </select>
@@ -223,7 +224,12 @@ export function TradeListTable({ trades, className, totalCount, onExport }: Trad
                     key={t.id}
                     className="border-t border-[color:var(--neu-stroke-soft)]/40 hover:bg-[color:var(--neu-surface-inset)]/30"
                   >
-                    <td className="px-3 py-2 font-medium text-[var(--neu-text-strong)]">{t.symbol}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--neu-text-strong)]">
+                      <span className="inline-flex items-center gap-1.5">
+                        {t.symbol}
+                        {t.strategy_kind === "mean_reversion" ? <StrategyChip kind="mean_reversion" /> : null}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       <Badge variant={side === "long" ? "default" : "destructive"}>{t.side}</Badge>
                     </td>
@@ -239,7 +245,7 @@ export function TradeListTable({ trades, className, totalCount, onExport }: Trad
                       {formatUsd(t.cumulative_pnl, { sign: true })}
                     </td>
                     <td className="px-3 py-2 text-[0.8rem] text-[var(--neu-text-muted)]">
-                      {t.close_reason ?? "—"}
+                      {formatCloseReason(t.close_reason)}
                     </td>
                   </tr>
                 );

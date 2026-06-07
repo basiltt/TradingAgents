@@ -209,12 +209,15 @@ async def list_trades_cross_account(
 async def get_trades_stats_cross_account(
     request: Request,
     account_id: Optional[str] = Query(default=None),
+    by_strategy: bool = Query(default=False),
 ):
     """Aggregate trade statistics across all (or selected) accounts.
 
     Returns total trade count, open count, win rate, average PnL, and total PnL.
     Accepts an optional comma-separated ``account_id`` filter; unrecognised IDs
     are silently ignored.  When no accounts match, zeroed-out stats are returned.
+    When ``by_strategy=true``, also returns a per-(strategy_kind, direction)
+    breakdown under ``by_strategy`` (FR-052/AC-016).
     """
     try:
         requested_ids = _validate_account_ids(account_id)
@@ -240,5 +243,7 @@ async def get_trades_stats_cross_account(
     db = _get_db(request)
     async with db.pool.acquire() as conn:
         stats = await repo.get_stats_cross_account(conn, account_ids=account_ids)
+        if by_strategy:
+            stats["by_strategy"] = await repo.get_stats_by_strategy(conn, account_ids=account_ids)
 
     return TradeStatsResponse(**stats).model_dump()

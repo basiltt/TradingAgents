@@ -317,7 +317,7 @@ class ScannerService:
 
     SCAN_LIST_TOPIC = "__scan_list__"
 
-    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, debug_recorder: Any = None):
+    def __init__(self, analysis_service: Any, db: Any = None, ws_manager: Any = None, accounts_service: Any = None, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, debug_recorder: Any = None, kline_cache: Any = None):
         self._analysis = analysis_service
         self._db = db
         self._ws = ws_manager
@@ -326,6 +326,7 @@ class ScannerService:
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
         self._debug_recorder = debug_recorder
+        self._kline_cache = kline_cache  # for Regime Multi-Strategy BTC/MR-mean fetches
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -336,13 +337,109 @@ class ScannerService:
             except Exception:
                 pass
 
-    async def _compute_adaptive_blacklist(self, auto_configs: List[Dict[str, Any]]) -> set:
-        """Query signal_performance to find symbols with consistently poor win rates."""
+    async def _resolve_account_cohorts(self, auto_configs: List[Dict[str, Any]]) -> None:
+        """Resolve each per-scan config's effective strategy_cohort (F3/FR-040).
+
+        Tri-state: a None cfg cohort inherits the account's STORED
+        trading_accounts.strategy_cohort (so the fleet-roster bulk-assign actually
+        drives routing); an explicit per-scan value (incl "trend") overrides. Writes a
+        CONCRETE value back so the executor never sees None. One batched list_accounts()
+        lookup (not per-account get_account) so a default-off / trend-only fleet pays a
+        single query, not N. Fail-soft: on a lookup error each cfg keeps its own value
+        coerced to a concrete default. Mutates cfg in place, once per scan.
+        """
+        if not self._db:
+            # No DB to read stored cohorts — still coerce None -> default so the
+            # executor sees a concrete value.
+            from backend.services.features import DEFAULT_COHORT as _default_cohort
+            for cfg in auto_configs:
+                if isinstance(cfg, dict):
+                    cfg["strategy_cohort"] = cfg.get("strategy_cohort") or _default_cohort
+            return
+        from backend.services import features as _feat
+        try:
+            accounts = {a["id"]: a for a in await self._db.list_accounts()}
+        except Exception:
+            accounts = {}
+        for cfg in auto_configs:
+            if not isinstance(cfg, dict):
+                continue
+            stored = (accounts.get(cfg.get("account_id")) or {}).get("strategy_cohort")
+            cfg["strategy_cohort"] = _feat.resolve_cohort(cfg.get("strategy_cohort"), stored)
+
+    async def _set_executor_scan_context(self, executor, auto_configs: List[Dict[str, Any]]) -> None:
+        """Read the kill-switch unconditionally + build the scan-time ScanContext and
+        attach it to the executor. Safe no-op for the default (all-off) fleet."""
+        from datetime import datetime, timezone
+        from backend.services.kill_switch import read_kill_switches
+        from backend.services import market_data as _md
+
+        kill = await read_kill_switches(self._db) if self._db else {"__all__": True}
+
+        # FR-065: evaluate the F2-long rolling-drawdown breaker BEFORE placement so a
+        # trip disables live longs within this same scan (not just the next one). Only
+        # runs for accounts that actually enable MR-long; fail-open per account.
+        if self._db and not kill.get("__all__") and not kill.get("f2_long"):
+            from backend.services import safety_monitors as _sm
+            checked: set[str] = set()
+            for cfg in auto_configs:
+                acct = cfg.get("account_id")
+                if (acct and acct not in checked
+                        and cfg.get("mean_reversion_enabled") and cfg.get("mr_long_enabled")):
+                    checked.add(acct)
+                    try:
+                        if await _sm.check_f2_long_breaker(self._db, acct):
+                            kill["f2_long"] = True  # reflect the trip in this scan's view
+                            break
+                    except Exception:
+                        logger.warning("f2_long_breaker_check_failed", exc_info=True)
+
+        async def _fetch(symbol: str, interval: str, depth: int):
+            # Adapt the kline cache to (symbol, interval, depth) -> list[kline].
+            kc = getattr(self, "_kline_cache", None)
+            if kc is None:
+                return []
+            try:
+                from datetime import timedelta
+                # Size the window from interval*depth (IR10) so non-default intervals
+                # (4h/1d) still fetch enough candles, with generous margin.
+                _mins = {"15m": 15, "1h": 60, "4h": 240}.get(interval, 60)
+                span_min = max(_mins * (depth + 5), _mins * 35)
+                end = datetime.now(timezone.utc)
+                start = end - timedelta(minutes=span_min)
+                klines = await kc.get_klines(symbol, interval, start, end)
+                return klines[-depth:] if depth and len(klines) > depth else klines
+            except Exception:
+                return []
+
+        ctx = await _md.build_scan_context(
+            auto_configs, [], now=datetime.now(timezone.utc), kill=kill, fetcher=_fetch,
+        )
+        executor.set_scan_context(ctx)
+        executor.set_mean_fetcher(_fetch)   # IR1: lazy MR mean source
+
+    async def _compute_adaptive_blacklist(
+        self,
+        auto_configs: List[Dict[str, Any]],
+        strategy_kind: str = "trend",
+        *,
+        require_mr: bool = False,
+    ) -> set:
+        """Query signal_performance for symbols with consistently poor win rates.
+
+        FR-030: scoped per strategy by joining ``trades.strategy_kind`` so a
+        mean-reversion losing streak feeds ONLY the MR blacklist and never the
+        trend blacklist (and vice-versa). For all-trend historical data the
+        ``strategy_kind='trend'`` join is identical to the legacy unscoped query
+        (migration 44 backfilled every existing row to 'trend'), so default-off /
+        trend-only behaviour is byte-identical. ``require_mr`` makes the MR scope
+        opt in only when some config has ``mean_reversion_enabled``.
+        """
         min_trades = 5
         max_win_rate = 30.0
         lookback_hours = 48
         for cfg in auto_configs:
-            if cfg.get("adaptive_blacklist_enabled"):
+            if cfg.get("adaptive_blacklist_enabled") and (not require_mr or cfg.get("mean_reversion_enabled")):
                 min_trades = cfg.get("adaptive_blacklist_min_trades", 5)
                 max_win_rate = cfg.get("adaptive_blacklist_max_win_rate", 30.0)
                 lookback_hours = cfg.get("adaptive_blacklist_lookback_hours", 48)
@@ -351,12 +448,14 @@ class ScannerService:
             return set()
         try:
             rows = await self._db.pool.fetch(
-                "SELECT symbol, COUNT(*) as total, "
-                "SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins "
-                "FROM signal_performance "
-                "WHERE closed_at > NOW() - make_interval(hours => $1) "
-                "GROUP BY symbol HAVING COUNT(*) >= $2",
-                lookback_hours, min_trades,
+                "SELECT sp.symbol AS symbol, COUNT(*) AS total, "
+                "SUM(CASE WHEN sp.is_win THEN 1 ELSE 0 END) AS wins "
+                "FROM signal_performance sp "
+                "JOIN trades t ON t.id = sp.trade_id "
+                "WHERE sp.closed_at > NOW() - make_interval(hours => $1) "
+                "AND t.strategy_kind = $3 "
+                "GROUP BY sp.symbol HAVING COUNT(*) >= $2",
+                lookback_hours, min_trades, strategy_kind,
             )
             blacklisted = set()
             for row in rows:
@@ -364,7 +463,7 @@ class ScannerService:
                 if win_rate < max_win_rate:
                     blacklisted.add(row["symbol"])
             if blacklisted:
-                logger.info("adaptive_blacklist_computed", extra={"count": len(blacklisted), "symbols": sorted(blacklisted)[:10]})
+                logger.info("adaptive_blacklist_computed", extra={"strategy_kind": strategy_kind, "count": len(blacklisted), "symbols": sorted(blacklisted)[:10]})
             return blacklisted
         except Exception:
             logger.warning("adaptive_blacklist_query_failed", exc_info=True)
@@ -406,18 +505,49 @@ class ScannerService:
         # Initialize auto-trade executor if configs provided
         auto_configs = config.get("auto_trade_configs")
         if auto_configs and self._accounts:
+            # F3/FR-040: settle each account's effective cohort (stored field merged
+            # under the per-scan override) BEFORE anything cohort-dependent runs.
+            await self._resolve_account_cohorts(auto_configs)
             # Compute adaptive blacklist from signal_performance (pre-inject into configs)
             if self._db:
-                adaptive_bl = await self._compute_adaptive_blacklist(auto_configs)
+                adaptive_bl = await self._compute_adaptive_blacklist(auto_configs, "trend")
                 if adaptive_bl:
                     for cfg in auto_configs:
                         if cfg.get("adaptive_blacklist_enabled"):
                             existing = set(cfg.get("_computed_adaptive_blacklist") or [])
                             cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
+                # FR-030: a separate MR-scoped blacklist so mean-reversion losses
+                # never poison the trend blacklist (and vice-versa). Only computed
+                # when some config runs MR; injected under a distinct key the
+                # _try_trade gate reads on the fade path.
+                mr_bl = await self._compute_adaptive_blacklist(auto_configs, "mean_reversion", require_mr=True)
+                if mr_bl:
+                    for cfg in auto_configs:
+                        if cfg.get("adaptive_blacklist_enabled") and cfg.get("mean_reversion_enabled"):
+                            existing = set(cfg.get("_computed_mr_adaptive_blacklist") or [])
+                            cfg["_computed_mr_adaptive_blacklist"] = list(existing | mr_bl)
             # trigger_source: scan_scheduler calls start_scan(triggered_by="scheduled");
             # the API run-now path uses triggered_by="run_now"; manual default is "manual".
             _trigger = triggered_by if triggered_by in ("scheduled", "manual", "run_now") else "manual"
-            debug_ctx = None
+            # FR-066: a one-time "ignore session filter this scan" escape hatch. ONLY
+            # honoured on a manual/run-now scan (never "scheduled", so a saved schedule
+            # cannot smuggle a persistent bypass). It is stamped onto the per-scan config
+            # copies, so it auto-reverts next scan (non-persistent). Overridden entries
+            # record f1_active=False (truthful: F1 did not act) — SD20 keeps them OUT of
+            # f1 before/after efficacy stats. Audit-logged for the operator trail.
+            if config.get("session_filter_override") and _trigger in ("manual", "run_now"):
+                try:
+                    from backend.services import features as _feat
+                    _n = _feat.apply_session_override(config, auto_configs, _trigger)
+                    if _n:
+                        logger.warning(
+                            "f1_session_filter_override_engaged",
+                            extra={"scan_id": scan_id, "trigger": _trigger, "accounts": _n},
+                        )
+                except Exception:
+                    # An override-stamping fault must NEVER abort the scan / regress
+                    # trend trading. Degrade to "no override" and proceed.
+                    logger.warning("f1_session_filter_override_stamp_failed", exc_info=True)
             if self._debug_recorder is not None:
                 debug_ctx = self._debug_recorder.new_run_context(
                     scan_id=scan_id,
@@ -429,6 +559,20 @@ class ScannerService:
                 sector_service=self._sector_service,
                 recorder=self._debug_recorder, debug_ctx=debug_ctx,
             )
+            # ── Regime Multi-Strategy: build the scan-time ScanContext ──
+            # Kill-switch is read UNCONDITIONALLY (R3-F1) so master/per-feature kills
+            # work even for fleets that never trigger precompute. build_scan_context
+            # returns an empty (non-degraded) context when no regime feature is on,
+            # so executor behavior is unchanged in the default case.
+            try:
+                await self._set_executor_scan_context(executor, auto_configs)
+            except Exception:
+                logger.warning("scan_context_setup_failed", exc_info=True)
+                # C2: if context setup itself throws (before set_scan_context ran),
+                # install a fail-CLOSED context so the master kill is honored and MR
+                # stays disabled, rather than running on the permissive default.
+                from backend.services.scan_context import ScanContext as _SC
+                executor.set_scan_context(_SC.empty(degraded=True, kill={"__all__": True}))
             if self._debug_recorder is not None and debug_ctx is not None:
                 await self._debug_recorder.open_run(
                     debug_ctx,
@@ -588,6 +732,8 @@ class ScannerService:
             # Restore auto-trade executor on resume — use prior results to restore trade counters
             auto_configs = config.get("auto_trade_configs")
             if auto_configs and self._accounts:
+                # F3/FR-040: settle stored cohort on resume too (parity with start path).
+                await self._resolve_account_cohorts(auto_configs)
                 # Pre-classify remaining symbols for sector service
                 if self._sector_service:
                     try:
@@ -604,6 +750,15 @@ class ScannerService:
                     sector_service=self._sector_service,
                     recorder=self._debug_recorder, debug_ctx=debug_ctx,
                 )
+                # Regime Multi-Strategy: rebuild the ScanContext on resume too, else
+                # MR would be silently inert (and the kill-switch unread) for resumed
+                # scans. Fail-safe: a degraded context just keeps MR fail-closed.
+                try:
+                    await self._set_executor_scan_context(executor, auto_configs)
+                except Exception:
+                    logger.warning("scan_context_setup_failed_on_resume", exc_info=True)
+                    from backend.services.scan_context import ScanContext as _SC
+                    executor.set_scan_context(_SC.empty(degraded=True, kill={"__all__": True}))
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB
                 prior_auto_results = (db_results or {}).get("auto_trade_results", [])

@@ -256,6 +256,10 @@ def create_app() -> FastAPI:
         app.state.backtest_service = BacktestService(
             db=db, kline_cache=app.state.kline_cache_service,
         )
+        # Wire the kline cache into the scanner for the Regime Multi-Strategy
+        # feature (BTC regime + MR-mean fetches). The scanner is constructed
+        # before the cache exists, so attach it here.
+        app.state.scanner_service._kline_cache = app.state.kline_cache_service
         # Recover any backtests left 'running'/'pending' by a previous process.
         try:
             await app.state.backtest_service.recover_stale_runs()
@@ -596,6 +600,8 @@ def create_app() -> FastAPI:
     app.include_router(trading_cycles_router, prefix="/api/v1")
     from backend.routers.debug import router as debug_router
     app.include_router(debug_router, prefix="/api/v1")
+    from backend.routers.admin import router as admin_router
+    app.include_router(admin_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
 

@@ -669,6 +669,7 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     signal_score    SMALLINT,
     signal_confidence TEXT,
     scan_id         TEXT,
+    strategy_kind   TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion')),
     metadata        JSONB DEFAULT '{}'
 )
 """)
@@ -1221,6 +1222,38 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     # resolve a version collision with the backtesting feature, which already
     # owns v38–v41 and is applied to the live DB).
     (42, _SCHEMA_DEBUG_V42),
+    # ── Regime Multi-Strategy (3 optional features). ASYNC-ONLY: the sync
+    # persistence._MIGRATIONS registry is dead (stuck at v35, AnalysisDB unused),
+    # so these are not mirrored there (PD2). All catalog-only on boot (PG11+),
+    # constant-default ADD COLUMN => no table rewrite. Single statements, no inner
+    # semicolons (the runner splits on ';').
+    (43, "ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS strategy_cohort TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_cohort IN ('trend','mean_reversion'))"),
+    (44, "ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy_kind TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion')), ADD COLUMN IF NOT EXISTS strategy_cohort TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_cohort IN ('trend','mean_reversion')), ADD COLUMN IF NOT EXISTS f1_active BOOLEAN NOT NULL DEFAULT false"),
+    # v45 — per-strategy analytics index. NOTE: built inline (brief SHARE lock).
+    # For a very large production `trades` table, the hardening is a
+    # CREATE INDEX CONCURRENTLY run OUTSIDE this transactional runner (the runner
+    # wraps every migration in conn.transaction(), which PG rejects for
+    # CONCURRENTLY). The startup healthcheck (mark_index_health) warns if absent.
+    (45, "CREATE INDEX IF NOT EXISTS idx_trades_account_strategy_kind ON trades(account_id, strategy_kind, status)"),
+    (46, "CREATE TABLE IF NOT EXISTS f2_long_ack (account_id TEXT PRIMARY KEY, acked_at TIMESTAMPTZ NOT NULL, acked_leverage INT NOT NULL, acked_capital_pct DOUBLE PRECISION NOT NULL, acked_max_trades INT NOT NULL, updated_by TEXT)"),
+    (47, "CREATE TABLE IF NOT EXISTS pending_trade_intents (account_id TEXT NOT NULL, symbol TEXT NOT NULL, side TEXT NOT NULL, strategy_kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (account_id, symbol, side))"),
+    (48, "CREATE TABLE IF NOT EXISTS feature_kill_switches (feature_name TEXT PRIMARY KEY, killed BOOLEAN NOT NULL DEFAULT false, updated_by TEXT, updated_at TIMESTAMPTZ)"),
+    # 49: partial+sorted index for the FR-065 F2-long drawdown breaker. Its query is
+    # account_id= + strategy_kind='mean_reversion' + side='Buy' + status='closed' +
+    # parent_trade_id IS NULL + ORDER BY closed_at DESC LIMIT 20. Without a sorted
+    # column the breaker top-N sorts every closed MR-Buy row each safety cycle; this
+    # partial index makes it a 20-row index scan. Small (only MR-long closes qualify).
+    (49, "CREATE INDEX IF NOT EXISTS idx_trades_f2_breaker ON trades(account_id, closed_at DESC) WHERE strategy_kind = 'mean_reversion' AND side = 'Buy' AND status = 'closed' AND parent_trade_id IS NULL AND realized_pnl_pct IS NOT NULL"),
+    # 50: lead-with-closed_at index for the strategy-scoped adaptive blacklist (FR-030),
+    # whose driving predicate is signal_performance.closed_at > NOW()-interval. Existing
+    # sp indexes lead with account_id/symbol, so the lookback window scanned the table.
+    (50, "CREATE INDEX IF NOT EXISTS idx_sp_closed_at ON signal_performance(closed_at DESC)"),
+    # 51: tag each backtest trade with the strategy that produced it (F2 validation).
+    # The engine already computes strategy_kind per trade; without this column the
+    # per-trade rows would lose it (the trade list couldn't show trend vs mean_reversion).
+    # NOT NULL DEFAULT 'trend' is metadata-only on PG11+ (existing rows backfill instantly)
+    # and matches the trades-table convention (migration 44).
+    (51, "ALTER TABLE backtest_trades ADD COLUMN IF NOT EXISTS strategy_kind TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion'))"),
 ]
 
 
@@ -1793,7 +1826,7 @@ class AsyncAnalysisDB:
         rows = await self.pool.fetch(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
-            "include_in_analytics "
+            "include_in_analytics, strategy_cohort "
             "FROM trading_accounts WHERE deleted_at IS NULL "
             "ORDER BY created_at DESC"
         )
@@ -1803,7 +1836,7 @@ class AsyncAnalysisDB:
         row = await self.pool.fetchrow(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
-            "include_in_analytics "
+            "include_in_analytics, strategy_cohort "
             "FROM trading_accounts WHERE id=$1 AND deleted_at IS NULL",
             account_id,
         )
@@ -1824,7 +1857,7 @@ class AsyncAnalysisDB:
         return d
 
     async def update_account(self, account_id: str, **fields: Any) -> bool:
-        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics"}
+        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics", "strategy_cohort"}
         nullable = {"last_error"}
         updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
         if not updates:

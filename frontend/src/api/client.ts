@@ -278,6 +278,43 @@ export interface AutoTradeConfig {
   adaptive_blacklist_max_win_rate?: number;
   adaptive_blacklist_lookback_hours?: number;
   ai_pause_cycles?: number | null;
+  // ── Regime Multi-Strategy (3 optional features, all default-off) ──
+  // F1 — Regime/Session Entry Filter
+  regime_filter_enabled?: boolean;
+  session_filter_enabled?: boolean;
+  session_blocked_hours_utc?: number[] | null;
+  session_allowed_hours_utc?: number[] | null;
+  btc_vol_filter_enabled?: boolean;
+  btc_vol_min_threshold?: number | null;
+  btc_vol_max_threshold?: number | null;
+  btc_vol_interval?: "15m" | "1h" | "4h";
+  btc_vol_lookback_candles?: number;
+  // F2 — Mean-Reversion Strategy
+  mean_reversion_enabled?: boolean;
+  mr_short_enabled?: boolean;
+  mr_long_enabled?: boolean;
+  mr_long_ack_requested?: boolean;
+  mr_regime?: "ranging";
+  mr_mean_period?: number;
+  mr_mean_interval?: "15m" | "1h" | "4h";
+  mr_target_capture_pct?: number;
+  mr_tight_stop_pct?: number | null;
+  mr_time_stop_minutes?: number;
+  mr_min_edge_pct?: number;
+  mr_extreme_min_abs_score?: number;
+  mr_capital_pct?: number;
+  mr_leverage?: number;
+  mr_max_trades?: number;
+  // F3 — Strategy-Cohort. null/undefined = inherit the account's stored cohort;
+  // an explicit value (incl "trend") overrides for this scan.
+  strategy_cohort?: "trend" | "mean_reversion" | null;
+  // common / classifier-tuning
+  regime_staleness_minutes?: number;
+  regime_volatile_atr?: number;
+  regime_trend_ema_dist_pct?: number;
+  // read-back (response only)
+  strategy_kind?: "trend" | "mean_reversion";
+  f1_active?: boolean;
 }
 
 export interface ScanRequest {
@@ -642,6 +679,7 @@ export interface TradingAccount {
   last_error?: string;
   created_at: string;
   updated_at: string;
+  strategy_cohort?: "trend" | "mean_reversion";
 }
 
 export interface WalletBalance {
@@ -806,8 +844,8 @@ export const accountsApi = {
   get: (id: string, signal?: AbortSignal) =>
     request<TradingAccount>(`/api/v1/accounts/${encodeURIComponent(id)}`, undefined, signal),
 
-  /** PATCH /api/v1/accounts/:id — update label or active status. */
-  update: (id: string, data: { label?: string; is_active?: boolean }) =>
+  /** PATCH /api/v1/accounts/:id — update label, active status, or strategy cohort. */
+  update: (id: string, data: { label?: string; is_active?: boolean; strategy_cohort?: "trend" | "mean_reversion" }) =>
     mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}`, data),
 
   /** PATCH /api/v1/accounts/:id/credentials — rotate API key/secret. */
@@ -1343,9 +1381,10 @@ export const tradesApi = {
   },
 
   /** GET /api/v1/trades/stats — aggregate trade statistics across accounts. */
-  getStats: (accountIds?: string[], signal?: AbortSignal) => {
+  getStats: (accountIds?: string[], byStrategy?: boolean, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (accountIds?.length) sp.set("account_id", accountIds.join(","));
+    if (byStrategy) sp.set("by_strategy", "true");
     const qs = sp.toString();
     return request<TradeStatsResponse>(`/api/v1/trades/stats${qs ? `?${qs}` : ""}`, undefined, signal);
   },

@@ -695,6 +695,11 @@ class BacktestService:
             # frontend can pre-check via GET /backtest-cache/status to avoid this.
             self._check_kline_coverage(signals, klines)
 
+            # Regime Multi-Strategy (F1/F2/F3): build per-scan ScanContexts so the
+            # engine can replay session/vol gating + MR routing/means. Returns {} (no
+            # extra fetches) unless a regime feature is enabled — default-off stays free.
+            scan_contexts = await self._build_scan_contexts(config, signals)
+
             def _on_timeout() -> None:
                 timed_out.set()
                 cancel_event.set()
@@ -728,7 +733,7 @@ class BacktestService:
             engine = BacktestEngine()
             result = await loop.run_in_executor(
                 self._executor,
-                lambda: engine.run(config, signals, klines, cancel_event, _on_progress, instrument_info),
+                lambda: engine.run(config, signals, klines, cancel_event, _on_progress, instrument_info, scan_contexts),
             )
             engine_done = True
 
@@ -738,6 +743,21 @@ class BacktestService:
             # but the backtest does not — warn when the user set it.
             if config.get("max_same_sector") is not None and result.warnings is not None:
                 result.warnings.append("max_same_sector_not_enforced")
+
+            # Regime Multi-Strategy modeling notes: surface the parity caveats so the
+            # user knows where the backtest necessarily approximates live trading.
+            if result.warnings is not None:
+                mr_on = bool(config.get("mean_reversion_enabled")) or (config.get("strategy_cohort") == "mean_reversion")
+                if mr_on:
+                    # F2-long ack is server-authoritative live; there is no live account
+                    # in a backtest, so it's honored via mr_long_enabled (bypassed).
+                    if config.get("mr_long_enabled"):
+                        result.warnings.append("f2_long_ack_bypassed_in_backtest")
+                    # MR side/geometry use the engine's next-bar-open fill (vs live's
+                    # scan-time mark) — documented, slightly more faithful, no look-ahead.
+                    result.warnings.append("mr_entry_uses_next_bar_open")
+                if config.get("regime_filter_enabled") and config.get("btc_vol_filter_enabled"):
+                    result.warnings.append("btc_vol_uses_historical_klines_at_scan_time")
 
             # Surface signals that were dropped purely because the symbol had no cached
             # candles — production would have traded them, so the backtest UNDER-trades
@@ -837,6 +857,139 @@ class BacktestService:
         for symbol in symbols:
             klines[symbol] = await self._kline_cache.get_klines(symbol, interval, start, end)
         return klines
+
+    @staticmethod
+    def _interval_minutes(interval: str) -> int:
+        return {"5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 60)
+
+    async def _build_scan_contexts(
+        self, config: dict[str, Any], signals: list[dict[str, Any]]
+    ) -> dict[str, "ScanContext"]:
+        """Replay live build_scan_context per historical scan for F1/F2/F3 (FR-003).
+
+        Returns {scan_id: ScanContext}. Empty {} unless a regime feature is active, so a
+        default-off backtest fetches NO extra klines and the engine no-ops (preserving
+        the byte-identical golden guarantee).
+
+        For each scan_id (anchored at its first signal's signal_time) we slice the
+        pre-fetched BTC + per-symbol kline series to candles with open_time <= scan_time
+        (no look-ahead) and assemble a ScanContext with the BTC regime
+        (classify_regime) and per-MR-symbol EMA means (compute_ema_mean). computed_at is
+        the historical scan instant — NOT now() — so is_stale uses real time and the
+        engine stays deterministic. Degraded when BTC data is unavailable (MR
+        fail-closed downstream, matching live).
+        """
+        from backend.services.scan_context import ScanContext
+        from backend.services import market_data as _md
+
+        # Which features need scan-time market data?
+        btc_needed = bool(config.get("regime_filter_enabled") and config.get("btc_vol_filter_enabled"))
+        mr_active = bool(config.get("mean_reversion_enabled")) or (config.get("strategy_cohort") == "mean_reversion")
+        if not (btc_needed or mr_active):
+            return {}
+        if self._kline_cache is None:
+            return {}
+
+        # Group signals by scan_id; each scan's time = its first signal's signal_time.
+        from collections import defaultdict
+        scans: dict[str, list[dict]] = defaultdict(list)
+        for s in signals:
+            scans[s["scan_id"]].append(s)
+        if not scans:
+            return {}
+
+        win_start = config["date_range_start"]
+        win_end = config["date_range_end"]
+        btc_iv = config.get("btc_vol_interval", "1h")
+        btc_lb = int(config.get("btc_vol_lookback_candles", 14))
+        # Warm-up buffer: enough candles before the window for the first scan's
+        # classify_regime/EMA (required_depth = 2*lookback+1; pad generously).
+        from datetime import timedelta as _td
+        btc_buffer = _td(minutes=self._interval_minutes(btc_iv) * (2 * btc_lb + 5))
+
+        # BTC series (for vol filter AND MR routing regime).
+        btc_series: list[dict] = []
+        try:
+            btc_series = await self._kline_cache.get_klines("BTCUSDT", btc_iv, win_start - btc_buffer, win_end)
+        except Exception:
+            logger.warning("backtest_scan_ctx_btc_fetch_failed", exc_info=False)
+
+        # Per-symbol MR mean series (only when MR active).
+        mr_iv = config.get("mr_mean_interval", "1h")
+        mr_period = int(config.get("mr_mean_period", 20))
+        mean_series: dict[str, list[dict]] = {}
+        if mr_active:
+            mr_buffer = _td(minutes=self._interval_minutes(mr_iv) * (mr_period + 5))
+            mr_symbols = sorted({
+                (t if t.endswith("USDT") else f"{t}USDT")
+                for t in {s["ticker"] for s in signals}
+            })
+            for sym in mr_symbols:
+                try:
+                    mean_series[sym] = await self._kline_cache.get_klines(sym, mr_iv, win_start - mr_buffer, win_end)
+                except Exception:
+                    # Log + fail-closed (this symbol won't route MR), matching the
+                    # log-and-fallback convention used by _load_klines / _attach_buy_hold
+                    # rather than swallowing the error silently.
+                    logger.warning("backtest_scan_ctx_mr_fetch_failed", extra={"symbol": sym}, exc_info=False)
+                    mean_series[sym] = []
+
+        volatile_atr = float(config.get("regime_volatile_atr", 2.0))
+        trend_ema = float(config.get("regime_trend_ema_dist_pct", 1.0))
+
+        # A candle is usable for a decision at scan_time only once it has CLOSED, i.e.
+        # open_time + interval <= scan_time  <=>  open_time <= scan_time - interval.
+        # Slicing on open_time <= scan_time would include the in-progress candle whose
+        # stored close is a FUTURE price (the bar hasn't ended at scan_time) — a classic
+        # look-ahead that contaminates the EMA mean's highest-weight term and the BTC
+        # regime label. This mirrors the engine's own next-bar-open fill convention.
+        #
+        # Perf: the series are sorted ascending by open_time, so for each scan we binary-
+        # search the cutoff index (bisect) instead of an O(n) re-scan, and pass only the
+        # bounded tail the indicators need (regime: 2*lookback+1; mean: period). With S
+        # scans / B BTC candles / M symbols / C candles this turns O(S*(B + M*C)) into
+        # O(B + M*C + S*M*log C) — seconds at the 365-day / 3M-candle ceiling, not minutes.
+        from bisect import bisect_right
+        from datetime import timedelta as _td2
+        btc_closed_by = _td2(minutes=self._interval_minutes(btc_iv))
+        mr_closed_by = _td2(minutes=self._interval_minutes(mr_iv))
+        btc_times = [k["open_time"] for k in btc_series]
+        btc_tail = 2 * btc_lb + 1                          # = live required_depth(lookback)
+        mean_times = {sym: [k["open_time"] for k in s] for sym, s in mean_series.items()}
+        # Live fetches EXACTLY period+1 candles for the EMA mean (auto_trade_service
+        # _lazy_mr_mean / market_data build_scan_context). The EMA value depends on how
+        # much history is passed (it seeds from the first `period` then iterates), so we
+        # must use the SAME depth as live, not the full buffered series — this is a
+        # parity fix as well as a perf one (the prior full-series slice diverged from live).
+        mr_tail = mr_period + 1
+
+        contexts: dict[str, ScanContext] = {}
+        for scan_id, scan_sigs in scans.items():
+            scan_time = scan_sigs[0]["signal_time"]
+            # BTC regime from candles that have CLOSED at/<= scan_time (no look-ahead).
+            bi = bisect_right(btc_times, scan_time - btc_closed_by)
+            btc_slice = btc_series[max(0, bi - btc_tail):bi]
+            btc_regime = _md.classify_regime(
+                btc_slice, lookback=btc_lb, volatile_atr=volatile_atr, trend_ema_dist_pct=trend_ema,
+            )
+            degraded = bool(btc_regime.get("unavailable"))
+            btc_map = {(btc_iv, btc_lb): btc_regime}
+
+            means: dict[tuple[str, int, str], float] = {}
+            if mr_active:
+                cutoff = scan_time - mr_closed_by
+                for sym, series in mean_series.items():
+                    mi = bisect_right(mean_times[sym], cutoff)
+                    sl = series[max(0, mi - mr_tail):mi]
+                    m = _md.compute_ema_mean(sl, mr_period)
+                    if m is not None:
+                        means[(sym, mr_period, mr_iv)] = m
+
+            contexts[scan_id] = ScanContext(
+                btc=btc_map, means=means, prices={}, computed_at=scan_time,
+                degraded=degraded, kill={},
+            )
+        return contexts
 
     async def _resolve_instrument_info(
         self, signals: list[dict[str, Any]]
@@ -1033,6 +1186,7 @@ class BacktestService:
                 _num(t.get("pnl")), _num(t.get("pnl_pct")), _num(t.get("fees_paid")),
                 t.get("close_reason"), _num(t.get("mfe_pct")), _num(t.get("mae_pct")),
                 t.get("signal_score"), t.get("signal_confidence"), t.get("scan_id"),
+                t.get("strategy_kind") or "trend",
             )
             for t in trades
         ]
@@ -1061,8 +1215,9 @@ class BacktestService:
                         INSERT INTO backtest_trades
                           (run_id, symbol, side, entry_price, exit_price, qty, leverage,
                            entry_time, exit_time, pnl, pnl_pct, fees_paid, close_reason,
-                           mfe_pct, mae_pct, signal_score, signal_confidence, scan_id)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                           mfe_pct, mae_pct, signal_score, signal_confidence, scan_id,
+                           strategy_kind)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
                         """,
                         records,
                     )
@@ -1121,7 +1276,8 @@ class BacktestService:
             f"""
             SELECT id, symbol, side, entry_price, exit_price, qty, leverage,
                    entry_time, exit_time, pnl, pnl_pct, fees_paid, close_reason,
-                   mfe_pct, mae_pct, signal_score, signal_confidence, scan_id
+                   mfe_pct, mae_pct, signal_score, signal_confidence, scan_id,
+                   strategy_kind
             FROM backtest_trades
             WHERE {where_sql}
             ORDER BY {sort_col} ASC, id ASC
@@ -1146,6 +1302,9 @@ class BacktestService:
             "mfe_pct": _f(row["mfe_pct"]), "mae_pct": _f(row["mae_pct"]),
             "signal_score": row["signal_score"], "signal_confidence": row["signal_confidence"],
             "scan_id": row["scan_id"],
+            # strategy that produced the trade (F2 validation). The column is NOT NULL
+            # with a 'trend' default (migration 51), so this is always a concrete value.
+            "strategy_kind": row["strategy_kind"] or "trend",
         }
 
     # ------------------------------------------------------------------ #

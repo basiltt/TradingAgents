@@ -86,6 +86,39 @@ export interface BacktestCreateRequest {
   adaptive_blacklist_min_trades?: number;
   adaptive_blacklist_max_win_rate?: number;
   adaptive_blacklist_lookback_hours?: number;
+
+  // ── Regime Multi-Strategy (F1/F2/F3) — replayed in the backtester ──
+  // F1 — Regime/Session Entry Filter
+  regime_filter_enabled?: boolean;
+  session_filter_enabled?: boolean;
+  session_blocked_hours_utc?: number[] | null;
+  session_allowed_hours_utc?: number[] | null;
+  btc_vol_filter_enabled?: boolean;
+  btc_vol_min_threshold?: number | null;
+  btc_vol_max_threshold?: number | null;
+  btc_vol_interval?: "15m" | "1h" | "4h";
+  btc_vol_lookback_candles?: number;
+  // F2 — Mean-Reversion Strategy
+  mean_reversion_enabled?: boolean;
+  mr_short_enabled?: boolean;
+  mr_long_enabled?: boolean;
+  mr_regime?: "ranging";
+  mr_mean_period?: number;
+  mr_mean_interval?: "15m" | "1h" | "4h";
+  mr_target_capture_pct?: number;
+  mr_tight_stop_pct?: number | null;
+  mr_time_stop_minutes?: number;
+  mr_min_edge_pct?: number;
+  mr_extreme_min_abs_score?: number;
+  mr_capital_pct?: number;
+  mr_leverage?: number;
+  mr_max_trades?: number;
+  // F3 — Strategy-Cohort (tri-state; null inherits -> trend in backtest)
+  strategy_cohort?: "trend" | "mean_reversion" | null;
+  // classifier-tuning
+  regime_staleness_minutes?: number;
+  regime_volatile_atr?: number;
+  regime_trend_ema_dist_pct?: number;
 }
 
 /** Per-direction metric subset (All / Long / Short columns). */
@@ -140,6 +173,8 @@ export interface BacktestMetrics {
   max_trade_duration_hours: number | null;
   final_equity: number;
   by_direction: { all: DirectionMetrics; long: DirectionMetrics; short: DirectionMetrics };
+  /** Per-strategy×direction breakdown keyed "<kind>:<long|short>" (e.g. "mean_reversion:short"). */
+  by_strategy?: Record<string, DirectionMetrics>;
   per_trade?: PerTradePoint[];
   diagnostics?: Record<string, number>;
   // Phase 5 service-attached comparison fields
@@ -211,6 +246,8 @@ export interface BacktestTrade {
   signal_score: number | null;
   signal_confidence: string | null;
   scan_id: string | null;
+  /** Strategy that produced the trade (F2 validation). Defaults to "trend". */
+  strategy_kind?: "trend" | "mean_reversion";
 }
 
 /** Paginated trades response. */

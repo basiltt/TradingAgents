@@ -105,6 +105,12 @@ class AIManagerTask:
         self._sweep_defense_started_at: Dict[str, float] = {}
         self._sweep_blocked_symbols: set = set()
         self._active_trailing: Dict[str, TrailingState] = {}
+        # FR-052/AC-015: symbols of open mean-reversion positions the AI manager must
+        # NOT manage (F2 owns their exit). Refreshed from the trades table each eval.
+        self._mr_symbols: set = set()
+        # True once _mr_symbols has been loaded at least once (eval or emergency prime),
+        # so an empty set is known-empty rather than not-yet-loaded (cold start).
+        self._mr_symbols_primed: bool = False
         self._is_hedge_mode: bool = False
         self._cleanup_task: Optional[asyncio.Task] = None
         # Event-driven evaluation trigger
@@ -831,6 +837,14 @@ class AIManagerTask:
         if self._killed:
             return
 
+        # FR-052/AC-015 defense-in-depth: never act on a mean-reversion position even
+        # if one reached here via an emergency/urgent path that bypassed the snapshot
+        # filter. F2's fast time-stop owns MR exits. PAUSE_TRADING (account-level, no
+        # symbol) is unaffected.
+        if symbol and symbol in self._mr_symbols:
+            self._log.info("Skipping AI action on mean-reversion position %s (F2-owned)", symbol)
+            return
+
         if action_type not in _ALLOWED_ACTIONS:
             self._log.warning("Rejected invalid action_type '%s'", action_type)
             return
@@ -1142,6 +1156,17 @@ class AIManagerTask:
         return total
 
     async def _build_graph_state(self) -> Dict[str, Any]:
+        # FR-052/AC-015: refresh the MR-position exclusion set before evaluating so the
+        # LLM never sees (and never acts on) mean-reversion positions. On a transient
+        # query error keep the LAST-KNOWN set (do NOT blank it) so the exclusion stays
+        # in force rather than failing open. The query is cheap and indexed, but it only
+        # ever returns rows for accounts that actually run MR; trend-only accounts get an
+        # empty set and the snapshot filter becomes a no-op.
+        try:
+            self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
+            self._mr_symbols_primed = True
+        except Exception:
+            self._log.debug("get_open_mr_symbols failed; retaining last-known MR set")
         episodic = []
         patterns = []
         decision_count = 100
@@ -1205,12 +1230,15 @@ class AIManagerTask:
         }
 
     def _build_ws_snapshot_for_eval(self) -> dict:
-        """Build WS snapshot for graph evaluation, excluding trailing symbols."""
+        """Build WS snapshot for graph evaluation, excluding trailing + MR symbols."""
         snapshot = copy.deepcopy(self._ws_buffer)
-        if self._active_trailing:
+        # FR-052/AC-015: never surface mean-reversion positions to the AI manager —
+        # F2's fast time-stop owns their exit; the manager must not double-manage them.
+        excluded = set(self._active_trailing) | set(self._mr_symbols)
+        if excluded:
             snapshot["positions"] = [
                 p for p in (snapshot.get("positions") or [])
-                if p.get("symbol") not in self._active_trailing
+                if p.get("symbol") not in excluded
             ]
         return snapshot
 
@@ -1438,8 +1466,19 @@ class AIManagerTask:
         if not triggered:
             return False
 
-        # Determine which symbols to close based on trigger type
-        excluded = set(self._config.excluded_symbols or [])
+        # Determine which symbols to close based on trigger type.
+        # FR-052/AC-015: mean-reversion positions are EXCLUDED here too — the emergency
+        # fast-path bypasses the snapshot filter, so without this an MR position with
+        # negative UPnL would be force-closed, violating "F2 owns MR exits". _mr_symbols
+        # is refreshed on each eval; prime it here if a WS-driven emergency fires before
+        # the first eval (cold start) so the exclusion holds from the very first tick.
+        if self._mr_symbols is None or (not self._mr_symbols and not self._mr_symbols_primed):
+            try:
+                self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
+            except Exception:
+                pass
+            self._mr_symbols_primed = True
+        excluded = set(self._config.excluded_symbols or []) | set(self._mr_symbols)
         locked = set(self._config.locked_positions or [])
 
         if trigger_reason.startswith("equity_drop"):

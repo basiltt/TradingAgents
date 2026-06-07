@@ -30,6 +30,27 @@ class AIManagerRepository:
             )
             return dict(row) if row else None
 
+    async def get_open_mr_symbols(self, account_id: str) -> set:
+        """Symbols of this account's OPEN mean-reversion positions (FR-052/AC-015).
+
+        The AI manager must NOT manage mean-reversion positions — F2 owns their exit
+        via its own fast time-stop. Exchange position objects carry no strategy tag,
+        so we resolve it from the trades table and the task filters these symbols out
+        of the snapshot the LLM evaluates. Fail-open (empty set) on any error so an AI
+        account never stalls on a transient DB blip.
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT symbol FROM trades "
+                    "WHERE account_id = $1 AND strategy_kind = 'mean_reversion' "
+                    "AND status IN ('open', 'partially_filled', 'closing', 'partially_closed')",
+                    account_id,
+                )
+            return {r["symbol"] for r in rows}
+        except Exception:
+            return set()
+
     _ALLOWED_COLUMNS = frozenset({
         "enabled", "fsm_state", "config", "circuit_breaker_count",
         "circuit_breaker_active", "circuit_breaker_half_open_used",

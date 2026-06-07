@@ -30,6 +30,12 @@ const WARNING_LABELS: Record<string, string> = {
   no_signals_found: "No scan signals matched this date range and filters.",
   max_same_sector_not_enforced:
     "The “Max Same Sector” limit is not simulated — results may differ from live trading, which enforces it.",
+  f2_long_ack_bypassed_in_backtest:
+    "F2 long-side acknowledgement is bypassed in the backtest (there is no live account) — the long side is honored via mr_long_enabled so its expectancy is measurable here.",
+  mr_entry_uses_next_bar_open:
+    "Mean-reversion side/geometry use the next-bar-open fill price (no look-ahead), which can differ slightly from live trading’s scan-time mark.",
+  btc_vol_uses_historical_klines_at_scan_time:
+    "The BTC volatility filter is evaluated from historical klines as of each scan time.",
 };
 
 function warningLabel(code: string): string {
