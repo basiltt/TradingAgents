@@ -317,3 +317,29 @@ main imports clean.
 
 Honest status after closure: all v1-scoped FRs/ACs/named-tests (T-15..T-24) now built
 and tested. Remaining items are explicit v2 scope deferrals, not gaps.
+
+## Holistic Review Round 2 — 2026-06-07 (consistency/architecture/data/perf)
+
+User asked for a fresh review across gaps, future-breakage, inconsistencies, codebase
+fit, internal conflicts. Four parallel reviewers (pattern/architecture/data-integrity/
+performance). Findings fixed:
+
+| Sev | Finding | Fix |
+|-----|---------|-----|
+| CRITICAL | F3 stored cohort was WRITE-ONLY — FleetCohortView bulk-assign never influenced routing | ScannerService._resolve_account_cohorts merges stored field under per-scan override (both scan+resume paths); features.resolve_cohort + e2e test |
+| HIGH | Kill-switch feature keys hand-synced across 4 files; feature_for had drifted (omitted f2_long) | new backend/services/features.py single registry; admin.py + strategy_router import it |
+| HIGH | BacktestCreateRequest silently dropped F1/F2/F3 fields -> misleading trend backtest | targeted validator 422s on regime fields ("deferred to v2") |
+| MED | client.ts getStats signal-in-middle would break a future 2-arg call | reordered (ids, byStrategy, signal); fixed StrategyTab + AppMarketBar callers |
+| MED | admin GET/POST polarity asymmetry (GET killed, POST enabled) | GET returns {enabled,killed} mirroring POST |
+| MED | AI-manager _mr_symbols blanked on query error (filter+guard went blind together) | retain last-known set on transient failure |
+| MED-perf | F2-long breaker top-N sorted all closed MR-Buy rows each cycle | migration 49 partial idx_trades_f2_breaker(account_id, closed_at DESC) |
+| LOW-perf | adaptive-blacklist lookback scanned signal_performance | migration 50 idx_sp_closed_at |
+| LOW | KillSwitchRequest no extra=forbid; admin 422 used HTTPException; safety_monitors mixed logging; StrategyStats plain str | extra=forbid; JSONResponse+code; structured logging; Literal |
+| LOW | new FE components used raw zinc/sky palette (no theming) | design-system semantic tokens (border-border/muted-foreground/primary) |
+
+Documented as acceptable (not fixed): route_strategy unknown-cohort -> trend fallback
+is fail-safe (DB CHECK + Literal already gate input); a 3rd-strategy enum refactor is YAGNI.
+
+Validation: 243 backend regime+adjacent + 671 frontend + 394 AI/scanner all green;
+golden snapshot byte-identical; migrations ordered/unique (max=50); tsc clean.
+Commits: 1c6c515 (fixes), c7f23d6 (e2e cohort test).
