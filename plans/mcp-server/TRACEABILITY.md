@@ -88,6 +88,13 @@
 
 **SATISFIED:** 28/40 FR · 17/26 AC — the entire OFF-path/security/auth/audit/read-tool/redaction/optimize→propose→approve→apply money path is built, tested, and reviewed.
 
+> **UPDATE (gap-closure pass — see `06-gap-closure.md`):** all 5 gap clusters below
+> were subsequently CLOSED. Net result now **38/40 FR · 25/26 AC SATISFIED**;
+> the only remaining DEFERRED items are genuine P5/P6 future scope (advanced
+> optimizer validation, shadow/paper, remote bind, mcp_tokens). The Linux-only
+> live-order-p95 gate (AC-011) is built + asserted in Linux CI (skip-marked on
+> Windows dev). See the per-cluster closure notes appended below.
+
 **Gaps grouped:**
 
 ### G1 — Async sweep persistence (FR-021, FR-040, FR-019 partial, AC-023, AC-025) — P4 TASK-P4-12b/13
@@ -105,3 +112,22 @@ One-time data-egress consent record + persistent `/mcp` notice not built.
 ### G5 — Smaller (FR-003 dry-connect, FR-014 kline cache tools, FR-004/AC-019 saturated-loop cancel test)
 
 **Intentional DEFERRED (not gaps):** FR-036 ProcessPool is partially in G2; P5/P6 (advanced optimizer, shadow/paper, remote bind, mcp_tokens) per spec §"Future Scope".
+
+---
+
+## Gap-closure verification (post-implementation)
+
+| Cluster | Was | Now | Evidence |
+|---------|-----|-----|----------|
+| G0 hollow optimizer exec | (masked) | CLOSED | BacktestService.run_one + load_inputs; metric-alias fix; test_run_one_adapter, test_optimizer_tools real-data path |
+| G1 FR-021/040, AC-023/025 | UNMET | CLOSED | SweepRepository + sweep_run/status/results/cancel + /sweeps endpoints + recover_interrupted; test_sweep_repo, test_sweep_tools |
+| G2 FR-034/035/036, NFR-002/AC-011/014 | UNMET | CLOSED | dbfloor + runner_pool(spawn+scrub) + breaker + leader + live-protection gate (Linux); test_dbfloor/breaker/leader/runner_pool/live_protection |
+| G3 FR-024, AC-009 | PARTIAL | CLOSED | McpProposalReview (/mcp/proposals/$id): server verdict + segregated rationale + per-field ack + typed-confirm + version history; MCPSweepBrowser; vitest McpProposalReview |
+| G4 FR-033, AC-022 | UNMET | CLOSED | v45 egress_consent_at + record_egress_consent (idempotent) + /mcp EgressNotice; test_config_repo consent |
+| G5 FR-003/014, AC-019 | UNMET/PARTIAL | CLOSED | cache_status/cache_warmup tools + server.self_test dry-connect + saturated-loop kill test; test_g5_misc |
+
+**Remaining DEFERRED (genuine P5/P6, per spec "Future Scope"):** advanced optimizer
+(walk-forward/OOS, Pareto, Monte Carlo, sensitivity), shadow/paper probation,
+staged capital rollout, champion-config memory, generated PDF reports,
+resources/subscribe + live notifications, remote-bind transport, mcp_tokens
+multi-token table. None are MVP.
