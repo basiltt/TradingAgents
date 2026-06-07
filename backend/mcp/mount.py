@@ -84,6 +84,7 @@ class MCPManager:
         self.config_repo = None
         self.audit_writer = None
         self.server = None  # the live MCPServer when enabled, else None
+        self._transport_cm = None
 
     async def boot(self) -> None:
         """Initialize repos, repair the singleton, and start the transport iff
@@ -127,6 +128,22 @@ class MCPManager:
             debug_allowed=bool(cfg.safe_mode_flags.get("allow_debug", False)),
         )
         self._app.state.mcp_server = self.server
+        # Build + start the FastMCP streamable-HTTP transport and point the
+        # indirection mount at it. Failure here leaves the server usable
+        # in-process (control-plane) but unreachable over the wire — logged.
+        try:
+            from backend.mcp.core.transport import build_fastmcp_app
+
+            asgi, manager = build_fastmcp_app(self.server, token_hash=cfg.access_token_hash)
+            if manager is not None:
+                import contextlib
+
+                self._transport_cm = manager.run()
+                await self._transport_cm.__aenter__()
+            self._app.state.mcp_asgi = asgi
+        except Exception:  # noqa: BLE001 — transport is best-effort; control-plane still works
+            logger.exception("mcp_transport_start_failed")
+            self._app.state.mcp_asgi = None
 
     def _service_available(self, group) -> bool:
         # P0: scans needs the db; everything else assumed available for now.
@@ -154,6 +171,12 @@ class MCPManager:
     async def _stop_transport(self) -> None:
         self._app.state.mcp_server = None
         self._app.state.mcp_asgi = None
+        if self._transport_cm is not None:
+            try:
+                await self._transport_cm.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                logger.exception("mcp_transport_stop_failed")
+            self._transport_cm = None
         if self.server is not None:
             await self.server.shutdown()
             self.server = None

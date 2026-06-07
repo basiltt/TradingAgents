@@ -82,6 +82,15 @@ class MCPServer:
             ),
         }
 
+    def enabled_specs(self) -> list[ToolSpec]:
+        """The enabled ToolSpecs (for transport registration)."""
+        return list(self._enabled.values())
+
+    def principal_hint(self) -> str:
+        """A stable non-secret principal id for HTTP-delegated calls (the bearer
+        is validated at the transport guard; this only labels the audit record)."""
+        return "http-agent"
+
     def list_tools(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for spec in self._enabled.values():
