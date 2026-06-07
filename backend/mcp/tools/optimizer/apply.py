@@ -102,6 +102,18 @@ def sanity_ceiling_ok(merged: dict[str, Any]) -> bool:
         return False
     if _finite(merged.get("capital_pct", 0)) > _MAX_CAPITAL_PCT:
         return False
+    # Mean-reversion leverage/capital carry the SAME absolute ceiling as the trend
+    # path. These fields are deny-from-sweep (not in SWEEPABLE_FIELDS), so the
+    # optimizer can't reach them today — but this ceiling is the non-overridable
+    # backstop that also runs on the revert path, so a user-set MR config can never
+    # write back leverage/capital above the hard bound either. Only checked when
+    # present (None when MR is disabled).
+    mr_lev = merged.get("mr_leverage")
+    if mr_lev is not None and _finite(mr_lev) > _MAX_LEVERAGE:
+        return False
+    mr_cap = merged.get("mr_capital_pct")
+    if mr_cap is not None and _finite(mr_cap) > _MAX_CAPITAL_PCT:
+        return False
     return True
 
 

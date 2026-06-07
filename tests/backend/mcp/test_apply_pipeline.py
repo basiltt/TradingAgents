@@ -43,6 +43,41 @@ def test_sanity_ceiling_rejects_tiny_stop():
     assert not sanity_ceiling_ok({"leverage": 10, "stop_loss_pct": 0.1})  # below min stop distance
 
 
+def test_sanity_ceiling_bounds_mr_leverage_and_capital():
+    """Regression (regime merge): the absolute non-overridable ceiling must also
+    bound the mean-reversion leverage/capital fields, not just the trend ones.
+    None (MR disabled) is allowed; over-bound values are a breach."""
+    base = {"leverage": 20, "stop_loss_pct": 100, "capital_pct": 5}
+    # MR fields absent / None → allowed (MR disabled)
+    assert sanity_ceiling_ok(base)
+    assert sanity_ceiling_ok({**base, "mr_leverage": None, "mr_capital_pct": None})
+    # within bounds → allowed
+    assert sanity_ceiling_ok({**base, "mr_leverage": 10, "mr_capital_pct": 2})
+    # mr_leverage above the hard max → breach (schema allows up to 125; ceiling caps it)
+    assert not sanity_ceiling_ok({**base, "mr_leverage": 125})
+    # mr_capital_pct above the hard max → breach
+    assert not sanity_ceiling_ok({**base, "mr_capital_pct": 80})
+
+
+def test_regime_fields_are_not_sweepable():
+    """Regression (regime merge): every Regime Multi-Strategy field is DENIED from
+    optimizer sweeping (fail-closed) — the optimizer must never auto-tune MR/regime
+    money knobs. Guards against a future accidental addition to SWEEPABLE_FIELDS."""
+    regime_fields = {
+        "mean_reversion_enabled", "mr_short_enabled", "mr_long_enabled",
+        "mr_long_ack_requested", "strategy_cohort", "mr_regime", "mr_mean_interval",
+        "mr_mean_period", "mr_capital_pct", "mr_leverage", "mr_max_trades",
+        "mr_target_capture_pct", "mr_tight_stop_pct", "mr_time_stop_minutes",
+        "mr_min_edge_pct", "mr_extreme_min_abs_score", "regime_filter_enabled",
+        "regime_staleness_minutes", "regime_trend_ema_dist_pct", "regime_volatile_atr",
+        "session_filter_enabled", "session_allowed_hours_utc", "session_blocked_hours_utc",
+        "btc_vol_filter_enabled", "btc_vol_interval", "btc_vol_lookback_candles",
+        "btc_vol_min_threshold", "btc_vol_max_threshold",
+    }
+    leaked = regime_fields & SWEEPABLE_FIELDS
+    assert not leaked, f"regime fields must not be sweepable: {leaked}"
+
+
 def test_validate_merged_config_runs_model_validators():
     # a patch that makes the MERGED config violate a cross-field model validator:
     # close_on_profit_pct requires target_goal_value (validate_target_goal).

@@ -1400,7 +1400,7 @@ class AutoTradeExecutor:
     async def _do_place(
         self, state: "_AccountState", result: Dict[str, Any], direction: str,
         cfg: Dict[str, Any], account_id: str, symbol: str, phase: str,
-        mr_fade: bool = False, ctx: Any = None,
+        mr_fade: bool, ctx: Any,
     ) -> Optional[TradeExecution]:
         # ── F2 mean-reversion placement parameters (only when routed to MR) ──
         # Defaults = the trend path (unchanged when mr_fade is False => golden-safe).
@@ -1606,9 +1606,15 @@ class AutoTradeExecutor:
             is_ambiguous = any(m in err_str.lower() for m in ambiguous_markers)
             if is_ambiguous:
                 state.existing_symbols.add(symbol)
-                _is_rev = cfg.get("direction") == "reverse"
-                _sig_dir = "short" if direction in ("short", "sell") else "long"
-                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                if mr_fade:
+                    # IR4 (parity with the success/timeout branches): an MR entry is
+                    # placed on the FADE side (price-vs-mean), decoupled from the LLM
+                    # signal direction and the trend reverse knob. Record the real side.
+                    state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
+                else:
+                    _is_rev = cfg.get("direction") == "reverse"
+                    _sig_dir = "short" if direction in ("short", "sell") else "long"
+                    state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
                 logger.error("auto_trade_ambiguous_phantom_risk", extra={
                     "account_id": account_id, "symbol": symbol,
                     "error": err_str[:512],
