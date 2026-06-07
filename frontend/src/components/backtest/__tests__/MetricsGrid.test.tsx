@@ -147,4 +147,25 @@ describe("MetricsGrid", () => {
     expect(screen.getByText("-$765.50")).toBeInTheDocument(); // gross_loss -Math.abs(765.5)
     expect(screen.getByText("3.20%")).toBeInTheDocument(); // avg_dd_pct 3.2
   });
+
+  it("hides the per-strategy breakdown when there is no mean-reversion bucket", () => {
+    render(<MetricsGrid metrics={makeMetrics({ by_strategy: { "trend:short": dir() } })} />);
+    expect(screen.queryByTestId("strategy-breakdown")).toBeNull();
+  });
+
+  it("renders the per-strategy breakdown when MR trades are present (F2 validation)", () => {
+    const metrics = makeMetrics({
+      by_strategy: {
+        "trend:short": dir({ total_trades: 5, net_profit: 500 }),
+        "mean_reversion:short": dir({ total_trades: 3, net_profit: 120, win_rate: 66.7 }),
+        "mean_reversion:long": dir({ total_trades: 2, net_profit: -40, win_rate: 25 }),
+      },
+    });
+    render(<MetricsGrid metrics={metrics} />);
+    const table = screen.getByTestId("strategy-breakdown");
+    const rows = within(table).getAllByTestId("strategy-row");
+    expect(rows).toHaveLength(3);
+    expect(table.textContent).toMatch(/Mean-Rev/);
+    expect(table.textContent).toMatch(/Trend/);
+  });
 });

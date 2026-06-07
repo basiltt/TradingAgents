@@ -280,3 +280,63 @@ describe("toCreateRequest", () => {
     expect(req.date_range_end).toMatch(/Z$/);
   });
 });
+
+describe("regime multi-strategy (F1/F2/F3) config", () => {
+  const base = {
+    starting_capital: 10000,
+    date_range_start: "2026-01-01T00:00",
+    date_range_end: "2026-02-01T00:00",
+    scan_source: { mode: "date_range" as const },
+  };
+
+  it("defaults all regime features off / inherit (mirrors backend)", () => {
+    const r = backtestConfigSchema.safeParse(base);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.regime_filter_enabled).toBe(false);
+      expect(r.data.mean_reversion_enabled).toBe(false);
+      expect(r.data.strategy_cohort).toBeNull();      // inherit -> trend in backtest
+      expect(r.data.mr_short_enabled).toBe(true);
+      expect(r.data.mr_long_enabled).toBe(false);
+      expect(r.data.mr_time_stop_minutes).toBe(120);
+    }
+  });
+
+  it("accepts an enabled MR + F1 config", () => {
+    const r = backtestConfigSchema.safeParse({
+      ...base, regime_filter_enabled: true, session_filter_enabled: true,
+      session_blocked_hours_utc: [1, 6, 7, 8], mean_reversion_enabled: true,
+      strategy_cohort: "mean_reversion", mr_long_enabled: true,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects blocked+allowed session hours together", () => {
+    const r = backtestConfigSchema.safeParse({
+      ...base, session_blocked_hours_utc: [1], session_allowed_hours_utc: [2],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects an inverted BTC vol band", () => {
+    const r = backtestConfigSchema.safeParse({
+      ...base, btc_vol_min_threshold: 3, btc_vol_max_threshold: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects MR enabled with no direction", () => {
+    const r = backtestConfigSchema.safeParse({
+      ...base, mean_reversion_enabled: true, mr_short_enabled: false, mr_long_enabled: false,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("buildDefaults supplies every regime field", () => {
+    const d = buildDefaults();
+    expect(d.regime_filter_enabled).toBe(false);
+    expect(d.strategy_cohort).toBeNull();
+    expect(d.mr_leverage).toBe(10);
+    expect(d.mr_capital_pct).toBe(2);
+  });
+});

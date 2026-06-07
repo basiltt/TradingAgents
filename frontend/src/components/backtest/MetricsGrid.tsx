@@ -310,6 +310,50 @@ export function MetricsGrid({ metrics, className }: MetricsGridProps) {
         </CardContent>
       </Card>
 
+      {/* Per-strategy breakdown (F2 validation): trend vs mean-reversion x direction.
+          Shown only when the backtest produced more than the single default trend
+          bucket — i.e. a regime feature actually routed some trades. */}
+      {(() => {
+        const byStrat = m.by_strategy ?? {};
+        const keys = Object.keys(byStrat).sort();
+        const hasMR = keys.some((k) => k.startsWith("mean_reversion"));
+        if (keys.length === 0 || !hasMR) return null;
+        return (
+          <Card>
+            <CardContent className="overflow-x-auto pt-5">
+              <table className="w-full border-collapse" data-testid="strategy-breakdown">
+                <caption className="sr-only">Per-strategy metric breakdown</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className={cn("pb-2 text-left", TH_CLASS)}>Strategy / Direction</th>
+                    <th scope="col" className={cn("pb-2 pl-4", TH_CLASS_RIGHT)}>Trades</th>
+                    <th scope="col" className={cn("pb-2 pl-4", TH_CLASS_RIGHT)}>Win&nbsp;%</th>
+                    <th scope="col" className={cn("pb-2 pl-4", TH_CLASS_RIGHT)}>Net&nbsp;PnL</th>
+                    <th scope="col" className={cn("pb-2 pl-4", TH_CLASS_RIGHT)}>Avg&nbsp;Trade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {keys.map((key) => {
+                    const d = byStrat[key];
+                    const [kind, dir] = key.split(":");
+                    const label = `${kind === "mean_reversion" ? "Mean-Rev" : "Trend"} · ${dir}`;
+                    return (
+                      <tr key={key} className="border-t border-[color:var(--neu-stroke-soft)]/60" data-testid="strategy-row">
+                        <th scope="row" className="py-2 pr-4 text-left text-[0.8rem] font-medium text-[var(--neu-text-muted)]">{label}</th>
+                        <td className="py-2 pl-4 text-right text-[0.85rem] tabular-nums text-[var(--neu-text-strong)]">{formatInt(d.total_trades)}</td>
+                        <td className="py-2 pl-4 text-right text-[0.85rem] tabular-nums text-[var(--neu-text-strong)]">{formatPct(d.win_rate)}</td>
+                        <td className={cn("py-2 pl-4 text-right text-[0.85rem] tabular-nums", pnlColorClass(d.net_profit))}>{formatUsd(d.net_profit, { sign: true })}</td>
+                        <td className={cn("py-2 pl-4 text-right text-[0.85rem] tabular-nums", pnlColorClass(d.avg_trade))}>{formatUsd(d.avg_trade, { sign: true })}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {/* Secondary stats strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         <MetricTile label="Gross Profit" value={formatUsd(m.gross_profit, { sign: true })} colorClass={PNL_POSITIVE_CLASS} />

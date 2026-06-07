@@ -82,6 +82,35 @@ export const backtestConfigSchema = z
     adaptive_blacklist_min_trades: z.coerce.number().int().min(1).max(100).default(5),
     adaptive_blacklist_max_win_rate: z.coerce.number().min(0).max(100).default(30),
     adaptive_blacklist_lookback_hours: z.coerce.number().int().min(1).max(720).default(48),
+
+    // ── Regime Multi-Strategy (F1/F2/F3) — replayed in the backtester ──
+    regime_filter_enabled: z.boolean().default(false),
+    session_filter_enabled: z.boolean().default(false),
+    session_blocked_hours_utc: z.array(z.coerce.number().int().min(0).max(23)).nullable().default(null),
+    session_allowed_hours_utc: z.array(z.coerce.number().int().min(0).max(23)).nullable().default(null),
+    btc_vol_filter_enabled: z.boolean().default(false),
+    btc_vol_min_threshold: z.coerce.number().min(0).nullable().default(null),
+    btc_vol_max_threshold: z.coerce.number().min(0).nullable().default(null),
+    btc_vol_interval: z.enum(["15m", "1h", "4h"]).default("1h"),
+    btc_vol_lookback_candles: z.coerce.number().int().min(2).max(200).default(14),
+    mean_reversion_enabled: z.boolean().default(false),
+    mr_short_enabled: z.boolean().default(true),
+    mr_long_enabled: z.boolean().default(false),
+    mr_regime: z.enum(["ranging"]).default("ranging"),
+    mr_mean_period: z.coerce.number().int().min(2).max(200).default(20),
+    mr_mean_interval: z.enum(["15m", "1h", "4h"]).default("1h"),
+    mr_target_capture_pct: z.coerce.number().positive().max(100).default(60),
+    mr_tight_stop_pct: z.coerce.number().positive().max(1000).nullable().default(null),
+    mr_time_stop_minutes: z.coerce.number().int().min(5).max(1440).default(120),
+    mr_min_edge_pct: z.coerce.number().min(0).max(100).default(1),
+    mr_extreme_min_abs_score: z.coerce.number().min(0).max(10).default(5),
+    mr_capital_pct: z.coerce.number().positive().max(100).default(2),
+    mr_leverage: z.coerce.number().int().min(1).max(125).default(10),
+    mr_max_trades: z.coerce.number().int().min(1).max(999).default(2),
+    strategy_cohort: z.enum(["trend", "mean_reversion"]).nullable().default(null),
+    regime_staleness_minutes: z.coerce.number().int().min(5).max(240).default(30),
+    regime_volatile_atr: z.coerce.number().positive().max(10).default(2),
+    regime_trend_ema_dist_pct: z.coerce.number().min(0).max(50).default(1),
   })
   .refine(
     (c) => new Date(c.date_range_end).getTime() > new Date(c.date_range_start).getTime(),
@@ -123,6 +152,22 @@ export const backtestConfigSchema = z
       message: "Close on Profit requires a Goal Value",
       path: ["target_goal_value"],
     },
+  )
+  .refine(
+    // Regime F1: blocked + allowed session hours are mutually exclusive (backend).
+    (c) => !(c.session_blocked_hours_utc != null && c.session_allowed_hours_utc != null),
+    { message: "Use blocked OR allowed session hours, not both", path: ["session_blocked_hours_utc"] },
+  )
+  .refine(
+    // Regime F1: BTC vol band must be lo < hi when both set (backend).
+    (c) => c.btc_vol_min_threshold == null || c.btc_vol_max_threshold == null ||
+           c.btc_vol_min_threshold < c.btc_vol_max_threshold,
+    { message: "Min vol must be < Max vol", path: ["btc_vol_min_threshold"] },
+  )
+  .refine(
+    // Regime F2: enabling MR requires at least one direction (backend).
+    (c) => !c.mean_reversion_enabled || c.mr_short_enabled || c.mr_long_enabled,
+    { message: "Enable at least one MR direction (short or long)", path: ["mr_short_enabled"] },
   );
 
 export type BacktestConfigFormValues = z.input<typeof backtestConfigSchema>;
@@ -206,6 +251,34 @@ export function buildDefaults(
     adaptive_blacklist_min_trades: seed?.adaptive_blacklist_min_trades ?? 5,
     adaptive_blacklist_max_win_rate: seed?.adaptive_blacklist_max_win_rate ?? 30,
     adaptive_blacklist_lookback_hours: seed?.adaptive_blacklist_lookback_hours ?? 48,
+    // Regime Multi-Strategy (F1/F2/F3) — defaults mirror backend (all off / inherit).
+    regime_filter_enabled: seed?.regime_filter_enabled ?? false,
+    session_filter_enabled: seed?.session_filter_enabled ?? false,
+    session_blocked_hours_utc: seed?.session_blocked_hours_utc ?? null,
+    session_allowed_hours_utc: seed?.session_allowed_hours_utc ?? null,
+    btc_vol_filter_enabled: seed?.btc_vol_filter_enabled ?? false,
+    btc_vol_min_threshold: seed?.btc_vol_min_threshold ?? null,
+    btc_vol_max_threshold: seed?.btc_vol_max_threshold ?? null,
+    btc_vol_interval: seed?.btc_vol_interval ?? "1h",
+    btc_vol_lookback_candles: seed?.btc_vol_lookback_candles ?? 14,
+    mean_reversion_enabled: seed?.mean_reversion_enabled ?? false,
+    mr_short_enabled: seed?.mr_short_enabled ?? true,
+    mr_long_enabled: seed?.mr_long_enabled ?? false,
+    mr_regime: seed?.mr_regime ?? "ranging",
+    mr_mean_period: seed?.mr_mean_period ?? 20,
+    mr_mean_interval: seed?.mr_mean_interval ?? "1h",
+    mr_target_capture_pct: seed?.mr_target_capture_pct ?? 60,
+    mr_tight_stop_pct: seed?.mr_tight_stop_pct ?? null,
+    mr_time_stop_minutes: seed?.mr_time_stop_minutes ?? 120,
+    mr_min_edge_pct: seed?.mr_min_edge_pct ?? 1,
+    mr_extreme_min_abs_score: seed?.mr_extreme_min_abs_score ?? 5,
+    mr_capital_pct: seed?.mr_capital_pct ?? 2,
+    mr_leverage: seed?.mr_leverage ?? 10,
+    mr_max_trades: seed?.mr_max_trades ?? 2,
+    strategy_cohort: seed?.strategy_cohort ?? null,
+    regime_staleness_minutes: seed?.regime_staleness_minutes ?? 30,
+    regime_volatile_atr: seed?.regime_volatile_atr ?? 2,
+    regime_trend_ema_dist_pct: seed?.regime_trend_ema_dist_pct ?? 1,
   };
 }
 
