@@ -191,6 +191,39 @@ async def toggle_analytics_inclusion(request: Request, account_id: str):
     return result
 
 
+@router.post("/accounts/{account_id}/f2-long-ack")
+async def acknowledge_f2_long(request: Request, account_id: str):
+    """Record a server-side acknowledgement that mean-reversion LONG entries (which
+    have negative expectancy) are permitted for this account at the given exposure.
+
+    The exposure snapshot (leverage/capital_pct/max_trades) is the high-water mark
+    the placement gate compares the LIVE scan config against; raising any of them
+    later invalidates the ack (re-consent required). Bounds are validated so a
+    fat-finger cannot ack an unbounded exposure.
+    """
+    _validate_account_id(account_id)
+    db = _get_db(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON body", "code": "PARSE_ERROR"}, 400)
+    try:
+        leverage = int(body.get("leverage", 0))
+        capital_pct = float(body.get("capital_pct", 0))
+        max_trades = int(body.get("max_trades", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"detail": "leverage/capital_pct/max_trades must be numeric", "code": "VALIDATION_ERROR"}, 422)
+    if not (1 <= leverage <= 125 and 0 < capital_pct <= 100 and 1 <= max_trades <= 999):
+        return JSONResponse({"detail": "exposure out of bounds", "code": "VALIDATION_ERROR"}, 422)
+
+    from backend.services import f2_long_ack as _ack
+    actor = getattr(request.state, "user", None) or request.headers.get("x-actor")
+    await _ack.record_ack(db, account_id, leverage=leverage, capital_pct=capital_pct,
+                          max_trades=max_trades, updated_by=actor)
+    return {"account_id": account_id, "acked_leverage": leverage,
+            "acked_capital_pct": capital_pct, "acked_max_trades": max_trades}
+
+
 @router.post("/accounts/{account_id}/test")
 async def test_connection(request: Request, account_id: str):
     """Test exchange API connectivity for an account."""

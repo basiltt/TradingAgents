@@ -1343,8 +1343,13 @@ class AutoTradeExecutor:
                 "side": execution.side, "order_id": execution.order_id,
             })
 
-            # Enable AI Manager for this account if configured
-            if cfg.get("ai_manager_enabled") and account_id not in self._ai_manager_enabled_accounts:
+            # Enable AI Manager for this account if configured.
+            # FR-052: a mean-reversion placement must NOT auto-enable the AI manager
+            # (MR positions are excluded from AI management — they have their own
+            # fast/tight exits and the AI's logic would fight them).
+            if (strategy_kind != "mean_reversion"
+                    and cfg.get("ai_manager_enabled")
+                    and account_id not in self._ai_manager_enabled_accounts):
                 self._ai_manager_enabled_accounts.add(account_id)
                 if self._ai_manager_service:
                     try:

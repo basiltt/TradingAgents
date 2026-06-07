@@ -148,3 +148,26 @@ async def test_mr_long_rejected_when_ack_stale_after_escalation():
     await ex._try_trade(list(ex._state.values())[0], signal, phase="batch")
     assert len(ex._accounts.calls) == 0
     assert ("skipped", "mr_long_unacknowledged") in seen
+
+
+@pytest.mark.asyncio
+async def test_mr_success_does_not_auto_enable_ai():
+    # FR-052: a mean-reversion placement must not flip AI auto-enable.
+    class _AIMgr:
+        def __init__(self):
+            self.enabled = []
+
+        async def get_config(self, account_id):
+            raise Exception("no config")
+
+        async def enable(self, account_id, cfg):
+            self.enabled.append(account_id)
+
+    cfg = _mr_cfg(ai_manager_enabled=True)
+    ex = _executor(cfg, _ctx(price=102.0, mean=100.0))
+    ai = _AIMgr()
+    ex._ai_manager_service = ai
+    await ex._try_trade(list(ex._state.values())[0], _overbought(), phase="batch")
+    assert len(ex._accounts.calls) == 1            # MR trade placed
+    assert ai.enabled == []                        # but AI NOT auto-enabled
+    assert "a" not in ex._ai_manager_enabled_accounts
