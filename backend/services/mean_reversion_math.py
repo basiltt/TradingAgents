@@ -89,3 +89,49 @@ def mr_target_price(entry: float, mean: float, capture_pct: float, side: Side = 
     clarity but not required."""
     frac = capture_pct / 100.0
     return entry + (mean - entry) * frac
+
+
+def compute_mr_placement(entry: float, mean: float, cfg: dict):
+    """Pure MR placement core shared by the live executor and the backtester.
+
+    Given the entry price, the EMA mean, and a config, return either the placement
+    param dict (same keys the live place_trade path consumes) or a skip ``ReasonCode``.
+
+    This factors the side/direction/geometry/TP logic out of the live async
+    ``_compute_mr_params`` so the backtester replays it identically (no drift). The
+    caller owns the async/stateful parts NOT included here — regime staleness, the
+    lazy mean/price fetch, the long-ack gate, and the mr_max_trades cap — because
+    those differ between live (DB/exchange) and backtest (historical klines, no ack).
+
+    Fade side is set by price RELATIVE TO THE MEAN (FR-021): entry >= mean fades
+    SHORT (reverts down), entry < mean fades LONG (reverts up). Geometry guards
+    (fee floor, no-edge, inverted, SL-vs-liquidation) fire via check_geometry.
+    """
+    side: Side = "short" if entry >= mean else "long"
+
+    # direction enablement (mirrors _compute_mr_params)
+    if side == "long" and not cfg.get("mr_long_enabled", False):
+        return ReasonCode.MR_LONG_DISABLED
+    if side == "short" and not cfg.get("mr_short_enabled", True):
+        return ReasonCode.MR_SHORT_DISABLED
+
+    leverage = int(cfg.get("mr_leverage", 10))
+    # MR uses its own tight SL; default to 8% margin when unset (matches live).
+    _sl_cfg = cfg.get("mr_tight_stop_pct")
+    tight_sl = _sl_cfg if (_sl_cfg is not None and _sl_cfg > 0) else 8.0
+    capture = float(cfg.get("mr_target_capture_pct", 60.0))
+
+    guard = check_geometry(entry, mean, side, float(tight_sl), float(leverage),
+                           min_edge_pct=float(cfg.get("mr_min_edge_pct", 1.0)),
+                           capture_pct=capture)
+    if guard is not None:
+        return guard
+
+    tp = margin_tp_pct(entry, mean, capture, float(leverage))
+    return {
+        "signal_direction": side,
+        "leverage": leverage,
+        "take_profit_pct": tp,
+        "stop_loss_pct": float(tight_sl),
+        "capital_pct": float(cfg.get("mr_capital_pct", 2.0)),
+    }

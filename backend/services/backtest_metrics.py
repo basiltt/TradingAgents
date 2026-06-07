@@ -448,6 +448,23 @@ def split_by_direction(trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     }
 
 
+def compute_by_strategy(trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Split metrics by strategy_kind x direction (F2 validation breakdown).
+
+    Returns {"<strategy_kind>:<long|short>": metric_subset}, e.g. "trend:short",
+    "mean_reversion:long". A trade with no strategy_kind buckets under "trend"
+    (legacy/trend). Reuses _direction_metrics so the shape matches by_direction; the
+    frontend StrategyPnLView consumes this to compare trend vs mean-reversion. Empty
+    input -> {}.
+    """
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for t in trades or []:
+        kind = t.get("strategy_kind") or "trend"
+        direction = "long" if t.get("side") == "Buy" else "short"
+        buckets.setdefault(f"{kind}:{direction}", []).append(t)
+    return {key: _direction_metrics(ts) for key, ts in buckets.items()}
+
+
 def _consecutive_returns(values: list[float]) -> list[float]:
     """Period-over-period returns over a sequence of equity values.
 
@@ -671,6 +688,7 @@ def compute_all_metrics(
             # (do not "unify" by moving that one inside — see compute_per_trade_series).
             "per_trade": [],
             "by_direction": split_by_direction([]),
+            "by_strategy": compute_by_strategy([]),
             "diagnostics": diagnostics,
         })
 
@@ -799,6 +817,7 @@ def compute_all_metrics(
         "max_trade_duration_hours": durs["max_trade_duration_hours"],
         "final_equity": final_equity,
         "by_direction": split_by_direction(trades),
+        "by_strategy": compute_by_strategy(trades),
         "diagnostics": diagnostics,
     })
     # Attach the pre-sanitized large list without a second pass.

@@ -48,6 +48,17 @@ class TestBacktestCreateRequest:
             "trailing_profit_pct", "breakeven_timeout_hours", "max_trade_duration_hours",
             "close_on_profit_pct", "target_goal_type", "target_goal_value",
             "symbol_blacklist", "symbol_whitelist", "adaptive_blacklist_enabled",
+            # Regime Multi-Strategy fields are now accepted by the backtester (so it can
+            # validate F1/F2/F3 before live funding) and MUST default identically to
+            # production, or a backtest wouldn't reflect real trading.
+            "regime_filter_enabled", "session_filter_enabled", "session_blocked_hours_utc",
+            "session_allowed_hours_utc", "btc_vol_filter_enabled", "btc_vol_min_threshold",
+            "btc_vol_max_threshold", "btc_vol_interval", "btc_vol_lookback_candles",
+            "mean_reversion_enabled", "mr_short_enabled", "mr_long_enabled", "mr_regime",
+            "mr_mean_period", "mr_mean_interval", "mr_target_capture_pct", "mr_tight_stop_pct",
+            "mr_time_stop_minutes", "mr_min_edge_pct", "mr_extreme_min_abs_score",
+            "mr_capital_pct", "mr_leverage", "mr_max_trades", "strategy_cohort",
+            "regime_staleness_minutes", "regime_volatile_atr", "regime_trend_ema_dist_pct",
         ]
         for field in shared:
             assert getattr(bt, field) == getattr(prod, field), (
@@ -55,6 +66,55 @@ class TestBacktestCreateRequest:
                 f"production AutoTradeConfig ({getattr(prod, field)!r}) — they must match "
                 "for real-world-faithful results"
             )
+
+    def test_accepts_regime_fields(self):
+        """The backtester now ACCEPTS F1/F2/F3 fields (was: 422'd them) so the regime
+        features can be validated on historical data before live funding."""
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        req = BacktestCreateRequest(
+            starting_capital=10000.0,
+            date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+            scan_source=ScanSource(mode="date_range"),
+            regime_filter_enabled=True,
+            session_filter_enabled=True,
+            session_blocked_hours_utc=[1, 6, 7, 8],
+            btc_vol_filter_enabled=True,
+            btc_vol_min_threshold=0.8,
+            btc_vol_max_threshold=3.0,
+            mean_reversion_enabled=True,
+            mr_short_enabled=True,
+            mr_long_enabled=True,
+            strategy_cohort="mean_reversion",
+            mr_capital_pct=2.0,
+            mr_leverage=10,
+            mr_time_stop_minutes=120,
+        )
+        assert req.mean_reversion_enabled is True
+        assert req.strategy_cohort == "mean_reversion"
+        assert req.session_blocked_hours_utc == [1, 6, 7, 8]
+        assert req.mr_long_enabled is True
+
+    def test_regime_validators_mirror_production(self):
+        """The 3 cross-field regime validators (session-exclusive, vol-band, mr-direction)
+        apply in the backtest schema exactly as in AutoTradeConfig."""
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        base = dict(
+            starting_capital=10000.0,
+            date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+            scan_source=ScanSource(mode="date_range"),
+        )
+        # session blocked + allowed are mutually exclusive
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            BacktestCreateRequest(**base, session_blocked_hours_utc=[1], session_allowed_hours_utc=[2])
+        # vol band must be lo < hi
+        with pytest.raises(ValidationError, match="btc_vol_min_threshold must be"):
+            BacktestCreateRequest(**base, btc_vol_min_threshold=3.0, btc_vol_max_threshold=1.0)
+        # MR enabled requires at least one direction
+        with pytest.raises(ValidationError, match="at least one of"):
+            BacktestCreateRequest(**base, mean_reversion_enabled=True,
+                                  mr_short_enabled=False, mr_long_enabled=False)
 
     def test_rejects_zero_capital(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
@@ -65,20 +125,6 @@ class TestBacktestCreateRequest:
                 date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
                 scan_source=ScanSource(mode="date_range"),
             )
-
-    def test_rejects_regime_fields_instead_of_silently_dropping(self):
-        # Regime F1/F2/F3 fields are deferred to v2; the backtester must 422 rather
-        # than silently ignore them and run a misleading plain-trend backtest.
-        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
-        for bad in ("mean_reversion_enabled", "regime_filter_enabled", "strategy_cohort"):
-            with pytest.raises(ValidationError, match="not supported by the backtester"):
-                BacktestCreateRequest(
-                    starting_capital=10000.0,
-                    date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                    date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
-                    scan_source=ScanSource(mode="date_range"),
-                    **{bad: True if bad != "strategy_cohort" else "mean_reversion"},
-                )
 
     def test_rejects_leverage_above_125(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource

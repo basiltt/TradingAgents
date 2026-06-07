@@ -44,6 +44,10 @@ class Position:
     scan_id: str = ""
     signal_score: int = 0
     signal_confidence: str = ""
+    # Regime Multi-Strategy: "trend" (default) or "mean_reversion". An MR position
+    # also carries its own fast time-stop (minutes) — F2's strategy-critical exit.
+    strategy_kind: str = "trend"
+    time_stop_minutes: Optional[float] = None
     # Trailing profit state
     trailing_active: bool = False
     trailing_peak: float = 0.0
@@ -106,6 +110,7 @@ class BacktestEngine:
         cancel_event: Optional[threading.Event] = None,
         on_progress: Optional[Callable[[int], None]] = None,
         instrument_info: Optional[dict[str, dict[str, float]]] = None,
+        scan_contexts: Optional[dict[str, Any]] = None,
     ) -> SimulationResult:
         """Execute the backtest simulation.
 
@@ -132,6 +137,15 @@ class BacktestEngine:
         # leverage). Stored on the instance so the pure sizing/_open_position path can
         # read it without threading it through every call. Empty dict → defaults.
         self._instrument_info: dict[str, dict[str, float]] = instrument_info or {}
+
+        # Regime Multi-Strategy (F1/F2/F3): {scan_id: ScanContext} from the service.
+        # None/{} ⇒ no feature active ⇒ the regime block in _apply_filter_chain /
+        # _open_position is never entered, so the engine is byte-identical to before
+        # (golden guarantee). self._ctx / self._mr_params are per-scan / per-signal
+        # transients set during the single-threaded run (safe: one run() per thread).
+        self._scan_contexts: dict[str, Any] = scan_contexts or {}
+        self._ctx: Any = None            # current scan's ScanContext (or None)
+        self._mr_mean: float | None = None  # scan-time EMA mean for the signal being opened (MR)
 
         # Initialize state
         starting_capital = config["starting_capital"]
@@ -196,6 +210,9 @@ class BacktestEngine:
 
             scan_signals = scans[scan_id]
             current_time = scan_signals[0]["signal_time"]
+
+            # Bind this scan's ScanContext (or None) for the regime gate/route block.
+            self._ctx = self._scan_contexts.get(scan_id)
 
             # Reset the per-scan entry counter. max_trades caps NEW trades per scan
             # (cycle), mirroring production, which builds a fresh AutoTradeExecutor
@@ -423,6 +440,73 @@ class BacktestEngine:
                         entered += 1
         return entered
 
+    @staticmethod
+    def _regime_active(config: dict[str, Any]) -> bool:
+        """True if any regime feature (F1/F2/F3) could affect this signal — the cheap
+        top gate that keeps a default-off backtest on the exact original code path."""
+        return bool(
+            config.get("regime_filter_enabled")
+            or config.get("mean_reversion_enabled")
+            or (config.get("strategy_cohort") == "mean_reversion")
+        )
+
+    def _resolve_strategy(
+        self,
+        config: dict[str, Any],
+        symbol: str,
+        direction: str,
+        current_time: datetime,
+    ):
+        """Resolve trend vs mean_reversion + apply F1 gates (mirror of live _try_trade).
+
+        Returns (strategy, mr_mean|None), or None to SKIP the signal. Reuses the same
+        pure functions as live: features.resolve_cohort, strategy_router.route_strategy,
+        regime_filter.{gate_session,gate_btc_vol}. For an MR route it returns the
+        ScanContext EMA mean; the fade side / geometry / TP are computed in
+        _open_position from the REAL next-bar-open entry (more faithful + no look-ahead,
+        no entry-price hack). A missing mean fails closed (MR unavailable)."""
+        from backend.services import features as _feat
+        from backend.services import strategy_router as _router
+        from backend.services import regime_filter as _f1
+
+        ctx = self._ctx
+        cohort = _feat.resolve_cohort(config.get("strategy_cohort"), None) or "trend"
+        is_mr_account = cohort == "mean_reversion" and bool(config.get("mean_reversion_enabled"))
+
+        # Strategy routing (MR only runs in its regime; else "none" => skip).
+        if is_mr_account:
+            iv = config.get("btc_vol_interval", "1h")
+            lb = int(config.get("btc_vol_lookback_candles", 14))
+            regime = ctx.routing_regime(iv, lb) if ctx is not None else "unknown"
+            strategy = _router.route_strategy("mean_reversion", regime,
+                                              mr_regime=config.get("mr_regime", "ranging"))
+            if strategy == "none":
+                return None
+        else:
+            strategy = "trend"
+
+        # F1 market-condition gates (apply to BOTH strategies; subtractive). Honor the
+        # one-time manual session-filter override flag (mirrors live).
+        if config.get("regime_filter_enabled"):
+            if _f1.gate_session(config, current_time) is not None:
+                return None
+            if ctx is not None and _f1.gate_btc_vol(config, ctx) is not None:
+                return None
+
+        if strategy != "mean_reversion":
+            return ("trend", None)
+
+        # MR needs the scan-time EMA mean; the side/geometry/TP are computed at open
+        # against the real next-bar-open entry. Missing mean => fail-closed skip.
+        if ctx is None:
+            return None
+        period = int(config.get("mr_mean_period", 20))
+        mean_iv = config.get("mr_mean_interval", "1h")
+        mean = ctx.get_mean(symbol, period, mean_iv)
+        if mean is None:
+            return None  # MR_MEAN_UNAVAILABLE (fail-closed)
+        return ("mean_reversion", mean)
+
     def _apply_filter_chain(
         self,
         config: dict[str, Any],
@@ -432,7 +516,11 @@ class BacktestEngine:
         klines: dict[str, list[dict[str, Any]]],
         relaxed: bool = False,
     ) -> bool:
-        """Apply 17-step filter chain. Returns True if signal passes all filters."""
+        """Apply 17-step filter chain (+ optional regime gate/route). Returns True if
+        the signal passes all filters. When a regime feature is active, the F1/F2/F3
+        block (mirroring live _try_trade) runs after the existing-position check; on an
+        MR route the signal-direction gates (max_same_direction, signal_sides) are
+        skipped because MR places in fade-space, not signal-space (live C3/C4)."""
         from backend.services.trading_rules import determine_side
 
         ticker = signal.get("ticker", "")
@@ -473,6 +561,23 @@ class BacktestEngine:
             state.signals_filtered += 1
             return False
 
+        # ── Regime Multi-Strategy gate/route (no-op unless a feature is enabled) ──
+        # Mirrors live _try_trade: resolve strategy (trend vs MR vs none) + F1 gates.
+        # On an MR route, self._mr_mean carries the scan-time EMA mean forward to
+        # _open_position (which computes the fade side/geometry/TP from the REAL
+        # next-bar-open entry). Reset per signal.
+        self._mr_mean = None
+        is_mr = False
+        if self._regime_active(config):
+            resolved = self._resolve_strategy(config, symbol, direction, current_time)
+            if resolved is None:
+                state.signals_filtered += 1
+                return False
+            strategy, mr_mean = resolved
+            if strategy == "mean_reversion":
+                is_mr = True
+                self._mr_mean = mr_mean
+
         # 6. Signal age (strict only)
         if not relaxed:
             max_age = config.get("max_signal_age_minutes")
@@ -489,9 +594,10 @@ class BacktestEngine:
             state.signals_filtered += 1
             return False
 
-        # 8. Max same direction
+        # 8. Max same direction — operates in SIGNAL space, so SKIP for MR (which
+        # places in fade-space, decoupled from the signal direction; live C3 fix).
         max_same_dir = config.get("max_same_direction")
-        if max_same_dir is not None:
+        if max_same_dir is not None and not is_mr:
             trade_side = determine_side(direction, config.get("direction", "straight"))
             same_dir_count = sum(1 for p in state.open_positions if p.side == trade_side)
             if same_dir_count >= max_same_dir:
@@ -511,9 +617,10 @@ class BacktestEngine:
                 state.signals_filtered += 1
                 return False
 
-        # 11. Signal sides filter
+        # 11. Signal sides filter — also signal-space; SKIP for MR (live C4 fix; MR
+        # side is governed by mr_short_enabled/mr_long_enabled, not signal_sides).
         signal_sides = config.get("signal_sides", "both")
-        if signal_sides != "both":
+        if signal_sides != "both" and not is_mr:
             if signal_sides in ("buy", "long") and direction not in ("buy", "long"):
                 state.signals_filtered += 1
                 return False
@@ -640,6 +747,25 @@ class BacktestEngine:
         # Apply slippage to get the actual ENTRY FILL price (used for PnL, fee, and
         # margin — mirrors production filling a market order at the slipped avgPrice).
         side = determine_side(direction, config.get("direction", "straight"))
+
+        # ── Mean-Reversion override (F2) ──
+        # If the filter chain routed this signal to MR, compute the placement from the
+        # REAL next-bar-open entry (entry_base_price) against the scan-time EMA mean,
+        # using the SAME pure core as live (mean_reversion_math.compute_mr_placement).
+        # This overrides the trend side and the leverage/TP/SL/capital below. A geometry
+        # guard at the real entry (which can differ from the routing estimate) skips the
+        # trade — fail-closed, matching live. self._mr_mean is set only on the MR path.
+        mr_placement = None
+        if self._mr_mean is not None:
+            from backend.services import mean_reversion_math as _mr
+            from backend.services.strategy_reason_codes import ReasonCode as _RC
+            mr_placement = _mr.compute_mr_placement(entry_base_price, self._mr_mean, config)
+            if isinstance(mr_placement, _RC):
+                # geometry/direction guard fired at the real entry → skip (no trade).
+                state.signals_filtered += 1
+                return False
+            side = "Buy" if mr_placement["signal_direction"] == "long" else "Sell"
+
         entry_price = apply_slippage(entry_base_price, side, config.get("slippage_bps", 2))
 
         # Per-symbol instrument parameters (lot step, min qty, tick size, max
@@ -654,13 +780,13 @@ class BacktestEngine:
         tick_size = float(info.get("tick_size", 0.0))  # 0 → no TP/SL rounding
         max_leverage = int(info.get("max_leverage", 0) or 0)  # 0 → no cap
 
-        # Compute position size
-        leverage = config.get("leverage", 20)
+        # Compute position size. MR uses its own leverage/capital from the placement.
+        leverage = int(mr_placement["leverage"]) if mr_placement else config.get("leverage", 20)
         # Cap leverage to the symbol's max, matching production (accounts_service caps
         # to the instrument's maxLeverage). Over-leveraging would mis-price liq/margin.
         if max_leverage > 0 and leverage > max_leverage:
             leverage = max_leverage
-        capital_pct = config.get("capital_pct", 5.0)
+        capital_pct = mr_placement["capital_pct"] if mr_placement else config.get("capital_pct", 5.0)
 
         # Available-balance basis for the margin-affordability check. Use the SAME
         # totalAvailableBalance basis the per-scan sizing uses (wallet + carried
@@ -710,8 +836,8 @@ class BacktestEngine:
         # slipped fill), i.e. slightly less than the nominal TP% — exactly as live
         # trading. Anchoring TP/SL to the slipped price instead would hand the trader
         # the full nominal move plus the slippage, a systematic favorable bias.
-        tp_pct = config.get("take_profit_pct", 150.0)
-        sl_pct = config.get("stop_loss_pct", 100.0)
+        tp_pct = mr_placement["take_profit_pct"] if mr_placement else config.get("take_profit_pct", 150.0)
+        sl_pct = mr_placement["stop_loss_pct"] if mr_placement else config.get("stop_loss_pct", 100.0)
         tp_price, sl_price = compute_tp_sl(entry_base_price, side, tp_pct, sl_pct, leverage)
         # Round TP/SL DOWN to the instrument tick size, matching production
         # (accounts_service round_price uses ROUND_DOWN to tick_size). Unrounded
@@ -754,6 +880,9 @@ class BacktestEngine:
             signal_confidence=signal.get("confidence", ""),
             max_favorable_price=entry_price,
             max_adverse_price=entry_price,
+            # F2: tag MR positions + carry their fast time-stop (minutes).
+            strategy_kind=("mean_reversion" if mr_placement else "trend"),
+            time_stop_minutes=(float(config.get("mr_time_stop_minutes", 120)) if mr_placement else None),
         )
         state.open_positions.append(position)
         state.signals_entered += 1  # lifetime counter (stats + target_goal early-stop)
@@ -1116,6 +1245,7 @@ class BacktestEngine:
             "signal_score": position.signal_score,
             "signal_confidence": position.signal_confidence,
             "scan_id": position.scan_id,
+            "strategy_kind": position.strategy_kind,
         }
         state.closed_trades.append(trade_record)
 
@@ -1327,29 +1457,41 @@ class BacktestEngine:
         fee_rate: float,
         latest_prices: Optional[dict[str, float]] = None,
     ) -> None:
-        """Evaluate time-based close rules: BREAKEVEN_TIMEOUT and MAX_DURATION.
+        """Evaluate time-based close rules: BREAKEVEN_TIMEOUT, MAX_DURATION, and the
+        per-position MR fast time-stop (F2).
 
         BREAKEVEN_TIMEOUT: modifies TP to breakeven (does NOT close).
             If position is actively trailing → SKIP (trailing takes priority).
         MAX_DURATION: force-closes after elapsed hours at the symbol's latest price.
+        MR time-stop: force-closes a mean_reversion position after its own
+            time_stop_minutes (F2's strategy-critical fast exit), independent of the
+            account-level MAX_DURATION.
         """
         from backend.services.trading_rules import compute_breakeven_price
 
         breakeven_hours = config.get("breakeven_timeout_hours")
         max_duration_hours = config.get("max_trade_duration_hours")
+        # Any MR position carries its own time-stop, so we must run even when the
+        # account-level time rules are unset.
+        any_mr_timestop = any(p.time_stop_minutes for p in state.open_positions)
 
-        if not breakeven_hours and not max_duration_hours:
+        if not breakeven_hours and not max_duration_hours and not any_mr_timestop:
             return
 
         latest_prices = latest_prices or {}
-        positions_to_close = []
+        positions_to_close = []          # (pos, close_reason)
 
         for pos in list(state.open_positions):
             elapsed_hours = (candle_time - pos.entry_time).total_seconds() / 3600.0
 
+            # MR fast time-stop (per-position): close after its own minutes elapse.
+            if pos.time_stop_minutes and elapsed_hours * 60.0 >= pos.time_stop_minutes:
+                positions_to_close.append((pos, "mr_time_stop"))
+                continue
+
             # MAX_DURATION: force close after max hours
             if max_duration_hours and elapsed_hours >= max_duration_hours:
-                positions_to_close.append(pos)
+                positions_to_close.append((pos, "max_duration"))
                 continue
 
             # BREAKEVEN_TIMEOUT: modify TP to breakeven price
@@ -1361,10 +1503,10 @@ class BacktestEngine:
                 new_tp = compute_breakeven_price(pos.entry_price, pos.side, pos.leverage)
                 pos.tp_price = new_tp
 
-        # Close MAX_DURATION positions at the symbol's latest price. Guard against a
+        # Close time-stopped positions at the symbol's latest price. Guard against a
         # position already closed by an earlier rule this candle (defensive parity
         # with the TP/SL close loop — _close_position would raise on a double .remove()).
-        for pos in positions_to_close:
+        for pos, reason in positions_to_close:
             if pos in state.open_positions:
                 exit_price = latest_prices.get(pos.symbol, pos.entry_price)
-                self._close_position(state, pos, "max_duration", exit_price, candle_time, fee_rate)
+                self._close_position(state, pos, reason, exit_price, candle_time, fee_rate)

@@ -1097,11 +1097,15 @@ class AutoTradeExecutor:
 
         # Mean-reversion fade side is determined by price RELATIVE TO THE MEAN
         # (FR-021): entry above the mean => fade SHORT (price reverts down); entry
-        # below the mean => fade LONG (price reverts up). This is the natural MR
-        # geometry, independent of the LLM signal's own direction.
+        # below the mean => fade LONG (price reverts up). The side/direction-enable/
+        # geometry/TP math lives in the shared pure core compute_mr_placement (so the
+        # backtester replays it identically). The async/stateful gates NOT in the core
+        # — staleness (above), the mr_max_trades cap, and the long-ack gate — stay here,
+        # interleaved to preserve the original skip-reason precedence:
+        #   direction-enable -> max_trades -> geometry/TP -> long-ack.
         side = "short" if entry >= mean else "long"
 
-        # direction enablement
+        # 1) direction enablement (specific reason before the cap/geometry checks)
         if side == "long" and not cfg.get("mr_long_enabled", False):
             self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_LONG_DISABLED, result)
             state.trades_skipped += 1
@@ -1111,7 +1115,7 @@ class AutoTradeExecutor:
             state.trades_skipped += 1
             return None
 
-        # IR6: enforce the consented MR position cap. mr_max_trades is part of the
+        # 2) IR6: enforce the consented MR position cap. mr_max_trades is part of the
         # long-ack consent tuple, so MR placements must be counted against it (the
         # generic max_trades is too coarse for a cohort where every trade is MR).
         mr_cap = int(cfg.get("mr_max_trades", 2))
@@ -1121,24 +1125,16 @@ class AutoTradeExecutor:
             state.trades_skipped += 1
             return None
 
-        leverage = int(cfg.get("mr_leverage", 10))
-        # MR uses its own tight SL; do NOT inherit the trend stop_loss_pct (100% margin),
-        # which would be wider than the mean-target TP and trip the inverted-geometry
-        # guard. Default to a tight 8% margin when mr_tight_stop_pct is explicitly unset.
-        _sl_cfg = cfg.get("mr_tight_stop_pct")
-        tight_sl = _sl_cfg if (_sl_cfg is not None and _sl_cfg > 0) else 8.0
-        capture = float(cfg.get("mr_target_capture_pct", 60.0))
-        # geometry guards (fire even under relaxed) — measured against the ACTUAL
-        # capture-scaled placed TP (IR3), incl. the SL-vs-liquidation guard (IR7).
-        guard = _mr.check_geometry(entry, mean, side, float(tight_sl), float(leverage),
-                                   min_edge_pct=float(cfg.get("mr_min_edge_pct", 1.0)),
-                                   capture_pct=capture)
-        if guard is not None:
-            self._emit_decision(account_id, phase, symbol, "skipped", guard, result)
+        # 3) side/direction-enable/geometry/TP via the shared pure core (no drift vs
+        # backtest). Direction-enable is re-checked harmlessly here; it already passed.
+        placement = _mr.compute_mr_placement(entry, mean, cfg)
+        if isinstance(placement, ReasonCode):
+            self._emit_decision(account_id, phase, symbol, "skipped", placement, result)
             state.trades_skipped += 1
             return None
 
-        # long-ack gate (server-authoritative; relaxed-proof)
+        # 4) long-ack gate (server-authoritative; relaxed-proof) — last, so geometry
+        # skips surface before the ack reason, matching the original ordering.
         if side == "long":
             # C1: the f2_long kill switch lets an operator emergency-stop the riskier
             # long-fade entries independently while leaving shorts running.
@@ -1152,14 +1148,7 @@ class AutoTradeExecutor:
                 state.trades_skipped += 1
                 return None
 
-        tp = _mr.margin_tp_pct(entry, mean, capture, float(leverage))
-        return {
-            "signal_direction": side,
-            "leverage": leverage,
-            "take_profit_pct": tp,
-            "stop_loss_pct": float(tight_sl),
-            "capital_pct": float(cfg.get("mr_capital_pct", 2.0)),
-        }
+        return placement
 
     async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False, phase: str = "batch") -> Optional[TradeExecution]:
         cfg = state.config
