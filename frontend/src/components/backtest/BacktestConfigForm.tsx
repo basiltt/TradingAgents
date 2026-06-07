@@ -318,6 +318,7 @@ export function BacktestConfigForm({
   });
 
   const scanMode = watch("scan_source.mode");
+  const mrLongEnabled = watch("mr_long_enabled");
   const formRef = React.useRef<HTMLFormElement>(null);
 
   const submit = handleSubmit(
@@ -556,7 +557,8 @@ export function BacktestConfigForm({
         <p className="mb-3 text-[0.72rem] leading-5 text-[var(--neu-text-muted)]">
           Replay the regime features on history. All off by default. Modeling notes:
           F2-long honors mr_long_enabled (the live server-ack is bypassed — no live
-          account); BTC vol uses historical klines at each scan time.
+          account); BTC vol uses historical klines at each scan time; MR entries fill at
+          the next bar&apos;s open.
         </p>
 
         {/* F1 — Regime / Session Filter */}
@@ -604,6 +606,13 @@ export function BacktestConfigForm({
           <NumberField control={control} name="mr_time_stop_minutes" label="MR time-stop (min)" error={fieldError("mr_time_stop_minutes")} />
           <NumberField control={control} name="mr_min_edge_pct" label="MR min edge (%)" error={fieldError("mr_min_edge_pct")} />
         </div>
+        {mrLongEnabled ? (
+          <p className="mt-2 text-[0.72rem] leading-5 text-[var(--neu-danger)]" role="note" data-testid="mr-long-danger">
+            Research shows the MR long side is net-negative (≈55% win rate, −$0.57/trade).
+            The backtest honors it (no live ack) precisely so you can measure that — expect
+            the long-side results to confirm the negative expectancy.
+          </p>
+        ) : null}
       </Section>
 
       <div className="flex items-center justify-end gap-3">

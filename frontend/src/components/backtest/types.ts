@@ -246,6 +246,8 @@ export interface BacktestTrade {
   signal_score: number | null;
   signal_confidence: string | null;
   scan_id: string | null;
+  /** Strategy that produced the trade (F2 validation). Defaults to "trend". */
+  strategy_kind?: "trend" | "mean_reversion";
 }
 
 /** Paginated trades response. */

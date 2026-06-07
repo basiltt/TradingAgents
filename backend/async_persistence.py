@@ -669,6 +669,7 @@ CREATE TABLE IF NOT EXISTS backtest_trades (
     signal_score    SMALLINT,
     signal_confidence TEXT,
     scan_id         TEXT,
+    strategy_kind   TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion')),
     metadata        JSONB DEFAULT '{}'
 )
 """)
@@ -1247,6 +1248,12 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     # whose driving predicate is signal_performance.closed_at > NOW()-interval. Existing
     # sp indexes lead with account_id/symbol, so the lookback window scanned the table.
     (50, "CREATE INDEX IF NOT EXISTS idx_sp_closed_at ON signal_performance(closed_at DESC)"),
+    # 51: tag each backtest trade with the strategy that produced it (F2 validation).
+    # The engine already computes strategy_kind per trade; without this column the
+    # per-trade rows would lose it (the trade list couldn't show trend vs mean_reversion).
+    # NOT NULL DEFAULT 'trend' is metadata-only on PG11+ (existing rows backfill instantly)
+    # and matches the trades-table convention (migration 44).
+    (51, "ALTER TABLE backtest_trades ADD COLUMN IF NOT EXISTS strategy_kind TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion'))"),
 ]
 
 

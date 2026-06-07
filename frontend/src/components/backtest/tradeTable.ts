@@ -118,6 +118,7 @@ const CSV_COLUMNS: Array<{ key: keyof BacktestTrade; label: string }> = [
   { key: "mae_pct", label: "MAE %" },
   { key: "signal_score", label: "Signal Score" },
   { key: "signal_confidence", label: "Signal Confidence" },
+  { key: "strategy_kind", label: "Strategy" },
 ];
 
 /** Escape a single CSV cell per RFC 4180 (quote if it contains ,"\n) AND

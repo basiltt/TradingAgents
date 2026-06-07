@@ -150,4 +150,26 @@ describe("TradeListTable", () => {
     fireEvent.click(screen.getByText("Next"));
     expect(screen.getByText(/Page 2 of 2/i)).toBeInTheDocument();
   });
+
+  it("shows a StrategyChip on mean-reversion trades but not trend trades", () => {
+    render(<TradeListTable trades={[
+      trade({ id: 1, symbol: "BTCUSDT", strategy_kind: "mean_reversion" }),
+      trade({ id: 2, symbol: "ETHUSDT", strategy_kind: "trend" }),
+    ]} />);
+    const chips = screen.getAllByTestId("strategy-chip");
+    expect(chips).toHaveLength(1);                 // only the MR row
+    expect(chips[0]).toHaveAttribute("data-kind", "mean_reversion");
+  });
+
+  it("renders friendly close-reason labels (incl mr_time_stop)", () => {
+    render(<TradeListTable trades={[
+      trade({ id: 1, close_reason: "mr_time_stop" }),
+      trade({ id: 2, close_reason: "tp" }),
+    ]} />);
+    // Scope to the table body so the filter-dropdown <option> with the same text
+    // (also relabeled) doesn't make the query ambiguous.
+    const body = screen.getByTestId("trade-table").querySelector("tbody")!;
+    expect(within(body).getByText("MR Time Stop")).toBeInTheDocument();
+    expect(within(body).getByText("Take Profit")).toBeInTheDocument();
+  });
 });

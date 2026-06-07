@@ -227,6 +227,7 @@ class BacktestTradeResponse(BaseModel):
     signal_score: Optional[int] = None
     signal_confidence: Optional[str] = None
     scan_id: Optional[str] = None
+    strategy_kind: str = "trend"  # "trend" | "mean_reversion" — F2 validation tag
 
 
 class BacktestResultsResponse(BaseModel):

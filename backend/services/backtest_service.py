@@ -1186,6 +1186,7 @@ class BacktestService:
                 _num(t.get("pnl")), _num(t.get("pnl_pct")), _num(t.get("fees_paid")),
                 t.get("close_reason"), _num(t.get("mfe_pct")), _num(t.get("mae_pct")),
                 t.get("signal_score"), t.get("signal_confidence"), t.get("scan_id"),
+                t.get("strategy_kind") or "trend",
             )
             for t in trades
         ]
@@ -1214,8 +1215,9 @@ class BacktestService:
                         INSERT INTO backtest_trades
                           (run_id, symbol, side, entry_price, exit_price, qty, leverage,
                            entry_time, exit_time, pnl, pnl_pct, fees_paid, close_reason,
-                           mfe_pct, mae_pct, signal_score, signal_confidence, scan_id)
-                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                           mfe_pct, mae_pct, signal_score, signal_confidence, scan_id,
+                           strategy_kind)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
                         """,
                         records,
                     )
@@ -1274,7 +1276,8 @@ class BacktestService:
             f"""
             SELECT id, symbol, side, entry_price, exit_price, qty, leverage,
                    entry_time, exit_time, pnl, pnl_pct, fees_paid, close_reason,
-                   mfe_pct, mae_pct, signal_score, signal_confidence, scan_id
+                   mfe_pct, mae_pct, signal_score, signal_confidence, scan_id,
+                   strategy_kind
             FROM backtest_trades
             WHERE {where_sql}
             ORDER BY {sort_col} ASC, id ASC
@@ -1299,6 +1302,9 @@ class BacktestService:
             "mfe_pct": _f(row["mfe_pct"]), "mae_pct": _f(row["mae_pct"]),
             "signal_score": row["signal_score"], "signal_confidence": row["signal_confidence"],
             "scan_id": row["scan_id"],
+            # strategy that produced the trade (F2 validation). The column is NOT NULL
+            # with a 'trend' default (migration 51), so this is always a concrete value.
+            "strategy_kind": row["strategy_kind"] or "trend",
         }
 
     # ------------------------------------------------------------------ #

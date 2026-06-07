@@ -19,7 +19,7 @@ def test_migration_versions_sequential_no_dupes():
     versions = [v for v, _ in _MIGRATIONS]
     assert versions == sorted(versions), "migration versions not sorted"
     assert len(versions) == len(set(versions)), "duplicate migration versions"
-    assert versions[-1] == 50, "latest migration should be 50 (49-50 = regime perf indexes)"
+    assert versions[-1] == 51, "latest migration should be 51 (backtest_trades.strategy_kind)"
 
 
 def test_new_migrations_present():

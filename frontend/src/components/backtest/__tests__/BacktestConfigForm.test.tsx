@@ -162,4 +162,16 @@ describe("BacktestConfigForm", () => {
     expect(screen.getByLabelText("Max Win Rate (%)")).toBeInTheDocument();
     expect(screen.getByLabelText("Lookback (h)")).toBeInTheDocument();
   });
+
+  it("exposes the regime section and shows the F2-long danger note when enabled", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByText("Market Regime & Strategy (F1/F2/F3)"));
+    // F3 cohort select is uniquely labeled; confirms the section rendered.
+    expect(screen.getByLabelText("Strategy cohort (F3)")).toBeInTheDocument();
+    // The negative-expectancy note appears only after enabling the long side. The
+    // neu Checkbox duplicates its label text, so target the visible label directly.
+    expect(screen.queryByTestId("mr-long-danger")).toBeNull();
+    fireEvent.click(screen.getByText("MR long side (neg. expectancy)"));
+    expect(screen.getByTestId("mr-long-danger")).toBeInTheDocument();
+  });
 });
