@@ -112,6 +112,19 @@ class MCPManager:
 
         discover_tools()  # populate the registry (composition layer, may import tools)
         db = self._app.state.db
+        # Wire the SweepRepository so ctx.services.sweep_repo resolves for the
+        # async sweep tools, and run boot crash-recovery (mark orphaned 'running'
+        # sweeps 'interrupted' so they're never perpetually running — AC-023).
+        try:
+            from backend.mcp.repositories.sweep_repo import SweepRepository
+
+            sweep_repo = SweepRepository(db.pool)
+            self._app.state.mcp_sweep_repo = sweep_repo
+            n = await sweep_repo.recover_interrupted()
+            if n:
+                logger.info("mcp_sweep_recovery: marked %d interrupted", n)
+        except Exception:  # noqa: BLE001 — recovery is best-effort
+            logger.exception("mcp_sweep_recovery_failed")
         # Build audit writer + server + transport under ONE guard so a partial
         # failure can't leave the audit task running orphaned or the server set
         # while the transport is dead. On any failure: tear down what started,

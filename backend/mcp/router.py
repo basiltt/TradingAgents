@@ -317,6 +317,62 @@ async def audit_feed(request: Request, limit: int = 50) -> dict[str, Any]:
     return {"items": rows}
 
 
+# --- sweeps (async optimizer jobs) ---
+
+def _sweep_repo(request: Request):
+    repo = getattr(request.app.state, "mcp_sweep_repo", None)
+    if repo is None:
+        mgr = _manager(request)
+        from backend.mcp.repositories.sweep_repo import SweepRepository
+
+        repo = SweepRepository(mgr.config_repo._pool)  # noqa: SLF001
+    return repo
+
+
+@router.get("/mcp/sweeps")
+async def list_sweeps(request: Request, limit: int = 50) -> dict[str, Any]:
+    repo = _sweep_repo(request)
+    items = await repo.list_jobs(limit=min(max(limit, 1), 200))
+    return {"items": items}
+
+
+@router.get("/mcp/sweeps/{sweep_id}")
+async def get_sweep(request: Request, sweep_id: str) -> dict[str, Any]:
+    repo = _sweep_repo(request)
+    job = await repo.get_job(sweep_id)
+    if job is None:
+        raise HTTPException(404, detail="sweep not found")
+    # include the top-N best results
+    job["results"] = await repo.results(sweep_id, limit=20)
+    return job
+
+
+@router.get("/mcp/sweeps/{sweep_id}/results")
+async def get_sweep_results(
+    request: Request, sweep_id: str, objective: Optional[str] = None, limit: int = 100
+) -> dict[str, Any]:
+    """Full results, server-side re-ranked by an alternate objective (FR-040)."""
+    repo = _sweep_repo(request)
+    if objective is not None:
+        from backend.mcp.tools.optimizer.ranker import OBJECTIVE_METRICS
+
+        if objective not in OBJECTIVE_METRICS:
+            raise HTTPException(422, detail={"unsupported_objective": objective})
+    rows = await repo.results(sweep_id, objective=objective, limit=min(max(limit, 1), 500))
+    return {"items": rows, "reranked_by": objective}
+
+
+@router.post("/mcp/sweeps/{sweep_id}/cancel")
+async def cancel_sweep(request: Request, sweep_id: str) -> dict[str, Any]:
+    repo = _sweep_repo(request)
+    # cancel the in-flight task if tracked
+    registry = getattr(request.app.state, "mcp_sweep_tasks", None)
+    if registry and sweep_id in registry:
+        registry[sweep_id].cancel()
+    cancelled = await repo.cancel_job(sweep_id)
+    return {"sweep_id": sweep_id, "cancelled": cancelled}
+
+
 # --- proposals (human-apply money path) ---
 
 def _proposal_repo(request: Request):

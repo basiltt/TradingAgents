@@ -50,5 +50,10 @@ class ServiceAccessors:
         return getattr(self._state, "sector_service", None)
 
     @property
+    def sweep_repo(self) -> Any:
+        """SweepRepository for async sweep persistence (lazily built on the pool)."""
+        return getattr(self._state, "mcp_sweep_repo", None)
+
+    @property
     def debug_trace_recorder(self) -> Any:
         return getattr(self._state, "debug_trace_recorder", None)
