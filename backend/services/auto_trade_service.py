@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
 from backend.services.sector_map import get_sector as _static_get_sector
+from backend.services.scan_context import ScanContext
+from backend.services.strategy_reason_codes import ReasonCode
+from backend.services import strategy_router as _router
+from backend.services import regime_filter as _f1
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,13 @@ class AutoTradeExecutor:
         self._ai_manager_enabled_accounts: set = set()
         self._recorder = recorder
         self._debug_ctx = debug_ctx
+        # Regime Multi-Strategy: scan-time context (set by scanner_service before a
+        # scan; defaults to an empty, non-degraded context so when no regime feature
+        # is enabled the gates below are all no-ops and behavior is unchanged).
+        self._scan_context: ScanContext = ScanContext.empty(degraded=False)
+
+    def set_scan_context(self, ctx: ScanContext) -> None:
+        self._scan_context = ctx
 
     def _emit_life(self, account_id: str, phase: str, event_type: str, **detail: Any) -> None:
         """Fail-open lifecycle emit helper. Never raises, never blocks."""
@@ -1010,6 +1021,52 @@ class AutoTradeExecutor:
         if not ticker:
             return None
         symbol = f"{ticker}USDT" if not ticker.endswith("USDT") else ticker
+
+        # ── Regime Multi-Strategy gates (all no-ops when no feature is enabled) ──
+        ctx = self._scan_context
+        cohort = cfg.get("strategy_cohort", "trend")
+        regime_active = (
+            cfg.get("regime_filter_enabled")
+            or cfg.get("mean_reversion_enabled")
+            or cohort == "mean_reversion"
+        )
+        mr_fade = False  # set True only on the F2 placement path (Phase 4)
+        if regime_active:
+            # (0) master kill-switch (only __all__ is knowable before routing)
+            if ctx.is_killed("__all__"):
+                self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.FEATURE_KILLED, result)
+                state.trades_skipped += 1
+                return None
+            # (1b) per-feature kill, keyed by cohort
+            feat = _router.feature_for(cohort)
+            if ctx.is_killed(feat):
+                self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.FEATURE_KILLED, result, feature=feat)
+                state.trades_skipped += 1
+                return None
+            # (2) strategy routing — trend-cohort runs trend in all regimes; mean_reversion
+            #     only in mr_regime, else skip. (F2 placement is wired in Phase 4.)
+            regime = ctx.routing_regime(
+                cfg.get("btc_vol_interval", "1h"), cfg.get("btc_vol_lookback_candles", 14)
+            )
+            strategy = _router.route_strategy(cohort, regime, mr_regime=cfg.get("mr_regime", "ranging"))
+            if strategy == "none":
+                self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_REGIME_EXCLUDED, result, regime=regime)
+                state.trades_skipped += 1
+                return None
+            mr_fade = strategy == "mean_reversion"
+            # (4) F1 market-condition gates (apply to BOTH strategies; subtractive)
+            session_skip = _f1.gate_session(cfg, datetime.now(timezone.utc))
+            if session_skip is not None:
+                self._emit_decision(account_id, phase, symbol, "skipped", session_skip, result)
+                state.trades_skipped += 1
+                return None
+            if _f1.btc_vol_unavailable(cfg, ctx):
+                self._emit_decision(account_id, phase, symbol, "allowed_vol_unavailable", ReasonCode.VOL_UNAVAILABLE, result)
+            vol_skip = _f1.gate_btc_vol(cfg, ctx)
+            if vol_skip is not None:
+                self._emit_decision(account_id, phase, symbol, "skipped", vol_skip, result)
+                state.trades_skipped += 1
+                return None
 
         blacklist = cfg.get("symbol_blacklist") or []
         if blacklist and symbol in blacklist:

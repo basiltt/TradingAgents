@@ -13,12 +13,24 @@
 
 | Phase | Status | Commit | Tests |
 |-------|--------|--------|-------|
-| 0 — Foundation | IN_PROGRESS | — | — |
-| 1 — Shared Compute | PENDING | — | — |
-| 2 — Routing/Cohort | PENDING | — | — |
-| 3 — F1 Filter | PENDING | — | — |
-| 4 — F2 Mean-Reversion | PENDING | — | — |
+| 0 — Foundation | DONE | committed | reason codes, config, migrations, ScanContext, router |
+| 1 — Shared Compute (pure) | DONE | committed | market_data, kill_switch (12+6) |
+| 2 — Routing/Cohort (wired) | PARTIAL | — | gates wired into _try_trade, integration green |
+| 3 — F1 Filter (wired) | DONE | — | session+vol gates fire through executor |
+| 4 — F2 Mean-Reversion | PARTIAL | — | MR math done; placement branch pending |
 | 5 — Frontend + Tests | PENDING | — | — |
+
+## Milestone: F1 + F3 working END-TO-END (90 regime tests green)
+- Golden snapshot LOCKED (captures current _try_trade; placed BTC/ETH/DOGE, skipped SOL/XRP) — stays byte-identical with features off.
+- Regime gates wired into _try_trade (kill-switch master+per-feature, cohort routing, F1 session+vol) — all no-op when off (golden green), all FIRE when on (integration test green).
+- Existing auto_trade tests: 12/12 still pass (no regression).
+
+## Session Log (cont.)
+| 13 | 14:10 | Golden-snapshot harness (TASK-0.1) | DONE — locks _try_trade behavior |
+| 14 | 14:20 | Wire regime gates into _try_trade (kill/cohort/route/F1) | DONE — golden stays green |
+| 15 | 14:25 | Integration test: gates fire when enabled | DONE — 6/6 |
+| 16 | 14:28 | Regression check: existing auto_trade tests | DONE — 12/12 |
+| 17 | 14:30 | Next: F2 placement branch + persistence tagging + frontend | IN_PROGRESS |
 
 ## Phase 0 Task Status
 
