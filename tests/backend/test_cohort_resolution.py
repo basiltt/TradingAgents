@@ -66,3 +66,24 @@ async def test_no_db_is_noop():
     cfgs = [{"account_id": "a1", "strategy_cohort": "trend"}]
     await svc._resolve_account_cohorts(cfgs)
     assert cfgs[0]["strategy_cohort"] == "trend"
+
+
+@pytest.mark.asyncio
+async def test_resolved_cohort_reaches_executor_routing():
+    # End-to-end: a stored mean_reversion cohort (scan cfg at default "trend") must,
+    # after resolution + init_configs, make the executor treat the account as MR.
+    from backend.services.auto_trade_service import AutoTradeExecutor
+
+    svc = _svc({"a1": {"id": "a1", "strategy_cohort": "mean_reversion"}})
+    cfgs = [{"account_id": "a1", "strategy_cohort": "trend",
+             "mean_reversion_enabled": True, "mr_regime": "ranging"}]
+    await svc._resolve_account_cohorts(cfgs)
+
+    ex = AutoTradeExecutor(object())
+    ex.init_configs(cfgs)
+    st = list(ex._state.values())[0]
+    cohort = st.config.get("strategy_cohort")
+    is_mr_account = cohort == "mean_reversion" and bool(st.config.get("mean_reversion_enabled"))
+    assert cohort == "mean_reversion"
+    assert is_mr_account is True  # the executor's own is_mr_account predicate
+
