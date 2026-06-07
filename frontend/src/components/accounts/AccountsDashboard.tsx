@@ -13,6 +13,7 @@ import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
 import { useAccountPolling } from "@/hooks/useAccountPolling";
 import { AccountCard } from "./AccountCard";
+import { FleetCohortPanel } from "./FleetCohortPanel";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { KillSwitchDialog } from "./KillSwitchDialog";
 import { DemoResetDialog } from "./DemoResetDialog";
@@ -335,11 +336,14 @@ export function AccountsDashboard() {
 
       {/* Account Cards */}
       {filtered.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3 neu-stagger">
-          {filtered.map((card) => (
-            <AccountCard key={card.id} card={card} onRefresh={fetchDashboard} />
-          ))}
-        </div>
+        <>
+          <FleetCohortPanel />
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3 neu-stagger">
+            {filtered.map((card) => (
+              <AccountCard key={card.id} card={card} onRefresh={fetchDashboard} />
+            ))}
+          </div>
+        </>
       )}
 
       <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} onCreated={fetchDashboard} />

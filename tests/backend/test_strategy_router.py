@@ -8,6 +8,7 @@ from backend.services.strategy_router import (
     route_strategy,
     resolve_final_side,
     feature_for,
+    select_adaptive_blacklist,
 )
 
 
@@ -75,3 +76,16 @@ def test_feature_for_cohort():
     assert feature_for("mean_reversion") == "f2"
     assert feature_for("trend") == "f1"
     assert feature_for("anything_else") == "f1"
+
+
+# ── select_adaptive_blacklist (FR-030) ──
+
+def test_select_adaptive_blacklist_picks_by_fade():
+    cfg = {"_computed_adaptive_blacklist": ["T"], "_computed_mr_adaptive_blacklist": ["M"]}
+    assert select_adaptive_blacklist(cfg, mr_fade=True) == ["M"]
+    assert select_adaptive_blacklist(cfg, mr_fade=False) == ["T"]
+
+
+def test_select_adaptive_blacklist_absent_keys_return_none():
+    assert select_adaptive_blacklist({}, mr_fade=True) is None
+    assert select_adaptive_blacklist({}, mr_fade=False) is None

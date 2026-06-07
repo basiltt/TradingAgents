@@ -233,3 +233,61 @@ TP convert, ack) -> place_trade(strategy_kind) -> create_trade writes the tag.
 - TASK-0.7 gate-chain extraction (refactor _try_trade under the snapshot)
 - TASK-0.6 index healthcheck
 - client.ts TS mirror
+
+
+---
+
+## Completion Sprint — 2026-06-07 (Finish ALL remaining plan items)
+
+User audit forced honest accounting: 3 core features wired, but ~6 plan items were unbuilt.
+User chose "Finish ALL remaining plan items." Each below built with TDD + golden-snapshot guard.
+
+| FR | Item | Status | Tests |
+|----|------|--------|-------|
+| FR-023 | MR per-account time-stop close rule (MAX_DURATION, once/scan) | DONE | test_mr_time_stop.py 3/3 |
+| FR-051 | pending_trade_intents write/delete + reconciler strategy-aware orphan alert | DONE | test_pending_intents.py 11/11 |
+| FR-030 | strategy-scoped adaptive blacklist (join trades.strategy_kind; MR vs trend keys) | DONE | test_mr_adaptive_blacklist.py 7/7 |
+| FR-065 | F2-long drawdown breaker (trip f2_long kill) + F1 suppression alert (SD22 constants) | DONE | test_safety_monitors.py 13/13 |
+| FR-066 | one-time manual session-filter override (both sub-modes, non-persistent, f1_active-excluded) | DONE | test_session_override.py 9/9 |
+
+New modules: pending_intents.py, safety_monitors.py. Extended: kill_switch.py (set_kill_switch writer),
+scanner_service.py (MR-scoped blacklist + breaker check + FR-066 stamping), auto_trade_service.py
+(MR time-stop, intent write/delete, MR blacklist key, f1_active override), regime_filter.py (override bypass),
+position_reconciler.py (strategy recovery), schemas (session_filter_override field).
+
+Regression: 84/84 regime-feature tests green incl golden snapshot (default-off byte-identical preserved).
+
+| Phase | Status | Steps |
+|-------|--------|-------|
+| Backend completion sprint (FR-023/051/030/065/066) | DONE | 43 new tests, all green |
+| Frontend completion (StrategyChip, per-strategy PnL, fleet bulk-assign, preset) | IN_PROGRESS | — |
+| Final review + merge | PENDING | — |
+
+## Final Review (Step 14) — 2026-06-07
+
+Two adversarial review rounds (5 agents total) + one convergence pass. All material findings fixed:
+
+| # | Finding | Severity | Fix |
+|---|---------|----------|-----|
+| R1-1 | F2-long breaker counted partial-close children | High | added `parent_trade_id IS NULL` to breaker query |
+| R1-2 | gc_stale defined but never called (intents leak) | Med | reconciler sweep calls gc_stale once/cycle |
+| R1-3 | f1_active=True even when no F1 sub-gate acts | Med | compute_f1_active requires umbrella + sub-gate |
+| R1-4 | auto-trade re-run path missing MR-blacklist parity | Low | added MR-scoped inject to routers/scanner.py |
+| R2-1 | FR-066 override stamping unwrapped (could abort scan) | Med | wrapped in try/except, degrade to no-override |
+| R2-2 | kill-switch write failure silently swallowed | Low | log ERROR when set_kill_switch returns False |
+| R2-FE1 | StrategyTab aborted fetch clobbers state | High | guard all writes on signal.aborted + error state |
+| R2-FE2 | FleetCohortPanel stuck loader on load error | Med | load-error state + Retry button |
+| R2-FE3 | selection wiped on total assign failure | Med | onAssign returns ok-count; keep selection if 0 |
+| C-1 | 3 tests mirrored prod logic (drift risk) | Low | extracted compute_f1_active + select_adaptive_blacklist helpers; tests import them |
+
+Security review: CLEAN (all SQL parameterized; Literal+CHECK defense-in-depth; override cannot persist/leak to scheduled).
+Reliability confirmation: kill-gate block is inside `if regime_active:` (False for default trend accounts) => fail-closed context NEVER regresses trend trading. FR-023 flag set only on create_rule success.
+
+Validation: 295 backend regime+adjacent tests pass; golden snapshot byte-identical; 40 frontend tests pass; tsc clean.
+
+| Phase | Status |
+|-------|--------|
+| Backend completion (FR-023/051/030/065/066) | DONE |
+| Frontend completion (chip/PnL/fleet/preset, wired into pages) | DONE |
+| Final review + fixes (2 rounds + convergence) | DONE |
+| Merge | PENDING |

@@ -77,6 +77,15 @@ class PositionReconciler:
                 await self._reconcile_account(str(account["id"]))
             except Exception:
                 logger.exception("reconcile_account_error account_id=%s", account["id"])
+        # FR-051: sweep abandoned pre-submit intents (rejected/never-filled MR orders
+        # whose trade row was never created, so delete_intent never ran). Without this
+        # a stale intent could mislabel a LATER orphan on the same (account,symbol,side)
+        # as mean_reversion, and the table would grow unbounded.
+        try:
+            from backend.services import pending_intents as _pi
+            await _pi.gc_stale(self._db)
+        except Exception:
+            logger.warning("pending_intent_gc_sweep_failed", exc_info=True)
 
     async def _reconcile_account(self, account_id: str) -> None:
         try:
@@ -147,15 +156,28 @@ class PositionReconciler:
             orphan_count = count - db_count
             if orphan_count > 0:
                 symbol, side = key
+                # FR-051: recover the originating strategy from the pre-submit intent
+                # (the order_link_id is never on the exchange, so we match by
+                # account/symbol/side). This tells the operator whether the orphan is a
+                # mean-reversion position — it is NEVER silently adopted as 'trend'.
+                recovered_strategy = None
+                try:
+                    from backend.services import pending_intents as _pi
+                    recovered_strategy = await _pi.lookup_strategy(self._db, account_id, symbol, side)
+                except Exception:
+                    pass
                 logger.error(
-                    "ORPHAN_POSITION_DETECTED: %s %s on account %s — %d exchange position(s) with no DB trade. Manual intervention required.",
-                    side, symbol, account_id, orphan_count,
+                    "ORPHAN_POSITION_DETECTED: %s %s on account %s — %d exchange position(s) with no DB trade (strategy=%s). Manual intervention required.",
+                    side, symbol, account_id, orphan_count, recovered_strategy or "unknown",
                 )
                 if self._ws:
                     try:
                         await self._ws.broadcast_to_account(account_id, "orphan_position_detected", {
                             "symbol": symbol, "side": side, "count": orphan_count,
-                            "message": f"{orphan_count} {side} {symbol} position(s) on exchange with no DB trade record. Manual intervention required.",
+                            "strategy_kind": recovered_strategy,
+                            "message": f"{orphan_count} {side} {symbol} position(s) on exchange with no DB trade record"
+                                       + (f" (strategy: {recovered_strategy})" if recovered_strategy else "")
+                                       + ". Manual intervention required.",
                         })
                     except Exception:
                         pass

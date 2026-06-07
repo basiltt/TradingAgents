@@ -1,0 +1,161 @@
+import { memo, useMemo, useState } from "react";
+import type { TradingAccount } from "../../api/client";
+
+export type Cohort = "trend" | "mean_reversion";
+
+/** SD22 server-side constant: warn when one cohort exceeds this fraction of the fleet. */
+export const COHORT_CONCENTRATION_PCT = 0.7;
+
+export interface CohortConcentration {
+  trend: number;
+  mean_reversion: number;
+  dominant: Cohort | null;
+  fraction: number;
+  warn: boolean;
+}
+
+/**
+ * Pure concentration calculator (AC-014). Returns per-cohort counts plus whether a
+ * single cohort dominates beyond COHORT_CONCENTRATION_PCT — the F3 decorrelation
+ * guard (21 accounts all in one cohort = correlated drawdowns, not diversification).
+ */
+export function computeConcentration(
+  accounts: Pick<TradingAccount, "strategy_cohort">[],
+): CohortConcentration {
+  const counts = { trend: 0, mean_reversion: 0 };
+  for (const a of accounts) {
+    const c: Cohort = a.strategy_cohort === "mean_reversion" ? "mean_reversion" : "trend";
+    counts[c] += 1;
+  }
+  const total = accounts.length;
+  let dominant: Cohort | null = null;
+  let fraction = 0;
+  if (total > 0) {
+    dominant = counts.trend >= counts.mean_reversion ? "trend" : "mean_reversion";
+    fraction = counts[dominant] / total;
+  }
+  return { ...counts, dominant, fraction, warn: total > 0 && fraction > COHORT_CONCENTRATION_PCT };
+}
+
+interface FleetCohortViewProps {
+  accounts: TradingAccount[];
+  /**
+   * Persist a cohort assignment for the given account ids. May return the count of
+   * successful assignments; when it returns 0 (total failure) the selection is kept
+   * so the user can retry the same set.
+   */
+  onAssign: (ids: string[], cohort: Cohort) => Promise<number | void> | number | void;
+}
+
+/**
+ * Fleet roster with multi-select + bulk "apply cohort to selected" (FR-067, TASK-5.3).
+ * Surfaces a concentration warning when a cohort dominates the fleet beyond the
+ * decorrelation threshold. Selection → preview → confirm; assignment is delegated so
+ * the parent owns partial-failure handling and refetch.
+ */
+export const FleetCohortView = memo(function FleetCohortView({ accounts, onAssign }: FleetCohortViewProps) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pendingCohort, setPendingCohort] = useState<Cohort | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const concentration = useMemo(() => computeConcentration(accounts), [accounts]);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelected(new Set(accounts.map((a) => a.id)));
+  }
+
+  function clearSel() {
+    setSelected(new Set());
+  }
+
+  async function confirmAssign() {
+    if (!pendingCohort || selected.size === 0) return;
+    setBusy(true);
+    try {
+      const ok = await onAssign(Array.from(selected), pendingCohort);
+      // Keep the selection on total failure (ok === 0) so the user can retry the
+      // same set; clear it when the assignment succeeded (or the handler is void).
+      if (ok !== 0) {
+        clearSel();
+        setPendingCohort(null);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div data-testid="fleet-cohort-view" className="space-y-3">
+      {concentration.warn ? (
+        <div
+          data-testid="concentration-warning"
+          role="alert"
+          className="text-xs px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] text-amber-400"
+        >
+          {Math.round(concentration.fraction * 100)}% of the fleet is in the{" "}
+          <span className="font-semibold capitalize">{concentration.dominant?.replace("_", "-")}</span>{" "}
+          cohort. Concentrating one strategy re-correlates drawdowns — consider splitting cohorts to decorrelate.
+        </div>
+      ) : null}
+
+      <div className="flex items-center gap-2 text-xs">
+        <button type="button" onClick={selectAll} className="px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800">Select all</button>
+        <button type="button" onClick={clearSel} className="px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800">Clear</button>
+        <span className="text-zinc-500" data-testid="selected-count">{selected.size} selected</span>
+        <span className="ml-auto text-zinc-500">
+          Trend {concentration.trend} · Mean-Rev {concentration.mean_reversion}
+        </span>
+      </div>
+
+      <ul className="divide-y divide-zinc-800/60 rounded-lg border border-zinc-800/60">
+        {accounts.map((a) => {
+          const cohort: Cohort = a.strategy_cohort === "mean_reversion" ? "mean_reversion" : "trend";
+          return (
+            <li key={a.id} className="flex items-center gap-3 px-3 py-2 text-sm" data-testid="fleet-row">
+              <input
+                type="checkbox"
+                aria-label={`select ${a.label}`}
+                checked={selected.has(a.id)}
+                onChange={() => toggle(a.id)}
+              />
+              <span className="flex-1 truncate">{a.label}</span>
+              <span className="text-[10px] uppercase tracking-wider text-zinc-400" data-testid="fleet-row-cohort">
+                {cohort === "mean_reversion" ? "Mean-Rev" : "Trend"}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="flex items-center gap-2">
+        <select
+          aria-label="cohort to apply"
+          value={pendingCohort ?? ""}
+          onChange={(e) => setPendingCohort((e.target.value || null) as Cohort | null)}
+          className="text-sm bg-zinc-900 border border-zinc-700 rounded px-2 py-1"
+        >
+          <option value="">Apply cohort…</option>
+          <option value="trend">Trend</option>
+          <option value="mean_reversion">Mean-Reversion</option>
+        </select>
+        <button
+          type="button"
+          data-testid="apply-cohort"
+          disabled={!pendingCohort || selected.size === 0 || busy}
+          onClick={confirmAssign}
+          className="text-sm px-3 py-1 rounded bg-sky-600 text-white disabled:opacity-40"
+        >
+          {busy ? "Applying…" : `Apply to ${selected.size}`}
+        </button>
+      </div>
+    </div>
+  );
+});

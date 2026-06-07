@@ -16,6 +16,27 @@ interface Props {
 const RECOMMENDED_BLOCKED_HOURS = [1, 6, 7, 8, 9, 10, 11, 12];
 
 /**
+ * One-click "research-recommended" preset (TASK-5.3): turns F1 on with the proven
+ * Asian-session block + a conservative BTC-vol band, and primes F2 with small/tight
+ * mean-reversion sizing. Long side stays OFF (negative expectancy per the report).
+ * Applied via onChange so the parent's diff/confirm + persistence flow is reused.
+ */
+export const RECOMMENDED_PRESET: Partial<AutoTradeConfig> = {
+  regime_filter_enabled: true,
+  session_filter_enabled: true,
+  session_blocked_hours_utc: [...RECOMMENDED_BLOCKED_HOURS],
+  btc_vol_filter_enabled: true,
+  btc_vol_min_threshold: 0.8,
+  btc_vol_max_threshold: 3.0,
+  mean_reversion_enabled: true,
+  strategy_cohort: "mean_reversion",
+  mr_capital_pct: 2,
+  mr_leverage: 5,
+  mr_time_stop_minutes: 120,
+  mr_long_enabled: false,
+};
+
+/**
  * Regime Multi-Strategy config (F1 session/regime filter, F2 mean-reversion,
  * F3 strategy cohort). All controls default-off so an untouched form preserves
  * current behavior. Mounted in the shared AutoTradeSection => appears on BOTH the
@@ -43,6 +64,15 @@ export function RegimeStrategyFields({ config, onChange }: Props) {
         Adapt entries and strategy to market regime. All off by default — see the
         2026-06-07 profitability report (Asian-session bleed, 21-account correlation).
       </p>
+
+      <button
+        type="button"
+        data-testid="apply-recommended-preset"
+        onClick={() => onChange({ ...RECOMMENDED_PRESET })}
+        className="mb-3 text-[11px] font-medium px-2.5 py-1 rounded-full border border-sky-500/30 bg-sky-500/[0.08] text-sky-400 hover:bg-sky-500/[0.14]"
+      >
+        Apply research-recommended preset
+      </button>
 
       {/* ── F1: Regime/Session Entry Filter ── */}
       <div className="flex items-start gap-3 mb-2">

@@ -125,7 +125,7 @@ async def update_account(request: Request, account_id: str):
         return JSONResponse({"detail": e.errors()[0]["msg"], "code": "VALIDATION_ERROR"}, 422)
 
     svc = _get_service(request)
-    account = await svc.update_account(account_id, label=req.label, is_active=req.is_active)
+    account = await svc.update_account(account_id, label=req.label, is_active=req.is_active, strategy_cohort=req.strategy_cohort)
     if not account:
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     return account

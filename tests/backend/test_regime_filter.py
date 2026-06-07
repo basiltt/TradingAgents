@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from backend.services.regime_filter import gate_session, gate_btc_vol, btc_vol_unavailable
+from backend.services.regime_filter import gate_session, gate_btc_vol, btc_vol_unavailable, compute_f1_active
 from backend.services.scan_context import ScanContext
 from backend.services.strategy_reason_codes import ReasonCode
 
@@ -105,3 +105,21 @@ def test_vol_off_when_umbrella_off():
     cfg = {"regime_filter_enabled": False, "btc_vol_filter_enabled": True,
            "btc_vol_min_threshold": 0.8, "btc_vol_interval": "1h", "btc_vol_lookback_candles": 14}
     assert gate_btc_vol(cfg, _ctx_with_vol(0.1)) is None
+
+
+# ── compute_f1_active (FR-066/SD20 efficacy tagging) ──
+
+def test_f1_active_requires_umbrella_and_subgate():
+    assert compute_f1_active({"regime_filter_enabled": True, "session_filter_enabled": True}) is True
+    assert compute_f1_active({"regime_filter_enabled": True, "btc_vol_filter_enabled": True}) is True
+
+
+def test_f1_active_false_without_umbrella_or_subgate():
+    assert compute_f1_active({"session_filter_enabled": True}) is False  # no umbrella
+    assert compute_f1_active({"regime_filter_enabled": True}) is False   # no sub-gate
+
+
+def test_f1_active_false_under_override():
+    cfg = {"regime_filter_enabled": True, "session_filter_enabled": True,
+           "_session_filter_override_active": True}
+    assert compute_f1_active(cfg) is False

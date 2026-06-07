@@ -1809,7 +1809,7 @@ class AsyncAnalysisDB:
         rows = await self.pool.fetch(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
-            "include_in_analytics "
+            "include_in_analytics, strategy_cohort "
             "FROM trading_accounts WHERE deleted_at IS NULL "
             "ORDER BY created_at DESC"
         )
@@ -1819,7 +1819,7 @@ class AsyncAnalysisDB:
         row = await self.pool.fetchrow(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
-            "include_in_analytics "
+            "include_in_analytics, strategy_cohort "
             "FROM trading_accounts WHERE id=$1 AND deleted_at IS NULL",
             account_id,
         )
@@ -1840,7 +1840,7 @@ class AsyncAnalysisDB:
         return d
 
     async def update_account(self, account_id: str, **fields: Any) -> bool:
-        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics"}
+        allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics", "strategy_cohort"}
         nullable = {"last_error"}
         updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
         if not updates:

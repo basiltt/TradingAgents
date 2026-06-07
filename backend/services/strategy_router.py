@@ -50,3 +50,13 @@ def feature_for(cohort: str) -> str:
     (The "f2_long" kill is checked separately on the long-fade path.)
     """
     return "f2" if cohort == "mean_reversion" else "f1"
+
+
+def select_adaptive_blacklist(cfg: dict, *, mr_fade: bool):
+    """Pick the strategy-scoped adaptive blacklist for an entry (FR-030).
+
+    MR (fade) entries read the MR-scoped key; trend entries read the trend key, so
+    each strategy's losing streak only blocks its own re-entries. Single source of
+    truth shared by the executor gate and its tests (no mirrored copy that drifts).
+    """
+    return cfg.get("_computed_mr_adaptive_blacklist") if mr_fade else cfg.get("_computed_adaptive_blacklist")

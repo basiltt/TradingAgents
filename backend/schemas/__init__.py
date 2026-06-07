@@ -394,6 +394,17 @@ class TradeListResponse(BaseModel):
     total: Optional[int] = None
 
 
+class StrategyDirectionStats(BaseModel):
+    """Per-(strategy_kind, direction) PnL slice for the per-strategy view (AC-016)."""
+    strategy_kind: str
+    direction: str  # "long" | "short"
+    count: int
+    total_pnl: float
+    avg_pnl: float
+    avg_hold_minutes: float
+    win_rate: float
+
+
 class TradeStatsResponse(BaseModel):
     total_trades: int
     open_count: int = 0
@@ -401,6 +412,9 @@ class TradeStatsResponse(BaseModel):
     avg_pnl: float
     total_pnl: float
     avg_hold_time: Optional[float] = None
+    # FR-052/AC-016: optional per-strategy×direction breakdown (omitted by callers
+    # that don't request it, so existing consumers are unaffected).
+    by_strategy: Optional[List[StrategyDirectionStats]] = None
 
 
 class TradeCloseRequest(BaseModel):
@@ -556,6 +570,9 @@ class ScanRequest(BaseModel):
     ta_prefilter_enabled: Optional[bool] = None
     ta_prefilter_threshold: Optional[int] = Field(None, ge=0, le=100)
     auto_trade_configs: Optional[List["AutoTradeConfig"]] = None
+    # FR-066: one-time manual escape hatch — "run anyway, ignore session filter this
+    # scan". Honoured only on manual/run-now scans; never persisted (per-scan only).
+    session_filter_override: Optional[bool] = False
 
     @field_validator("workflow_mode")
     @classmethod
@@ -743,6 +760,9 @@ class CreateAccountRequest(BaseModel):
 class UpdateAccountRequest(BaseModel):
     label: Optional[str] = Field(None, min_length=1, max_length=64)
     is_active: Optional[bool] = None
+    # F3 (FR-040): account-level strategy cohort home. The scan form may override
+    # per-scan, but this is the persisted default the fleet roster bulk-assigns.
+    strategy_cohort: Optional[Literal["trend", "mean_reversion"]] = None
 
 
 class RotateCredentialsRequest(BaseModel):

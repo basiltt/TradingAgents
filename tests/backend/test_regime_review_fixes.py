@@ -96,12 +96,25 @@ async def test_ir1_lazy_mean_cached_per_scan():
 
 @pytest.mark.asyncio
 async def test_ir2_cohort_and_f1_active_passed_to_place_trade():
-    cfg = _mr_cfg(regime_filter_enabled=True)
+    # f1_active is True only when F1 can actually act: umbrella ON + a sub-gate ON.
+    # session_filter_enabled with no blocked hours keeps F1 active without suppressing.
+    cfg = _mr_cfg(regime_filter_enabled=True, session_filter_enabled=True,
+                  session_blocked_hours_utc=[])
     ex = _executor(cfg, _ranging_ctx(), klines=_flat_klines(30, 100.0))
     await ex._try_trade(list(ex._state.values())[0], _overbought(), phase="batch")
     call = ex._accounts.calls[0]
     assert call["strategy_cohort"] == "mean_reversion"
     assert call["f1_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_ir2_f1_active_false_when_umbrella_on_but_no_subgate():
+    # regime_filter_enabled on but BOTH sub-gates off => F1 never acts => f1_active False
+    # (keeps before/after efficacy stats free of entries F1 didn't touch).
+    cfg = _mr_cfg(regime_filter_enabled=True)  # no session/vol sub-flag
+    ex = _executor(cfg, _ranging_ctx(), klines=_flat_klines(30, 100.0))
+    await ex._try_trade(list(ex._state.values())[0], _overbought(), phase="batch")
+    assert ex._accounts.calls[0]["f1_active"] is False
 
 
 # ── IR3: geometry guard uses the capture-scaled placed TP ──

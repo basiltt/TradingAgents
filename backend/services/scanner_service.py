@@ -346,6 +346,24 @@ class ScannerService:
 
         kill = await read_kill_switches(self._db) if self._db else {"__all__": True}
 
+        # FR-065: evaluate the F2-long rolling-drawdown breaker BEFORE placement so a
+        # trip disables live longs within this same scan (not just the next one). Only
+        # runs for accounts that actually enable MR-long; fail-open per account.
+        if self._db and not kill.get("__all__") and not kill.get("f2_long"):
+            from backend.services import safety_monitors as _sm
+            checked: set[str] = set()
+            for cfg in auto_configs:
+                acct = cfg.get("account_id")
+                if (acct and acct not in checked
+                        and cfg.get("mean_reversion_enabled") and cfg.get("mr_long_enabled")):
+                    checked.add(acct)
+                    try:
+                        if await _sm.check_f2_long_breaker(self._db, acct):
+                            kill["f2_long"] = True  # reflect the trip in this scan's view
+                            break
+                    except Exception:
+                        logger.warning("f2_long_breaker_check_failed", exc_info=True)
+
         async def _fetch(symbol: str, interval: str, depth: int):
             # Adapt the kline cache to (symbol, interval, depth) -> list[kline].
             kc = getattr(self, "_kline_cache", None)
@@ -370,13 +388,28 @@ class ScannerService:
         executor.set_scan_context(ctx)
         executor.set_mean_fetcher(_fetch)   # IR1: lazy MR mean source
 
-    async def _compute_adaptive_blacklist(self, auto_configs: List[Dict[str, Any]]) -> set:
-        """Query signal_performance to find symbols with consistently poor win rates."""
+    async def _compute_adaptive_blacklist(
+        self,
+        auto_configs: List[Dict[str, Any]],
+        strategy_kind: str = "trend",
+        *,
+        require_mr: bool = False,
+    ) -> set:
+        """Query signal_performance for symbols with consistently poor win rates.
+
+        FR-030: scoped per strategy by joining ``trades.strategy_kind`` so a
+        mean-reversion losing streak feeds ONLY the MR blacklist and never the
+        trend blacklist (and vice-versa). For all-trend historical data the
+        ``strategy_kind='trend'`` join is identical to the legacy unscoped query
+        (migration 44 backfilled every existing row to 'trend'), so default-off /
+        trend-only behaviour is byte-identical. ``require_mr`` makes the MR scope
+        opt in only when some config has ``mean_reversion_enabled``.
+        """
         min_trades = 5
         max_win_rate = 30.0
         lookback_hours = 48
         for cfg in auto_configs:
-            if cfg.get("adaptive_blacklist_enabled"):
+            if cfg.get("adaptive_blacklist_enabled") and (not require_mr or cfg.get("mean_reversion_enabled")):
                 min_trades = cfg.get("adaptive_blacklist_min_trades", 5)
                 max_win_rate = cfg.get("adaptive_blacklist_max_win_rate", 30.0)
                 lookback_hours = cfg.get("adaptive_blacklist_lookback_hours", 48)
@@ -385,12 +418,14 @@ class ScannerService:
             return set()
         try:
             rows = await self._db.pool.fetch(
-                "SELECT symbol, COUNT(*) as total, "
-                "SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins "
-                "FROM signal_performance "
-                "WHERE closed_at > NOW() - make_interval(hours => $1) "
-                "GROUP BY symbol HAVING COUNT(*) >= $2",
-                lookback_hours, min_trades,
+                "SELECT sp.symbol AS symbol, COUNT(*) AS total, "
+                "SUM(CASE WHEN sp.is_win THEN 1 ELSE 0 END) AS wins "
+                "FROM signal_performance sp "
+                "JOIN trades t ON t.id = sp.trade_id "
+                "WHERE sp.closed_at > NOW() - make_interval(hours => $1) "
+                "AND t.strategy_kind = $3 "
+                "GROUP BY sp.symbol HAVING COUNT(*) >= $2",
+                lookback_hours, min_trades, strategy_kind,
             )
             blacklisted = set()
             for row in rows:
@@ -398,7 +433,7 @@ class ScannerService:
                 if win_rate < max_win_rate:
                     blacklisted.add(row["symbol"])
             if blacklisted:
-                logger.info("adaptive_blacklist_computed", extra={"count": len(blacklisted), "symbols": sorted(blacklisted)[:10]})
+                logger.info("adaptive_blacklist_computed", extra={"strategy_kind": strategy_kind, "count": len(blacklisted), "symbols": sorted(blacklisted)[:10]})
             return blacklisted
         except Exception:
             logger.warning("adaptive_blacklist_query_failed", exc_info=True)
@@ -442,16 +477,47 @@ class ScannerService:
         if auto_configs and self._accounts:
             # Compute adaptive blacklist from signal_performance (pre-inject into configs)
             if self._db:
-                adaptive_bl = await self._compute_adaptive_blacklist(auto_configs)
+                adaptive_bl = await self._compute_adaptive_blacklist(auto_configs, "trend")
                 if adaptive_bl:
                     for cfg in auto_configs:
                         if cfg.get("adaptive_blacklist_enabled"):
                             existing = set(cfg.get("_computed_adaptive_blacklist") or [])
                             cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
+                # FR-030: a separate MR-scoped blacklist so mean-reversion losses
+                # never poison the trend blacklist (and vice-versa). Only computed
+                # when some config runs MR; injected under a distinct key the
+                # _try_trade gate reads on the fade path.
+                mr_bl = await self._compute_adaptive_blacklist(auto_configs, "mean_reversion", require_mr=True)
+                if mr_bl:
+                    for cfg in auto_configs:
+                        if cfg.get("adaptive_blacklist_enabled") and cfg.get("mean_reversion_enabled"):
+                            existing = set(cfg.get("_computed_mr_adaptive_blacklist") or [])
+                            cfg["_computed_mr_adaptive_blacklist"] = list(existing | mr_bl)
             # trigger_source: scan_scheduler calls start_scan(triggered_by="scheduled");
             # the API run-now path uses triggered_by="run_now"; manual default is "manual".
             _trigger = triggered_by if triggered_by in ("scheduled", "manual", "run_now") else "manual"
-            debug_ctx = None
+            # FR-066: a one-time "ignore session filter this scan" escape hatch. ONLY
+            # honoured on a manual/run-now scan (never "scheduled", so a saved schedule
+            # cannot smuggle a persistent bypass). It is stamped onto the per-scan config
+            # copies, so it auto-reverts next scan (non-persistent). Overridden entries
+            # record f1_active=False (truthful: F1 did not act) — SD20 keeps them OUT of
+            # f1 before/after efficacy stats. Audit-logged for the operator trail.
+            if config.get("session_filter_override") and _trigger in ("manual", "run_now"):
+                try:
+                    _n = 0
+                    for cfg in auto_configs:
+                        if isinstance(cfg, dict) and cfg.get("regime_filter_enabled"):
+                            cfg["_session_filter_override_active"] = True
+                            _n += 1
+                    if _n:
+                        logger.warning(
+                            "f1_session_filter_override_engaged",
+                            extra={"scan_id": scan_id, "trigger": _trigger, "accounts": _n},
+                        )
+                except Exception:
+                    # An override-stamping fault must NEVER abort the scan / regress
+                    # trend trading. Degrade to "no override" and proceed.
+                    logger.warning("f1_session_filter_override_stamp_failed", exc_info=True)
             if self._debug_recorder is not None:
                 debug_ctx = self._debug_recorder.new_run_context(
                     scan_id=scan_id,

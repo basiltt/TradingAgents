@@ -430,13 +430,15 @@ class AccountsService:
         """Fetch a single account by ID, or None if not found."""
         return await self._db.get_account(account_id)
 
-    async def update_account(self, account_id: str, label: str | None = None, is_active: bool | None = None) -> Optional[Dict[str, Any]]:
-        """Update account label and/or active status."""
+    async def update_account(self, account_id: str, label: str | None = None, is_active: bool | None = None, strategy_cohort: str | None = None) -> Optional[Dict[str, Any]]:
+        """Update account label, active status, and/or strategy cohort (F3)."""
         fields: Dict[str, Any] = {"updated_at": _now_iso()}
         if label is not None:
             fields["label"] = label
         if is_active is not None:
             fields["is_active"] = 1 if is_active else 0
+        if strategy_cohort is not None:
+            fields["strategy_cohort"] = strategy_cohort
         await self._db.update_account(account_id, **fields)
         if is_active is False:
             self.invalidate_cache(account_id)

@@ -665,6 +665,49 @@ class TradeRepository:
             "total_pnl": float(row["total_pnl"] or 0),
         }
 
+    async def get_stats_by_strategy(
+        self, conn, *, account_ids: list[str],
+    ) -> list[dict]:
+        """Per-(strategy_kind, direction) PnL breakdown for the per-strategy view (FR-052/AC-016).
+
+        Groups closed trades by ``strategy_kind`` × ``side`` (Buy=long / Sell=short) so the
+        UI can render strategy × direction × {PnL, win-rate, count, avg-hold}. Parent/child
+        accounting mirrors ``get_stats_cross_account`` (exclude partial-close parents).
+        """
+        rows = await conn.fetch(
+            """SELECT
+                strategy_kind,
+                side,
+                COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) as count,
+                COALESCE(SUM(net_pnl) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL), 0) as total_pnl,
+                COALESCE(AVG(net_pnl) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL), 0) as avg_pnl,
+                COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - opened_at)) / 60.0)
+                    FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL
+                            AND closed_at IS NOT NULL AND opened_at IS NOT NULL), 0) as avg_hold_minutes,
+                CASE WHEN COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) > 0
+                    THEN COUNT(*) FILTER (WHERE status = 'closed' AND net_pnl > 0 AND exit_price > 0 AND parent_trade_id IS NULL)::float
+                         / COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL)
+                    ELSE 0 END as win_rate
+            FROM trades
+            WHERE account_id = ANY($1::text[])
+            GROUP BY strategy_kind, side
+            HAVING COUNT(*) FILTER (WHERE status = 'closed' AND exit_price > 0 AND parent_trade_id IS NULL) > 0
+            ORDER BY strategy_kind, side""",
+            account_ids,
+        )
+        return [
+            {
+                "strategy_kind": r["strategy_kind"],
+                "direction": "long" if r["side"] == "Buy" else "short",
+                "count": int(r["count"]),
+                "total_pnl": float(r["total_pnl"] or 0),
+                "avg_pnl": float(r["avg_pnl"] or 0),
+                "avg_hold_minutes": float(r["avg_hold_minutes"] or 0),
+                "win_rate": float(r["win_rate"] or 0),
+            }
+            for r in rows
+        ]
+
     async def create_child_trade(
         self, conn, *, parent_trade: dict,
         closed_qty: float, exit_price: float,

@@ -14,6 +14,7 @@ import { WalletPanel } from "./WalletPanel";
 import { PositionsTable } from "./PositionsTable";
 import { OrdersTable } from "./OrdersTable";
 import { PnLPanel } from "./PnLPanel";
+import { StrategyTab } from "./StrategyTab";
 import { AnalyticsDashboard } from "@/components/analytics/AnalyticsDashboard";
 import { useAppDispatch, useAppSelector } from "@/store";
 import type { RootState } from "@/store";
@@ -429,6 +430,7 @@ export function AccountDetailView({ accountId }: AccountDetailViewProps) {
           { value: "positions", label: <>Positions{positions.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_15%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold tabular-nums">{positions.length}</span>}</>, content: <PositionsTable positions={positions} /> },
           { value: "orders", label: <>Orders{orders.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-[color-mix(in_oklch,var(--neu-accent)_15%,var(--neu-surface-base))] text-[var(--neu-accent)] font-semibold tabular-nums">{orders.length}</span>}</>, content: <OrdersTable orders={orders} /> },
           { value: "pnl", label: "PnL", content: <PnLPanel pnlSummary={pnlSummary} accountId={accountId} /> },
+          { value: "strategy", label: "Strategy", content: <StrategyTab accountId={accountId} /> },
           { value: "analytics", label: "Analytics", content: <AnalyticsDashboard accountId={accountId} embedded /> },
           {
             value: "ai-monitor",

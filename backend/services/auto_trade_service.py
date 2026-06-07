@@ -1277,8 +1277,10 @@ class AutoTradeExecutor:
                     state.trades_skipped += 1
                     return None
 
-        # Adaptive blacklist check (pre-computed by scanner_service)
-        adaptive_bl = cfg.get("_computed_adaptive_blacklist")
+        # Adaptive blacklist check (pre-computed by scanner_service).
+        # FR-030: MR entries read the MR-scoped blacklist; trend entries read the
+        # trend one. select_adaptive_blacklist is the single source of truth.
+        adaptive_bl = _router.select_adaptive_blacklist(cfg, mr_fade=mr_fade)
         if adaptive_bl:
             bl_set = adaptive_bl if isinstance(adaptive_bl, set) else set(adaptive_bl)
             if symbol in bl_set:
@@ -1375,6 +1377,17 @@ class AutoTradeExecutor:
             place_signal_direction, place_trade_direction = mr["signal_direction"], "straight"
             place_leverage, place_tp, place_sl = mr["leverage"], mr["take_profit_pct"], mr["stop_loss_pct"]
             place_capital, strategy_kind = mr["capital_pct"], "mean_reversion"
+            # FR-051: record a pre-submit intent so an orphaned MR position (order fills
+            # but the trades-row write fails) can be reconciled to mean_reversion rather
+            # than mislabeled trend. Keyed by (account, symbol, side) — the tuple the
+            # reconciler matches on. Deleted after a successful create_trade below.
+            _db = getattr(self._accounts, "_db", None)
+            _mr_side = "Buy" if place_signal_direction == "long" else "Sell"
+            try:
+                from backend.services import pending_intents as _pi
+                await _pi.write_intent(_db, account_id, symbol, _mr_side, "mean_reversion")
+            except Exception:
+                pass
 
         # Execute trade
         try:
@@ -1393,7 +1406,15 @@ class AutoTradeExecutor:
                     scan_result_id=result.get("id"),
                     strategy_kind=strategy_kind,
                     strategy_cohort=cohort,
-                    f1_active=bool(cfg.get("regime_filter_enabled")),
+                    # FR-066/SD20: an entry is "f1-active" only when F1 could actually
+                    # act on it — the umbrella flag AND at least one sub-gate enabled —
+                    # and it was NOT placed under the one-time session-filter override.
+                    # This keeps the before/after efficacy stats free of entries F1
+                    # never touched (umbrella-on but both sub-gates off) or bypassed.
+                    # FR-066/SD20: an entry is "f1-active" only when F1 could actually
+                    # act on it (umbrella + a sub-gate) and was not placed under the
+                    # one-time override. compute_f1_active is the single source of truth.
+                    f1_active=_f1.compute_f1_active(cfg),
                 ),
                 timeout=30.0,
             )
@@ -1408,6 +1429,41 @@ class AutoTradeExecutor:
             state.trades_executed += 1
             state.executions.append(execution)
             state.existing_symbols.add(symbol)
+            if mr_fade:
+                # FR-051: trade row now exists -> remove the pre-submit intent.
+                try:
+                    from backend.services import pending_intents as _pi
+                    _db = getattr(self._accounts, "_db", None)
+                    _mr_side = "Buy" if place_signal_direction == "long" else "Sell"
+                    await _pi.delete_intent(_db, account_id, symbol, _mr_side)
+                except Exception:
+                    pass
+            if mr_fade and self._close_svc and not state.mr_duration_rule_created:
+                # FR-023: register the MR fast time-stop as a MAX_DURATION close rule
+                # (minutes/60 = float hours, stored in close_rules.threshold_value NUMERIC
+                # without truncation). This is the strategy-critical fast exit (data:
+                # 1-3h holds win, 3-6h holds lose). The rule is account-level, which is
+                # correct for an MR cohort: every position on the account is MR (the
+                # `both` cohort was cut, so there's no trend position to clobber). Created
+                # once per account per scan (flag-guarded), like the trend duration rule.
+                from datetime import datetime as _dt, timezone as _tz
+                try:
+                    _mins = float(cfg.get("mr_time_stop_minutes", 120))
+                    _rule = await self._close_svc.create_rule(
+                        account_id=account_id,
+                        rule_data={
+                            "trigger_type": "MAX_DURATION",
+                            "threshold_value": str(_mins / 60.0),
+                            "reference_value": _dt.now(_tz.utc).isoformat(),
+                        },
+                    )
+                    state.created_rule_ids.append(_rule.get("id"))
+                    state.mr_duration_rule_created = True
+                    logger.info("mr_time_stop_rule_created", extra={
+                        "account_id": account_id, "minutes": _mins})
+                except Exception as e:
+                    logger.warning("mr_time_stop_rule_failed", extra={
+                        "account_id": account_id, "error": str(e)[:200]})
             if self._recorder is not None and self._debug_ctx is not None:
                 try:
                     self._recorder.emit_symbol_decision(
@@ -1520,3 +1576,4 @@ class _AccountState:
     existing_symbols: set = field(default_factory=set)
     position_directions: Dict[str, str] = field(default_factory=dict)
     created_rule_ids: List[str] = field(default_factory=list)
+    mr_duration_rule_created: bool = False  # FR-023: MR time-stop rule registered once/scan

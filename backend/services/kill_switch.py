@@ -27,3 +27,26 @@ async def read_kill_switches(db: Any) -> dict[str, bool]:
 def is_killed(kill: dict[str, bool], feature: str) -> bool:
     """True if the master __all__ kill is set OR this feature is individually killed."""
     return bool(kill.get("__all__") or kill.get(feature, False))
+
+
+async def set_kill_switch(db: Any, feature: str, killed: bool, *, updated_by: str = "system") -> bool:
+    """Upsert a feature kill flag. Returns True on success, False on failure (never raises).
+
+    Used by the FR-065 safety auto-disable to trip ``f2_long`` when the rolling-drawdown
+    breaker fires. Writing failures must not abort the scan, so the caller treats False
+    as "could not persist" and logs — the next scan's reader still fails closed on a
+    broken table.
+    """
+    from datetime import datetime, timezone
+    try:
+        await db.pool.execute(
+            "INSERT INTO feature_kill_switches (feature_name, killed, updated_by, updated_at) "
+            "VALUES ($1, $2, $3, $4) "
+            "ON CONFLICT (feature_name) DO UPDATE SET "
+            "killed = EXCLUDED.killed, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at",
+            feature, killed, updated_by, datetime.now(timezone.utc),
+        )
+        return True
+    except Exception:
+        logger.warning("kill_switch_write_failed", exc_info=True)
+        return False

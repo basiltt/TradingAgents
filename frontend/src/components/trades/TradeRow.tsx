@@ -2,6 +2,7 @@ import { memo } from "react";
 import type { Trade } from "@/components/trades/types";
 import { ACTIVE_STATUSES } from "@/components/trades/types";
 import { TradeStatusBadge } from "@/components/trades/TradeStatusBadge";
+import { StrategyChip } from "@/components/trades/StrategyChip";
 import { PnLDisplay } from "@/components/trades/PnLDisplay";
 import { formatPrice, formatQty, formatRelativeTime } from "@/components/trades/utils";
 import { Button } from "@/components/ui/button";
@@ -43,7 +44,10 @@ export const TradeRow = memo(function TradeRow({
         />
       </td>
       <td className="px-4 py-3">
-        <span className="text-[13px] font-semibold tracking-tight">{trade.symbol}</span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-[13px] font-semibold tracking-tight">{trade.symbol}</span>
+          {trade.strategy_kind === "mean_reversion" ? <StrategyChip kind="mean_reversion" /> : null}
+        </span>
       </td>
       <td className="px-4 py-3">
         <span className={`text-[10px] font-bold uppercase tracking-wider ${trade.side === "Buy" ? "text-emerald-400" : "text-red-400"}`}>

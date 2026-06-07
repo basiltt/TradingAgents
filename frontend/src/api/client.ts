@@ -678,6 +678,7 @@ export interface TradingAccount {
   last_error?: string;
   created_at: string;
   updated_at: string;
+  strategy_cohort?: "trend" | "mean_reversion";
 }
 
 export interface WalletBalance {
@@ -842,8 +843,8 @@ export const accountsApi = {
   get: (id: string, signal?: AbortSignal) =>
     request<TradingAccount>(`/api/v1/accounts/${encodeURIComponent(id)}`, undefined, signal),
 
-  /** PATCH /api/v1/accounts/:id — update label or active status. */
-  update: (id: string, data: { label?: string; is_active?: boolean }) =>
+  /** PATCH /api/v1/accounts/:id — update label, active status, or strategy cohort. */
+  update: (id: string, data: { label?: string; is_active?: boolean; strategy_cohort?: "trend" | "mean_reversion" }) =>
     mutate<TradingAccount>("PATCH", `/api/v1/accounts/${encodeURIComponent(id)}`, data),
 
   /** PATCH /api/v1/accounts/:id/credentials — rotate API key/secret. */
@@ -1379,9 +1380,10 @@ export const tradesApi = {
   },
 
   /** GET /api/v1/trades/stats — aggregate trade statistics across accounts. */
-  getStats: (accountIds?: string[], signal?: AbortSignal) => {
+  getStats: (accountIds?: string[], signal?: AbortSignal, byStrategy?: boolean) => {
     const sp = new URLSearchParams();
     if (accountIds?.length) sp.set("account_id", accountIds.join(","));
+    if (byStrategy) sp.set("by_strategy", "true");
     const qs = sp.toString();
     return request<TradeStatsResponse>(`/api/v1/trades/stats${qs ? `?${qs}` : ""}`, undefined, signal);
   },
