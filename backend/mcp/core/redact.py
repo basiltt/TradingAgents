@@ -14,11 +14,37 @@ _SECRET_KEY_MARKERS = ("key", "secret", "token", "password", "credential", "encr
 # Raw exchange identifiers to drop (opaque-id policy).
 _EXCHANGE_ID_KEYS = ("bybit_uid", "uid")
 # Absolute-money field MARKERS — substring-matched (so total_equity, net_pnl,
-# usdt_balance, account_balance, etc. are all caught, like secrets are).
-_MONEY_MARKERS = ("balance", "equity", "pnl", "margin")
+# usdt_balance, account_balance, position_value, realised_pnl, funding_fee,
+# wallet_balance, notional, etc. are all caught, like secrets are). Deliberately
+# does NOT include public market prices (entry/mark/liq price are not account
+# money) — only absolute account-money figures that the contract reduces to
+# ratios unless the financial-detail opt-in is set.
+_MONEY_MARKERS = (
+    "balance",
+    "equity",
+    "pnl",
+    "margin",
+    "notional",
+    "wallet",
+    "funding",
+    "realised",
+    "realized",
+    "fee",
+    "_value",
+    "position_value",
+    "cost",
+)
+# Ratio/percentage suffixes that are SAFE to emit (the redacted representation of
+# money). A key matching these is never treated as absolute money.
+_RATIO_MARKERS = ("_pct", "_ratio", "_rate", "percent", "_pnl_pct")
 
 
 def _is_money_key(lk: str) -> bool:
+    # Ratio/percentage fields are SAFE (they're the redacted-by-default
+    # representation) even if they also contain a money marker like "pnl"
+    # (e.g. unrealised_pnl_pct, pnl_ratio, roi_pct). Never mask those.
+    if any(r in lk for r in _RATIO_MARKERS):
+        return False
     return any(m in lk for m in _MONEY_MARKERS)
 
 

@@ -7,6 +7,7 @@ the same ctx.services accessors at call time).
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # --- static resource catalog ---
@@ -30,7 +31,42 @@ RESOURCES: list[dict[str, str]] = [
         "description": "The current scheduled-scanner AutoTradeConfig baseline (redacted).",
         "mimeType": "application/json",
     },
+    {
+        "uri": "tradingagents://portfolio/snapshot",
+        "name": "Portfolio snapshot",
+        "description": "Aggregated portfolio P&L summary over the trailing 30 days (redacted to ratios).",
+        "mimeType": "application/json",
+    },
 ]
+
+# Resource URI TEMPLATES (RFC-6570-ish) advertised via resources/templates/list.
+RESOURCE_TEMPLATES: list[dict[str, str]] = [
+    {
+        "uriTemplate": "tradingagents://scan/{scan_id}",
+        "name": "Scan by id",
+        "description": "A specific stored scan by id (no re-run). scan_id must be a valid scan identifier.",
+        "mimeType": "application/json",
+    },
+]
+
+# A scan id is a uuid-like / alphanumeric-dash token. Anything with path or
+# scheme characters (.. / : %) is rejected to prevent traversal / cross-scope.
+_SCAN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_DAY_MS = 86_400_000
+
+
+def _parse_scan_template(uri: str) -> str | None:
+    """Return a VALIDATED scan_id if `uri` matches tradingagents://scan/{id}
+    (and is not the literal /latest), else None. Rejects traversal payloads."""
+    prefix = "tradingagents://scan/"
+    if not uri.startswith(prefix):
+        return None
+    tail = uri[len(prefix):]
+    if tail == "latest" or not tail:
+        return None
+    if not _SCAN_ID_RE.match(tail):
+        raise ValueError("invalid scan id in resource uri")
+    return tail
 
 
 async def read_resource(uri: str, services: Any, *, server_version: str = "0.1.0") -> dict[str, Any]:
@@ -53,6 +89,32 @@ async def read_resource(uri: str, services: Any, *, server_version: str = "0.1.0
             return {"schedules": []}
         rows = await db.list_scheduled_scans()
         return {"schedule_count": len(rows)}
+    if uri == "tradingagents://portfolio/snapshot":
+        db = getattr(services, "db", None)
+        clock = getattr(services, "_clock", None)
+        if db is None:
+            return {"summary": None}
+        # 30-day trailing window; tolerate absence of a clock accessor
+        import time
+
+        now_ms = int(time.time() * 1000) if clock is None else int(clock.now().timestamp() * 1000)
+        try:
+            from backend.mcp.core.redact import redact_record
+
+            summary = await db.get_portfolio_pnl_summary(now_ms - 30 * _DAY_MS, now_ms)
+            return {"window_days": 30, "summary": redact_record(dict(summary), allow_financial_detail=False)}
+        except Exception:  # noqa: BLE001 — resource read is best-effort
+            return {"window_days": 30, "summary": None}
+    # templated: tradingagents://scan/{id}
+    scan_id = _parse_scan_template(uri)
+    if scan_id is not None:
+        db = getattr(services, "db", None)
+        if db is None:
+            return {"scan": None}
+        from backend.mcp.core.redact import strip_secret_keys
+
+        scan = await db.get_scan(scan_id)
+        return {"scan": strip_secret_keys(scan) if scan else None}
     raise ValueError(f"unknown resource uri: {uri!r}")
 
 
@@ -83,7 +145,28 @@ PROMPTS: dict[str, dict[str, Any]] = {
             "if allow_debug is enabled."
         ),
     },
+    "explain_trade_close": {
+        "name": "explain_trade_close",
+        "description": "Explain why a specific trade was closed (rule, P&L, timing).",
+        "arguments": [
+            {"name": "account_id", "description": "Account that owns the trade.", "required": True},
+            {"name": "trade_id", "description": "The trade to explain.", "required": True},
+        ],
+        "template": (
+            "Explain the close of trade {trade_id} on account {account_id}. "
+            "Call trades_get for the trade, identify its close_reason and P&L "
+            "ratio, and relate the close to the active close rules (take-profit, "
+            "stop-loss, drawdown, breakeven-timeout, max-duration, or trailing). "
+            "Be concise and factual; do not propose new trades."
+        ),
+    },
 }
+
+
+def _clean_arg(value: Any, *, maxlen: int = 64) -> str:
+    """Validate + escape a prompt argument before interpolation (alnum/_-/space)."""
+    s = str(value or "").strip()
+    return "".join(c for c in s if c.isalnum() or c in " _-")[:maxlen]
 
 
 def get_prompt(name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -92,10 +175,15 @@ def get_prompt(name: str, arguments: dict[str, Any] | None = None) -> dict[str, 
     if spec is None:
         raise ValueError(f"unknown prompt: {name!r}")
     args = arguments or {}
-    obj = str(args.get("objective", "")).strip()
-    obj = "".join(c for c in obj if c.isalnum() or c in " _-")[:40]
-    objective = f" ({obj})" if obj else ""
-    text = spec["template"].format(objective=objective)
+    if name == "explain_trade_close":
+        text = spec["template"].format(
+            account_id=_clean_arg(args.get("account_id")) or "<account_id>",
+            trade_id=_clean_arg(args.get("trade_id")) or "<trade_id>",
+        )
+    else:
+        obj = _clean_arg(args.get("objective"), maxlen=40)
+        objective = f" ({obj})" if obj else ""
+        text = spec["template"].format(objective=objective)
     return {"description": spec["description"], "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
 
 
@@ -105,6 +193,10 @@ class ResourceProvider:
     @property
     def resources(self) -> list[dict[str, str]]:
         return list(RESOURCES)
+
+    @property
+    def templates(self) -> list[dict[str, str]]:
+        return list(RESOURCE_TEMPLATES)
 
     async def read(self, uri: str, services: Any, server_version: str) -> dict[str, Any]:
         return await read_resource(uri, services, server_version=server_version)

@@ -116,6 +116,13 @@ class MCPServer:
             return []
         return list(self._resources.resources)
 
+    def list_resource_templates(self) -> list[dict[str, str]]:
+        """resources/templates/list — parameterized resource URIs (e.g. scan/{id})."""
+        if self._resources is None:
+            return []
+        getter = getattr(self._resources, "templates", None)
+        return list(getter) if getter else []
+
     async def read_resource(self, uri: str) -> dict[str, Any]:
         if self._resources is None:
             raise ValueError("resources not available")

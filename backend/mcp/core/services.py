@@ -37,5 +37,18 @@ class ServiceAccessors:
         return getattr(self._state, "scanner_service", None)
 
     @property
+    def trade_repo(self) -> Any:
+        """TradeRepository for trade/position reads (read-only methods only)."""
+        return getattr(self._state, "trade_repo", None)
+
+    @property
+    def signal_analytics_service(self) -> Any:
+        return getattr(self._state, "signal_analytics_service", None)
+
+    @property
+    def sector_service(self) -> Any:
+        return getattr(self._state, "sector_service", None)
+
+    @property
     def debug_trace_recorder(self) -> Any:
         return getattr(self._state, "debug_trace_recorder", None)
