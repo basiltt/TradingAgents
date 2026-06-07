@@ -71,3 +71,24 @@ async def test_repair_to_failsafe_forces_off_on_corrupt_flags(mcp_pool):
     after = await repo.get()
     assert after.enabled is False
     assert after.safe_mode_flags["read_only"] is True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_egress_consent_recorded_once(mcp_pool):
+    """FR-033: enable records data-egress consent exactly once (idempotent)."""
+    from backend.mcp.repositories.config_repo import MCPConfigRepository
+
+    repo = MCPConfigRepository(mcp_pool)
+    await repo.repair_to_failsafe()
+    cfg0 = await repo.get()
+    assert cfg0.egress_consent_at is None  # not consented yet
+
+    ts1 = await repo.record_egress_consent()
+    assert ts1 is not None
+    cfg1 = await repo.get()
+    assert cfg1.egress_consent_at == ts1
+
+    # second call must NOT overwrite (COALESCE keeps the original)
+    ts2 = await repo.record_egress_consent()
+    assert ts2 == ts1

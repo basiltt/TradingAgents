@@ -24,6 +24,8 @@ export interface MCPConfig {
   row_version: number;
   bind_host: string;
   has_token: boolean;
+  /** When set, the operator has acknowledged that tool results leave to the model provider (FR-033). */
+  egress_consent_at?: string | null;
 }
 
 /** Runtime status (GET /api/v1/mcp/status). */

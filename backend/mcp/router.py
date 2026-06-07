@@ -53,6 +53,7 @@ async def get_config(request: Request) -> dict[str, Any]:
         "row_version": cfg.row_version,
         "bind_host": cfg.bind_host,
         "has_token": bool(cfg.access_token_hash),
+        "egress_consent_at": cfg.egress_consent_at,
     }
 
 
@@ -94,11 +95,14 @@ async def enable(request: Request) -> dict[str, Any]:
     slis_present = getattr(request.app.state, "mcp_live_slis", None) is not None or not optimizer_on
 
     result = run_preflight(
-        cfg, schema_version=44, optimizer_enabled=optimizer_on,
+        cfg, schema_version=45, optimizer_enabled=optimizer_on,
         db_budget_ok=budget_ok, live_slis_present=slis_present,
     )
     if not result.ok:
         raise HTTPException(422, detail={"preflight_failed": result.failed_invariant})
+    # Record the one-time data-egress consent (FR-033) — tool results leave to the
+    # connected model provider when enabled. Idempotent; first enable stamps it.
+    await mgr.config_repo.record_egress_consent()
     await mgr.enable()
     return {"enabled": True}
 

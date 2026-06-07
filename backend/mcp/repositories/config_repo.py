@@ -31,6 +31,7 @@ class MCPConfig:
     installation_id: str
     audit_retention_days: int
     sweep_retention_days: int
+    egress_consent_at: Optional[str] = None
 
 
 def _loads(v: Any, default: Any) -> Any:
@@ -49,6 +50,8 @@ def _row_to_config(row: asyncpg.Record) -> MCPConfig:
     # most-restrictive on a corrupt/partial flags blob (R-308)
     if not isinstance(flags, dict) or "read_only" not in flags:
         flags = dict(_FAILSAFE_FLAGS)
+    # egress_consent_at may be absent on a record selected before the v45 column
+    consent = row["egress_consent_at"] if "egress_consent_at" in row else None
     return MCPConfig(
         enabled=row["enabled"],
         bind_host=row["bind_host"],
@@ -63,6 +66,11 @@ def _row_to_config(row: asyncpg.Record) -> MCPConfig:
         installation_id=str(row["installation_id"]),
         audit_retention_days=row["audit_retention_days"],
         sweep_retention_days=row["sweep_retention_days"],
+        egress_consent_at=(
+            consent.isoformat()
+            if consent is not None and hasattr(consent, "isoformat")
+            else None
+        ),
     )
 
 
@@ -126,6 +134,17 @@ class MCPConfigRepository:
                 "updated_at=now() WHERE id=1",
                 token_hash,
             )
+
+    async def record_egress_consent(self) -> str:
+        """Record the one-time data-egress consent (FR-033). Idempotent: only
+        sets the timestamp the FIRST time (COALESCE keeps the original). Returns
+        the consent timestamp ISO string."""
+        async with self._pool.acquire() as conn:
+            ts = await conn.fetchval(
+                "UPDATE mcp_config SET egress_consent_at=COALESCE(egress_consent_at, now()) "
+                "WHERE id=1 RETURNING egress_consent_at"
+            )
+        return ts.isoformat() if ts is not None and hasattr(ts, "isoformat") else str(ts)
 
     async def bump_kill_epoch(self) -> int:
         async with self._pool.acquire() as conn:

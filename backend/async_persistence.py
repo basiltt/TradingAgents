@@ -1400,6 +1400,9 @@ ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 
 ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS sweep_id UUID;
 CREATE INDEX IF NOT EXISTS idx_backtest_runs_source ON backtest_runs (source) WHERE source <> 'ui'
 """),
+    # v45 — one-time data-egress consent timestamp on the MCP config singleton
+    # (FR-033): recorded the first time the operator enables the server.
+    (45, "ALTER TABLE mcp_config ADD COLUMN IF NOT EXISTS egress_consent_at TIMESTAMPTZ"),
 ]
 
 

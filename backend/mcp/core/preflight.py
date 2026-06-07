@@ -12,7 +12,7 @@ from typing import Optional
 
 from backend.mcp.core.netguard import _is_loopback_host
 
-EXPECTED_SCHEMA_VERSION = 44
+EXPECTED_SCHEMA_VERSION = 45
 
 
 @dataclass(frozen=True)

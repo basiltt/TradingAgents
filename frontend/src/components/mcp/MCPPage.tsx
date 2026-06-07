@@ -12,7 +12,7 @@
  * build (feature-flagged off); we show a clear, non-alarming notice.
  */
 import { useState } from "react";
-import { AlertTriangle, Network, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, Network, RefreshCw, ShieldCheck, Sparkles, Share2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { mcpApi, ApiError } from "@/api/client";
@@ -132,6 +132,7 @@ export function MCPPage() {
         <LoadingState />
       ) : (
         <>
+          <EgressNotice consentedAt={config.egress_consent_at} />
           <MCPMasterControl
             config={config}
             status={status}
@@ -204,6 +205,23 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
         <RefreshCw className="size-4" />
         Retry
       </Button>
+    </div>
+  );
+}
+
+function EgressNotice({ consentedAt }: { consentedAt?: string | null }) {
+  return (
+    <div className="flex items-start gap-3 rounded-[var(--neu-radius-md)] border border-warning/25 bg-warning/8 px-4 py-3">
+      <Share2 className="mt-0.5 size-4 shrink-0 text-warning" />
+      <div className="text-xs leading-relaxed text-[var(--neu-text-muted)]">
+        <span className="font-semibold text-[var(--neu-text-strong)]">Data egress notice. </span>
+        When the server is on, the tools you enable send their results to the connected AI
+        model provider. Enable only what you're comfortable sharing; money figures are
+        redacted to ratios by default.
+        {consentedAt ? (
+          <span className="ml-1 opacity-80">Consent recorded {new Date(consentedAt).toLocaleDateString()}.</span>
+        ) : null}
+      </div>
     </div>
   );
 }
