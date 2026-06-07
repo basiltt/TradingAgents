@@ -418,3 +418,24 @@ established backtest_schemas pattern; engine per-run instance attrs documented s
 
 Validation: golden 22/22 + regime snapshot byte-identical; 529 backtest+regime + 88 live
 auto-trade/scanner green. Commit add3eb2.
+
+## Backtest Completeness Review — 2026-06-07
+
+Reviewers: backend (data-completeness chain) + frontend (live-form parity). Both
+converged on the same HIGH finding.
+
+| Sev | Finding | Fix |
+|-----|---------|-----|
+| HIGH | strategy_kind computed by engine + in by_strategy metrics, but DROPPED at persistence — per-trade rows lost it, so the trade list could not show trend vs MR | migration 51 + CREATE TABLE col + records tuple + INSERT($19) + SELECT + row->dict + BacktestTradeResponse + frontend type + StrategyChip in TradeListTable + CSV |
+| MED | F2-long was a plain checkbox; no danger context though studying the long side is the point | inline negative-expectancy note when mr_long_enabled |
+| MED | next-bar-open MR-fill caveat only in results, not the form | added to the form modeling-note paragraph |
+| LOW | close-reason codes (mr_time_stop etc.) rendered raw | shared formatCloseReason label map (cell + filter dropdown) |
+
+Confirmed complete/correct (no change): by_strategy survives the metrics JSONB round-trip;
+regime config persists in backtest_runs.config (full JSONB blob, no allowlist) + re-seeds
+the form; close_reason is free TEXT (mr_time_stop persists fine); backtest form is a
+superset of the live form fields; mr_long_ack UI correctly absent (bypassed). Compare/list
+views not surfacing per-strategy = acceptable future enhancement, not a data gap.
+
+Validation: golden 22/22 + regime snapshot byte-identical; 348 backend backtest+regime +
+684 frontend green; migrations max=51. Commit ba32498.
