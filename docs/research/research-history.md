@@ -382,6 +382,56 @@ The one real bug that would have corrupted profitability research (`analysis_pri
 
 <!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
 
+## 2026-06-07 — Regime-Focused Research (Choppy-Market Profitability)
+
+**Timestamp:** 2026-06-07 01:26 UTC
+**Total System PnL:** $2,065.28 across 4,924 closed trades (was $1,370.92 / 4,858 on 06-04 → **+$694**)
+**System Win Rate:** 51.0% (was 50.3%)
+**Avg PnL/Trade:** $0.42 (was $0.33)
+**Trigger:** Operator question — profitability drops in choppy markets; considering "multiple strategies on multiple markets."
+**Report:** `docs/research/reports/2026-06-07_01-26-profitability-report.md`
+
+### Trend
+**IMPROVING overall** — best 48h window in the dataset (+$990, $1.80/tr, 59.5% WR). Prior fixes (min_score 7, max_trades 3, drift filter, blacklist, trailing profit) all validated and working. BUT a large, localized choppy-market leak remains.
+
+### Top 3 Findings
+1. **Session-of-day is the dominant profit factor.** US/EU session (UTC 13–22) is strongly profitable; **Asian/low-vol session (UTC 01, 06–12) bleeds ~−$1,335 over the last 5 days** (win rates 0–31%). The trend-short engine gets chopped in ranging Asian tape. (New — prior research never bucketed by hour.)
+2. **One edge, not two.** Shorts +$2,149 / Longs −$106. Longs show 55% WR but **negative expectancy** (fat left tail) — no long edge exists; the 93%-bias *bug* fix did not create a long *strategy*.
+3. **"21 accounts" = correlation, not diversification.** All accounts trade identical signals simultaneously → 21× correlated drawdowns (e.g. 06-06 13:00: 12–13 accounts in same 3 losers). The operator's "multiple strategies" instinct is correct but must come *before* more capital replication.
+
+### Supporting discoveries
+- **1–3h holds win (+$1,532); 3–6h holds lose (−$97)** — sharp chop-grind cliff at ~3h.
+- **Blacklist leaks via ticker churn** — new toxic names (BABY, PARTI, TA, HOME −$114 to −$208 each, 0–16% WR). **Blacklist enforcement AUDITED & CONFIRMED working** — BIGTIME/SOXL/PLAYSOUT last traded 06-03, zero since blacklist deploy; earlier "reappeared" flag was a 7-day-window artifact that swept up the pre-blacklist 06-03 blowup (~−$344 in one day across 16–23 accounts each). Static blacklist is reactive (bans *after* the correlated loss); structural liquidity filter needed to catch the next toxic coin pre-blowup.
+- **AI manager is break-even noise** (+$0.03/tr over 1,118 closes).
+- **13 liquidations −$167** at 20× in volatile/illiquid names.
+
+### Recommendation Status Updates (from 06-04)
+| Rec | Status |
+|---|---|
+| Raise min_score 6→7 | ✅ IMPLEMENTED — validated (score 7 = +$1,268) |
+| Reduce max_trades 5→3 | ✅ IMPLEMENTED |
+| Post-scan drift filter | ✅ IMPLEMENTED (drift 3%, age 120m) |
+| Symbol blacklist | ✅ IMPLEMENTED & AUDITED WORKING — but reactive; needs structural filter for new tickers |
+| Trailing stop +2% | ✅ IMPLEMENTED |
+| Lower profit goal 14→8% | ✅ IMPLEMENTED |
+| Fix AI Manager pipeline | 🔶 PARTIAL — runs but adds ~$0 edge |
+| 93% sell-bias fix | ✅ IMPLEMENTED — bug gone, but no long edge created |
+
+### New Recommendations (this run)
+1. **[VERY HIGH]** Session/regime entry filter — suppress/score-gate UTC 01,06–12 (~$200–300/day).
+2. **[HIGH]** Structural symbol filter (24h vol, listing age, spread) vs static blacklist.
+3. **[MED]** Cut long side to zero until a long strategy is backtested.
+4. **[MED]** Chop exit — cut trades not resolved in ~3h during detected chop.
+5. **[HIGH/long-term]** Backtest a regime-segmented mean-reversion strategy for the chop window (use the in-flight Backtesting System; must report per-session metrics).
+6. **[RESOLVED]** ~~Audit blacklist enforcement~~ — audited, blacklist holds (zero trades since 06-03); no gap.
+7. **[HIGH/long-term]** Strategy-cohort the accounts (A=trend US-session, B=mean-rev Asian-session) for real diversification.
+8. **[MED]** Drop chop-cohort leverage 20×→10×.
+
+### Note for Backtesting System (in-flight feature)
+The backtester is the right vehicle to validate the mean-reversion strategy and account-cohort ideas **before funding**. It MUST be regime-segmented (per-session / per-volatility-bucket metrics) or it will average the Asian-session leak into US-session profit and hide the exact effect isolated here.
+
+---
+
 
 
 
