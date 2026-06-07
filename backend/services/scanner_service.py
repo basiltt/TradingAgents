@@ -336,6 +336,35 @@ class ScannerService:
             except Exception:
                 pass
 
+    async def _set_executor_scan_context(self, executor, auto_configs: List[Dict[str, Any]]) -> None:
+        """Read the kill-switch unconditionally + build the scan-time ScanContext and
+        attach it to the executor. Safe no-op for the default (all-off) fleet."""
+        from datetime import datetime, timezone
+        from backend.services.kill_switch import read_kill_switches
+        from backend.services import market_data as _md
+
+        kill = await read_kill_switches(self._db) if self._db else {}
+
+        async def _fetch(symbol: str, interval: str, depth: int):
+            # Adapt the kline cache to (symbol, interval, depth) -> list[kline].
+            kc = getattr(self, "_kline_cache", None)
+            if kc is None:
+                return []
+            try:
+                from datetime import timedelta
+                # Approximate window from depth; the cache returns what it has.
+                end = datetime.now(timezone.utc)
+                start = end - timedelta(days=30)
+                klines = await kc.get_klines(symbol, interval, start, end)
+                return klines[-depth:] if depth and len(klines) > depth else klines
+            except Exception:
+                return []
+
+        ctx = await _md.build_scan_context(
+            auto_configs, [], now=datetime.now(timezone.utc), kill=kill, fetcher=_fetch,
+        )
+        executor.set_scan_context(ctx)
+
     async def _compute_adaptive_blacklist(self, auto_configs: List[Dict[str, Any]]) -> set:
         """Query signal_performance to find symbols with consistently poor win rates."""
         min_trades = 5
@@ -429,6 +458,15 @@ class ScannerService:
                 sector_service=self._sector_service,
                 recorder=self._debug_recorder, debug_ctx=debug_ctx,
             )
+            # ── Regime Multi-Strategy: build the scan-time ScanContext ──
+            # Kill-switch is read UNCONDITIONALLY (R3-F1) so master/per-feature kills
+            # work even for fleets that never trigger precompute. build_scan_context
+            # returns an empty (non-degraded) context when no regime feature is on,
+            # so executor behavior is unchanged in the default case.
+            try:
+                await self._set_executor_scan_context(executor, auto_configs)
+            except Exception:
+                logger.warning("scan_context_setup_failed", exc_info=True)
             if self._debug_recorder is not None and debug_ctx is not None:
                 await self._debug_recorder.open_run(
                     debug_ctx,

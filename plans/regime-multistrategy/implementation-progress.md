@@ -35,7 +35,25 @@
 | 19 | 14:50 | F2 placement integration (TDD; caught fade-side + SL-default bugs) | DONE — 6/6 |
 | 20 | 14:55 | f2_long_ack escalation-staleness (TDD) | DONE — 8/8 |
 | 21 | 14:58 | Full regime+auto_trade suite | DONE — 134 green, 0 regressions |
-| 22 | 15:00 | Next: persistence tagging, reconciler, AI-exclusion, start_scan wiring, frontend | IN_PROGRESS |
+| 22 | 15:00 | Persistence tagging: place_trade + create_trade + create_child_trade INSERTs | DONE — 145 green |
+| 23 | 15:15 | start_scan wiring: kill-switch read + build_scan_context + set_scan_context | DONE — 132 scanner green, no-op for non-regime |
+| 24 | 15:20 | BACKEND FUNCTIONALLY COMPLETE end-to-end | DONE |
+| 25 | 15:22 | Next: reconciler/AI-exclusion/endpoints, frontend, Phase 5 tests | IN_PROGRESS |
+
+## BACKEND END-TO-END COMPLETE
+scan -> _set_executor_scan_context (kill read + build_scan_context BTC regime/means)
+-> executor gates (kill, cohort route, F1 session/vol) -> F2 placement (fade side,
+TP convert, ack) -> place_trade(strategy_kind) -> create_trade writes the tag.
+- place_trade: +strategy_kind/strategy_cohort/f1_active params; long/short side map
+- create_trade: 25-col INSERT (was 22); create_child_trade inherits parent (28 cols)
+- start_scan: _set_executor_scan_context (kline-cache fetcher + fail-safe degrade)
+- Existing scanner(132)+auto_trade+trade_repo+accounts tests all green (no regression)
+
+## Remaining (non-trade-path + UI + tests)
+- reconciler strategy-awareness + pending_intents writes; AI-mgr MR exclusion
+- f2-long-ack POST endpoint + admin kill-switch endpoint (routers)
+- frontend: AutoTradeSection sub-components, StrategyChip, PnL view, client.ts
+- Phase 5: E2E all-on, fixtures, perf, coverage; review gates; final hardening; merge
 
 ## Milestone: ALL 3 FEATURES functionally working end-to-end (134 tests green)
 - F1 session+vol filter: fires through executor, fail-open. ✓

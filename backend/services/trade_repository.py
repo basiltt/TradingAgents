@@ -121,6 +121,9 @@ class TradeRepository:
         trade_direction: str | None = None,
         take_profit_pct: float | None = None,
         stop_loss_pct: float | None = None,
+        strategy_kind: str = "trend",
+        strategy_cohort: str = "trend",
+        f1_active: bool = False,
         metadata: dict | None = None,
         actor: str = "user",
     ) -> dict:
@@ -138,16 +141,17 @@ class TradeRepository:
                 position_idx, stop_loss_price, take_profit_price, mark_price_at_open,
                 capital_pct, base_capital, signal_direction, trade_direction,
                 take_profit_pct, stop_loss_pct, source, source_id, scan_result_id,
-                order_link_id, metadata
+                order_link_id, metadata, strategy_kind, strategy_cohort, f1_active
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                $16, $17, $18, $19, $20, $21, $22
+                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
             ) RETURNING *""",
             account_id, symbol, side, order_type, qty, leverage, margin_mode,
             position_idx, stop_loss_price, take_profit_price, mark_price_at_open,
             capital_pct, base_capital, signal_direction, trade_direction,
             take_profit_pct, stop_loss_pct, source, source_id, scan_result_id,
             order_link_id, json.dumps(metadata or {}),
+            strategy_kind, strategy_cohort, f1_active,
         )
         trade = dict(row)
         await conn.execute(
@@ -672,10 +676,12 @@ class TradeRepository:
                 stop_loss_price, take_profit_price,
                 status, parent_trade_id, realized_pnl, realized_pnl_pct,
                 fees, net_pnl, close_reason, close_rule_id, closed_at, opened_at,
-                source, source_id, scan_result_id, signal_direction, order_link_id
+                source, source_id, scan_result_id, signal_direction, order_link_id,
+                strategy_kind, strategy_cohort
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                'closed', $14, $15, $16, $17, $18, $19, $20, NOW(), $21, $22, $23, $24, $25, $26
+                'closed', $14, $15, $16, $17, $18, $19, $20, NOW(), $21, $22, $23, $24, $25, $26,
+                $27, $28
             ) RETURNING *""",
             parent_trade["account_id"], parent_trade["symbol"],
             parent_trade["side"], parent_trade["order_type"],
@@ -691,6 +697,8 @@ class TradeRepository:
             parent_trade.get("scan_result_id"),
             parent_trade.get("signal_direction"),
             str(uuid.uuid4()),
+            parent_trade.get("strategy_kind", "trend"),
+            parent_trade.get("strategy_cohort", "trend"),
         )
         child_dict = dict(child)
 

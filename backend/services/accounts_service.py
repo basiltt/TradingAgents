@@ -194,6 +194,9 @@ class AccountsService:
         source: str = "manual",
         source_id: int | None = None,
         scan_result_id: int | None = None,
+        strategy_kind: str = "trend",
+        strategy_cohort: str = "trend",
+        f1_active: bool = False,
     ) -> Dict[str, Any]:
         """Place a market trade with leverage, TP, and SL.
 
@@ -214,9 +217,9 @@ class AccountsService:
             raise ValueError("Account is inactive or not found")
 
         if trade_direction == "straight":
-            side = "Buy" if signal_direction == "buy" else "Sell"
+            side = "Buy" if signal_direction in ("buy", "long") else "Sell"
         else:
-            side = "Sell" if signal_direction == "buy" else "Buy"
+            side = "Sell" if signal_direction in ("buy", "long") else "Buy"
 
         logger.info("place_trade_start", extra={
             "account_id": account_id, "side": side, "symbol": symbol,
@@ -337,6 +340,8 @@ class AccountsService:
                             capital_pct=capital_pct, base_capital=base_capital,
                             signal_direction=signal_direction, trade_direction=trade_direction,
                             take_profit_pct=take_profit_pct, stop_loss_pct=stop_loss_pct,
+                            strategy_kind=strategy_kind, strategy_cohort=strategy_cohort,
+                            f1_active=f1_active,
                             actor="system" if source == "cycle" else "user",
                         )
                         await self._trade_repo.update_trade_status(
