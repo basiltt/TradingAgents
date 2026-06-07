@@ -42,6 +42,11 @@ export function useAccountWebSocket() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pingWatchdog = useRef<ReturnType<typeof setTimeout>>(undefined);
   const mounted = useRef(true);
+  // AI-CONTEXT: When we intentionally close the socket for BFCache eligibility
+  // (on `pagehide`), this flag tells the unconditional reconnect in `onclose` to
+  // stand down — otherwise it would immediately re-open a socket, defeating
+  // BFCache and racing the `pageshow` reconnect into a duplicate connection.
+  const suppressReconnect = useRef(false);
   const queryClientRef = useRef(queryClient);
   const connectRef = useRef<() => void>(undefined);
   const dashboardRefreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -191,6 +196,7 @@ export function useAccountWebSocket() {
       dispatch(setWsConnected(false));
       clearTimeout(pingWatchdog.current);
       if (!mounted.current) return;
+      if (suppressReconnect.current) return;
       reconnectTimer.current = setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX) * (0.75 + Math.random() * 0.5);
         connectRef.current?.();
@@ -212,17 +218,47 @@ export function useAccountWebSocket() {
 
     function handleVisibilityChange() {
       if (document.visibilityState !== "visible") return;
+      suppressReconnect.current = false;
       const ws = wsRef.current;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       clearTimeout(reconnectTimer.current);
       connectRef.current?.();
     }
 
+    // AI-CONTEXT: BFCache eligibility. An open WebSocket makes the page
+    // ineligible for Chrome's back/forward cache, so a backgrounded tab (e.g.
+    // when the user switches to another app on mobile) is discarded and FULLY
+    // RELOADED on return instead of restored instantly. Closing the socket on
+    // `pagehide` lets the page qualify for BFCache; `pageshow` reconnects when
+    // it is restored or shown again. The ref is nulled before close() so the
+    // onclose handler's reconnect path is skipped for this intentional teardown.
+    function handlePageHide() {
+      clearTimeout(reconnectTimer.current);
+      suppressReconnect.current = true;
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close(1000, "pagehide");
+    }
+
+    function handlePageShow() {
+      if (!mounted.current) return;
+      suppressReconnect.current = false;
+      const ws = wsRef.current;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      clearTimeout(reconnectTimer.current);
+      reconnectDelay.current = RECONNECT_BASE;
+      connectRef.current?.();
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("pageshow", handlePageShow);
 
     return () => {
       mounted.current = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("pageshow", handlePageShow);
       clearTimeout(reconnectTimer.current);
       clearTimeout(pingWatchdog.current);
       clearTimeout(dashboardRefreshTimer.current);

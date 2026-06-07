@@ -52,10 +52,21 @@ export function ScanHistoryPage() {
     let reconnectTimer: ReturnType<typeof setTimeout>;
     let debounceTimer: ReturnType<typeof setTimeout>;
     let disposed = false;
+    // AI-CONTEXT: BFCache eligibility. An open WebSocket makes the page
+    // ineligible for Chrome's back/forward cache, so a backgrounded tab (e.g.
+    // the user switching to another app on mobile) gets discarded and FULLY
+    // RELOADED on return instead of restored instantly. We close the socket on
+    // `pagehide` and reconnect on `pageshow`/visibility. `suppressReconnect`
+    // tells the onclose handler to stand down for the intentional pagehide
+    // close, so it doesn't immediately re-open (which would defeat BFCache and
+    // race the pageshow reconnect into a duplicate connection).
+    let suppressReconnect = false;
     let ws: WebSocket;
 
     function connect() {
       if (disposed) return;
+      const existing = wsRef.current;
+      if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) return;
       ws = new WebSocket(getScannerWsUrl());
       wsRef.current = ws;
 
@@ -75,19 +86,46 @@ export function ScanHistoryPage() {
 
       ws.onclose = () => {
         wsRef.current = null;
-        if (!disposed) {
-          clearTimeout(reconnectTimer);
-          reconnectTimer = setTimeout(connect, 3_000);
-        }
+        if (disposed || suppressReconnect) return;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, 3_000);
       };
 
       ws.onerror = () => ws.close();
     }
 
+    function handlePageHide() {
+      suppressReconnect = true;
+      clearTimeout(reconnectTimer);
+      const current = wsRef.current;
+      wsRef.current = null;
+      current?.close();
+    }
+
+    function handlePageShow() {
+      if (disposed) return;
+      suppressReconnect = false;
+      const current = wsRef.current;
+      if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+      clearTimeout(reconnectTimer);
+      connect();
+    }
+
+    function handleVisibility() {
+      if (document.visibilityState !== "visible") return;
+      handlePageShow();
+    }
+
     connect();
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
       disposed = true;
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibility);
       clearTimeout(reconnectTimer);
       clearTimeout(debounceTimer);
       if (wsRef.current) {

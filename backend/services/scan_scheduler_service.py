@@ -123,7 +123,21 @@ class ScanSchedulerService:
         merged = {**existing, **updates}
 
         self._validate_schedule(merged["schedule_type"], merged.get("schedule_config", {}))
-        updates["next_run_at"] = self._compute_next_run(merged)
+
+        # Only recompute next_run_at when a TIMING field actually changed in
+        # value. The edit form re-sends schedule_type/schedule_config/timezone
+        # unchanged on every save, so recomputing unconditionally would reset the
+        # countdown to a full interval: _compute_next_run anchors intervals to
+        # max(now, last_run_at), and after a run last_run_at is in the past, so
+        # the anchor collapses to "now" and the next run jumps out by a whole
+        # interval instead of preserving the time already remaining.
+        timing_changed = any(
+            existing.get(k) != merged.get(k)
+            for k in ("schedule_type", "schedule_config", "timezone")
+        )
+        if timing_changed:
+            updates["next_run_at"] = self._compute_next_run(merged)
+
         await self._db.update_scheduled_scan(scan_id, updates)
         logger.info("Updated schedule %s", scan_id)
         if self._ai_manager_service:

@@ -32,6 +32,15 @@ def _is_loopback_host(authority: Optional[str]) -> bool:
     return _hostname(authority) in _LOOPBACK_HOSTS
 
 
+# Public alias — the single source of truth for "is this a loopback authority?".
+# Reused by preflight, the control-plane router's endpoint builder, and anywhere
+# else that must agree with what host_origin_allowed() actually enforces. Do NOT
+# re-implement this check elsewhere; membership/normalization must stay in lockstep
+# with _LOOPBACK_HOSTS so a UI "loopback" badge never disagrees with the guard.
+def is_loopback_host(authority: Optional[str]) -> bool:
+    return _is_loopback_host(authority)
+
+
 def _is_loopback_origin(origin: str) -> bool:
     parts = urlsplit(origin)
     return parts.hostname in _LOOPBACK_HOSTS

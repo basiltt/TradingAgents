@@ -145,6 +145,37 @@ describe("useAnalysisWebSocket", () => {
     expect(ws.close).toHaveBeenCalled();
   });
 
+  // BFCache eligibility: an open WebSocket makes a page ineligible for Chrome's
+  // back/forward cache, so a backgrounded tab gets fully reloaded instead of
+  // instantly restored. Closing the socket on `pagehide` restores eligibility;
+  // `pageshow` reconnects when the page is shown again.
+  it("closes the WebSocket on pagehide (BFCache eligibility)", () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useAnalysisWebSocket("run-1"), { wrapper });
+    const ws = MockWebSocket.instances[0];
+    act(() => ws.simulateOpen());
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    });
+    expect(ws.close).toHaveBeenCalled();
+  });
+
+  it("reconnects on pageshow after a pagehide closed the socket", () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useAnalysisWebSocket("run-1"), { wrapper });
+    const ws = MockWebSocket.instances[0];
+    act(() => ws.simulateOpen());
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+      ws.simulateClose(1000);
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    });
+    expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
   it("reconnects with backoff on unexpected close", () => {
     const { wrapper } = createWrapper();
     renderHook(() => useAnalysisWebSocket("run-1"), { wrapper });

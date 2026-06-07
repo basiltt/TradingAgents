@@ -19,6 +19,11 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# The single ASGI mount path for the MCP transport. Exported so the control-plane
+# router can advertise the exact same path it is mounted at — if this ever moves,
+# the operator-facing endpoint URL moves with it (no silent drift).
+MCP_RPC_PATH = "/mcp/rpc"
+
 _GATE_BODY = b'{"detail":"feature disabled","code":"MCP_DISABLED"}'
 
 
@@ -386,7 +391,7 @@ def register_mcp(app: Any) -> None:
     app.state.mcp_asgi = None
     app.state.mcp_server = None
     app.state.mcp_manager = None
-    app.mount("/mcp/rpc", _Indirection(app))
+    app.mount(MCP_RPC_PATH, _Indirection(app))
 
     from backend.mcp.router import router as mcp_control_router
 

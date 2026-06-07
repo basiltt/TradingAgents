@@ -604,5 +604,11 @@ export const routeTree = rootRoute.addChildren([
 ]);
 
 export function createAppRouter() {
-  return createRouter({ routeTree });
+  // AI-CONTEXT: `scrollRestoration` persists each route's scroll position to
+  // sessionStorage and restores it — even across a full page reload. Combined
+  // with the URL in the address bar and the sessionStorage query-cache persister
+  // (see App.tsx), this makes a Chrome tab-discard reload (which we cannot fully
+  // prevent on memory-constrained mobile) land the user back where they were,
+  // instead of jumping to the top of a freshly mounted page.
+  return createRouter({ routeTree, scrollRestoration: true });
 }

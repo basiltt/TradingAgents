@@ -42,6 +42,11 @@ export function useMCPConfig() {
     queryKey: KEYS.config,
     queryFn: ({ signal }) => mcpApi.getConfig(signal),
     staleTime: 10_000,
+    // Poll while the page is open so the security-critical bind/exposure signal
+    // (served_host / loopback_only) stays fresh after a config change or restart —
+    // a stale "verified loopback" must not linger. Stop polling when the module is
+    // absent (503), mirroring useMCPStatus.
+    refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 503 ? false : 8_000),
     retry: (count, err) => !(err instanceof ApiError && err.status === 503) && count < 1,
   });
 }

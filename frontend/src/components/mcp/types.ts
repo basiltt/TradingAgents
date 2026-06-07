@@ -26,6 +26,18 @@ export interface MCPConfig {
   has_token: boolean;
   /** When set, the operator has acknowledged that tool results leave to the model provider (FR-033). */
   egress_consent_at?: string | null;
+  /** The TRUE reachable /mcp/rpc URL (loopback host + the real served port),
+   * computed server-side. The transport guard accepts only a loopback Host. */
+  rpc_endpoint?: string;
+  /** The host the server process detected it bound to (from its own argv, then env).
+   * null/absent when it can't be proven — the UI must then caution, not reassure. */
+  served_host?: string | null;
+  /** How served_host was determined: "argv" (process truth) | "env" | "unknown". */
+  bind_source?: "argv" | "env" | "unknown";
+  /** FAIL-SAFE: true ONLY on positive proof of a loopback bind. false = proven
+   * exposed; undefined/unknown = unproven. The UI must never present anything but a
+   * verified loopback as "safe" — this app has no auth, so a wrong "safe" is dangerous. */
+  loopback_only?: boolean;
 }
 
 /** Runtime status (GET /api/v1/mcp/status). */

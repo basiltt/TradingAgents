@@ -349,11 +349,46 @@ export function useAnalysisWebSocket(runId: string) {
       connect();
     }
 
+    // AI-CONTEXT: BFCache eligibility. An open WebSocket makes the page
+    // ineligible for Chrome's back/forward cache, so when the tab is
+    // backgrounded (e.g. user switches to another app on mobile) the browser
+    // discards and FULLY RELOADS it on return instead of restoring instantly.
+    // Closing the socket on `pagehide` lets the page qualify for BFCache;
+    // `pageshow` reconnects when it is restored or shown again. We suppress the
+    // reconnect-on-close path here by clearing the pending timer and nulling the
+    // ref so a clean teardown doesn't schedule a redundant backoff reconnect.
+    function handlePageHide() {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close(1000, "pagehide");
+    }
+
+    function handlePageShow() {
+      if (!mountedRef.current) return;
+      const ws = wsRef.current;
+      const dead = !ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED;
+      if (!dead) return;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      attemptRef.current = 0;
+      connect();
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("pageshow", handlePageShow);
 
     return () => {
       mountedRef.current = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("pageshow", handlePageShow);
       const timers = timersRef;
       for (const id of timers) {
         clearTimeout(id);

@@ -16,15 +16,23 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Container bind. Default 0.0.0.0 is correct INSIDE a container: Docker forwards the
+# published host port to the container's eth0, never to container-loopback, so a
+# 127.0.0.1 in-container bind would be unreachable. This is NOT the exposure boundary
+# — that is docker-compose's host-side port map (TRADINGAGENTS_HOST_BIND, default
+# 127.0.0.1). Passed as the real argv token below so the backend reports the true bind.
+BIND_HOST="${TRADINGAGENTS_BIND_HOST:-0.0.0.0}"
+PORT="${TRADINGAGENTS_PORT:-8877}"
+
 BACKEND_CMD=(
   python
   -m
   uvicorn
   backend.main:create_app
   --host
-  0.0.0.0
+  "$BIND_HOST"
   --port
-  8877
+  "$PORT"
   --factory
 )
 
@@ -43,12 +51,13 @@ cd "$ROOT_DIR"
 BACKEND_PID="$!"
 
 cd "$ROOT_DIR/frontend"
-npm run dev -- --host 0.0.0.0 --port 5177 --strictPort &
+npm run dev -- --host "$BIND_HOST" --port 5177 --strictPort &
 FRONTEND_PID="$!"
 
 echo "========================================"
 echo "  TradingAgents Web UI"
-echo "  Backend API : http://localhost:8877"
+echo "  Bind host   : $BIND_HOST (container-internal; host exposure = compose port map)"
+echo "  Backend API : http://localhost:$PORT"
 echo "  Frontend    : http://localhost:5177"
 echo "========================================"
 echo

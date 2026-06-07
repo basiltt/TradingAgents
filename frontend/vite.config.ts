@@ -5,11 +5,31 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 
+// Keep the dev proxy targeted at the SAME port the backend binds. start.sh / start.bat
+// resolve TRADINGAGENTS_PORT (default 8877) for uvicorn; read it here too so a custom
+// port doesn't silently break /api + /ws in dev. Loopback host: the proxy runs on the
+// same machine as the backend.
+const BACKEND_PORT = process.env.TRADINGAGENTS_PORT?.trim() || "8877";
+const BACKEND_HTTP = `http://localhost:${BACKEND_PORT}`;
+const BACKEND_WS = `ws://localhost:${BACKEND_PORT}`;
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // AI-CONTEXT: The service worker is intentionally self-destructing.
+    // This is a live, real-time trading dashboard — it gets no meaningful
+    // benefit from offline precaching, and the `autoUpdate` SW was a direct
+    // cause of unexpected full-page reloads (on a new deploy, an autoUpdate SW
+    // forces skipWaiting + clientsClaim and reloads every open tab). Setting
+    // `selfDestroying: true` ships a SW (same filename) that unregisters itself
+    // and deletes its caches on every device that already installed the old one,
+    // cleanly removing it in production. Do NOT change the SW filename or other
+    // workbox options while self-destroying — the plugin must reuse the old name
+    // so existing clients pick up the replacement. To restore PWA behavior later,
+    // remove `selfDestroying` (and reconsider `registerType`, see below).
     VitePWA({
+      selfDestroying: true,
       registerType: "autoUpdate",
       injectRegister: "auto",
       devOptions: { enabled: false },
@@ -51,11 +71,11 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://localhost:8877",
+        target: BACKEND_HTTP,
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://localhost:8877",
+        target: BACKEND_WS,
         ws: true,
         changeOrigin: true,
       },

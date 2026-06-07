@@ -123,6 +123,69 @@ class TestUpdate:
         updates = call_args[0][1]
         assert updates.get("scan_config", {}).get("llm_api_key") == "real-key"
 
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_update_non_timing_field_preserves_next_run(self, svc, db):
+        """Editing name/scan_config must NOT reset the existing countdown.
+
+        Regression: the edit form always resends schedule_type, schedule_config,
+        and timezone unchanged. update() used to recompute next_run_at
+        unconditionally, and because last_run_at is in the past,
+        max(now, last_run_at) collapsed to now, pushing next_run_at out by a
+        full interval on every metadata edit.
+        """
+        existing = {
+            "id": "s1", "name": "Old", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 180},
+            "scan_config": {},
+            "timezone": "UTC",
+            "last_run_at": "2026-06-07T09:00:00Z",   # in the past
+            "next_run_at": "2026-06-07T12:00:00Z",   # already scheduled
+        }
+        db.get_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan.side_effect = [existing, {**existing, "name": "New"}]
+        db.update_scheduled_scan = AsyncMock()
+
+        # Form re-sends timing fields with identical values + a changed name.
+        await svc.update("s1", {
+            "name": "New",
+            "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 180},
+            "scan_config": {"asset_type": "crypto"},
+            "timezone": "UTC",
+        })
+
+        updates = db.update_scheduled_scan.call_args[0][1]
+        # Countdown must be left untouched: either omit next_run_at, or keep the
+        # stored value verbatim.
+        assert updates.get("next_run_at", "2026-06-07T12:00:00Z") == "2026-06-07T12:00:00Z"
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_update_timing_field_recomputes_next_run(self, svc, db):
+        """Changing the interval SHOULD recompute next_run_at."""
+        existing = {
+            "id": "s1", "name": "Sched", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 180},
+            "scan_config": {},
+            "timezone": "UTC",
+            "last_run_at": "2026-06-07T09:00:00Z",
+            "next_run_at": "2026-06-07T12:00:00Z",
+        }
+        db.get_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan.side_effect = [existing, existing]
+        db.update_scheduled_scan = AsyncMock()
+
+        await svc.update("s1", {
+            "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 60},  # changed 180 -> 60
+            "timezone": "UTC",
+        })
+
+        updates = db.update_scheduled_scan.call_args[0][1]
+        assert "next_run_at" in updates
+        assert updates["next_run_at"] is not None
+        # Recomputed value must differ from the previously stored one.
+        assert updates["next_run_at"] != "2026-06-07T12:00:00Z"
+
 
 class TestDelete:
     @pytest.mark.asyncio(loop_scope="function")

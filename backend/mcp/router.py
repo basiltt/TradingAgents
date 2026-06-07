@@ -1,15 +1,22 @@
 """MCP control-plane router — TASK-P0-12.
 
-Same-origin REST at /api/v1/mcp/* for the operator UI (existing app auth + CSRF
-via the global middleware). 503 when the MCP module is absent; 200 {state:"off"}
-when present-but-disabled.
+Same-origin REST at /api/v1/mcp/* for the operator UI. The whole app's security
+boundary is its LOOPBACK BIND (the trading endpoints have no per-request auth);
+the global middleware adds a CSRF header check on mutating methods + security
+headers. 503 when the MCP module is absent; 200 {state:"off"} when
+present-but-disabled.
 """
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from backend.mcp.core.netguard import is_loopback_host
+from backend.mcp.mount import MCP_RPC_PATH
 
 router = APIRouter(tags=["mcp"])
 
@@ -86,6 +93,7 @@ async def _pending_proposals(mgr) -> int:
 async def get_config(request: Request) -> dict[str, Any]:
     mgr = _manager(request)
     cfg = await mgr.config_repo.get()
+    bind_host, bind_source = _resolve_bind_host()
     return {
         "enabled": cfg.enabled,
         "capability_tier": cfg.capability_tier,
@@ -96,7 +104,112 @@ async def get_config(request: Request) -> dict[str, Any]:
         "bind_host": cfg.bind_host,
         "has_token": bool(cfg.access_token_hash),
         "egress_consent_at": cfg.egress_consent_at,
+        # The TRUE, reachable transport URL. The host is loopback because the
+        # transport guard (netguard.host_origin_allowed) accepts only a loopback Host
+        # — a client must therefore run on THIS machine. The port is the real
+        # listening socket port (ASGI scope), so it is correct however the server
+        # was launched.
+        "rpc_endpoint": _mcp_rpc_endpoint(request, bind_host),
+        # The host the server process actually bound to, detected from its OWN argv
+        # (process truth), then env. None when it cannot be proven (e.g. programmatic
+        # launch). NOTE: in a container a 0.0.0.0 bind is normal and says nothing about
+        # host exposure — the real Docker boundary is the published-port map, which the
+        # process cannot observe. The UI must therefore treat anything other than a
+        # PROVEN loopback bind as "verify it yourself", never as "safe".
+        "served_host": bind_host,
+        "bind_source": bind_source,  # "argv" | "env" | "unknown"
+        # FAIL-SAFE: true ONLY on positive proof of a loopback bind. Unknown / 0.0.0.0
+        # / LAN all → false so the operator console never asserts safety it cannot back.
+        "loopback_only": bool(bind_host) and is_loopback_host(bind_host),
     }
+
+
+def _served_port(request: Request) -> str:
+    """The real port the app is listening on. Authoritative source is the ASGI
+    scope's server address (the actual bound socket); falls back to TRADINGAGENTS_PORT
+    (matches start.sh / start.bat), then 8877. Always returns a clean numeric string
+    for a valid TCP port (1-65535)."""
+    server = request.scope.get("server")
+    if server and len(server) >= 2 and server[1]:
+        p = _coerce_port(server[1])
+        if p is not None:
+            return p
+    p = _coerce_port(os.environ.get("TRADINGAGENTS_PORT"))
+    return p if p is not None else "8877"
+
+
+def _coerce_port(raw: Any) -> Optional[str]:
+    """A whitespace-tolerant, range-checked TCP port as str, or None if invalid."""
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return str(n) if 1 <= n <= 65535 else None
+
+
+def _resolve_bind_host() -> tuple[Optional[str], str]:
+    """Best-effort detection of the host the server actually bound to, for an HONEST
+    network-exposure signal. Returns (host, source) with source in
+    {"argv", "env", "unknown"}.
+
+    Primary source is the server process's OWN argv: every first-party launcher
+    (start.sh / start.bat / start-web.sh) passes `--host` explicitly, and the shell
+    EXPANDS the value into the real argv token whether or not the env var was exported
+    — so argv is the process truth even when os.environ is empty. Falls back to
+    TRADINGAGENTS_BIND_HOST for programmatic launches that set it. If neither yields a
+    host (bare `uvicorn.run()`, a gunicorn config file, etc.) returns (None, "unknown")
+    so the caller FAILS SAFE rather than assuming loopback."""
+    host = _bind_host_from_argv(sys.argv)
+    if host:
+        return host, "argv"
+    env = (os.environ.get("TRADINGAGENTS_BIND_HOST") or "").strip()
+    if env:
+        return env, "env"
+    return None, "unknown"
+
+
+def _bind_host_from_argv(argv: list[str]) -> Optional[str]:
+    """Extract the bind host from a uvicorn/gunicorn argv. Handles `--host H`,
+    `--host=H`, and gunicorn `-b H:port` / `--bind H:port` (incl. `=` forms and
+    bracketed IPv6). Returns None if no bind flag is present."""
+
+    def _host_of_bind(val: str) -> str:  # gunicorn "host:port" -> "host"
+        val = val.strip()
+        if val.startswith("["):  # [::1]:8000
+            end = val.find("]")
+            if end != -1:
+                return val[1:end]
+        if ":" in val and val.count(":") == 1:  # ipv4/host : port
+            return val.rsplit(":", 1)[0]
+        return val
+
+    i, n = 0, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok == "--host" and i + 1 < n:
+            return argv[i + 1].strip()
+        if tok.startswith("--host="):
+            return tok.split("=", 1)[1].strip()
+        if tok in ("-b", "--bind") and i + 1 < n:
+            return _host_of_bind(argv[i + 1])
+        if tok.startswith("--bind=") or tok.startswith("-b="):
+            return _host_of_bind(tok.split("=", 1)[1])
+        i += 1
+    return None
+
+
+def _mcp_rpc_endpoint(request: Request, bind_host: Optional[str]) -> str:
+    """Build the reachable /mcp/rpc URL. The host is loopback because the transport
+    guard rejects every non-loopback Host. When the server bound a SPECIFIC loopback
+    address (e.g. ::1 on an IPv6-only loopback box, or `localhost`), echo that so the
+    URL is actually reachable; for a wildcard (0.0.0.0), a LAN bind, or an unknown
+    bind, default to 127.0.0.1 (the loopback interface is always included). The path
+    mirrors the real ASGI mount so it can never drift."""
+    host = "127.0.0.1"
+    if bind_host and is_loopback_host(bind_host):
+        h = bind_host.strip()
+        host = f"[{h}]" if (":" in h and not h.startswith("[")) else h
+    return f"http://{host}:{_served_port(request)}{MCP_RPC_PATH}"
 
 
 @router.patch("/mcp/config")

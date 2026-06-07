@@ -6,7 +6,12 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: tradingagents
     ports:
-      - "5432:5432"
+      # Bind the Postgres port to the HOST's loopback only. The app reaches the DB
+      # over the compose network (db:5432) regardless of this map; publishing it at
+      # all is just for host-side debugging. Trivial creds (postgres/postgres) + a
+      # 0.0.0.0 publish would expose the DB to the LAN. Override the host interface
+      # via TRADINGAGENTS_HOST_BIND only on a trusted network.
+      - "${TRADINGAGENTS_HOST_BIND:-127.0.0.1}:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -27,8 +32,14 @@ services:
       TRADINGAGENTS_DISABLE_RELOAD: "1"
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tradingagents
     ports:
-      - "5177:5177"
-      - "8877:8877"
+      # SECURITY: publish to the HOST's loopback only by default. Inside the container
+      # uvicorn/vite bind 0.0.0.0 (required — Docker forwards host→container eth0, never
+      # to container-loopback), so the REAL exposure boundary is THIS host-side map, not
+      # the in-container bind. The trading API has NO auth, so a bare "8877:8877" (i.e.
+      # 0.0.0.0:8877) would let any LAN device place real-money trades. Set
+      # TRADINGAGENTS_HOST_BIND=0.0.0.0 ONLY behind a trusted network + an auth proxy.
+      - "${TRADINGAGENTS_HOST_BIND:-127.0.0.1}:5177:5177"
+      - "${TRADINGAGENTS_HOST_BIND:-127.0.0.1}:8877:8877"
     volumes:
       - tradingagents_data:/app/.tradingagents
     tty: true
