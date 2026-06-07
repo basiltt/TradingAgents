@@ -43,7 +43,27 @@
 | 5 | 13:25 | Phase 0 TASK-0.5 migrations 43-48 async (TDD) | DONE — 9/9 (incl CHECK==Literal) |
 | 6 | 13:30 | Phase 2 TASK-2.1/2.2 strategy_router (route+resolve, pure) | DONE — 13/13 truth table |
 | 7 | 13:32 | Phase 0 unit foundation: 41 tests green | DONE |
-| 8 | 13:35 | Remaining: golden harness + gate extraction (live-code refactor) + Phases 1-5 | IN_PROGRESS |
+| 8 | 13:35 | Phase 1 market_data classifier + EMA (TDD; caught flat-market bug) | DONE — 12/12 |
+| 9 | 13:42 | Phase 1 kill_switch reader (TDD) | DONE — 6/6 |
+| 10 | 13:48 | Phase 4 mean_reversion_math TP oracle + guards (TDD; caught test-arith) | DONE — 13/13 |
+| 11 | 13:55 | Phase 3 regime_filter session+vol gates (TDD) | DONE — 12/12 |
+| 12 | 13:58 | Full new-module suite | DONE — 84/84 green |
+
+## Pure-logic core of ALL 3 features complete (isolated-tested, default-off)
+- `market_data.py` (classify_regime, atr_ratio w/ depth guard, ema_mean) — 12 tests
+- `kill_switch.py` (read_kill_switches, is_killed; fail-closed) — 6 tests
+- `mean_reversion_math.py` (margin_tp_pct oracle, check_geometry 4 guards) — 13 tests
+- `regime_filter.py` (gate_session placement-UTC, gate_btc_vol fail-open) — 12 tests
+- (+ Phase 0: reason codes, scan_context, strategy_router, config, migrations)
+- TOTAL new tests: 84 green. TDD caught 1 real bug (flat-market→ranging) + 1 test-arith error.
+
+## Remaining: WIRING into live services (the executor integration)
+- build_scan_context orchestration (market_data) + start_scan wiring
+- _try_trade: kill gate, cohort resolve, route_strategy, F1 gates, F2 placement branch
+- trade_repository strategy_kind tagging (both INSERT paths)
+- reconciler + pending_intents; f2_long_ack endpoint; AI-mgr exclusion
+- golden-snapshot harness (capture current _try_trade) BEFORE the executor refactor
+- Phase 5 frontend + E2E/perf/coverage
 
 ## Modules built so far (all TDD, default-off)
 - `backend/services/strategy_reason_codes.py` (ReasonCode enum) — 4 tests
