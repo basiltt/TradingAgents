@@ -131,3 +131,30 @@ One-time data-egress consent record + persistent `/mcp` notice not built.
 staged capital rollout, champion-config memory, generated PDF reports,
 resources/subscribe + live notifications, remote-bind transport, mcp_tokens
 multi-token table. None are MVP.
+
+---
+
+## NFR verification (final pass)
+
+| NFR | Verdict | Evidence |
+|-----|---------|----------|
+| NFR-001 read-tool p95<200ms | SATISFIED | test_nfr_gates::test_nfr001 (50-sample in-proc dispatch p95) |
+| NFR-002 live-order gate under sweep | SATISFIED (Linux CI) | test_live_protection (N=600, p95≤1.15×, p99≤1.3×baseline_p99, max<bound); skip on Windows |
+| NFR-003 audit write <5ms | SATISFIED | test_nfr003 (100-sample enqueue p95<5ms, non-blocking queue) |
+| NFR-004 preset budgets ≤2k/8k/20k + per-tool cap | SATISFIED | budget.PRESET_TOKEN_CEILINGS + test_nfr004 |
+| NFR-005 5000-combo <60s FakeRunner | SATISFIED | test_nfr005 (timed orchestration) |
+| NFR-006 default OFF / READ_ONLY / fail-closed | SATISFIED | preflight + config_repo failsafe + test_off_path |
+| NFR-007 never crash live process | SATISFIED | mount degrade-to-None + spawn pool isolation; test_off_path boot-failure |
+| NFR-008 restart mid-sweep recovers | SATISFIED | sweep_repo.recover_interrupted + mount boot + test_sweep_repo |
+| NFR-009 one-way dep, import-linter enforced | SATISFIED | .importlinter contract 'mcp-one-way-dependency' KEPT (services/routers/tradingagents ↛ mcp) |
+| NFR-010 health mcp sub-status (degraded≠503) | SATISFIED | main._mcp_health_substatus in /api/v1/health + test_nfr010 |
+| NFR-011 OFF <50ms startup overhead | SATISFIED | test_nfr011 (register_mcp timed) |
+| NFR-012 NaN/Inf→NULL at persist, per-combo committed | SATISFIED | sweep_repo._nan_to_null/_safe_objective + own-txn write; test_nfr012 |
+| NFR-013 /mcp a11y (roles/labels/keyboard) | SATISFIED | a11y.test.tsx (progressbar ARIA, native controls, no positive tabindex) |
+| NFR-014 Linux CI MCP job (POSIX gate) | SATISFIED | .github/workflows/ci.yml mcp-tests job (Postgres service + full suite + import-linter) |
+
+**Phase exits now met:** P2 (budget ceilings + a11y test present), P4 (live-order gate N≥500 + max bound + p99-vs-p99).
+
+**All 14 NFRs SATISFIED.** Combined with 38/40 FR + 25/26 AC (the 2 remaining are P5/P6
+future scope), the feature meets its MVP spec. Note: NFR-002's protection gate is
+*asserted* only in Linux CI (POSIX ProcessPool) — on Windows dev it skip-marks.

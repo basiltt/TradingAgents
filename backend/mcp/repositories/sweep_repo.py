@@ -11,6 +11,7 @@ written in its own committed txn so a crash leaves a resumable partial sweep.
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -18,6 +19,31 @@ import asyncpg
 
 # Re-rankable objective metrics → "min" means lower is better.
 _MINIMIZE = {"max_drawdown"}
+
+
+def _nan_to_null(obj: Any) -> Any:
+    """Recursively replace NaN/Inf floats with None so the persisted JSON is
+    strictly valid (NFR-012: NaN/Inf → NULL at the persist boundary). Postgres
+    jsonb rejects the bare `NaN`/`Infinity` tokens json.dumps would otherwise
+    emit, and a downstream strict parser would choke on them."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _nan_to_null(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_nan_to_null(v) for v in obj]
+    return obj
+
+
+def _safe_objective(v: Optional[float]) -> Optional[float]:
+    """NaN/Inf objective → NULL (NUMERIC column rejects non-finite)."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _loads(v: Any) -> Any:
@@ -111,8 +137,9 @@ class SweepRepository:
                           objective_value = EXCLUDED.objective_value,
                           result_rank = EXCLUDED.result_rank
                     """,
-                    sweep_id, json.dumps(config), config_hash, json.dumps(metrics),
-                    objective_value, result_rank,
+                    sweep_id, json.dumps(config), config_hash,
+                    json.dumps(_nan_to_null(metrics)), _safe_objective(objective_value),
+                    result_rank,
                 )
                 await conn.execute(
                     "UPDATE mcp_sweep_jobs SET completed_combos = "

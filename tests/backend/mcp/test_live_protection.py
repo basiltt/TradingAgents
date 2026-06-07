@@ -52,6 +52,13 @@ class _SyntheticTradingLoop:
         xs = sorted(self.cycle_latencies_ms)
         return xs[int(len(xs) * 0.95)] if xs else 0.0
 
+    def p99(self) -> float:
+        xs = sorted(self.cycle_latencies_ms)
+        return xs[int(len(xs) * 0.99)] if xs else 0.0
+
+    def max_ms(self) -> float:
+        return max(self.cycle_latencies_ms) if self.cycle_latencies_ms else 0.0
+
 
 def _sweep_inputs():
     signals = [{"scan_id": "s1", "ticker": "BTCUSDT", "direction": "long", "score": 0.9}]
@@ -64,13 +71,18 @@ def _sweep_inputs():
 @pytest.mark.asyncio
 async def test_live_order_p95_within_gate_under_max_sweep():
     """Baseline the synthetic loop idle, then run it WHILE a pooled sweep fans
-    out, and assert live p95 ≤ 1.15× baseline AND p99 ≤ 1.3× (NFR-002/AC-011)."""
+    out, and assert the FULL NFR-002 gate: p95 ≤ 1.15× baseline_p95 AND
+    p99 ≤ 1.3× baseline_p99 AND max single-cycle < a hard bound, over N≥500."""
     from backend.mcp.tools.optimizer.orchestrator import run_sweep_pooled
+
+    N = 600  # NFR-002 requires N ≥ 500
+    HARD_MAX_MS = 250.0  # absolute single-cycle ceiling for a stand-in loop
 
     # 1. baseline: synthetic loop alone
     base_loop = _SyntheticTradingLoop()
-    await base_loop.run(cycles=300)
+    await base_loop.run(cycles=N)
     baseline_p95 = base_loop.p95()
+    baseline_p99 = base_loop.p99()
     assert baseline_p95 > 0
 
     # 2. under load: synthetic loop concurrent with a pooled sweep
@@ -86,12 +98,15 @@ async def test_live_order_p95_within_gate_under_max_sweep():
             n=100, seed=0,
         )
 
-    await asyncio.gather(live.run(cycles=300), _sweep())
-    under_load_p95 = live.p95()
-    under_load_p99 = sorted(live.cycle_latencies_ms)[int(len(live.cycle_latencies_ms) * 0.99)]
+    await asyncio.gather(live.run(cycles=N), _sweep())
 
-    # the gate: the offloaded sweep must not blow up live latency
-    assert under_load_p95 <= baseline_p95 * 1.15, (
-        f"live p95 {under_load_p95:.3f}ms > 1.15x baseline {baseline_p95:.3f}ms"
+    # the full gate: the offloaded sweep must not blow up live latency
+    assert live.p95() <= baseline_p95 * 1.15, (
+        f"live p95 {live.p95():.3f}ms > 1.15x baseline_p95 {baseline_p95:.3f}ms"
     )
-    assert under_load_p99 <= baseline_p95 * 1.30
+    assert live.p99() <= baseline_p99 * 1.30, (
+        f"live p99 {live.p99():.3f}ms > 1.3x baseline_p99 {baseline_p99:.3f}ms"
+    )
+    assert live.max_ms() < HARD_MAX_MS, (
+        f"live max-cycle {live.max_ms():.3f}ms exceeds hard bound {HARD_MAX_MS}ms"
+    )

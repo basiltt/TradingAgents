@@ -7,9 +7,10 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-_TEST_DSN = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test",
+_TEST_DSN = (
+    os.environ.get("TEST_DATABASE_URL")
+    or os.environ.get("MCP_TEST_DATABASE_URL")
+    or "postgresql://postgres:Mywings123@localhost:5432/tradingagents_test"
 )
 
 

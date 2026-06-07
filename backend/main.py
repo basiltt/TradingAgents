@@ -156,6 +156,20 @@ class ContentSizeLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+def _mcp_health_substatus(app: FastAPI) -> dict:
+    """MCP sub-status for /api/v1/health (NFR-010). Pure read of app.state — a
+    degraded/off/errored MCP must NEVER change the main health status code."""
+    mgr = getattr(app.state, "mcp_manager", None)
+    if mgr is None:
+        return {"state": "absent"}
+    running = getattr(app.state, "mcp_server", None) is not None
+    last_error = getattr(mgr, "last_error", None)
+    return {
+        "state": "running" if running else "off",
+        "error": last_error,
+    }
+
+
 def create_app() -> FastAPI:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
@@ -657,6 +671,9 @@ def create_app() -> FastAPI:
             "analyses_active": active,
             "analyses_max": cap,
             "coingecko": get_coingecko_status(),
+            # MCP sub-status (NFR-010): off/running/error — never affects the main
+            # status code (a degraded/off MCP is not a 503 for the trading app).
+            "mcp": _mcp_health_substatus(request.app),
         }
         status_code = 503 if not db_ok else 200
         return Response(

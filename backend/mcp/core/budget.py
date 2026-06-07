@@ -26,6 +26,17 @@ _CHARS_PER_TOKEN = 4.0
 # Fixed protocol envelope per tool (JSON wrapper keys, delimiters, role framing).
 _ENVELOPE_TOKENS = 12
 
+# Advertised-schema token ceilings per preset (NFR-004). A preset's enabled set
+# must fit within its ceiling; the UI warns past it. Per-tool soft cap ~500.
+PRESET_TOKEN_CEILINGS: dict[str, int] = {
+    "minimal": 2_000,
+    "read_only": 8_000,
+    "backtest_only": 8_000,
+    "standard": 8_000,
+    "full": 20_000,
+}
+PER_TOOL_SOFT_CAP = 500
+
 
 def _schema_text(spec: ToolSpec) -> str:
     """The input JSON Schema as the model sees it, serialized stably."""

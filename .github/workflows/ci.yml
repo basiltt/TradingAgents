@@ -55,6 +55,44 @@ jobs:
         env:
           ACCOUNTS_ENCRYPTION_KEY: ""
 
+  mcp-tests:
+    # Dedicated MCP job on Linux (prod OS): runs the full MCP suite INCLUDING the
+    # POSIX-only ProcessPool isolation + live-order-p95 protection gate that
+    # skip-mark on Windows dev boxes (NFR-002/014). Uses a real Postgres for the
+    # integration-marked repo/apply/sweep tests.
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tradingagents_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" --quiet
+
+      - name: Import-linter (MCP boundary contracts)
+        run: lint-imports
+
+      - name: Run MCP suite (incl. Linux-only protection gate)
+        run: python -m pytest tests/backend/mcp/ -q --tb=short
+        env:
+          ACCOUNTS_ENCRYPTION_KEY: ""
+          MCP_TEST_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/tradingagents_test"
+
   frontend-checks:
     runs-on: ubuntu-latest
     defaults:

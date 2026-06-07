@@ -29,3 +29,13 @@ source_modules =
     backend.schemas
 forbidden_modules =
     backend.mcp
+
+[importlinter:contract:mcp-one-way-dependency]
+name = Only the mount seam imports backend.mcp (NFR-009 removability)
+type = forbidden
+source_modules =
+    backend.services
+    backend.routers
+    tradingagents
+forbidden_modules =
+    backend.mcp
