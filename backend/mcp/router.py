@@ -130,12 +130,148 @@ async def health(request: Request) -> dict[str, Any]:
 @router.get("/mcp/tools")
 async def list_tools(request: Request) -> dict[str, Any]:
     """Minimal P0 stub: enabled tool names. Enriched (full registry + est_tokens
-    + presets) in P2."""
+    + presets) in P2 via /mcp/registry."""
     mgr = _manager(request)
     server = getattr(request.app.state, "mcp_server", None)
     if server is None:
         return {"tools": []}
     return {"tools": [t["name"] for t in server.list_tools()]}
+
+
+def _service_available(request: Request, group) -> bool:
+    """Mirror MCPManager._service_available so OFF-state budget reflects reality."""
+    from backend.mcp.core.registry import ToolGroup
+
+    if group == ToolGroup.SCANS:
+        return getattr(request.app.state, "db", None) is not None
+    return True
+
+
+@router.get("/mcp/registry")
+async def registry(request: Request) -> dict[str, Any]:
+    """Full tool catalog annotated with token cost + enabled/available state.
+
+    Returns EVERY registered tool (not just the enabled set) so the operator UI
+    can render the context-budget manager while the server is OFF — the user
+    selects what fits the model's context window before turning the server on.
+    """
+    mgr = _manager(request)
+    from backend.mcp.core.budget import estimate_tool_tokens
+    from backend.mcp.core.registry import (
+        PRESETS,
+        iter_specs,
+        resolve_enabled,
+        tier_allows,
+    )
+    from backend.mcp.discovery import discover_tools
+
+    discover_tools()  # idempotent; populate the registry even when OFF
+    cfg = await mgr.config_repo.get()
+    debug_allowed = bool(cfg.safe_mode_flags.get("allow_debug", False))
+
+    from backend.mcp.core.registry import MCPConfigView
+
+    view = MCPConfigView(
+        capability_tier=cfg.capability_tier,
+        enabled_groups=cfg.enabled_groups,
+        enabled_tools=cfg.enabled_tools,
+    )
+    enabled_names = {
+        s.name
+        for s in resolve_enabled(
+            view,
+            available=lambda g: _service_available(request, g),
+            debug_allowed=debug_allowed,
+        )
+    }
+
+    tools: list[dict[str, Any]] = []
+    groups: dict[str, dict[str, Any]] = {}
+    total = 0
+    selected = 0
+    for spec in iter_specs():
+        est = estimate_tool_tokens(spec)
+        is_enabled = spec.name in enabled_names
+        available = _service_available(request, spec.group)
+        tier_ok = tier_allows(spec.safety_class, cfg.capability_tier)
+        tools.append(
+            {
+                "name": spec.name,
+                "group": spec.group.value,
+                "safety_class": spec.safety_class.value,
+                "est_tokens": est,
+                "enabled": is_enabled,
+                "available": available and tier_ok,
+                "mutating": spec.mutating,
+                "exchange_facing": spec.exchange_facing,
+                "description": spec.description,
+            }
+        )
+        g = groups.setdefault(
+            spec.group.value, {"est_tokens": 0, "tool_count": 0, "enabled_count": 0}
+        )
+        g["est_tokens"] += est
+        g["tool_count"] += 1
+        if is_enabled:
+            g["enabled_count"] += 1
+            selected += est
+        total += est
+
+    # Presets are predicates over registry metadata → the tool names they select.
+    preset_map = {
+        name: [s.name for s in iter_specs() if pred(s)]
+        for name, pred in PRESETS.items()
+    }
+
+    return {
+        "tools": tools,
+        "groups": groups,
+        "presets": preset_map,
+        "total_est_tokens": total,
+        "selected_est_tokens": selected,
+        "capability_tier": cfg.capability_tier,
+        "enabled_groups": cfg.enabled_groups,
+        "row_version": cfg.row_version,
+    }
+
+
+class PresetApply(BaseModel):
+    preset: str
+    expected_row_version: int
+
+
+@router.post("/mcp/registry/preset")
+async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
+    """Apply a named preset by writing per-tool overrides (most-restrictive).
+
+    Translates a preset predicate into an explicit enabled_tools map so the
+    selection is exact and auditable, and clears group-level enables to avoid
+    double-counting. The UI then reflects the new selection via /mcp/registry.
+    """
+    mgr = _manager(request)
+    from backend.mcp.core.errors import MCPConflictError
+    from backend.mcp.core.registry import PRESETS, iter_specs, required_tier
+    from backend.mcp.discovery import discover_tools
+
+    discover_tools()
+    pred = PRESETS.get(body.preset)
+    if pred is None:
+        raise HTTPException(422, detail={"unknown_preset": body.preset})
+
+    selected = [s for s in iter_specs() if pred(s)]
+    overrides = {s.name: (s in selected) for s in iter_specs()}
+    # A preset is a complete intent: raise the tier ceiling to whatever the
+    # selection needs (presets exclude LIVE_MONEY, so this maxes at BACKTEST —
+    # it can never escalate to a money-capable tier).
+    tier = required_tier(selected)
+    try:
+        await mgr.config_repo.update(
+            {"enabled_tools": overrides, "enabled_groups": [], "capability_tier": tier},
+            expected_row_version=body.expected_row_version,
+        )
+    except MCPConflictError as exc:
+        raise HTTPException(409, detail=str(exc))
+    return await registry(request)
 
 
 @router.get("/mcp/audit")

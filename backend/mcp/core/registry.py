@@ -162,6 +162,33 @@ def tier_allows(safety_class: SafetyClass, tier: str) -> bool:
     return _TIER_RANK[min_tier] <= _TIER_RANK.get(tier, -1)
 
 
+def iter_specs() -> list[ToolSpec]:
+    """Public, read-only snapshot of every registered tool.
+
+    Used by the control-plane registry endpoint to render the full budget
+    catalog (every tool, regardless of enabled state). Ordering is stable
+    (group then name) so the operator UI is deterministic.
+    """
+    return sorted(_REGISTRY.values(), key=lambda s: (s.group.value, s.name))
+
+
+# Reverse of _TIER_RANK for mapping a numeric ceiling back to a tier name.
+_RANK_TIER: dict[int, str] = {rank: name for name, rank in _TIER_RANK.items()}
+
+
+def required_tier(specs: list[ToolSpec]) -> str:
+    """The minimum capability tier that allows EVERY spec in `specs`.
+
+    A preset/selection is a complete intent: if it includes a BACKTEST tool the
+    tier ceiling must be at least BACKTEST or the tool would be silently hidden.
+    Returns "READ_ONLY" for an empty selection (the safe floor).
+    """
+    if not specs:
+        return "READ_ONLY"
+    needed = max(_TIER_RANK[_SAFETY_MIN_TIER[s.safety_class]] for s in specs)
+    return _RANK_TIER[needed]
+
+
 @dataclass(frozen=True)
 class MCPConfigView:
     """The slice of mcp_config the registry needs to resolve the enabled set."""
