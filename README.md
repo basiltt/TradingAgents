@@ -137,14 +137,14 @@ Set-Location ..
 Manual startup is also available:
 
 ```powershell
-python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents
+python -m uvicorn backend.main:create_app --host 127.0.0.1 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents
 ```
 
 In a second terminal:
 
 ```powershell
 Set-Location frontend
-npm run dev -- --host 0.0.0.0 --port 5177 --strictPort
+npm run dev -- --host 127.0.0.1 --port 5177 --strictPort
 ```
 
 If PowerShell blocks virtual environment activation, use:
@@ -191,14 +191,14 @@ chmod +x scripts/start-web.sh
 Manual startup is also available:
 
 ```bash
-python -m uvicorn backend.main:create_app --host 0.0.0.0 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents
+python -m uvicorn backend.main:create_app --host 127.0.0.1 --port 8877 --factory --reload --reload-dir backend --reload-dir tradingagents
 ```
 
 In a second terminal:
 
 ```bash
 cd frontend
-npm run dev -- --host 0.0.0.0 --port 5177 --strictPort
+npm run dev -- --host 127.0.0.1 --port 5177 --strictPort
 ```
 
 ## Setup With Docker

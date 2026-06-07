@@ -41,7 +41,7 @@ def test_migration_versions_contiguous_and_unique():
     assert 43 in by_ver and callable(by_ver[43])
     assert 44 in by_ver and isinstance(by_ver[44], str)
     assert by_ver[-1 if False else 44]  # sanity
-    assert max(versions) == 45
+    assert max(versions) == 46
 
 
 async def _apply_all(conn):

@@ -428,6 +428,7 @@ class ScannerService:
                 self._accounts, self._close_svc, self._ai_manager_service,
                 sector_service=self._sector_service,
                 recorder=self._debug_recorder, debug_ctx=debug_ctx,
+                position_lock_registry=getattr(self, "_position_lock_registry", None),
             )
             if self._debug_recorder is not None and debug_ctx is not None:
                 await self._debug_recorder.open_run(
@@ -603,6 +604,7 @@ class ScannerService:
                     self._accounts, self._close_svc, self._ai_manager_service,
                     sector_service=self._sector_service,
                     recorder=self._debug_recorder, debug_ctx=debug_ctx,
+                    position_lock_registry=getattr(self, "_position_lock_registry", None),
                 )
                 executor.init_configs(auto_configs)
                 # Restore counters from already-executed trades stored in DB

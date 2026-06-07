@@ -470,6 +470,22 @@ class AutoTradeConfig(BaseModel):
             raise ValueError("target_goal_type required when target_goal_value is set")
         if self.close_on_profit_pct and not self.target_goal_value:
             raise ValueError("close_on_profit_pct requires target_goal_value to be set")
+        # Aggregate-capital guard: when filling to max_trades, every trade sizes
+        # at capital_pct of base capital, so capital_pct * max_trades is the total
+        # fraction of base capital committed. Reject configs that would commit
+        # more than 100% (margin over-allocation → forced liquidation risk).
+        # max_same_direction caps concurrent same-side trades when set; use the
+        # tighter of (max_trades, max_same_direction*2) as the effective fill.
+        if self.fill_to_max_trades:
+            effective_trades = self.max_trades
+            if self.max_same_direction is not None:
+                effective_trades = min(effective_trades, self.max_same_direction * 2)
+            if self.capital_pct * effective_trades > 100:
+                raise ValueError(
+                    f"capital_pct ({self.capital_pct}) × effective max trades "
+                    f"({effective_trades}) = {self.capital_pct * effective_trades}% "
+                    f"exceeds 100% of base capital; reduce capital_pct or max_trades"
+                )
         return self
 
 

@@ -1403,6 +1403,29 @@ CREATE INDEX IF NOT EXISTS idx_backtest_runs_source ON backtest_runs (source) WH
     # v45 — one-time data-egress consent timestamp on the MCP config singleton
     # (FR-033): recorded the first time the operator enables the server.
     (45, "ALTER TABLE mcp_config ADD COLUMN IF NOT EXISTS egress_consent_at TIMESTAMPTZ"),
+    # v46 — widen money columns from REAL (float4, ~7 sig-digits, lossy for
+    # 6-7 figure cumulative PnL) to NUMERIC(20,8). Additive + lossless (REAL→
+    # NUMERIC widens). Confined to reporting/analytics tables; live close rules
+    # already read equity as Decimal from the wallet, so this fixes reporting
+    # precision without touching execution. USING cast is exact for the stored
+    # float values.
+    (46, """
+ALTER TABLE closed_pnl_records ALTER COLUMN qty TYPE NUMERIC(30,12) USING qty::NUMERIC;
+ALTER TABLE closed_pnl_records ALTER COLUMN avg_entry_price TYPE NUMERIC(30,12) USING avg_entry_price::NUMERIC;
+ALTER TABLE closed_pnl_records ALTER COLUMN avg_exit_price TYPE NUMERIC(30,12) USING avg_exit_price::NUMERIC;
+ALTER TABLE closed_pnl_records ALTER COLUMN closed_pnl TYPE NUMERIC(30,12) USING closed_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN equity TYPE NUMERIC(30,12) USING equity::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN wallet_balance TYPE NUMERIC(30,12) USING wallet_balance::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN available_balance TYPE NUMERIC(30,12) USING available_balance::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN unrealised_pnl TYPE NUMERIC(30,12) USING unrealised_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN realised_pnl TYPE NUMERIC(30,12) USING realised_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN cumulative_pnl TYPE NUMERIC(30,12) USING cumulative_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN peak_equity TYPE NUMERIC(30,12) USING peak_equity::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN equity TYPE NUMERIC(30,12) USING equity::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN unrealised_pnl TYPE NUMERIC(30,12) USING unrealised_pnl::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN realised_pnl TYPE NUMERIC(30,12) USING realised_pnl::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN balance TYPE NUMERIC(30,12) USING balance::NUMERIC
+"""),
 ]
 
 

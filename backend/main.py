@@ -321,6 +321,14 @@ def create_app() -> FastAPI:
             app.state.accounts_service = AccountsService(db=db, ws_manager=account_ws_mgr)
             account_ws_mgr.set_accounts_service(app.state.accounts_service)
             app.state.scanner_service._accounts = app.state.accounts_service
+            # ONE shared per-(account,symbol) lock registry across the AutoTrade
+            # executor, the AI manager, and the close evaluator — so they can never
+            # act on the same position concurrently (double/opposite placement,
+            # close-vs-open races). Must be created before those services so they
+            # all bind to the SAME instance.
+            from backend.services.position_lock_registry import PositionLockRegistry
+            app.state.position_lock_registry = PositionLockRegistry()
+            app.state.scanner_service._position_lock_registry = app.state.position_lock_registry
             await account_ws_mgr.start()
 
             from backend.scheduler import SnapshotScheduler
@@ -383,6 +391,9 @@ def create_app() -> FastAPI:
                 "account_ws_manager": account_ws_mgr,
                 "db_pool": db._pool,
                 "market_data_cache": market_data_cache,
+                # bind to the SHARED registry (not a throwaway) so AI-manager
+                # position locks are visible to the auto-trade executor.
+                "position_lock_registry": app.state.position_lock_registry,
             })
             await ai_manager_service.start()
             app.state.ai_manager_service = ai_manager_service

@@ -28,7 +28,11 @@ BACKEND_CMD=(
   uvicorn
   backend.main:create_app
   --host
-  0.0.0.0
+  # SECURITY: bind to loopback by default — the trading endpoints have no auth,
+  # so exposing them on 0.0.0.0 lets any device on the network place real-money
+  # trades. Override with TRADINGAGENTS_BIND_HOST=0.0.0.0 ONLY behind a trusted
+  # network + an auth proxy.
+  "${TRADINGAGENTS_BIND_HOST:-127.0.0.1}"
   --port
   8877
   --factory
@@ -49,7 +53,7 @@ cd "$ROOT_DIR"
 BACKEND_PID="$!"
 
 cd "$ROOT_DIR/frontend"
-npm run dev -- --host 0.0.0.0 --port 5177 --strictPort &
+npm run dev -- --host "${TRADINGAGENTS_BIND_HOST:-127.0.0.1}" --port 5177 --strictPort &
 FRONTEND_PID="$!"
 
 echo "========================================"
