@@ -146,3 +146,78 @@ async def audit_feed(request: Request, limit: int = 50) -> dict[str, Any]:
     repo = AuditRepository(mgr.config_repo._pool)  # noqa: SLF001
     rows = await repo.recent(limit=min(max(limit, 1), 200))
     return {"items": rows}
+
+
+# --- proposals (human-apply money path) ---
+
+def _proposal_repo(request: Request):
+    mgr = _manager(request)
+    from backend.mcp.repositories.proposal_repo import ProposalRepository
+
+    return ProposalRepository(mgr.config_repo._pool), mgr  # noqa: SLF001
+
+
+@router.get("/mcp/proposals")
+async def list_proposals(request: Request, status: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
+    repo, _ = _proposal_repo(request)
+    items = await repo.list(status=status, limit=min(max(limit, 1), 200))
+    return {"items": items}
+
+
+@router.get("/mcp/proposals/{proposal_id}")
+async def get_proposal(request: Request, proposal_id: str) -> dict[str, Any]:
+    repo, _ = _proposal_repo(request)
+    prop = await repo.get(proposal_id)
+    if prop is None:
+        raise HTTPException(404, detail="proposal not found")
+    return prop
+
+
+@router.post("/mcp/proposals/{proposal_id}/approve")
+async def approve_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
+    repo, mgr = _proposal_repo(request)
+    db = getattr(request.app.state, "db", None)
+    if db is None:
+        raise HTTPException(503, detail="storage unavailable")
+    from backend.mcp.tools.optimizer.proposal_service import (
+        ProposalApplyError,
+        approve_proposal,
+    )
+
+    try:
+        summary = await approve_proposal(
+            proposal_repo=repo, db=db, proposal_id=proposal_id, approver="operator",
+        )
+    except ProposalApplyError as exc:
+        raise HTTPException(409, detail=str(exc))
+    return {"applied": True, **summary}
+
+
+@router.post("/mcp/proposals/{proposal_id}/reject")
+async def reject_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
+    repo, _ = _proposal_repo(request)
+    try:
+        await repo.transition(proposal_id, to_status="rejected", approver="operator")
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc))
+    return {"rejected": True}
+
+
+@router.post("/mcp/proposals/{proposal_id}/revert")
+async def revert_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
+    repo, _ = _proposal_repo(request)
+    db = getattr(request.app.state, "db", None)
+    if db is None:
+        raise HTTPException(503, detail="storage unavailable")
+    from backend.mcp.tools.optimizer.proposal_service import (
+        ProposalApplyError,
+        revert_proposal,
+    )
+
+    try:
+        summary = await revert_proposal(
+            proposal_repo=repo, db=db, proposal_id=proposal_id, approver="operator",
+        )
+    except ProposalApplyError as exc:
+        raise HTTPException(409, detail=str(exc))
+    return summary

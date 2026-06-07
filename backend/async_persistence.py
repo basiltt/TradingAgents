@@ -2537,6 +2537,54 @@ class AsyncAnalysisDB:
             *params,
         )
 
+    async def apply_auto_trade_config_atomic(
+        self,
+        schedule_id: str,
+        config_index: int,
+        merged_config: Dict[str, Any],
+        *,
+        expected_prior: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Atomically replace one auto_trade_configs[index] entry under
+        SELECT ... FOR UPDATE. MCP human-apply path ONLY.
+
+        Re-verifies (drift-guard) the targeted entry still matches
+        `expected_prior` before writing, so a concurrent edit between propose and
+        approve can't cause a lost update or wrong-target write. Returns the prior
+        config (for revert). Raises ValueError on missing scan / out-of-range
+        index / drift.
+        """
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "SELECT scan_config FROM scheduled_scans WHERE id=$1 FOR UPDATE",
+                    schedule_id,
+                )
+                if row is None:
+                    raise ValueError(f"scheduled scan {schedule_id!r} not found")
+                raw = row["scan_config"]
+                scan_config = raw if isinstance(raw, dict) else json.loads(raw)
+                configs = scan_config.get("auto_trade_configs") or []
+                if not (0 <= config_index < len(configs)):
+                    raise ValueError(
+                        f"config_index {config_index} out of range (len={len(configs)})"
+                    )
+                prior = dict(configs[config_index])
+                if expected_prior is not None and prior != expected_prior:
+                    raise ValueError(
+                        "auto_trade_configs entry changed since the proposal was "
+                        "created (drift) — re-create the proposal"
+                    )
+                configs[config_index] = merged_config
+                scan_config["auto_trade_configs"] = configs
+                await conn.execute(
+                    "UPDATE scheduled_scans SET scan_config=$1, updated_at=$2 WHERE id=$3",
+                    json.dumps(scan_config),
+                    datetime.now(timezone.utc).isoformat(),
+                    schedule_id,
+                )
+                return prior
+
     async def delete_scheduled_scan(self, schedule_id: str) -> bool:
         result = await self.pool.execute(
             "DELETE FROM scheduled_scans WHERE id=$1", schedule_id
