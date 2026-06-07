@@ -25,24 +25,40 @@ async def _audit_control_plane(
     mgr, *, action: str, outcome: str, mutating: bool, detail: Optional[dict] = None
 ) -> None:
     """Record a control-plane action (enable/disable/approve/reject/revert/token)
-    into the SAME hash-chained audit when the writer is running. Best-effort:
-    these human actions must never fail because audit is unavailable, but when
-    the server is on they belong in the tamper-evident chain alongside tool calls.
-    """
+    into the hash-chained audit. Uses the live writer when the server is running;
+    when OFF, spins a TRANSIENT writer (safe: no concurrent writer to fork the
+    chain) so money-path actions (approve/revert) are NEVER unaudited. Best-effort
+    — the action itself must never fail because audit is unavailable."""
+    payload = {
+        "tool_name": f"control_plane:{action}",
+        "tool_group": "control_plane",
+        "safety_class": "live_money" if mutating else "read_only",
+        "mutating": mutating,
+        "principal_token_id": "operator",
+        "session_id": "control-plane",
+        "status": outcome,
+        "args_redacted": detail or {},
+    }
     writer = getattr(mgr, "audit_writer", None)
-    if writer is None:
-        return  # server off → no live writer; the action's own row (proposal/config) is the record
+    if writer is not None:
+        try:
+            await writer.enqueue(payload)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    # Server OFF → transient writer through the same repo/pool, drained inline.
     try:
-        await writer.enqueue({
-            "tool_name": f"control_plane:{action}",
-            "tool_group": "control_plane",
-            "safety_class": "live_money" if mutating else "read_only",
-            "mutating": mutating,
-            "principal_token_id": "operator",
-            "session_id": "control-plane",
-            "status": outcome,
-            "args_redacted": detail or {},
-        })
+        from backend.mcp.core.audit import AuditWriter
+        from backend.mcp.repositories.audit_repo import AuditRepository
+
+        pool = mgr.config_repo._pool  # noqa: SLF001
+        transient = AuditWriter(AuditRepository(pool))
+        await transient.start()
+        try:
+            await transient.enqueue(payload)
+            await transient.drain()
+        finally:
+            await transient.shutdown()
     except Exception:  # noqa: BLE001 — audit best-effort; never block the action
         pass
 
@@ -108,20 +124,24 @@ async def enable(request: Request) -> dict[str, Any]:
     )
 
     cfg = await mgr.config_repo.get()
-    # Derive optimizer-on from the RESOLVED enabled set, not enabled_groups alone:
-    # a preset enables optimizer tools via per-tool overrides with empty groups,
-    # which would otherwise bypass the optimizer-only SLI/shm preflight invariants.
+    # Derive optimizer-on from the resolved enabled set by CONFIG INTENT (not
+    # runtime availability): a preset enables optimizer tools via per-tool
+    # overrides with empty groups, which would otherwise bypass the
+    # optimizer-only SLI/shm preflight invariants. We pass available=True here
+    # because the optimizer's backing services (sweep_repo) are wired INSIDE
+    # _start_transport — i.e. AFTER this preflight — so a runtime-availability
+    # check would always report the optimizer off and skip the gate.
     view = MCPConfigView(
         capability_tier=cfg.capability_tier,
         enabled_groups=cfg.enabled_groups,
         enabled_tools=cfg.enabled_tools,
     )
-    resolved = resolve_enabled(
+    resolved_intent = resolve_enabled(
         view,
-        available=lambda g: _service_available(request, g),
+        available=lambda g: True,  # intent, not runtime wiring
         debug_allowed=bool(cfg.safe_mode_flags.get("allow_debug", False)),
     )
-    optimizer_on = any(s.group is ToolGroup.OPTIMIZER for s in resolved)
+    optimizer_on = any(s.group is ToolGroup.OPTIMIZER for s in resolved_intent)
 
     # Compute the real DB-pool budget (FR-035): reserve a live floor for the
     # trading loop; the MCP cap is pool_max - floor. Enable is refused if the
@@ -133,9 +153,12 @@ async def enable(request: Request) -> dict[str, Any]:
     mcp_cap = compute_mcp_acquire_cap(pool_max=pool_max, live_floor=live_floor)
     budget_ok = db_budget_ok(pool_max=pool_max, live_floor=live_floor, mcp_cap=mcp_cap) and mcp_cap >= 1
 
-    # Live-SLI presence: the breaker needs live signals when the optimizer is on.
-    # Absent → fail-closed (preflight refuses) unless a real SLI source is wired.
-    slis_present = getattr(request.app.state, "mcp_live_slis", None) is not None or not optimizer_on
+    # Live-SLI presence: the breaker always has a signal because the manager's
+    # _poll_slis measures event-loop lag in-process (a real, dependency-free SLI:
+    # a starved loop = degraded order placement). A richer app-provided source
+    # (app.state.mcp_live_slis) augments it but is not required for the breaker to
+    # function — so the optimizer can be enabled with the built-in protection.
+    slis_present = True
 
     result = run_preflight(
         cfg, schema_version=45, optimizer_enabled=optimizer_on,

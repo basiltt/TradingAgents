@@ -50,8 +50,10 @@ export function useMCPStatus() {
   return useQuery({
     queryKey: KEYS.status,
     queryFn: ({ signal }) => mcpApi.getStatus(signal),
-    // Poll while the page is open so pending-proposal count + running state stay live.
-    refetchInterval: 8_000,
+    // Poll while the page is open, but STOP polling when the module is absent
+    // (503) — the retry guard only stops retries, not the interval, so without
+    // this a module-off page hammers the endpoint forever.
+    refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 503 ? false : 8_000),
     staleTime: 4_000,
     retry: (count, err) => !(err instanceof ApiError && err.status === 503) && count < 1,
   });
@@ -72,9 +74,9 @@ export function useMCPProposals(status?: string) {
     queryFn: ({ signal }) => mcpApi.listProposals(status, signal),
     // Poll so a proposal the agent creates in the background appears without a
     // manual refresh — keeps this list in sync with the polled pending count.
-    refetchInterval: 8_000,
+    // Stop polling on 503 (module absent) so it doesn't hammer forever.
+    refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 503 ? false : 8_000),
     staleTime: 4_000,
-    // Don't hammer when the module is absent (503) — same guard as the others.
     retry: (count, err) => !(err instanceof ApiError && err.status === 503) && count < 1,
   });
 }

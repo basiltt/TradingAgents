@@ -65,18 +65,36 @@ def _run_combo(
     signals: list[dict[str, Any]],
     snapshot: dict[str, list[dict[str, Any]]],
     instrument_info: dict[str, Any],
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Module-level SYNC worker entrypoint (picklable for spawn). Runs ONE config
     through the engine and returns its metrics dict. DB-less; never raises out —
-    a failed combo returns {} so the sweep keeps going."""
+    a failed combo returns {} so the sweep keeps going. `deadline` (monotonic
+    seconds) bounds the run via the engine's cooperative cancel event so a
+    pathological config cannot peg a worker forever."""
+    import threading
+    import time
+
+    cancel_event = threading.Event()
+    timer: threading.Timer | None = None
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {}
+        timer = threading.Timer(remaining, cancel_event.set)
+        timer.daemon = True
+        timer.start()
     try:
         from backend.services.backtest_engine import BacktestEngine
 
         engine = BacktestEngine()
-        result = engine.run(config, signals, snapshot or {}, None, None, instrument_info or {})
+        result = engine.run(config, signals, snapshot or {}, cancel_event, None, instrument_info or {})
         return dict(result.metrics or {})
-    except Exception:  # noqa: BLE001 — isolate combo failures
+    except Exception:  # noqa: BLE001 — isolate combo failures (incl. BacktestCancelled)
         return {}
+    finally:
+        if timer is not None:
+            timer.cancel()
 
 
 def supports_process_pool() -> bool:

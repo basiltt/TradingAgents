@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, FlaskConical, Loader2 } from "lucide-react";
 
-import { mcpApi } from "@/api/client";
+import { mcpApi, ApiError } from "@/api/client";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { mcpErrorMessage } from "./hooks";
@@ -27,8 +27,10 @@ export function MCPSweepBrowser() {
   const sweepsQ = useQuery({
     queryKey: ["mcp", "sweeps"],
     queryFn: ({ signal }) => mcpApi.listSweeps(50, signal),
-    refetchInterval: 10_000,
+    // Stop polling + retrying when the module is absent (503).
+    refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 503 ? false : 10_000),
     staleTime: 5_000,
+    retry: (count, err) => !(err instanceof ApiError && err.status === 503) && count < 1,
   });
 
   const sweeps = sweepsQ.data?.items ?? [];
@@ -101,6 +103,7 @@ function SweepRow({ sweep }: { sweep: MCPSweepJob }) {
             <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Re-rank by</span>
             <select
               value={objective}
+              aria-label={`Re-rank sweep ${sweep.id.slice(0, 8)} by objective`}
               onChange={(e) => setObjective(e.target.value)}
               className="rounded-[var(--neu-radius-sm)] bg-[var(--neu-surface-inset)] px-2 py-1 text-xs text-[var(--neu-text-strong)] neu-focus-ring"
             >
@@ -120,8 +123,8 @@ function SweepRow({ sweep }: { sweep: MCPSweepJob }) {
               {rows.slice(0, 10).map((r, i) => (
                 <div key={r.config_hash} className="flex items-center justify-between gap-2 text-[11px]">
                   <span className="font-mono text-[var(--neu-text-muted)]">#{i + 1}</span>
-                  <code className="flex-1 truncate font-mono text-[var(--neu-text-strong)]">
-                    {JSON.stringify(r.config)}
+                  <code className="flex-1 truncate font-mono text-[11px] text-[var(--neu-text-strong)]" title={JSON.stringify(r.config)}>
+                    {fmtConfig(r.config)}
                   </code>
                   <span className="font-semibold text-[var(--neu-accent)]">
                     {objective}: {fmtMetric(r.metrics, objective)}
@@ -134,6 +137,14 @@ function SweepRow({ sweep }: { sweep: MCPSweepJob }) {
       ) : null}
     </div>
   );
+}
+
+function fmtConfig(config: Record<string, unknown>): string {
+  const keys = ["leverage", "capital_pct", "take_profit_pct", "stop_loss_pct", "min_score", "max_trades"];
+  const parts = keys
+    .filter((k) => config[k] !== undefined)
+    .map((k) => `${k.replace(/_pct$/, "").replace(/_/g, " ")}=${String(config[k])}`);
+  return parts.length ? parts.join(" · ") : JSON.stringify(config);
 }
 
 function fmtMetric(metrics: Record<string, unknown>, objective: string): string {

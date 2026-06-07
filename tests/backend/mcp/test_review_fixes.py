@@ -147,3 +147,106 @@ async def test_enable_wires_breaker_dbfloor_and_sli_task(mcp_pool):
         await mgr.shutdown()
         # teardown cancels the SLI task + clears protection
         assert mgr.breaker is None and mgr.db_floor is None
+
+
+# === Iteration-2 review fixes ===
+
+@pytest.mark.asyncio
+async def test_optimize_config_uses_live_config_as_sweep_base(mcp_pool):
+    """S2/BE2: when targeting a live schedule, the sweep base + uplift baseline
+    must be the REAL live config, not the agent's `base` (so the human approves a
+    config that was actually backtested against live)."""
+    import json
+    import uuid
+
+    from backend.mcp.core.clock import RealClock
+    from backend.mcp.core.dispatch import CallContext, dispatch
+    from backend.mcp.core.registry import _REGISTRY
+
+    # seed a live schedule with a distinctive config
+    sid = "sched-" + uuid.uuid4().hex[:8]
+    live = {"account_id": "acc1", "leverage": 7, "stop_loss_pct": 4.0,
+            "take_profit_pct": 9.0, "capital_pct": 3.0, "direction": "straight",
+            "starting_capital": 1000.0}
+    async with mcp_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO scheduled_scans (id, name, schedule_type, schedule_config, "
+            "scan_config, status, created_at, updated_at) "
+            "VALUES ($1,'t','interval',$2::jsonb,$3::jsonb,'active',now(),now())",
+            sid, json.dumps({"interval_minutes": 60}),
+            json.dumps({"auto_trade_configs": [live]}),
+        )
+
+    seen_bases = []
+
+    class _Runner:
+        async def load_inputs(self, config):
+            seen_bases.append(dict(config))  # the load_cfg carries base
+            return ([{"scan_id": "s", "ticker": "BTCUSDT", "direction": "long", "score": 0.9}],
+                    {"BTCUSDT": [{"open_time": 1, "open": 100, "high": 101, "low": 99, "close": 100.5, "volume": 5}]},
+                    {})
+
+        async def run_one(self, config, signals, snapshot, instrument_info, *, deadline=None):
+            seen_bases.append(dict(config))
+            return {"net_profit_pct": float(config.get("leverage", 1)), "max_dd_pct": 8.0,
+                    "sharpe": 1.0, "total_trades": 40, "top_trade_pnl_share": 0.2, "expectancy": 1.0}
+
+    class _DB:
+        def __init__(self, pool):
+            self.pool = pool
+
+        async def get_scheduled_scan(self, schedule_id):
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM scheduled_scans WHERE id=$1", schedule_id)
+            return dict(row) if row else None
+
+    class _State:
+        def __init__(self, db, runner):
+            self.db = db
+            self.backtest_runner = runner
+            self.mcp_manager = None
+
+    class _Services:
+        def __init__(self, db, runner):
+            self._state = _State(db, runner)
+            self.db = db
+            self.backtest_runner = runner
+
+    db = _DB(mcp_pool)
+    runner = _Runner()
+    ctx = CallContext(principal="t", session_id="s", tier="BACKTEST", correlation_id=None,
+                      services=_Services(db, runner), clock=RealClock())
+    # agent sends a WEAK base (leverage 1) to try to make the winner look good
+    await dispatch(_REGISTRY["optimize_config"], {
+        "space": {"leverage": [10, 20]}, "objective": "total_return", "strategy": "grid",
+        "base": {"leverage": 1, "stop_loss_pct": 99.0},  # strawman
+        "date_range_start": "2026-01-01", "date_range_end": "2026-02-01",
+        "target_schedule_id": sid, "target_config_index": 0,
+    }, ctx, audit=lambda x: None)
+
+    # every base/combo the runner saw must carry the LIVE non-swept fields
+    # (stop_loss_pct=4.0 from live, NOT 99.0 from the agent strawman)
+    assert seen_bases, "runner never invoked"
+    assert all(b.get("stop_loss_pct") == 4.0 for b in seen_bases if "stop_loss_pct" in b), \
+        f"agent strawman leaked into the sweep: {[b.get('stop_loss_pct') for b in seen_bases]}"
+
+
+def test_preflight_optimizer_on_by_intent_not_availability():
+    """BE4: optimizer_on at preflight must reflect config intent even though the
+    optimizer's backing service (sweep_repo) isn't wired until _start_transport."""
+    from backend.mcp.core.registry import (
+        MCPConfigView,
+        ToolGroup,
+        resolve_enabled,
+    )
+
+    # a config that enables optimizer via per-tool override (preset style)
+    view = MCPConfigView(
+        capability_tier="BACKTEST",
+        enabled_groups=[],
+        enabled_tools={"optimize_config": True, "sweep_run": True},
+    )
+    # availability=True (intent) → optimizer tools resolve
+    resolved = resolve_enabled(view, available=lambda g: True, debug_allowed=False)
+    assert any(s.group is ToolGroup.OPTIMIZER for s in resolved), \
+        "optimizer intent not detected → SLI/shm preflight gate would be skipped"

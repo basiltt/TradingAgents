@@ -25,7 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { HIGH_RISK_FIELDS } from "./types";
+import { HIGH_RISK_FIELDS, robustnessTone } from "./types";
 import type { MCPProposal } from "./types";
 
 const TYPED_CONFIRM_WORD = "APPLY";
@@ -98,10 +98,12 @@ export function McpProposalReview({
                   "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em]",
                   robustness === "robust"
                     ? "bg-[var(--neu-accent)]/12 text-[var(--neu-accent)]"
-                    : "bg-warning/12 text-warning",
+                    : robustness === "fragile"
+                      ? "bg-destructive/12 text-destructive"
+                      : "bg-warning/12 text-warning",
                 )}
               >
-                {robustness === "robust" ? <ShieldCheck className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
+                {robustnessTone(robustness).good ? <ShieldCheck className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
                 Server verdict: {robustness}
               </span>
             ) : null}

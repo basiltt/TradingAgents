@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { robustnessTone } from "./types";
 import type { MCPProposal } from "./types";
 
 export function MCPProposals({
@@ -212,7 +213,9 @@ function ProposalCard({
       (("before" in diffRaw) ? {} : diffRaw)) as Record<string, unknown>;
   const verdict = (proposal.risk_verdict ?? {}) as Record<string, unknown>;
   const robustness = typeof verdict.robustness === "string" ? verdict.robustness : null;
-  const uplift = verdict.uplift as Record<string, unknown> | undefined;
+  const uplift = (verdict.uplift && typeof verdict.uplift === "object"
+    ? verdict.uplift
+    : undefined) as Record<string, unknown> | undefined;
 
   return (
     <div
@@ -231,10 +234,10 @@ function ProposalCard({
               <span
                 className={cn(
                   "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em]",
-                  robustness === "robust" ? "text-[var(--neu-accent)]" : "text-warning",
+                  robustnessTone(robustness).text,
                 )}
               >
-                {robustness === "robust" ? <ShieldCheck className="size-3" /> : <ShieldAlert className="size-3" />}
+                {robustnessTone(robustness).good ? <ShieldCheck className="size-3" /> : <ShieldAlert className="size-3" />}
                 {robustness}
               </span>
             ) : null}

@@ -130,6 +130,14 @@ export const PRESET_LABELS: Record<string, string> = {
   full: "Full (no live money)",
 };
 
+/** Map a robustness verdict to a tone — fragile (worst) must look distinct from
+ *  moderate, not lumped with it. Returns a text/accent color class. */
+export function robustnessTone(robustness: string | null): { text: string; good: boolean } {
+  if (robustness === "robust") return { text: "text-[var(--neu-accent)]", good: true };
+  if (robustness === "fragile") return { text: "text-destructive", good: false };
+  return { text: "text-warning", good: false }; // moderate / unknown
+}
+
 /** A persisted async sweep job (GET /api/v1/mcp/sweeps). */
 export interface MCPSweepJob {
   id: string;

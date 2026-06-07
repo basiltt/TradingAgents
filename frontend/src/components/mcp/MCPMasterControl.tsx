@@ -101,12 +101,13 @@ export function MCPMasterControl({
         </div>
       ) : null}
 
-      {status?.last_error ? (
+      {status?.last_error && !running ? (
         <div className="mt-3 flex items-start gap-2 rounded-[var(--neu-radius-md)] border border-destructive/30 bg-destructive/6 px-3.5 py-2.5">
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
           <div className="text-[11px] leading-relaxed text-[var(--neu-text-muted)]">
-            <span className="font-semibold text-destructive">Last error: </span>
+            <span className="font-semibold text-destructive">Last start error: </span>
             <code className="break-all">{status.last_error}</code>
+            <span className="ml-1 opacity-75">— resolve, then try enabling again.</span>
           </div>
         </div>
       ) : null}

@@ -46,6 +46,8 @@ def _validate_scan_source(scan_source: Optional[dict[str, Any]]) -> None:
 async def _live_target_config(db: Any, schedule_id: str, config_index: int) -> Optional[dict[str, Any]]:
     """Read the REAL live auto-trade config at (schedule_id, config_index) to use
     as a proposal's drift baseline — never trust the agent-supplied `base`."""
+    import json
+
     try:
         row = await db.get_scheduled_scan(schedule_id)
     except Exception:  # noqa: BLE001
@@ -53,6 +55,12 @@ async def _live_target_config(db: Any, schedule_id: str, config_index: int) -> O
     if not row:
         return None
     scan_config = row.get("scan_config") or {}
+    # asyncpg may return jsonb as a raw string when no codec is registered.
+    if isinstance(scan_config, str):
+        try:
+            scan_config = json.loads(scan_config)
+        except (ValueError, TypeError):
+            return None
     if not isinstance(scan_config, dict):
         return None
     configs = scan_config.get("auto_trade_configs") or []
@@ -166,6 +174,25 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
     instrument_info: dict[str, Any] = {}
     base_cfg = dict(args.base or {})
     _validate_scan_source(args.scan_source)
+
+    # When an apply-target is given, the sweep + uplift baseline MUST run against
+    # the REAL live config (not agent-supplied `base`). Otherwise the agent could
+    # send a weak `base` so the winner "beats" a strawman, and the human would
+    # approve metrics whose backtest used different non-swept fields than live.
+    # The sweep overlays swept dims onto this live base, so the winner's
+    # non-swept fields == live's, exactly what approval applies.
+    target_live_config: Optional[dict[str, Any]] = None
+    if args.target_schedule_id is not None and args.target_config_index is not None:
+        db_h = getattr(ctx.services, "db", None)
+        if db_h is not None and getattr(db_h, "pool", None) is not None:
+            target_live_config = await _live_target_config(
+                db_h, args.target_schedule_id, args.target_config_index
+            )
+            if target_live_config is not None:
+                # live config is the authoritative base; agent `base` only
+                # contributes fields the live config doesn't define.
+                base_cfg = {**base_cfg, **target_live_config}
+
     if args.date_range_start and args.date_range_end and hasattr(runner, "load_inputs"):
         load_cfg = {
             **base_cfg,
@@ -188,6 +215,15 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
             baseline = await runner.run_one(base_cfg, signals, snapshot, instrument_info, deadline=None)
         except Exception:  # noqa: BLE001 — no baseline → uplift falls back to absolute
             baseline = None
+
+    # Live-protection gate: the synchronous optimize_config runs a full grid of
+    # real backtests, so it must yield to the live-SLI breaker exactly like the
+    # async sweep_run path — otherwise it could starve order placement.
+    manager = getattr(getattr(ctx.services, "_state", None), "mcp_manager", None)
+    if manager is not None and getattr(manager, "mcp_permitted", None) is not None:
+        from backend.mcp.tools.optimizer.sweep_tools import _await_breaker_clear
+
+        await _await_breaker_clear(manager)
 
     try:
         # Offload combo CPU work to a spawn ProcessPool when supported (POSIX) so
@@ -252,13 +288,15 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
                     create_proposal_from_winner,
                 )
 
-                # The proposal baseline + drift-guard must be the REAL live config
-                # at the target, NOT agent-supplied `base` (which the agent could
-                # fabricate to make the diff look benign). Fetch it now; approval
-                # re-verifies drift against the live row atomically anyway.
-                prior_for_target = await _live_target_config(
-                    db, args.target_schedule_id, args.target_config_index
-                )
+                # Use the SAME live config the sweep ran against (fetched above)
+                # as the proposal baseline + drift baseline, so the diff the human
+                # reviews is exactly current-live → swept-winner. Re-fetch only if
+                # it wasn't captured (shouldn't happen on the target path).
+                prior_for_target = target_live_config
+                if prior_for_target is None:
+                    prior_for_target = await _live_target_config(
+                        db, args.target_schedule_id, args.target_config_index
+                    )
                 if prior_for_target is None:
                     raise ProposalApplyError(
                         "target schedule/config not found for proposal baseline"

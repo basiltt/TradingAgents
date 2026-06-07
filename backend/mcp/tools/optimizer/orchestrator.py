@@ -145,13 +145,16 @@ async def run_sweep_pooled(
     min_trades: int = 30,
     min_uplift_pct: float = 5.0,
     max_workers: int | None = None,
+    per_combo_timeout_s: float = 120.0,
 ) -> dict[str, Any]:
     """Run a sweep with combo CPU work offloaded to a spawn ProcessPool so the
     live event loop is never CPU-starved (FR-036). The PARENT collects each
-    worker's metrics (workers are DB-less). Falls back to nothing here — the
-    caller chooses pooled vs in-process via supports_process_pool().
+    worker's metrics (workers are DB-less). `per_combo_timeout_s` bounds each
+    worker via the engine's deadline AND a parent-side wait_for so one
+    pathological config can neither hang the gather nor leak unbounded compute.
     """
     import asyncio
+    import time
 
     from backend.mcp.tools.optimizer.runner_pool import _run_combo, make_sweep_pool
 
@@ -160,11 +163,19 @@ async def run_sweep_pooled(
     pool = make_sweep_pool(max_workers=max_workers)
     results: list[dict[str, Any]] = []
     try:
-        futures = [
-            loop.run_in_executor(pool, _run_combo, cfg, signals, snapshot, instrument_info)
-            for cfg in combos
-        ]
-        metrics_list = await asyncio.gather(*futures, return_exceptions=True)
+        async def _one(cfg):
+            deadline = time.monotonic() + per_combo_timeout_s
+            fut = loop.run_in_executor(pool, _run_combo, cfg, signals, snapshot, instrument_info, deadline)
+            try:
+                # Parent-side guard: a little beyond the worker deadline so the
+                # worker's own engine-cancel fires first; if the process is truly
+                # wedged, wait_for stops US blocking (the worker is shed on pool
+                # shutdown / cancel_futures).
+                return await asyncio.wait_for(fut, timeout=per_combo_timeout_s + 15.0)
+            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                return {}
+
+        metrics_list = await asyncio.gather(*[_one(c) for c in combos], return_exceptions=True)
         for cfg, metrics in zip(combos, metrics_list):
             m = metrics if isinstance(metrics, dict) else {}
             results.append({"config": cfg, "config_hash": config_hash(cfg), "metrics": m})

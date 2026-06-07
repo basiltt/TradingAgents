@@ -140,34 +140,48 @@ class MCPManager:
         return got
 
     async def _poll_slis(self) -> None:
-        """Feed the live-SLI breaker on a cadence. Reads whatever SLI source the
-        app exposes (app.state.mcp_live_slis: a callable or dict of {metric: value}),
-        comparing against bounds. Absent source → the breaker observes None
-        (fail-closed: trips OPEN, suspending sweeps). Runs until cancelled."""
+        """Feed the live-SLI breaker on a cadence. Always measures event-loop lag
+        in-process (a real, dependency-free signal: if the loop is starved, order
+        placement is too), and merges any richer SLIs the app exposes via
+        app.state.mcp_live_slis (callable or dict of {metric: value}). The breaker
+        trips OPEN when any bounded metric exceeds its bound, suspending sweeps.
+        Runs until cancelled."""
         bounds = {
             "loop_lag_ms": 250.0,
             "order_p95_ms": 500.0,
             "reconciler_cycle_ms": 2000.0,
             "pool_wait_ms": 500.0,
         }
+        interval = 2.0
         while True:
             try:
+                # 1. measure event-loop lag: schedule a wake-up `interval` out and
+                #    see how late it actually fires. Late wake = a busy/starved loop.
+                t0 = asyncio.get_running_loop().time()
+                await asyncio.sleep(interval)
+                lag_ms = max(0.0, (asyncio.get_running_loop().time() - t0 - interval) * 1000.0)
+                sample: dict[str, float] = {"loop_lag_ms": lag_ms}
+
+                # 2. merge any app-provided SLIs (defensive: only finite numbers).
                 src = getattr(self._app.state, "mcp_live_slis", None)
-                sample = src() if callable(src) else src
+                extra = src() if callable(src) else src
+                if isinstance(extra, dict):
+                    for k, v in extra.items():
+                        try:
+                            fv = float(v)
+                            if fv == fv and fv not in (float("inf"), float("-inf")):
+                                sample[k] = fv
+                        except (TypeError, ValueError):
+                            # unparsable metric → treat as a breach (fail-closed)
+                            sample[k] = bounds.get(k, 0.0) + 1.0
+
                 if self.breaker is not None:
-                    if sample is None:
-                        # No live SLI source wired yet → do NOT fail-closed on a
-                        # read-only deployment that never trades. Treat absence as
-                        # healthy ONLY when no sweep machinery exists; otherwise
-                        # the enable-preflight already refused (breaker_live_slis_absent).
-                        self.breaker.observe(healthy=True)
-                    else:
-                        self.breaker.observe_metrics(dict(sample), bounds=bounds)
+                    self.breaker.observe_metrics(sample, bounds=bounds)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 — never let SLI polling crash the manager
                 logger.exception("mcp_sli_poll_error")
-            await asyncio.sleep(2.0)
+                await asyncio.sleep(interval)
 
     async def _start_transport(self, cfg) -> None:
         from backend.mcp.core.audit import AuditWriter
@@ -183,6 +197,9 @@ class MCPManager:
         # multi-worker deployment — the single-writer audit chain requires one.
         if not await self._acquire_leadership():
             self.last_error = "not_mcp_leader"
+            # acquire() already closed its connection on a lost contention; null
+            # the handle so a later re-enable contends cleanly (no stale object).
+            self.leader = None
             return
 
         # Live-trading protection (FR-035/037): a reserved DB-pool floor caps

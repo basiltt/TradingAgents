@@ -93,7 +93,13 @@ async def _execute_sweep(
             )
         await repo.finish_job(sweep_id, status="completed")
     except asyncio.CancelledError:
-        await repo.finish_job(sweep_id, status="cancelled")
+        # Shield the status write from the cancellation so the job is reliably
+        # marked 'cancelled' (not left 'running'); recover_interrupted is the
+        # backstop if even this is interrupted by loop teardown.
+        try:
+            await asyncio.shield(repo.finish_job(sweep_id, status="cancelled"))
+        except Exception:  # noqa: BLE001
+            pass
         raise
     except Exception:  # noqa: BLE001 — record failure, never crash the loop
         await repo.finish_job(sweep_id, status="failed")

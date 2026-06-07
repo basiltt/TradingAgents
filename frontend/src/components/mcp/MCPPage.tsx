@@ -80,7 +80,18 @@ export function MCPPage({ onOpenProposal }: { onOpenProposal?: (id: string) => v
 
   function handleToggleTool(toolName: string, next: boolean) {
     if (!config) return;
-    const enabled_tools = { ...config.enabled_tools, [toolName]: next };
+    // Build the new override map from the REGISTRY's current enabled state (the
+    // source of truth that already reflects a just-applied preset), NOT from a
+    // possibly-stale config.enabled_tools. Seeding from stale config could erase
+    // a preset's per-tool overrides if a toggle lands in the post-preset refetch
+    // window (the registry/config are separate queries).
+    const base: Record<string, boolean> = {};
+    if (registry) {
+      for (const t of registry.tools) base[t.name] = t.enabled;
+    } else {
+      Object.assign(base, config.enabled_tools);
+    }
+    const enabled_tools = { ...base, [toolName]: next };
     patch.mutate({ patch: { enabled_tools }, rowVersion: config.row_version });
   }
 
