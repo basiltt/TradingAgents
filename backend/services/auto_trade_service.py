@@ -1337,10 +1337,15 @@ class AutoTradeExecutor:
             state.stopped_reason = "no_balance_captured"
             return None
 
-        # Price drift validation — skip if price already moved too far in signal direction
+        # Price drift validation — skip if price already moved too far in signal
+        # direction. SKIPPED for MR (mr_fade): the drift check is direction-aware on the
+        # LLM signal direction, but an MR trade places on the FADE side (decoupled from
+        # the signal), so checking drift against the signal axis would skip/admit the
+        # wrong entries (SD12 — price_drift is trend-only). The MR geometry guards
+        # (no-edge/fee-floor) already validate the MR entry against the mean.
         max_drift = cfg.get("max_price_drift_pct")
         analysis_price = result.get("analysis_price")
-        if max_drift and analysis_price:
+        if max_drift and analysis_price and not mr_fade:
             try:
                 current_price = await self._accounts.get_mark_price(account_id, symbol)
                 drift_pct = ((current_price - analysis_price) / analysis_price) * 100

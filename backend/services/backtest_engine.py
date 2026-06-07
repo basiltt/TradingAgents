@@ -683,8 +683,10 @@ class BacktestEngine:
         # symmetric abs() one. A buy whose price has DROPPED is a BETTER entry and is
         # admitted (production trades it); only a buy that already ran UP past the cap
         # is rejected. Uses the raw signal direction (production checks pre-reverse).
+        # SKIPPED for MR (is_mr): the check is on the signal axis, but MR places on the
+        # fade side (decoupled) — matches live's `not mr_fade` guard (SD12).
         max_drift = config.get("max_price_drift_pct")
-        if max_drift is not None:
+        if max_drift is not None and not is_mr:
             analysis_price = signal.get("analysis_price")
             if analysis_price and analysis_price > 0:
                 # Compare analysis_price against the price the trade would FILL at —

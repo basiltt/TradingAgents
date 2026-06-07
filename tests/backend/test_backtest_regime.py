@@ -235,3 +235,30 @@ def test_mr_cap_enforced_concurrent_not_generic_max_trades():
     res = eng.run(cfg, sigs, kl, None, None, None, ctx)
     assert res.filter_stats["signals_entered"] == 2  # capped at mr_max_trades, not 999
 
+
+def test_price_drift_skipped_for_mr_in_backtest():
+    # SD12 parity: price_drift is trend-only. An MR signal whose price drifted past the
+    # cap is still entered (the gate is skipped for MR, mirroring live's `not mr_fade`).
+    eng = BacktestEngine()
+    cfg = _config(mean_reversion_enabled=True, strategy_cohort="mean_reversion",
+                  mr_short_enabled=True, mr_mean_period=20, mr_mean_interval="1h",
+                  mr_leverage=10, mr_tight_stop_pct=6.0, mr_target_capture_pct=60.0,
+                  mr_min_edge_pct=1.0, max_price_drift_pct=1.0)
+    # analysis_price 130 vs fill ~100 -> a sell on the trend path drifts -23% (skipped),
+    # but MR fades short regardless and must be entered.
+    sig = {**_signal(ticker="ETH", direction="sell"), "analysis_price": 130.0}
+    ctx = {"s1": _ranging_ctx(means={("ETHUSDT", 20, "1h"): 98.0})}
+    res = eng.run(cfg, [sig], {"ETH": _klines(100.0)}, None, None, None, ctx)
+    assert res.filter_stats["signals_entered"] == 1
+    assert res.trades[0]["strategy_kind"] == "mean_reversion"
+
+
+def test_price_drift_still_applies_to_trend_in_backtest():
+    # Parity guard: drift still fires on the trend path (not globally removed).
+    eng = BacktestEngine()
+    cfg = _config(max_price_drift_pct=1.0)  # no regime feature -> trend
+    sig = {**_signal(ticker="ETH", direction="buy"), "analysis_price": 50.0}
+    # fill ~100 vs analysis 50 -> a buy drifted +100% > cap -> skipped
+    res = eng.run(cfg, [sig], {"ETH": _klines(100.0)})
+    assert res.filter_stats["signals_entered"] == 0
+

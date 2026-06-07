@@ -170,3 +170,37 @@ async def test_no_lookahead_excludes_in_progress_candle():
     # If the future-close (200) leaked in, the EMA would be pulled well above 100.
     assert abs(mean - 100.0) < 1e-6, f"look-ahead: future close leaked into mean ({mean})"
 
+
+@pytest.mark.asyncio
+async def test_mean_matches_live_period_plus_one_depth():
+    # Parity: the EMA mean must use exactly period+1 candles (what live fetches), since
+    # the EMA value depends on history depth. Build a RISING series so depth matters,
+    # then assert the computed mean equals compute_ema_mean over the last period+1
+    # CLOSED candles (not the full buffered series).
+    from backend.services.market_data import compute_ema_mean
+    period = 20
+    # 60 rising 1h candles ending well before the scan; closes = 100,101,...,159
+    eth = []
+    for i in range(60):
+        c = 100.0 + i
+        eth.append({"open_time": BASE - timedelta(hours=60) + timedelta(hours=i),
+                    "open": c, "high": c, "low": c, "close": c, "volume": 1.0})
+    btc = _hourly(50000.0, 60, start=BASE - timedelta(hours=60))
+    cache = _FakeKlineCache({"BTCUSDT": btc, "ETHUSDT": eth})
+    svc = _svc(cache)
+    cfg = {
+        "date_range_start": BASE, "date_range_end": BASE + timedelta(days=1),
+        "mean_reversion_enabled": True, "strategy_cohort": "mean_reversion",
+        "mr_mean_period": period, "mr_mean_interval": "1h",
+        "btc_vol_interval": "1h", "btc_vol_lookback_candles": 14,
+    }
+    sig = _signals("s1", "ETH", 180)  # BASE + 3h
+    out = await svc._build_scan_contexts(cfg, [sig])
+    got = out["s1"].get_mean("ETHUSDT", period, "1h")
+    # closed candles at/<= BASE+3h: all 60 fall before that; the LAST period+1 closes
+    closed = [k for k in eth if k["open_time"] + timedelta(hours=1) <= sig["signal_time"]]
+    expected = compute_ema_mean(closed[-(period + 1):], period)
+    assert got is not None and expected is not None
+    assert abs(got - expected) < 1e-9, f"mean depth diverges from live period+1 ({got} vs {expected})"
+
+

@@ -928,27 +928,47 @@ class BacktestService:
                 try:
                     mean_series[sym] = await self._kline_cache.get_klines(sym, mr_iv, win_start - mr_buffer, win_end)
                 except Exception:
+                    # Log + fail-closed (this symbol won't route MR), matching the
+                    # log-and-fallback convention used by _load_klines / _attach_buy_hold
+                    # rather than swallowing the error silently.
+                    logger.warning("backtest_scan_ctx_mr_fetch_failed", extra={"symbol": sym}, exc_info=False)
                     mean_series[sym] = []
 
         volatile_atr = float(config.get("regime_volatile_atr", 2.0))
         trend_ema = float(config.get("regime_trend_ema_dist_pct", 1.0))
 
         # A candle is usable for a decision at scan_time only once it has CLOSED, i.e.
-        # open_time + interval <= scan_time. Slicing on open_time <= scan_time would
-        # include the in-progress candle whose stored close is a FUTURE price (the bar
-        # hasn't ended at scan_time) — a classic look-ahead that contaminates the EMA
-        # mean's highest-weight term and the BTC regime label. This mirrors the engine's
-        # own next-bar-open fill convention (it fills at a bar strictly after the signal
-        # precisely to avoid using the same bar's not-yet-realized close).
+        # open_time + interval <= scan_time  <=>  open_time <= scan_time - interval.
+        # Slicing on open_time <= scan_time would include the in-progress candle whose
+        # stored close is a FUTURE price (the bar hasn't ended at scan_time) — a classic
+        # look-ahead that contaminates the EMA mean's highest-weight term and the BTC
+        # regime label. This mirrors the engine's own next-bar-open fill convention.
+        #
+        # Perf: the series are sorted ascending by open_time, so for each scan we binary-
+        # search the cutoff index (bisect) instead of an O(n) re-scan, and pass only the
+        # bounded tail the indicators need (regime: 2*lookback+1; mean: period). With S
+        # scans / B BTC candles / M symbols / C candles this turns O(S*(B + M*C)) into
+        # O(B + M*C + S*M*log C) — seconds at the 365-day / 3M-candle ceiling, not minutes.
+        from bisect import bisect_right
         from datetime import timedelta as _td2
         btc_closed_by = _td2(minutes=self._interval_minutes(btc_iv))
         mr_closed_by = _td2(minutes=self._interval_minutes(mr_iv))
+        btc_times = [k["open_time"] for k in btc_series]
+        btc_tail = 2 * btc_lb + 1                          # = live required_depth(lookback)
+        mean_times = {sym: [k["open_time"] for k in s] for sym, s in mean_series.items()}
+        # Live fetches EXACTLY period+1 candles for the EMA mean (auto_trade_service
+        # _lazy_mr_mean / market_data build_scan_context). The EMA value depends on how
+        # much history is passed (it seeds from the first `period` then iterates), so we
+        # must use the SAME depth as live, not the full buffered series — this is a
+        # parity fix as well as a perf one (the prior full-series slice diverged from live).
+        mr_tail = mr_period + 1
 
         contexts: dict[str, ScanContext] = {}
         for scan_id, scan_sigs in scans.items():
             scan_time = scan_sigs[0]["signal_time"]
             # BTC regime from candles that have CLOSED at/<= scan_time (no look-ahead).
-            btc_slice = [k for k in btc_series if k["open_time"] + btc_closed_by <= scan_time]
+            bi = bisect_right(btc_times, scan_time - btc_closed_by)
+            btc_slice = btc_series[max(0, bi - btc_tail):bi]
             btc_regime = _md.classify_regime(
                 btc_slice, lookback=btc_lb, volatile_atr=volatile_atr, trend_ema_dist_pct=trend_ema,
             )
@@ -957,8 +977,10 @@ class BacktestService:
 
             means: dict[tuple[str, int, str], float] = {}
             if mr_active:
+                cutoff = scan_time - mr_closed_by
                 for sym, series in mean_series.items():
-                    sl = [k for k in series if k["open_time"] + mr_closed_by <= scan_time]
+                    mi = bisect_right(mean_times[sym], cutoff)
+                    sl = series[max(0, mi - mr_tail):mi]
                     m = _md.compute_ema_mean(sl, mr_period)
                     if m is not None:
                         means[(sym, mr_period, mr_iv)] = m
