@@ -212,3 +212,26 @@ def test_f3_trend_cohort_uses_trend_path():
     res = eng.run(cfg, [_signal(direction="sell")], {"ETH": _klines(100.0)}, None, None, None, ctx)
     assert res.filter_stats["signals_entered"] == 1
     assert res.trades[0]["strategy_kind"] == "trend"
+
+
+# ── mr_max_trades parity: MR uses the concurrent MR cap, NOT generic max_trades=999 ──
+
+def test_mr_cap_enforced_concurrent_not_generic_max_trades():
+    eng = BacktestEngine()
+    # 3 MR signals in one scan, mr_max_trades=2 -> only 2 MR positions open even though
+    # the generic max_trades default is 999. Without the cap the backtest would open all 3.
+    cfg = _config(mean_reversion_enabled=True, strategy_cohort="mean_reversion",
+                  mr_short_enabled=True, mr_mean_period=20, mr_mean_interval="1h",
+                  mr_leverage=10, mr_tight_stop_pct=6.0, mr_target_capture_pct=60.0,
+                  mr_min_edge_pct=1.0, mr_max_trades=2, max_trades=999)
+    sigs = [
+        {**_signal(ticker="ETH", sid=1), "scan_id": "s1"},
+        {**_signal(ticker="BTC", sid=2), "scan_id": "s1"},
+        {**_signal(ticker="SOL", sid=3), "scan_id": "s1"},
+    ]
+    means = {("ETHUSDT", 20, "1h"): 98.0, ("BTCUSDT", 20, "1h"): 98.0, ("SOLUSDT", 20, "1h"): 98.0}
+    ctx = {"s1": _ranging_ctx(means=means)}
+    kl = {"ETH": _klines(100.0), "BTC": _klines(100.0), "SOL": _klines(100.0)}
+    res = eng.run(cfg, sigs, kl, None, None, None, ctx)
+    assert res.filter_stats["signals_entered"] == 2  # capped at mr_max_trades, not 999
+

@@ -140,3 +140,33 @@ async def test_degraded_when_btc_missing():
     }
     out = await svc._build_scan_contexts(cfg, [_signals("s1", "ETH", 180)])
     assert out["s1"].degraded is True
+
+
+@pytest.mark.asyncio
+async def test_no_lookahead_excludes_in_progress_candle():
+    # CRITICAL look-ahead guard: a candle whose bar has NOT closed at scan_time
+    # (open_time + interval > scan_time) carries a FUTURE close and must NOT feed the
+    # EMA mean. Build a flat-100 history, then make the LAST (in-progress) 1h candle
+    # spike to 200; a scan landing 30 min into that candle must compute the mean from
+    # the CLOSED candles only (== 100), never seeing the 200 future close.
+    eth = _hourly(100.0, 30, start=BASE - timedelta(hours=30))  # closed candles, flat 100
+    # in-progress candle: opens at BASE, would close at BASE+1h, close=200 (the future)
+    eth.append({"open_time": BASE, "open": 100.0, "high": 200.0, "low": 100.0,
+                "close": 200.0, "volume": 1.0})
+    btc = _hourly(50000.0, 60, start=BASE - timedelta(hours=60))
+    cache = _FakeKlineCache({"BTCUSDT": btc, "ETHUSDT": eth})
+    svc = _svc(cache)
+    cfg = {
+        "date_range_start": BASE, "date_range_end": BASE + timedelta(days=1),
+        "mean_reversion_enabled": True, "strategy_cohort": "mean_reversion",
+        "mr_mean_period": 20, "mr_mean_interval": "1h",
+        "btc_vol_interval": "1h", "btc_vol_lookback_candles": 14,
+    }
+    # scan 30 min into the in-progress candle (BASE + 30m) — that candle is NOT closed.
+    sig = _signals("s1", "ETH", 30)
+    out = await svc._build_scan_contexts(cfg, [sig])
+    mean = out["s1"].get_mean("ETHUSDT", 20, "1h")
+    assert mean is not None
+    # If the future-close (200) leaked in, the EMA would be pulled well above 100.
+    assert abs(mean - 100.0) < 1e-6, f"look-ahead: future close leaked into mean ({mean})"
+

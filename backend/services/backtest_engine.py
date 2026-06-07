@@ -577,6 +577,15 @@ class BacktestEngine:
             if strategy == "mean_reversion":
                 is_mr = True
                 self._mr_mean = mr_mean
+                # IR6 parity: enforce the consented MR CONCURRENT cap (mr_max_trades,
+                # default 2), NOT the generic max_trades (default 999). Live counts
+                # existing open MR positions (auto_trade_service _compute_mr_params); an
+                # MR cohort is all-MR, so every open position counts. Without this the
+                # backtest opens MR essentially every scan and wildly over-trades vs live.
+                mr_cap = int(config.get("mr_max_trades", 2))
+                if len(state.open_positions) >= mr_cap:
+                    state.signals_filtered += 1
+                    return False
 
         # 6. Signal age (strict only)
         if not relaxed:

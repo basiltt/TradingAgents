@@ -933,11 +933,22 @@ class BacktestService:
         volatile_atr = float(config.get("regime_volatile_atr", 2.0))
         trend_ema = float(config.get("regime_trend_ema_dist_pct", 1.0))
 
+        # A candle is usable for a decision at scan_time only once it has CLOSED, i.e.
+        # open_time + interval <= scan_time. Slicing on open_time <= scan_time would
+        # include the in-progress candle whose stored close is a FUTURE price (the bar
+        # hasn't ended at scan_time) — a classic look-ahead that contaminates the EMA
+        # mean's highest-weight term and the BTC regime label. This mirrors the engine's
+        # own next-bar-open fill convention (it fills at a bar strictly after the signal
+        # precisely to avoid using the same bar's not-yet-realized close).
+        from datetime import timedelta as _td2
+        btc_closed_by = _td2(minutes=self._interval_minutes(btc_iv))
+        mr_closed_by = _td2(minutes=self._interval_minutes(mr_iv))
+
         contexts: dict[str, ScanContext] = {}
         for scan_id, scan_sigs in scans.items():
             scan_time = scan_sigs[0]["signal_time"]
-            # BTC regime from candles strictly at/<= scan_time (no look-ahead).
-            btc_slice = [k for k in btc_series if k["open_time"] <= scan_time]
+            # BTC regime from candles that have CLOSED at/<= scan_time (no look-ahead).
+            btc_slice = [k for k in btc_series if k["open_time"] + btc_closed_by <= scan_time]
             btc_regime = _md.classify_regime(
                 btc_slice, lookback=btc_lb, volatile_atr=volatile_atr, trend_ema_dist_pct=trend_ema,
             )
@@ -947,7 +958,7 @@ class BacktestService:
             means: dict[tuple[str, int, str], float] = {}
             if mr_active:
                 for sym, series in mean_series.items():
-                    sl = [k for k in series if k["open_time"] <= scan_time]
+                    sl = [k for k in series if k["open_time"] + mr_closed_by <= scan_time]
                     m = _md.compute_ema_mean(sl, mr_period)
                     if m is not None:
                         means[(sym, mr_period, mr_iv)] = m
