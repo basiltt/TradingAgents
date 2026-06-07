@@ -110,7 +110,7 @@ function BudgetSelector({ value, onChange }: { value: string; onChange: (v: stri
           type="button"
           onClick={() => onChange(k)}
           className={cn(
-            "rounded-[var(--neu-radius-sm)] px-2.5 py-1 text-[11px] font-semibold transition-colors",
+            "rounded-[var(--neu-radius-sm)] px-2.5 py-1 text-[11px] font-semibold transition-colors neu-focus-ring",
             value === k
               ? "bg-[var(--neu-surface-raised)] text-[var(--neu-accent)] shadow-[var(--neu-shadow-soft)]"
               : "text-[var(--neu-text-muted)] hover:text-[var(--neu-text-strong)]",
@@ -137,14 +137,24 @@ function GroupSection({
   const enabledCount = tools.filter((t) => t.enabled).length;
   const groupTokens = tools.reduce((sum, t) => sum + t.est_tokens, 0);
   const selectedTokens = tools.filter((t) => t.enabled).reduce((sum, t) => sum + t.est_tokens, 0);
-  const [open, setOpen] = useState(enabledCount > 0);
+  // `open` is DERIVED: a group with enabled tools auto-expands (so a preset that
+  // enables tools in a collapsed group reveals them), unless the user has
+  // explicitly overridden it. No setState-in-effect — override is null until a
+  // click, then it wins. Tracking the override (not `open`) keeps it reactive to
+  // enabledCount changes from presets.
+  const [override, setOverride] = useState<boolean | null>(null);
+  const open = override ?? enabledCount > 0;
+
+  function toggleOpen() {
+    setOverride(!open);
+  }
 
   return (
     <div className="overflow-hidden rounded-[var(--neu-radius-md)] border border-[var(--neu-stroke-soft)]">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-3 bg-[var(--neu-surface-flat)] px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--neu-surface-inset)]"
+        onClick={toggleOpen}
+        className="flex w-full items-center justify-between gap-3 bg-[var(--neu-surface-flat)] px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--neu-surface-inset)] neu-focus-ring"
       >
         <div className="flex items-center gap-2.5">
           <ChevronDown className={cn("size-4 text-[var(--neu-text-muted)] transition-transform", !open && "-rotate-90")} />
@@ -252,7 +262,7 @@ function ToggleSwitch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 neu-focus-ring",
         checked ? "bg-[var(--neu-accent)]" : "bg-[var(--neu-surface-inset)]",
       )}
     >

@@ -61,7 +61,10 @@ export function useMCPProposals(status?: string) {
   return useQuery({
     queryKey: KEYS.proposals(status),
     queryFn: ({ signal }) => mcpApi.listProposals(status, signal),
-    staleTime: 5_000,
+    // Poll so a proposal the agent creates in the background appears without a
+    // manual refresh — keeps this list in sync with the polled pending count.
+    refetchInterval: 8_000,
+    staleTime: 4_000,
   });
 }
 
@@ -88,26 +91,37 @@ export function useToggleMCP() {
 
 /** Patch the persisted config with optimistic-concurrency (row_version). */
 export function usePatchMCPConfig() {
-  const invalidate = useInvalidateMCP();
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: {
       patch: Partial<Pick<MCPConfig, "enabled" | "capability_tier" | "enabled_groups" | "enabled_tools">>;
       rowVersion: number;
     }) => mcpApi.patchConfig(vars.patch, vars.rowVersion),
-    onSuccess: () => invalidate(),
+    // Seed the returned config (with the bumped row_version) synchronously so a
+    // rapid follow-up toggle uses the fresh version and does NOT self-inflict a
+    // 409 in the post-settle / pre-refetch window. Then invalidate to refresh
+    // the registry's derived enabled/selected state.
+    onSuccess: (data) => {
+      qc.setQueryData(KEYS.config, data);
+      qc.invalidateQueries({ queryKey: KEYS.registry });
+      qc.invalidateQueries({ queryKey: KEYS.status });
+    },
     onError: (err) => toast.error(mcpErrorMessage(err)),
   });
 }
 
 /** Apply a named preset (writes per-tool overrides + raises tier). */
 export function useApplyPreset() {
-  const invalidate = useInvalidateMCP();
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { preset: string; rowVersion: number }) =>
       mcpApi.applyPreset(vars.preset, vars.rowVersion),
-    onSuccess: () => {
+    onSuccess: (registry) => {
+      // The preset endpoint returns the fresh registry; seed it and refresh
+      // config so its row_version matches for the next mutation.
+      qc.setQueryData(KEYS.registry, registry);
+      qc.invalidateQueries({ queryKey: KEYS.config });
       toast.success("Preset applied");
-      invalidate();
     },
     onError: (err) => toast.error(mcpErrorMessage(err)),
   });

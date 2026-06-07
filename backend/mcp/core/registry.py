@@ -249,12 +249,20 @@ def _backtest_only(spec: ToolSpec) -> bool:
 
 
 def _standard(spec: ToolSpec) -> bool:
-    # read-only suite + backtest, excluding advanced primitives and live-money
-    return spec.safety_class is not SafetyClass.LIVE_MONEY and spec.group is not ToolGroup.ADVANCED
+    # read-only suite + backtest, excluding advanced primitives and live-money.
+    # Also exclude exchange-facing tools as defense-in-depth: a single
+    # mislabeled order/leverage tool must not be auto-selected by a broad preset.
+    return (
+        spec.safety_class is not SafetyClass.LIVE_MONEY
+        and spec.group is not ToolGroup.ADVANCED
+        and not spec.exchange_facing
+    )
 
 
 def _full(spec: ToolSpec) -> bool:
-    return spec.safety_class is not SafetyClass.LIVE_MONEY
+    # Everything except live-money and exchange-facing tools (defense-in-depth —
+    # see _standard). The capability-tier ceiling remains the primary gate.
+    return spec.safety_class is not SafetyClass.LIVE_MONEY and not spec.exchange_facing
 
 
 PRESETS: dict[str, Callable[[ToolSpec], bool]] = {

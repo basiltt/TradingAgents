@@ -36,6 +36,7 @@ import type { MCPProposal } from "./types";
 export function MCPProposals({
   proposals,
   isLoading,
+  isError,
   busyId,
   onApprove,
   onReject,
@@ -43,6 +44,7 @@ export function MCPProposals({
 }: {
   proposals: MCPProposal[];
   isLoading: boolean;
+  isError?: boolean;
   busyId: string | null;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
@@ -78,6 +80,14 @@ export function MCPProposals({
         {isLoading ? (
           <div className="flex items-center justify-center py-10 text-[var(--neu-text-muted)]">
             <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-[var(--neu-radius-md)] border border-dashed border-destructive/30 py-8 text-center">
+            <ShieldAlert className="size-6 text-destructive" />
+            <p className="text-sm font-medium text-[var(--neu-text-strong)]">Couldn't load proposals</p>
+            <p className="max-w-xs text-[11px] text-[var(--neu-text-muted)]">
+              The approval queue is temporarily unavailable. It will retry automatically.
+            </p>
           </div>
         ) : proposals.length === 0 ? (
           <EmptyState />

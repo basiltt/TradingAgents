@@ -250,7 +250,12 @@ async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
     """
     mgr = _manager(request)
     from backend.mcp.core.errors import MCPConflictError
-    from backend.mcp.core.registry import PRESETS, iter_specs, required_tier
+    from backend.mcp.core.registry import (
+        _TIER_RANK,
+        PRESETS,
+        iter_specs,
+        required_tier,
+    )
     from backend.mcp.discovery import discover_tools
 
     discover_tools()
@@ -261,9 +266,12 @@ async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
     selected = [s for s in iter_specs() if pred(s)]
     overrides = {s.name: (s in selected) for s in iter_specs()}
     # A preset is a complete intent: raise the tier ceiling to whatever the
-    # selection needs (presets exclude LIVE_MONEY, so this maxes at BACKTEST —
-    # it can never escalate to a money-capable tier).
-    tier = required_tier(selected)
+    # selection needs. Hard-clamp at BACKTEST so even a future buggy preset
+    # predicate can never write a money-capable tier from this endpoint —
+    # arming the live-money path must always go through the explicit tier
+    # control in PATCH /mcp/config, never a one-click preset.
+    want = required_tier(selected)
+    tier = want if _TIER_RANK.get(want, 99) <= _TIER_RANK["BACKTEST"] else "BACKTEST"
     try:
         await mgr.config_repo.update(
             {"enabled_tools": overrides, "enabled_groups": [], "capability_tier": tier},

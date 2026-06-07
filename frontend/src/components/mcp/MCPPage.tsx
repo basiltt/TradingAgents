@@ -12,11 +12,12 @@
  * build (feature-flagged off); we show a clear, non-alarming notice.
  */
 import { useState } from "react";
-import { AlertTriangle, Network, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertTriangle, Network, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { mcpApi, ApiError } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   mcpErrorMessage,
@@ -53,6 +54,9 @@ export function MCPPage() {
   const moduleAbsent =
     (configQ.error instanceof ApiError && configQ.error.status === 503) ||
     (statusQ.error instanceof ApiError && statusQ.error.status === 503);
+
+  // A non-503 config failure must surface as an error (not an infinite skeleton).
+  const configFailed = configQ.isError && !moduleAbsent;
 
   const config = configQ.data;
   const status = statusQ.data;
@@ -122,6 +126,8 @@ export function MCPPage() {
 
       {moduleAbsent ? (
         <ModuleAbsentNotice />
+      ) : configFailed ? (
+        <ErrorState message={mcpErrorMessage(configQ.error)} onRetry={() => configQ.refetch()} />
       ) : configQ.isLoading || !config ? (
         <LoadingState />
       ) : (
@@ -130,6 +136,7 @@ export function MCPPage() {
             config={config}
             status={status}
             pending={pending}
+            toggling={toggle.isPending}
             onToggle={(next) => toggle.mutate(next)}
           />
 
@@ -142,6 +149,8 @@ export function MCPPage() {
                   onToggleTool={handleToggleTool}
                   onApplyPreset={(preset) => applyPreset.mutate({ preset, rowVersion: config.row_version })}
                 />
+              ) : registryQ.isError ? (
+                <ErrorState message={mcpErrorMessage(registryQ.error)} onRetry={() => registryQ.refetch()} />
               ) : (
                 <Skeleton className="h-96 rounded-[var(--neu-radius-lg)]" />
               )}
@@ -149,6 +158,7 @@ export function MCPPage() {
               <MCPProposals
                 proposals={proposalsQ.data?.items ?? []}
                 isLoading={proposalsQ.isLoading}
+                isError={proposalsQ.isError}
                 busyId={proposalBusyId}
                 onApprove={(id) => runProposalAction(id, () => mcpApi.approveProposal(id), "Proposal applied to live config")}
                 onReject={(id) => runProposalAction(id, () => mcpApi.rejectProposal(id), "Proposal rejected")}
@@ -178,6 +188,22 @@ function LoadingState() {
         <Skeleton className="h-96 rounded-[var(--neu-radius-lg)]" />
         <Skeleton className="h-80 rounded-[var(--neu-radius-lg)]" />
       </div>
+    </div>
+  );
+}
+
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="neu-surface-base neu-surface-raised flex flex-col items-center justify-center gap-3 rounded-[var(--neu-radius-lg)] py-16 text-center shadow-[var(--neu-shadow-float)]">
+      <div className="flex size-12 items-center justify-center rounded-[var(--neu-radius-md)] bg-destructive/12 text-destructive">
+        <AlertTriangle className="size-6" />
+      </div>
+      <h2 className="text-lg font-bold text-[var(--neu-text-strong)]">Couldn't load the MCP console</h2>
+      <p className="max-w-md text-sm text-[var(--neu-text-muted)]">{message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry} className="mt-1">
+        <RefreshCw className="size-4" />
+        Retry
+      </Button>
     </div>
   );
 }

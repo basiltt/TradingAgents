@@ -7,7 +7,7 @@
  * the number of config proposals waiting for human approval.
  */
 import { useState } from "react";
-import { Power, ShieldAlert, Activity, Inbox } from "lucide-react";
+import { Loader2, Power, ShieldAlert, Activity, Inbox } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,11 +25,13 @@ export function MCPMasterControl({
   config,
   status,
   pending,
+  toggling,
   onToggle,
 }: {
   config: MCPConfig;
   status?: MCPStatus;
   pending: number;
+  toggling?: boolean;
   onToggle: (next: boolean) => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -77,9 +79,10 @@ export function MCPMasterControl({
             variant={running ? "destructive" : "default"}
             size="lg"
             onClick={handleClick}
-            disabled={!hasToken && enabling}
+            disabled={(!hasToken && enabling) || toggling}
             className="min-w-36"
           >
+            {toggling ? <Loader2 className="size-4 animate-spin" /> : null}
             {running ? "Disable server" : "Enable server"}
           </Button>
           {!hasToken && enabling ? (
