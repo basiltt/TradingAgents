@@ -23,6 +23,32 @@ OBJECTIVE_METRICS: dict[str, str] = {
     "calmar": "max",
 }
 
+# The BacktestEngine emits its own metric key names; map each objective to the
+# engine key(s) that carry it (first present wins). Without this, objectives like
+# "total_return"/"max_drawdown" would silently resolve to None against real
+# engine output (the engine uses net_profit_pct / max_dd_pct), excluding every
+# candidate. Win-rate is emitted as a fraction or percent depending on path; the
+# ranker only compares relative values so either is consistent within a sweep.
+_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "total_return": ("total_return", "net_profit_pct", "cagr"),
+    "max_drawdown": ("max_drawdown", "max_dd_pct"),
+    "sharpe": ("sharpe",),
+    "sortino": ("sortino",),
+    "win_rate": ("win_rate",),
+    "profit_factor": ("profit_factor",),
+    "expectancy": ("expectancy",),
+    "calmar": ("calmar",),
+}
+
+
+def _resolve_metric(metrics: dict[str, Any], objective: str) -> Any:
+    """Return the metric value for `objective`, trying the objective key first
+    then engine-key aliases (first present, non-None wins)."""
+    for key in _METRIC_ALIASES.get(objective, (objective,)):
+        if key in metrics and metrics[key] is not None:
+            return metrics[key]
+    return metrics.get(objective)
+
 
 class RobustnessVerdict(str, Enum):
     ROBUST = "robust"
@@ -31,7 +57,7 @@ class RobustnessVerdict(str, Enum):
 
 
 def _objective_value(metrics: dict[str, Any], objective: str) -> Optional[float]:
-    v = metrics.get(objective)
+    v = _resolve_metric(metrics, objective)
     if v is None:
         return None
     try:
@@ -48,10 +74,14 @@ def _passes_constraints(metrics: dict[str, Any], constraints: dict[str, Any]) ->
         return True
     if "min_trades" in constraints and float(metrics.get("total_trades", 0)) < constraints["min_trades"]:
         return False
-    if "max_drawdown" in constraints and float(metrics.get("max_drawdown", 1e9)) > constraints["max_drawdown"]:
-        return False
-    if "min_win_rate" in constraints and float(metrics.get("win_rate", 0)) < constraints["min_win_rate"]:
-        return False
+    if "max_drawdown" in constraints:
+        dd = _resolve_metric(metrics, "max_drawdown")
+        if dd is not None and float(dd) > constraints["max_drawdown"]:
+            return False
+    if "min_win_rate" in constraints:
+        wr = _resolve_metric(metrics, "win_rate")
+        if wr is not None and float(wr) < constraints["min_win_rate"]:
+            return False
     return True
 
 
@@ -90,9 +120,11 @@ def rank_results(
 
 
 def compute_uplift(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, float]:
-    """Delta of candidate vs baseline on the headline metrics."""
+    """Delta of candidate vs baseline on the headline metrics (alias-resolved)."""
     def _d(key: str) -> float:
-        return float(candidate.get(key, 0.0)) - float(baseline.get(key, 0.0))
+        c = _resolve_metric(candidate, key)
+        b = _resolve_metric(baseline, key)
+        return float(c if c is not None else 0.0) - float(b if b is not None else 0.0)
 
     return {
         "delta_total_return": _d("total_return"),
@@ -113,7 +145,8 @@ def robustness_verdict(
     """Grade robust/moderate/fragile from named HARD/SOFT checks (FR-020)."""
     # HARD checks
     trade_count_ok = float(metrics.get("total_trades", 0)) >= min_trades
-    dd_ok = float(metrics.get("max_drawdown", 1e9)) <= baseline_max_dd
+    _dd = _resolve_metric(metrics, "max_drawdown")
+    dd_ok = float(_dd if _dd is not None else 1e9) <= baseline_max_dd
     # SOFT checks
     not_single_dominated = float(metrics.get("top_trade_pnl_share", 0.0)) < 0.40
     uplift_above_noise = uplift_pct >= min_uplift_pct

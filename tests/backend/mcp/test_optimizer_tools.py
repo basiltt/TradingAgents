@@ -77,3 +77,45 @@ async def test_optimize_config_unavailable_without_runner():
     r = await dispatch(spec, {"space": {"leverage": [5]}, "objective": "sharpe"},
                        _ctx(None), audit=lambda x: None)
     assert r["isError"] is True
+
+
+class _RealishRunner:
+    """A runner that loads inputs once and runs each combo against them — exercises
+    the real-data optimize_config path (load_inputs + run_one + baseline)."""
+
+    def __init__(self):
+        self.load_calls = 0
+        self.seen_snapshots = []
+
+    async def load_inputs(self, config):
+        self.load_calls += 1
+        signals = [{"scan_id": "s1", "ticker": "BTCUSDT", "direction": "long", "score": 0.9}]
+        snapshot = {"BTCUSDT": [{"open_time": 1, "open": 100, "high": 101, "low": 99, "close": 100.5, "volume": 5}]}
+        return signals, snapshot, {"BTCUSDT": {"qty_step": 0.001}}
+
+    async def run_one(self, config, signals, snapshot, instrument_info, *, deadline=None):
+        # record that the LOADED snapshot (not empty) reached the runner
+        self.seen_snapshots.append(snapshot)
+        lev = float(config.get("leverage", 1))
+        return {"net_profit_pct": lev * 2, "max_dd_pct": 8.0, "sharpe": lev,
+                "total_trades": 40, "top_trade_pnl_share": 0.2, "expectancy": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_optimize_config_real_data_path_loads_inputs_once():
+    runner = _RealishRunner()
+    spec = _REGISTRY["optimize_config"]
+    r = await dispatch(spec, {
+        "space": {"leverage": [5, 10]}, "objective": "total_return", "strategy": "grid",
+        "base": {"leverage": 5}, "date_range_start": "2026-01-01", "date_range_end": "2026-02-01",
+        "starting_capital": 1000.0,
+    }, _ctx(runner), audit=lambda x: None)
+    assert r["isError"] is False
+    sc = r["structuredContent"]
+    # inputs loaded exactly once for the whole sweep (not per combo)
+    assert runner.load_calls == 1
+    # every run_one (baseline + 2 combos) saw the LOADED snapshot, never empty
+    assert runner.seen_snapshots and all("BTCUSDT" in s for s in runner.seen_snapshots)
+    # a winner is produced and ranked by the aliased total_return (net_profit_pct)
+    assert sc["winner"] is not None
+    assert sc["total_combos"] == 2

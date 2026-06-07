@@ -115,3 +115,39 @@ def test_robustly_beats_full_bar():
              "top_trade_pnl_share": 0.2, "total_return": 18.0}
     assert not robustly_beats(loser, baseline, objective="total_return",
                               min_trades=30, min_uplift_pct=5)
+
+
+def test_engine_metric_aliasing_resolves_objectives():
+    """Real BacktestEngine metric keys (net_profit_pct/max_dd_pct) must resolve to
+    the standard objective names — without this, total_return/max_drawdown
+    objectives silently excluded every candidate (the hollow-path bug)."""
+    from backend.mcp.tools.optimizer.ranker import _resolve_metric
+
+    engine_metrics = {"net_profit_pct": 12.5, "max_dd_pct": 8.0, "sharpe": 1.3,
+                      "win_rate": 0.6, "total_trades": 40}
+    assert _resolve_metric(engine_metrics, "total_return") == 12.5
+    assert _resolve_metric(engine_metrics, "max_drawdown") == 8.0
+    assert _resolve_metric(engine_metrics, "sharpe") == 1.3
+
+
+def test_rank_results_works_on_engine_metric_keys():
+    """rank_results ranks real-engine-shaped results by total_return via aliasing."""
+    results = [
+        {"config": {"leverage": 5}, "config_hash": "a",
+         "metrics": {"net_profit_pct": 5.0, "max_dd_pct": 10.0, "total_trades": 40}},
+        {"config": {"leverage": 10}, "config_hash": "b",
+         "metrics": {"net_profit_pct": 20.0, "max_dd_pct": 12.0, "total_trades": 40}},
+    ]
+    ranked = rank_results(results, objective="total_return")
+    assert ranked[0]["config_hash"] == "b"  # higher net_profit_pct wins
+
+
+def test_constraint_exclude_uses_engine_drawdown_key():
+    """A max_drawdown constraint must read the engine's max_dd_pct via alias."""
+    results = [
+        {"config": {}, "config_hash": "a",
+         "metrics": {"net_profit_pct": 30.0, "max_dd_pct": 25.0, "total_trades": 40}},
+    ]
+    # 25% DD breaches a 15% cap → excluded → no rows
+    ranked = rank_results(results, objective="total_return", constraints={"max_drawdown": 15.0})
+    assert ranked == []

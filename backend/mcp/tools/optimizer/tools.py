@@ -67,6 +67,14 @@ class OptimizeConfigIn(BaseModel):
     base: Optional[dict[str, Any]] = None
     n: int = Field(default=100, ge=1, le=5000)
     seed: int = 0
+    # Real-data execution window: when provided, the optimizer loads the historical
+    # signals + klines for this range ONCE and replays every combo against that
+    # in-sample snapshot via the real BacktestEngine. Absent → caller must inject a
+    # runner with its own data (test path).
+    date_range_start: Optional[str] = None
+    date_range_end: Optional[str] = None
+    scan_source: Optional[dict[str, Any]] = None
+    starting_capital: float = Field(default=1000.0, gt=0)
     # Optional apply target: when BOTH are provided and a robust winner beats the
     # live config, the tool PERSISTS a pending proposal for human approval. With
     # them absent, the tool is analysis-only (returns the winner, stores nothing).
@@ -109,19 +117,49 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
 
     from backend.mcp.tools.optimizer.orchestrator import run_sweep_inproc
 
-    # baseline = the current live config's metrics, if the runner can provide one
+    # Load the historical signals + klines + instrument params ONCE for the
+    # window, then replay every combo against that in-sample snapshot. When a
+    # date range is given and the runner can load inputs (the real
+    # BacktestService), use real data; otherwise fall back to empty inputs (the
+    # injected-runner test path provides its own).
+    signals: list[Any] = []
+    snapshot: dict[str, Any] = {}
+    instrument_info: dict[str, Any] = {}
+    base_cfg = dict(args.base or {})
+    if args.date_range_start and args.date_range_end and hasattr(runner, "load_inputs"):
+        load_cfg = {
+            **base_cfg,
+            "date_range_start": args.date_range_start,
+            "date_range_end": args.date_range_end,
+            "scan_source": args.scan_source or {},
+            "starting_capital": args.starting_capital,
+        }
+        try:
+            signals, snapshot, instrument_info = await runner.load_inputs(load_cfg)
+        except Exception as exc:  # noqa: BLE001 — surface as a clean validation error
+            raise MCPServiceUnavailableError(f"could not load backtest inputs: {exc}") from exc
+        base_cfg.setdefault("starting_capital", args.starting_capital)
+
+    # Real baseline: run the current/base config through the SAME harness so
+    # uplift is measured against an actual backtest, not a ctx stub.
     baseline = getattr(ctx, "baseline_metrics", None)
+    if baseline is None and (signals or snapshot):
+        try:
+            baseline = await runner.run_one(base_cfg, signals, snapshot, instrument_info, deadline=None)
+        except Exception:  # noqa: BLE001 — no baseline → uplift falls back to absolute
+            baseline = None
+
     try:
         result = await run_sweep_inproc(
             runner=runner,
             space=args.space,
-            base=args.base or {},
+            base=base_cfg,
             strategy=args.strategy,
             objective=args.objective,
             constraints=args.constraints,
-            signals=[],
-            snapshot={},
-            instrument_info={},
+            signals=signals,
+            snapshot=snapshot,
+            instrument_info=instrument_info,
             baseline_metrics=baseline,
             n=args.n,
             seed=args.seed,

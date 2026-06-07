@@ -256,6 +256,10 @@ def create_app() -> FastAPI:
         app.state.backtest_service = BacktestService(
             db=db, kline_cache=app.state.kline_cache_service,
         )
+        # The MCP optimizer's BacktestRunner adapter — BacktestService.run_one
+        # satisfies the Protocol, so the in-process sweep path uses the REAL
+        # engine (not a stub). Read lazily by ctx.services.backtest_runner.
+        app.state.mcp_backtest_runner = app.state.backtest_service
         # Recover any backtests left 'running'/'pending' by a previous process.
         try:
             await app.state.backtest_service.recover_stale_runs()
