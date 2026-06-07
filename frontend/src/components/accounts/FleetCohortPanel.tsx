@@ -50,7 +50,7 @@ export function FleetCohortPanel() {
   }, [load]);
 
   return (
-    <div className="rounded-xl border border-zinc-800/60 bg-zinc-900/30" data-testid="fleet-cohort-panel">
+    <div className="rounded-xl border border-border/60 bg-muted/20" data-testid="fleet-cohort-panel">
       <button
         type="button"
         onClick={toggle}
@@ -60,22 +60,22 @@ export function FleetCohortPanel() {
         data-testid="fleet-cohort-toggle"
       >
         <span>Fleet Cohorts (F3 — decorrelate strategy across accounts)</span>
-        <span className="text-zinc-500">{open ? "▲" : "▼"}</span>
+        <span className="text-muted-foreground">{open ? "▲" : "▼"}</span>
       </button>
       {open ? (
         <div id="fleet-cohort-body" className="px-4 pb-4">
-          {note ? <div className="mb-2 text-xs text-zinc-400" data-testid="fleet-note">{note}</div> : null}
+          {note ? <div className="mb-2 text-xs text-muted-foreground" data-testid="fleet-note">{note}</div> : null}
           {loadError ? (
             <div className="text-sm text-red-400 py-3 flex items-center gap-3" data-testid="fleet-load-error">
               Failed to load the fleet.
-              <button type="button" onClick={() => void load()} className="px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-200">
+              <button type="button" onClick={() => void load()} className="px-2 py-1 rounded border border-border hover:bg-muted/50 text-foreground">
                 Retry
               </button>
             </div>
           ) : loaded ? (
             <FleetCohortView accounts={accounts} onAssign={onAssign} />
           ) : (
-            <div className="text-sm text-zinc-500 py-4">Loading fleet…</div>
+            <div className="text-sm text-muted-foreground py-4">Loading fleet…</div>
           )}
         </div>
       ) : null}

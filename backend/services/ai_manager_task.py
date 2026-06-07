@@ -1154,11 +1154,15 @@ class AIManagerTask:
 
     async def _build_graph_state(self) -> Dict[str, Any]:
         # FR-052/AC-015: refresh the MR-position exclusion set before evaluating so the
-        # LLM never sees (and never acts on) mean-reversion positions. Fail-open.
+        # LLM never sees (and never acts on) mean-reversion positions. On a transient
+        # query error keep the LAST-KNOWN set (do NOT blank it) so the exclusion stays
+        # in force rather than failing open. The query is cheap and indexed, but it only
+        # ever returns rows for accounts that actually run MR; trend-only accounts get an
+        # empty set and the snapshot filter becomes a no-op.
         try:
             self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
         except Exception:
-            self._mr_symbols = set()
+            self._log.debug("get_open_mr_symbols failed; retaining last-known MR set")
         episodic = []
         patterns = []
         decision_count = 100

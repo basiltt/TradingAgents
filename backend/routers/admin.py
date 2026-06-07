@@ -11,17 +11,20 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from backend.schemas import KillSwitchRequest
 from backend.services import kill_switch as _ks
+from backend.services.features import KILL_SWITCH_FEATURES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
 
-# Feature keys the kill switch understands (master + per-feature). Rejecting unknown
-# names stops a typo from silently creating a no-op row that looks like protection.
-_VALID_FEATURES = {"__all__", "f1", "f2", "f2_long"}
+# Feature keys the kill switch understands (from the single registry). Rejecting
+# unknown names stops a typo from silently creating a no-op row that looks like
+# protection.
+_VALID_FEATURES = KILL_SWITCH_FEATURES
 
 
 def _get_db(request: Request):
@@ -33,10 +36,18 @@ def _get_db(request: Request):
 
 @router.get("/admin/kill-switch")
 async def get_kill_switches(request: Request):
-    """Return the current feature kill-switch map ({feature_name: killed})."""
+    """Return the current feature kill-switch state in the operator-facing sense.
+
+    Mirrors POST's polarity: ``enabled`` (True = feature allowed to run) rather than
+    the raw stored ``killed`` column, so a client never has to invert. ``killed`` is
+    included too for transparency.
+    """
     db = _get_db(request)
     kill = await _ks.read_kill_switches(db)
-    return {"kill_switches": kill}
+    return {
+        "kill_switches": {feature: {"enabled": not killed, "killed": killed}
+                          for feature, killed in kill.items()},
+    }
 
 
 @router.post("/admin/kill-switch")
@@ -47,15 +58,16 @@ async def set_kill_switch(request: Request, body: KillSwitchRequest):
     state so the caller can confirm the flip took.
     """
     if body.feature_name not in _VALID_FEATURES:
-        raise HTTPException(
+        return JSONResponse(
+            {"detail": f"Unknown feature_name '{body.feature_name}'. Valid: {sorted(_VALID_FEATURES)}",
+             "code": "VALIDATION_ERROR"},
             422,
-            detail=f"Unknown feature_name '{body.feature_name}'. Valid: {sorted(_VALID_FEATURES)}",
         )
     db = _get_db(request)
     killed = not body.enabled  # operator 'enabled' == not killed
     ok = await _ks.set_kill_switch(db, body.feature_name, killed, updated_by=body.updated_by or "admin")
     if not ok:
-        raise HTTPException(500, detail="Failed to persist kill switch")
+        return JSONResponse({"detail": "Failed to persist kill switch", "code": "PERSIST_ERROR"}, 500)
     logger.warning(
         "feature_kill_switch_flipped",
         extra={"feature": body.feature_name, "enabled": body.enabled, "by": body.updated_by or "admin"},

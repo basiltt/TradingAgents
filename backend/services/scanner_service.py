@@ -337,6 +337,32 @@ class ScannerService:
             except Exception:
                 pass
 
+    async def _resolve_account_cohorts(self, auto_configs: List[Dict[str, Any]]) -> None:
+        """Merge each account's STORED strategy_cohort into its per-scan config (F3/FR-040).
+
+        Without this the fleet-roster bulk-assign (which writes trading_accounts.
+        strategy_cohort) would be inert: the executor only reads cfg["strategy_cohort"],
+        which defaults to "trend". Resolution precedence is per-scan override > stored
+        account field > default (see features.resolve_cohort). Fail-soft: a lookup error
+        leaves the per-scan value untouched (never downgrades a chosen cohort). Mutates
+        cfg in place — done once per scan, before routing/blacklist/context.
+        """
+        if not self._db:
+            return
+        from backend.services import features as _feat
+        for cfg in auto_configs:
+            if not isinstance(cfg, dict):
+                continue
+            acct_id = cfg.get("account_id")
+            if not acct_id:
+                continue
+            try:
+                account = await self._db.get_account(acct_id)
+            except Exception:
+                continue
+            stored = (account or {}).get("strategy_cohort")
+            cfg["strategy_cohort"] = _feat.resolve_cohort(cfg.get("strategy_cohort"), stored)
+
     async def _set_executor_scan_context(self, executor, auto_configs: List[Dict[str, Any]]) -> None:
         """Read the kill-switch unconditionally + build the scan-time ScanContext and
         attach it to the executor. Safe no-op for the default (all-off) fleet."""
@@ -475,6 +501,9 @@ class ScannerService:
         # Initialize auto-trade executor if configs provided
         auto_configs = config.get("auto_trade_configs")
         if auto_configs and self._accounts:
+            # F3/FR-040: settle each account's effective cohort (stored field merged
+            # under the per-scan override) BEFORE anything cohort-dependent runs.
+            await self._resolve_account_cohorts(auto_configs)
             # Compute adaptive blacklist from signal_performance (pre-inject into configs)
             if self._db:
                 adaptive_bl = await self._compute_adaptive_blacklist(auto_configs, "trend")
@@ -702,6 +731,8 @@ class ScannerService:
             # Restore auto-trade executor on resume — use prior results to restore trade counters
             auto_configs = config.get("auto_trade_configs")
             if auto_configs and self._accounts:
+                # F3/FR-040: settle stored cohort on resume too (parity with start path).
+                await self._resolve_account_cohorts(auto_configs)
                 # Pre-classify remaining symbols for sector service
                 if self._sector_service:
                     try:

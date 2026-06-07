@@ -107,15 +107,15 @@ export const FleetCohortView = memo(function FleetCohortView({ accounts, onAssig
       ) : null}
 
       <div className="flex items-center gap-2 text-xs">
-        <button type="button" onClick={selectAll} className="px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800">Select all</button>
-        <button type="button" onClick={clearSel} className="px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800">Clear</button>
-        <span className="text-zinc-500" data-testid="selected-count">{selected.size} selected</span>
-        <span className="ml-auto text-zinc-500">
+        <button type="button" onClick={selectAll} className="px-2 py-1 rounded border border-border hover:bg-muted/50">Select all</button>
+        <button type="button" onClick={clearSel} className="px-2 py-1 rounded border border-border hover:bg-muted/50">Clear</button>
+        <span className="text-muted-foreground" data-testid="selected-count">{selected.size} selected</span>
+        <span className="ml-auto text-muted-foreground">
           Trend {concentration.trend} · Mean-Rev {concentration.mean_reversion}
         </span>
       </div>
 
-      <ul className="divide-y divide-zinc-800/60 rounded-lg border border-zinc-800/60">
+      <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
         {accounts.map((a) => {
           const cohort: Cohort = a.strategy_cohort === "mean_reversion" ? "mean_reversion" : "trend";
           return (
@@ -127,7 +127,7 @@ export const FleetCohortView = memo(function FleetCohortView({ accounts, onAssig
                 onChange={() => toggle(a.id)}
               />
               <span className="flex-1 truncate">{a.label}</span>
-              <span className="text-[10px] uppercase tracking-wider text-zinc-400" data-testid="fleet-row-cohort">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground" data-testid="fleet-row-cohort">
                 {cohort === "mean_reversion" ? "Mean-Rev" : "Trend"}
               </span>
             </li>
@@ -140,7 +140,7 @@ export const FleetCohortView = memo(function FleetCohortView({ accounts, onAssig
           aria-label="cohort to apply"
           value={pendingCohort ?? ""}
           onChange={(e) => setPendingCohort((e.target.value || null) as Cohort | null)}
-          className="text-sm bg-zinc-900 border border-zinc-700 rounded px-2 py-1"
+          className="text-sm bg-background border border-border rounded px-2 py-1"
         >
           <option value="">Apply cohort…</option>
           <option value="trend">Trend</option>
@@ -151,7 +151,7 @@ export const FleetCohortView = memo(function FleetCohortView({ accounts, onAssig
           data-testid="apply-cohort"
           disabled={!pendingCohort || selected.size === 0 || busy}
           onClick={confirmAssign}
-          className="text-sm px-3 py-1 rounded bg-sky-600 text-white disabled:opacity-40"
+          className="text-sm px-3 py-1 rounded bg-primary text-primary-foreground disabled:opacity-40"
         >
           {busy ? "Applying…" : `Apply to ${selected.size}`}
         </button>

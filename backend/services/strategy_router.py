@@ -47,9 +47,11 @@ def feature_for(cohort: str) -> str:
     """Kill-switch feature key for an account's cohort.
 
     trend-cohort accounts are gated by the "f1" kill; mean_reversion-cohort by "f2".
-    (The "f2_long" kill is checked separately on the long-fade path.)
+    (The "f2_long" kill is checked separately on the long-fade path.) Delegates to the
+    single feature registry so the key set can't drift across modules.
     """
-    return "f2" if cohort == "mean_reversion" else "f1"
+    from backend.services.features import feature_for_cohort
+    return feature_for_cohort(cohort)
 
 
 def select_adaptive_blacklist(cfg: dict, *, mr_fade: bool):

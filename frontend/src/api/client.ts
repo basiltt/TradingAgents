@@ -1380,7 +1380,7 @@ export const tradesApi = {
   },
 
   /** GET /api/v1/trades/stats — aggregate trade statistics across accounts. */
-  getStats: (accountIds?: string[], signal?: AbortSignal, byStrategy?: boolean) => {
+  getStats: (accountIds?: string[], byStrategy?: boolean, signal?: AbortSignal) => {
     const sp = new URLSearchParams();
     if (accountIds?.length) sp.set("account_id", accountIds.join(","));
     if (byStrategy) sp.set("by_strategy", "true");

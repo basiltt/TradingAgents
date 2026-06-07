@@ -85,14 +85,14 @@ async def check_f2_long_breaker(db: Any, account_id: str, *, updated_by: str = "
     if not breaker_should_trip(pnl_pcts):
         return False
     logger.error(
-        "F2_LONG_BREAKER_TRIPPED: account=%s rolling_drawdown=%.2f%% over %d trades -> disabling f2_long",
-        account_id, sum(pnl_pcts), len(pnl_pcts),
+        "f2_long_breaker_tripped",
+        extra={"account_id": account_id, "rolling_drawdown_pct": sum(pnl_pcts), "trades": len(pnl_pcts)},
     )
     persisted = await kill_switch.set_kill_switch(db, "f2_long", True, updated_by=updated_by)
     if not persisted:
         # The in-scan kill still applies (caller flips the local kill dict), but the
         # next scan's reader won't see it. Surface loudly so the gap is visible.
-        logger.error("f2_long_breaker_kill_write_failed account=%s", account_id)
+        logger.error("f2_long_breaker_kill_write_failed", extra={"account_id": account_id})
     return True
 
 

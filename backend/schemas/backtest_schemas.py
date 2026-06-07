@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, ClassVar, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -83,6 +83,35 @@ class BacktestCreateRequest(BaseModel):
     adaptive_blacklist_min_trades: int = Field(default=5, ge=1, le=100)
     adaptive_blacklist_max_win_rate: float = Field(default=30.0, ge=0, le=100)
     adaptive_blacklist_lookback_hours: int = Field(default=48, ge=1, le=720)
+
+    # Regime-multistrategy (F1/F2/F3) fields are NOT supported by the v1 backtester
+    # (regime-segmented backtest validation is deferred to v2). Rather than silently
+    # dropping them (extra="ignore" default) and running a misleading plain-trend
+    # backtest, reject them loudly so a caller knows the result wouldn't reflect the
+    # requested config. Targeted (not extra="forbid") so other unknown keys still pass.
+    _REGIME_FIELDS: ClassVar[frozenset[str]] = frozenset({
+        "regime_filter_enabled", "session_filter_enabled", "session_blocked_hours_utc",
+        "session_allowed_hours_utc", "btc_vol_filter_enabled", "btc_vol_min_threshold",
+        "btc_vol_max_threshold", "btc_vol_interval", "btc_vol_lookback_candles",
+        "mean_reversion_enabled", "mr_regime", "mr_mean_period", "mr_mean_interval",
+        "mr_target_capture_pct", "mr_tight_stop_pct", "mr_time_stop_minutes",
+        "mr_min_edge_pct", "mr_extreme_min_abs_score", "mr_capital_pct", "mr_leverage",
+        "mr_max_trades", "mr_short_enabled", "mr_long_enabled", "mr_long_ack_requested",
+        "strategy_cohort", "regime_staleness_minutes", "regime_volatile_atr",
+        "regime_trend_ema_dist_pct",
+    })
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_regime_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            present = cls._REGIME_FIELDS.intersection(data.keys())
+            if present:
+                raise ValueError(
+                    "Regime multi-strategy fields are not supported by the backtester "
+                    f"(deferred to v2): {sorted(present)}. Remove them to run a backtest."
+                )
+        return data
 
     @model_validator(mode="after")
     def validate_dates(self) -> "BacktestCreateRequest":

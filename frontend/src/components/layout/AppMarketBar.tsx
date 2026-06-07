@@ -75,7 +75,7 @@ export function AppMarketBar() {
 
   const tradesQuery = useQuery({
     queryKey: ["shell", "trade-stats"],
-    queryFn: ({ signal }) => tradesApi.getStats(undefined, signal),
+    queryFn: ({ signal }) => tradesApi.getStats(undefined, undefined, signal),
     staleTime: 15_000,
     refetchInterval: 20_000,
     retry: 1,

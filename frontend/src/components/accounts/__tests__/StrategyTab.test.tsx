@@ -25,7 +25,7 @@ describe("StrategyTab", () => {
     getStats.mockResolvedValue({ by_strategy: [] });
     render(<StrategyTab accountId="a1" />);
     await waitFor(() => expect(getStats).toHaveBeenCalled());
-    const [ids, , byStrategy] = getStats.mock.calls[0];
+    const [ids, byStrategy] = getStats.mock.calls[0];
     expect(ids).toEqual(["a1"]);
     expect(byStrategy).toBe(true);
   });

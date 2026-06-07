@@ -94,4 +94,6 @@ async def test_get_returns_current_state(client, db):
     resp = await client.get("/api/v1/admin/kill-switch")
     assert resp.status_code == 200
     ks = resp.json()["kill_switches"]
-    assert ks["f2_long"] is True and ks["f1"] is False
+    # operator-facing 'enabled' mirrors POST polarity; 'killed' included for transparency
+    assert ks["f2_long"] == {"enabled": False, "killed": True}
+    assert ks["f1"] == {"enabled": True, "killed": False}

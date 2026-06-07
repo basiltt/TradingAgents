@@ -396,8 +396,8 @@ class TradeListResponse(BaseModel):
 
 class StrategyDirectionStats(BaseModel):
     """Per-(strategy_kind, direction) PnL slice for the per-strategy view (AC-016)."""
-    strategy_kind: str
-    direction: str  # "long" | "short"
+    strategy_kind: Literal["trend", "mean_reversion"]
+    direction: Literal["long", "short"]
     count: int
     total_pnl: float
     avg_pnl: float
@@ -775,8 +775,10 @@ class KillSwitchRequest(BaseModel):
 
     ``enabled`` is the operator-facing sense (True = feature allowed to run); the
     persistence layer stores the inverse ``killed``. ``feature_name`` is validated
-    against the known feature set in the router.
+    against the known feature set in the router. ``extra="forbid"`` so a typo (e.g.
+    ``enable``) is a 422 rather than a silent no-op that looks like protection.
     """
+    model_config = ConfigDict(extra="forbid")
     feature_name: str = Field(..., min_length=1, max_length=32)
     enabled: bool
     updated_by: Optional[str] = Field(None, max_length=64)

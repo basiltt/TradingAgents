@@ -66,6 +66,20 @@ class TestBacktestCreateRequest:
                 scan_source=ScanSource(mode="date_range"),
             )
 
+    def test_rejects_regime_fields_instead_of_silently_dropping(self):
+        # Regime F1/F2/F3 fields are deferred to v2; the backtester must 422 rather
+        # than silently ignore them and run a misleading plain-trend backtest.
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        for bad in ("mean_reversion_enabled", "regime_filter_enabled", "strategy_cohort"):
+            with pytest.raises(ValidationError, match="not supported by the backtester"):
+                BacktestCreateRequest(
+                    starting_capital=10000.0,
+                    date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+                    scan_source=ScanSource(mode="date_range"),
+                    **{bad: True if bad != "strategy_cohort" else "mean_reversion"},
+                )
+
     def test_rejects_leverage_above_125(self):
         from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
         with pytest.raises(ValidationError):

@@ -1237,6 +1237,16 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     (46, "CREATE TABLE IF NOT EXISTS f2_long_ack (account_id TEXT PRIMARY KEY, acked_at TIMESTAMPTZ NOT NULL, acked_leverage INT NOT NULL, acked_capital_pct DOUBLE PRECISION NOT NULL, acked_max_trades INT NOT NULL, updated_by TEXT)"),
     (47, "CREATE TABLE IF NOT EXISTS pending_trade_intents (account_id TEXT NOT NULL, symbol TEXT NOT NULL, side TEXT NOT NULL, strategy_kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (account_id, symbol, side))"),
     (48, "CREATE TABLE IF NOT EXISTS feature_kill_switches (feature_name TEXT PRIMARY KEY, killed BOOLEAN NOT NULL DEFAULT false, updated_by TEXT, updated_at TIMESTAMPTZ)"),
+    # 49: partial+sorted index for the FR-065 F2-long drawdown breaker. Its query is
+    # account_id= + strategy_kind='mean_reversion' + side='Buy' + status='closed' +
+    # parent_trade_id IS NULL + ORDER BY closed_at DESC LIMIT 20. Without a sorted
+    # column the breaker top-N sorts every closed MR-Buy row each safety cycle; this
+    # partial index makes it a 20-row index scan. Small (only MR-long closes qualify).
+    (49, "CREATE INDEX IF NOT EXISTS idx_trades_f2_breaker ON trades(account_id, closed_at DESC) WHERE strategy_kind = 'mean_reversion' AND side = 'Buy' AND status = 'closed' AND parent_trade_id IS NULL AND realized_pnl_pct IS NOT NULL"),
+    # 50: lead-with-closed_at index for the strategy-scoped adaptive blacklist (FR-030),
+    # whose driving predicate is signal_performance.closed_at > NOW()-interval. Existing
+    # sp indexes lead with account_id/symbol, so the lookback window scanned the table.
+    (50, "CREATE INDEX IF NOT EXISTS idx_sp_closed_at ON signal_performance(closed_at DESC)"),
 ]
 
 

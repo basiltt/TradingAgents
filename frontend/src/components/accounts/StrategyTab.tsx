@@ -21,7 +21,7 @@ export function StrategyTab({ accountId }: { accountId: string }) {
     setError(false);
     (async () => {
       try {
-        const res = await tradesApi.getStats([accountId], ctrl.signal, true);
+        const res = await tradesApi.getStats([accountId], true, ctrl.signal);
         if (!ctrl.signal.aborted) setRows(res.by_strategy ?? []);
       } catch {
         if (!ctrl.signal.aborted) {
