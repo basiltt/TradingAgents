@@ -229,4 +229,4 @@ __marimo__/
 .worktrees/
 
  # Ignore all node_modules even if it is in child directories
-node_modules/
+node_modules/.tmp_db_backup/
