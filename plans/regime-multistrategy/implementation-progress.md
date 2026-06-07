@@ -343,3 +343,22 @@ is fail-safe (DB CHECK + Literal already gate input); a 3rd-strategy enum refact
 Validation: 243 backend regime+adjacent + 671 frontend + 394 AI/scanner all green;
 golden snapshot byte-identical; migrations ordered/unique (max=50); tsc clean.
 Commits: 1c6c515 (fixes), c7f23d6 (e2e cohort test).
+
+## Holistic Review Round 3 (iteration 2) — 2026-06-07
+
+Adversarial re-review specifically targeting the PRIOR fixes (a fix can introduce a
+worse bug). Three reviewers: adversarial-on-the-fixes, concurrency, test-quality.
+
+| Sev | Finding | Fix |
+|-----|---------|-----|
+| HIGH | Cohort precedence (my own fix) made explicit per-scan "trend" un-expressible — silently routed as stored MR | tri-state: cfg cohort None=inherit; any explicit value overrides; frontend Inherit/Trend/Mean-Rev selector; executor coerces None->trend |
+| MED-HIGH | _resolve_account_cohorts was N+1 (get_account x21/scan, on trend-only fleets too) | one batched list_accounts() |
+| MED | AI-manager emergency fast-close (bypasses LLM) force-closed losing MR positions; cold-start window | exclude _mr_symbols in _check_emergency_close + prime on cold start (_mr_symbols_primed) |
+| MED | pending-intent delete could be skipped by cancel/timeout -> stale intent mislabels later orphan | asyncio.shield the delete |
+| TEST | FR-066 stamping + cohort routing tests MIRRORED prod logic | extracted features.apply_session_override; tests import real code; e2e drives real _try_trade |
+| TEST | FleetCohort 70% boundary, StrategyTab row content, AI fail-closed retain untested | added all |
+
+Documented acceptable (not changed): admin GET/POST nesting cosmetic; f2_long_ack revoke-mid-scan window (seconds, operator action); mid-scan kill needs cancel_scan (runbook).
+
+Validation: 283 backend regime + 386 AI/scanner + 673 frontend all green; golden
+snapshot byte-identical; tsc clean. Commit 1dc2ce9.
