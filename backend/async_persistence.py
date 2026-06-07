@@ -773,6 +773,176 @@ INSERT INTO debug_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING
 """
 
 
+async def _migrate_mcp_v43(conn) -> None:
+    """v43 — MCP server tables (config/sweep_jobs/sweep_results/audit/proposals/tokens).
+
+    Additive, all-in-one-version (atomic rollback via the runner's per-version
+    transaction). All-new tables; the circular sweep FK is added via a guarded
+    ALTER (Postgres has no ADD CONSTRAINT IF NOT EXISTS for FKs).
+    """
+    # 1. mcp_config singleton
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_config (
+            id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+            enabled BOOLEAN NOT NULL DEFAULT false,
+            bind_host TEXT NOT NULL DEFAULT '127.0.0.1',
+            access_token_hash TEXT,
+            capability_tier TEXT NOT NULL DEFAULT 'READ_ONLY'
+                CHECK (capability_tier IN ('READ_ONLY','BACKTEST','MUTATING_DEMO','LIVE_MONEY')),
+            enabled_groups JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(enabled_groups)='array'),
+            enabled_tools JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(enabled_tools)='object'),
+            safe_mode_flags JSONB NOT NULL
+                DEFAULT '{"read_only":true,"allow_real_trades":false,"allow_debug":false}'
+                CHECK (jsonb_typeof(safe_mode_flags)='object'),
+            config_schema_version INT NOT NULL DEFAULT 1,
+            row_version BIGINT NOT NULL DEFAULT 0,
+            config_epoch BIGINT NOT NULL DEFAULT 0,
+            kill_epoch BIGINT NOT NULL DEFAULT 0,
+            installation_id UUID NOT NULL DEFAULT gen_random_uuid(),
+            leader_host TEXT,
+            leader_pid INT,
+            heartbeat_at TIMESTAMPTZ,
+            audit_retention_days INT NOT NULL DEFAULT 365 CHECK (audit_retention_days BETWEEN 1 AND 3650),
+            sweep_retention_days INT NOT NULL DEFAULT 90 CHECK (sweep_retention_days BETWEEN 1 AND 3650),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    await conn.execute("INSERT INTO mcp_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+    # 2. mcp_sweep_jobs
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_sweep_jobs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            status TEXT NOT NULL DEFAULT 'queued'
+                CHECK (status IN ('queued','running','completed','cancelled','failed','interrupted')),
+            strategy TEXT,
+            param_space JSONB NOT NULL,
+            objective_metric TEXT NOT NULL,
+            total_combos INT NOT NULL CHECK (total_combos > 0),
+            completed_combos INT NOT NULL DEFAULT 0 CHECK (completed_combos <= total_combos),
+            best_result_id UUID,
+            idempotency_key TEXT,
+            principal_token_id TEXT,
+            session_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            CHECK (completed_at IS NULL OR completed_at >= started_at)
+        )
+        """
+    )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_sweep_idem "
+        "ON mcp_sweep_jobs (principal_token_id, session_id, idempotency_key) "
+        "WHERE idempotency_key IS NOT NULL"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_sweep_jobs_status "
+        "ON mcp_sweep_jobs (status) WHERE status IN ('queued','running')"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_sweep_jobs_created ON mcp_sweep_jobs (created_at)"
+    )
+    # 3. mcp_sweep_results
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_sweep_results (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sweep_id UUID NOT NULL REFERENCES mcp_sweep_jobs(id) ON DELETE CASCADE,
+            config JSONB NOT NULL,
+            config_hash CHAR(64) NOT NULL,
+            backtest_id UUID,
+            metrics JSONB NOT NULL,
+            objective_value NUMERIC(20,8),
+            result_rank INT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (sweep_id, config_hash)
+        )
+        """
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_sweep_results_rank ON mcp_sweep_results (sweep_id, result_rank)"
+    )
+    # 3b. circular FK (guarded; deferrable so dump/restore of the cycle is safe)
+    await conn.execute(
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_mcp_best_result') THEN
+                ALTER TABLE mcp_sweep_jobs ADD CONSTRAINT fk_mcp_best_result
+                    FOREIGN KEY (best_result_id) REFERENCES mcp_sweep_results(id)
+                    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+            END IF;
+        END $$
+        """
+    )
+    # 4. mcp_audit_log
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_audit_log (
+            id BIGSERIAL PRIMARY KEY,
+            seq BIGINT NOT NULL UNIQUE,
+            prev_hash TEXT,
+            entry_hash TEXT NOT NULL,
+            tool_name TEXT,
+            tool_group TEXT,
+            safety_class TEXT,
+            mutating BOOLEAN NOT NULL DEFAULT false,
+            principal_token_id TEXT,
+            session_id TEXT,
+            correlation_id UUID,
+            args_redacted JSONB,
+            sensitive_payload BYTEA,
+            status TEXT NOT NULL CHECK (status IN ('ok','error','rejected','rate_limited','timeout','interrupted')),
+            error TEXT,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            duration_ms INT CHECK (duration_ms >= 0)
+        )
+        """
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_audit_started ON mcp_audit_log (started_at DESC)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_audit_session ON mcp_audit_log (session_id, started_at DESC)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_audit_tool ON mcp_audit_log (tool_name, tool_group, status)")
+    # 5. mcp_proposals
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_proposals (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sweep_id UUID REFERENCES mcp_sweep_jobs(id) ON DELETE SET NULL,
+            target_schedule_id TEXT,
+            target_config_index INT,
+            config JSONB NOT NULL,
+            diff JSONB NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','approved','rejected','expired','applied','reverted')),
+            approver TEXT,
+            applied_config_version TEXT,
+            risk_verdict JSONB,
+            config_schema_version INT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at TIMESTAMPTZ NOT NULL
+        )
+        """
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals (status, created_at DESC)")
+    # 6. mcp_tokens (modeled now, populated in a later phase)
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_tokens (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name TEXT,
+            token_hash TEXT NOT NULL,
+            scope JSONB,
+            principal TEXT,
+            expires_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -1221,6 +1391,15 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     # resolve a version collision with the backtesting feature, which already
     # owns v38–v41 and is applied to the live DB).
     (42, _SCHEMA_DEBUG_V42),
+    # v43 — MCP server tables (callable migration; all 6 tables in one version).
+    (43, _migrate_mcp_v43),
+    # v44 — additive backtest_runs tagging for sweep-spawned backtests (separate
+    # version so the MCP table DDL and the backtest_runs ALTER stay independent).
+    (44, """
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'ui';
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS sweep_id UUID;
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_source ON backtest_runs (source) WHERE source <> 'ui'
+"""),
 ]
 
 
