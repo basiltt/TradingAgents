@@ -30,7 +30,31 @@
 | 14 | 14:20 | Wire regime gates into _try_trade (kill/cohort/route/F1) | DONE — golden stays green |
 | 15 | 14:25 | Integration test: gates fire when enabled | DONE — 6/6 |
 | 16 | 14:28 | Regression check: existing auto_trade tests | DONE — 12/12 |
-| 17 | 14:30 | Next: F2 placement branch + persistence tagging + frontend | IN_PROGRESS |
+| 17 | 14:30 | build_scan_context precompute orchestration (TDD) | DONE — 7/7 |
+| 18 | 14:45 | F2 placement branch + _compute_mr_params + f2_long_ack | DONE |
+| 19 | 14:50 | F2 placement integration (TDD; caught fade-side + SL-default bugs) | DONE — 6/6 |
+| 20 | 14:55 | f2_long_ack escalation-staleness (TDD) | DONE — 8/8 |
+| 21 | 14:58 | Full regime+auto_trade suite | DONE — 134 green, 0 regressions |
+| 22 | 15:00 | Next: persistence tagging, reconciler, AI-exclusion, start_scan wiring, frontend | IN_PROGRESS |
+
+## Milestone: ALL 3 FEATURES functionally working end-to-end (134 tests green)
+- F1 session+vol filter: fires through executor, fail-open. ✓
+- F3 cohort routing: trend-all-regimes, MR-only-ranging. ✓
+- F2 mean-reversion PLACEMENT: short/long fade (side from price-vs-mean per FR-021),
+  margin-% TP conversion, fail-closed on stale/missing data, geometry guards,
+  server-authoritative long-ack with escalation-staleness, strategy_kind tagging. ✓
+- build_scan_context: precompute predicate, BTC memoization, MR-symbol scoping,
+  PR1-6 (MR-cohort vol-off still classifies), degrade-on-failure. ✓
+- Golden snapshot: regenerated (trend trades now tagged strategy_kind="trend" —
+  intended FR-050 change; decision logic byte-identical). ✓
+- TDD caught 3 real bugs: flat-market→ranging, MR fade-side model, MR SL-default.
+
+## Remaining (backend wiring + frontend + tests + review gates)
+- start_scan: call build_scan_context + read kill-switch, set_scan_context on executor
+- trade_repository: strategy_kind/strategy_cohort/f1_active in both INSERT paths
+- reconciler + pending_intents; AI-mgr MR exclusion; f2-long-ack + admin endpoints
+- frontend sub-components + StrategyChip + PnL view + client.ts
+- Phase 5 E2E/fixtures/perf/coverage; per-phase review gates; final hardening; merge
 
 ## Phase 0 Task Status
 

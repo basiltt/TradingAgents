@@ -1009,6 +1009,82 @@ class AutoTradeExecutor:
 
         return executions
 
+    async def _compute_mr_params(self, state, cfg, result, symbol, direction, ctx, phase):
+        """Compute mean-reversion placement params or emit a skip and return None.
+
+        Fail-closed: missing/stale regime, missing mean/price, geometry guards, and
+        the long-ack gate all skip the trade. Uses the pure mean_reversion_math fns.
+        """
+        from backend.services import mean_reversion_math as _mr
+        from backend.services import f2_long_ack as _ack
+        account_id = cfg.get("account_id", "")
+        now = datetime.now(timezone.utc)
+
+        # staleness (fail-closed): regime data older than TTL or degraded
+        if ctx.is_stale(now, float(cfg.get("regime_staleness_minutes", 30))):
+            self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_REGIME_STALE, result)
+            state.trades_skipped += 1
+            return None
+
+        period = int(cfg.get("mr_mean_period", 20))
+        interval = cfg.get("mr_mean_interval", "1h")
+        mean = ctx.get_mean(symbol, period, interval)
+        if mean is None:
+            self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_MEAN_UNAVAILABLE, result)
+            state.trades_skipped += 1
+            return None
+        entry = ctx.get_price(symbol)
+        if entry is None:
+            self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_PRICE_UNAVAILABLE, result)
+            state.trades_skipped += 1
+            return None
+
+        # Mean-reversion fade side is determined by price RELATIVE TO THE MEAN
+        # (FR-021): entry above the mean => fade SHORT (price reverts down); entry
+        # below the mean => fade LONG (price reverts up). This is the natural MR
+        # geometry, independent of the LLM signal's own direction.
+        side = "short" if entry >= mean else "long"
+
+        # direction enablement
+        if side == "long" and not cfg.get("mr_long_enabled", False):
+            self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_LONG_DISABLED, result)
+            state.trades_skipped += 1
+            return None
+        if side == "short" and not cfg.get("mr_short_enabled", True):
+            self._emit_decision(account_id, phase, symbol, "skipped", "mr_short_disabled", result)
+            state.trades_skipped += 1
+            return None
+
+        leverage = int(cfg.get("mr_leverage", 10))
+        # MR uses its own tight SL; do NOT inherit the trend stop_loss_pct (100% margin),
+        # which would be wider than the mean-target TP and trip the inverted-geometry
+        # guard. Default to a tight 8% margin when mr_tight_stop_pct is unset.
+        tight_sl = cfg.get("mr_tight_stop_pct") or 8.0
+        # geometry guards (fire even under relaxed)
+        guard = _mr.check_geometry(entry, mean, side, float(tight_sl), float(leverage),
+                                   min_edge_pct=float(cfg.get("mr_min_edge_pct", 1.0)))
+        if guard is not None:
+            self._emit_decision(account_id, phase, symbol, "skipped", guard, result)
+            state.trades_skipped += 1
+            return None
+
+        # long-ack gate (server-authoritative; relaxed-proof)
+        if side == "long":
+            ok = await _ack.is_long_acknowledged(self._accounts, account_id, cfg)
+            if not ok:
+                self._emit_decision(account_id, phase, symbol, "skipped", ReasonCode.MR_LONG_UNACKNOWLEDGED, result)
+                state.trades_skipped += 1
+                return None
+
+        tp = _mr.margin_tp_pct(entry, mean, float(cfg.get("mr_target_capture_pct", 60.0)), float(leverage))
+        return {
+            "signal_direction": side,
+            "leverage": leverage,
+            "take_profit_pct": tp,
+            "stop_loss_pct": float(tight_sl),
+            "capital_pct": float(cfg.get("mr_capital_pct", 2.0)),
+        }
+
     async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False, phase: str = "batch") -> Optional[TradeExecution]:
         cfg = state.config
         account_id = cfg.get("account_id", "")
@@ -1202,21 +1278,39 @@ class AutoTradeExecutor:
             except Exception:
                 pass  # fail-open: proceed with trade if price check fails
 
+        # ── F2 mean-reversion placement parameters (only when routed to MR) ──
+        # Defaults = the trend path (unchanged when mr_fade is False => golden-safe).
+        place_signal_direction = direction
+        place_trade_direction = cfg.get("direction", "straight")
+        place_leverage = cfg.get("leverage", 20)
+        place_tp = cfg.get("take_profit_pct", 150)
+        place_sl = cfg.get("stop_loss_pct", 100)
+        place_capital = cfg.get("capital_pct", 5)
+        strategy_kind = "trend"
+        if mr_fade:
+            mr = await self._compute_mr_params(state, cfg, result, symbol, direction, ctx, phase)
+            if mr is None:
+                return None  # an MR guard fired (already emitted) — skip
+            place_signal_direction, place_trade_direction = mr["signal_direction"], "straight"
+            place_leverage, place_tp, place_sl = mr["leverage"], mr["take_profit_pct"], mr["stop_loss_pct"]
+            place_capital, strategy_kind = mr["capital_pct"], "mean_reversion"
+
         # Execute trade
         try:
             result_data = await asyncio.wait_for(
                 self._accounts.place_trade(
                     account_id=account_id,
                     symbol=symbol,
-                    signal_direction=direction,
-                    trade_direction=cfg.get("direction", "straight"),
-                    leverage=cfg.get("leverage", 20),
-                    take_profit_pct=cfg.get("take_profit_pct", 150),
-                    stop_loss_pct=cfg.get("stop_loss_pct", 100),
-                    capital_pct=cfg.get("capital_pct", 5),
+                    signal_direction=place_signal_direction,
+                    trade_direction=place_trade_direction,
+                    leverage=place_leverage,
+                    take_profit_pct=place_tp,
+                    stop_loss_pct=place_sl,
+                    capital_pct=place_capital,
                     base_capital=state.base_capital,
                     source="scanner",
                     scan_result_id=result.get("id"),
+                    strategy_kind=strategy_kind,
                 ),
                 timeout=30.0,
             )

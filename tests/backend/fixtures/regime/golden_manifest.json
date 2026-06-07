@@ -17,7 +17,7 @@
       "leverage": 20,
       "signal_direction": "sell",
       "stop_loss_pct": 100,
-      "strategy_kind": null,
+      "strategy_kind": "trend",
       "symbol": "BTCUSDT",
       "take_profit_pct": 150,
       "trade_direction": "straight"
@@ -27,7 +27,7 @@
       "leverage": 20,
       "signal_direction": "buy",
       "stop_loss_pct": 100,
-      "strategy_kind": null,
+      "strategy_kind": "trend",
       "symbol": "ETHUSDT",
       "take_profit_pct": 150,
       "trade_direction": "straight"
@@ -37,7 +37,7 @@
       "leverage": 20,
       "signal_direction": "sell",
       "stop_loss_pct": 100,
-      "strategy_kind": null,
+      "strategy_kind": "trend",
       "symbol": "DOGEUSDT",
       "take_profit_pct": 150,
       "trade_direction": "straight"

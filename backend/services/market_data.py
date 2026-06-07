@@ -16,11 +16,18 @@ and first-match:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import asyncio
+import logging
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Optional
 
-from backend.services.scan_context import BtcRegime
+from backend.services.scan_context import BtcRegime, ScanContext
+
+logger = logging.getLogger(__name__)
 
 Kline = dict[str, Any]
+# fetcher(symbol, interval, depth) -> list[Kline]
+Fetcher = Callable[[str, str, int], Awaitable[list[Kline]]]
 
 
 def _closes(klines: list[Kline]) -> list[float]:
@@ -129,3 +136,134 @@ def classify_regime(
     else:
         regime = "ranging"
     return {"regime": regime, "vol_value": atr_ratio, "unavailable": False}
+
+
+def _precompute_enabled(auto_configs: list[dict[str, Any]]) -> bool:
+    """True if any config needs scan-time regime/mean precompute (FR-003 predicate).
+
+    Note: session-only F1 needs NO BTC precompute (it gates on placement-time UTC),
+    so the BTC-vol sub-mode or MR (enabled or cohort) is what triggers precompute.
+    """
+    for cfg in auto_configs:
+        if cfg.get("regime_filter_enabled") and cfg.get("btc_vol_filter_enabled"):
+            return True
+        if cfg.get("mean_reversion_enabled"):
+            return True
+        if cfg.get("strategy_cohort") == "mean_reversion":
+            return True
+    return False
+
+
+def _btc_tuples(auto_configs: list[dict[str, Any]]) -> set[tuple[str, int]]:
+    """Distinct (interval, lookback) BTC tuples needed for regime classification.
+
+    PR1-6: MR-enabled / MR-cohort configs contribute their tuple even when the vol
+    filter is OFF (else routing_regime -> unknown -> route 'none' -> MR never fires).
+    """
+    tuples: set[tuple[str, int]] = set()
+    for cfg in auto_configs:
+        needs = (
+            (cfg.get("regime_filter_enabled") and cfg.get("btc_vol_filter_enabled"))
+            or cfg.get("mean_reversion_enabled")
+            or cfg.get("strategy_cohort") == "mean_reversion"
+        )
+        if needs:
+            tuples.add((cfg.get("btc_vol_interval", "1h"), int(cfg.get("btc_vol_lookback_candles", 14))))
+    return tuples
+
+
+def _mr_symbol_params(auto_configs: list[dict[str, Any]], scan_results: list[dict[str, Any]]
+                      ) -> tuple[set[str], set[tuple[int, str]]]:
+    """Qualifying MR symbols (extreme score, per the loosest MR threshold) and the
+    distinct (period, interval) mean params across MR-enabled configs."""
+    mr_cfgs = [c for c in auto_configs if c.get("mean_reversion_enabled")]
+    if not mr_cfgs:
+        return set(), set()
+    min_score = min(float(c.get("mr_extreme_min_abs_score", 5.0)) for c in mr_cfgs)
+    symbols = {
+        (r.get("ticker", "") if str(r.get("ticker", "")).endswith("USDT") else f"{r.get('ticker','')}USDT")
+        for r in scan_results
+        if r.get("status") == "completed" and abs(float(r.get("score", 0))) >= min_score and r.get("ticker")
+    }
+    params = {(int(c.get("mr_mean_period", 20)), c.get("mr_mean_interval", "1h")) for c in mr_cfgs}
+    return symbols, params
+
+
+async def build_scan_context(
+    auto_configs: list[dict[str, Any]],
+    scan_results: list[dict[str, Any]],
+    *,
+    now: datetime,
+    kill: dict[str, bool],
+    fetcher: Fetcher,
+    concurrency: int = 8,
+    budget_seconds: float = 60.0,
+) -> ScanContext:
+    """Precompute scan-global BTC regime/vol + per-symbol MR means once per scan.
+
+    kill is read UNCONDITIONALLY in start_scan and passed in (R3-F1) so it is carried
+    even on the no-precompute path. On any failure/timeout the context degrades
+    (empty + degraded=True) so F1 fails-open and F2 fails-closed while trend proceeds.
+    """
+    if not _precompute_enabled(auto_configs):
+        return ScanContext.empty(degraded=False, kill=kill)
+
+    try:
+        return await asyncio.wait_for(
+            _build(auto_configs, scan_results, now, kill, fetcher, concurrency),
+            timeout=budget_seconds,
+        )
+    except Exception:
+        logger.warning("scan_context_precompute_failed_degrading", exc_info=True)
+        return ScanContext.empty(degraded=True, kill=kill)
+
+
+async def _build(auto_configs, scan_results, now, kill, fetcher, concurrency):
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _guarded(coro):
+        async with sem:
+            return await coro
+
+    # BTC regimes (per distinct interval/lookback tuple)
+    btc: dict[tuple[str, int], BtcRegime] = {}
+    btc_tuples = _btc_tuples(auto_configs)
+
+    async def _btc_one(interval, lookback):
+        klines = await fetcher("BTCUSDT", interval, required_depth(lookback))
+        return (interval, lookback), classify_regime(
+            klines, lookback=lookback,
+            volatile_atr=float(_first(auto_configs, "regime_volatile_atr", 2.0)),
+            trend_ema_dist_pct=float(_first(auto_configs, "regime_trend_ema_dist_pct", 1.0)),
+        )
+
+    btc_pairs = await asyncio.gather(*[_guarded(_btc_one(i, lb)) for (i, lb) in btc_tuples])
+    for key, regime in btc_pairs:
+        btc[key] = regime
+
+    # MR means + per-symbol mark prices (qualifying symbols only)
+    means: dict[tuple[str, int, str], float] = {}
+    prices: dict[str, float] = {}
+    symbols, params = _mr_symbol_params(auto_configs, scan_results)
+
+    async def _mean_one(symbol, period, interval):
+        klines = await fetcher(symbol, interval, period + 1)
+        m = compute_ema_mean(klines, period)
+        return symbol, period, interval, m, (klines[-1]["close"] if klines else None)
+
+    jobs = [_guarded(_mean_one(s, p, i)) for s in symbols for (p, i) in params]
+    for symbol, period, interval, m, last_close in await asyncio.gather(*jobs):
+        if m is not None:
+            means[(symbol, period, interval)] = m
+        if last_close is not None:
+            prices.setdefault(symbol, float(last_close))
+
+    return ScanContext(btc=btc, means=means, prices=prices, computed_at=now,
+                       degraded=False, kill=dict(kill))
+
+
+def _first(auto_configs: list[dict[str, Any]], key: str, default):
+    for cfg in auto_configs:
+        if key in cfg and cfg[key] is not None:
+            return cfg[key]
+    return default
