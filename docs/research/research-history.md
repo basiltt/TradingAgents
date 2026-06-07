@@ -380,8 +380,6 @@ The one real bug that would have corrupted profitability research (`analysis_pri
 
 ---
 
-<!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
-
 ## 2026-06-07 — Regime-Focused Research (Choppy-Market Profitability)
 
 **Timestamp:** 2026-06-07 01:26 UTC
@@ -431,6 +429,70 @@ The one real bug that would have corrupted profitability research (`analysis_pri
 The backtester is the right vehicle to validate the mean-reversion strategy and account-cohort ideas **before funding**. It MUST be regime-segmented (per-session / per-volatility-bucket metrics) or it will average the Asian-session leak into US-session profit and hide the exact effect isolated here.
 
 ---
+
+## 2026-06-07 — Two-Feature Integration (Regime Multi-Strategy + MCP Optimizer)
+
+**Timestamp:** 2026-06-07 ~21:40 UTC
+**Type:** Multi-feature merge to `main` (2 large independent feature branches) + comprehensive post-merge review
+**Trigger:** The Regime Multi-Strategy and MCP Server features were completed in separate worktrees and needed to land on `main` together, cleanly, with correct migration ordering and no money-path regressions.
+
+### Why this matters for profitability research
+
+These two features directly operationalize the recommendations from the 2026-06-04 and 2026-06-07 research entries:
+
+- **Regime Multi-Strategy** is the *implementation* of the "strategy-cohort the accounts" and "regime-segmented mean-reversion" recommendations (rec #5/#7 in the 06-07 entry). It adds a BTC-regime filter (F1), a mean-reversion strategy cohort (F2), and session filtering (F3) — so an account can be routed to trend OR mean-reversion based on detected market regime, instead of running one strategy blind into a chop window. This is the mechanism that lets us stop "averaging the Asian-session leak into US-session profit."
+- **MCP Optimizer** lets an LLM agent run parameter sweeps over the *real* backtest engine and propose better configs — turning the backtester from a manual tool into an automated parameter-search loop, behind a human-approval gate before anything touches live trading.
+
+Together with the backtesting + scheduled-scan data already imported, the research loop is now: detect regime → route the right strategy → sweep its params on history → human-approve → deploy.
+
+### Feature 1 — Regime Multi-Strategy (F1/F2/F3)
+
+**Problem it solves:** The 93%-sell-bias era and the chop-window losses both came from running ONE strategy (trend-following) regardless of market regime. In a ranging/choppy market, trend signals are noise; the data showed 3-6h holds losing in chop. There was no way to say "in this regime, fade the extremes instead of chasing the trend," and no way to run different strategies on different accounts.
+
+**What was built:**
+- **F1 — BTC regime filter:** classifies the market (trend / ranging / volatile) from BTC volatility and EMA distance; gates whether trend entries are allowed.
+- **F2 — Mean-reversion cohort:** a full second strategy. When an account's `strategy_cohort = mean_reversion`, signals are *faded* (price-vs-mean) rather than followed, with their own leverage/capital/TP/SL, a fast time-stop (MR holds are 1-3h winners, 3-6h losers), and a drawdown breaker. MR positions are excluded from the AI Manager (they have their own fast exits).
+- **F3 — Session filter:** block/allow specific UTC hours (isolates the Asian-session leak).
+- **Strategy routing + cohort resolution**, kill-switches (`feature_kill_switches`), pending-trade-intents (so an orphaned MR fill is reconciled as MR, not mislabeled trend), and per-strategy backtest replay + per-trade strategy tagging.
+
+**Key components:** `regime_filter.py`, `mean_reversion_math.py`, `strategy_router.py`, `kill_switch.py`, `pending_intents.py`, `scan_context.py`, `safety_monitors.py`, `market_data.py`. Migrations v43–v51 (strategy_cohort/strategy_kind columns, f2_long_ack, pending_trade_intents, feature_kill_switches, backtest_trades.strategy_kind).
+
+### Feature 2 — MCP Server + Parameter Optimizer
+
+**Problem it solves:** Backtesting validates a *single* config a human picked. But the config space (leverage × capital × TP × SL × min_score × close rules × …) is huge — manual exploration finds local optima at best. There was no automated way to search it, and no safe path from "the optimizer found a better config" to "live trading uses it."
+
+**What was built:** A FastMCP streamable-HTTP server that exposes read tools + a parameter optimizer to an LLM agent. The optimizer runs sweeps over the **real** backtest engine, scores configs, and produces ranked proposals. The ONLY route from a swept config to live trading is a 3-gate apply pipeline (allow-list sanitize → absolute sanity ceiling → full cross-field validation) behind **explicit human approval** in the control plane. Includes token-budget UI (so enabling all tools doesn't blow the model's context), live-trading protection, audit log, and one-time data-egress consent.
+
+**Key components:** `backend/mcp/` (61 modules — core/auth/netguard/breaker/budget, tools/optimizer/apply, repositories, transport). Migrations v52–v55 (renumbered from the branch's v43–v46 during the merge; 6 mcp_ tables + backtest_runs sweep tagging + money-column precision widening).
+
+### Merge mechanics & money-safety (no room for error)
+
+**Migration collision:** both branches branched at v42 and both started numbering at v43. The live dev DB had already applied regime's v43–v51, so regime KEEPS v43–v51 and MCP was RENUMBERED to v52–v55. Final list contiguous 1..55. Live DB migrated to v55, all tables present.
+
+**Money-path composition (the hard part):** both features refactored the SAME trade-placement function (`auto_trade_service._try_trade`) differently — regime added F2 mean-reversion param computation + pending-intent lifecycle; MCP wrapped placement in a per-(account,symbol) position lock + live re-check, extracting a `_do_place` helper. These were COMPOSED by hand: `_try_trade` computes guards + routes (mr_fade), then calls `_do_place` under the lock; `_do_place` computes MR params (so the intent write AND order submission are both lock-protected) and executes. The composition introduced and caught one NameError (`cohort`) during the merge, and a post-merge review caught one dropped regime semantic (MR position-direction on the ambiguous-error branch) — both fixed.
+
+**Cross-feature money-safety finding:** regime added 28 new fields to `AutoTradeConfig` (mr_leverage up to 125, mr_capital_pct, regime toggles, …). The MCP optimizer's fail-closed allow-list security guard correctly flagged them as unclassified. **All 28 were DENIED from optimizer sweeping** — the optimizer has no model of MR/regime interactions and must not auto-tune money-critical MR knobs. Additionally the absolute sanity ceiling was extended to bound `mr_leverage`/`mr_capital_pct` (defense-in-depth on the revert path).
+
+### Review & verification
+
+Comprehensive multi-aspect review (a correctness reviewer on the hand-composed money path; a security reviewer on the optimizer→live-config apply path), every finding adversarially verified before fixing. Security verdict: the apply pipeline is genuinely fail-closed — the 28 regime fields are unreachable by any agent/apply path (allow-list + double-sanitize + drift-guarded atomic write under FOR UPDATE).
+
+- Backend: regime suite (281) + mcp suite (273) + money-path/MR/backtest suites all pass; full broad sweep 557 pass.
+- Frontend: tsc clean, production build OK, 691 tests pass.
+- Live DB at v55; full app lifespan (regime + mcp + all existing services) starts/stops clean; 21 mcp routes registered.
+- Pre-existing `test_close_positions_service_unit.py` failures (stale `cumExecQty` mocks) proven present on the pre-merge tag — unrelated to this merge.
+
+### Next steps for profitability research
+
+1. Use the MCP optimizer to sweep **trend** params on the imported scheduled-scan history (the 28 MR fields stay deny-from-sweep until manually validated).
+2. Backtest the F2 mean-reversion cohort regime-segmented (per-session metrics) before funding an MR account — exactly the 06-07 recommendation #5.
+3. Validate F3 session filtering against the Asian-session leak isolated in the 06-07 research.
+
+---
+
+<!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
+
+
 
 
 

@@ -12,14 +12,24 @@ from backend.schemas import AutoTradeConfig
 
 
 def _new_migrations():
-    return {v: sql for v, sql in _MIGRATIONS if isinstance(v, int) and v >= 43}
+    # Regime Multi-Strategy owns migrations 43-51. These style invariants are
+    # regime-specific (single-statement, IF NOT EXISTS guards). MCP's migrations
+    # (52-55, added by the later merge) use a different but equally runner-valid
+    # style — multi-statement strings, which the runner correctly splits on ';' —
+    # and are validated by tests/backend/mcp/test_migrations.py. So scope these
+    # checks to regime's own 43-51 range, not "everything >= 43".
+    return {v: sql for v, sql in _MIGRATIONS if isinstance(v, int) and 43 <= v <= 51}
 
 
 def test_migration_versions_sequential_no_dupes():
     versions = [v for v, _ in _MIGRATIONS]
     assert versions == sorted(versions), "migration versions not sorted"
     assert len(versions) == len(set(versions)), "duplicate migration versions"
-    assert versions[-1] == 51, "latest migration should be 51 (backtest_trades.strategy_kind)"
+    # Regime's own latest migration is 51 (backtest_trades.strategy_kind). The
+    # overall list extends past it (MCP's 52-55 were appended by the later merge),
+    # so assert 51 is present and the list stays contiguous rather than pinning the max.
+    assert 51 in versions, "regime's v51 (backtest_trades.strategy_kind) must be present"
+    assert versions == list(range(1, versions[-1] + 1)), "migration versions not contiguous"
 
 
 def test_new_migrations_present():
