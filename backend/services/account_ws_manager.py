@@ -12,6 +12,11 @@ from backend.services.bybit_ws_client import BybitWSClient
 
 logger = logging.getLogger(__name__)
 
+# Cap on concurrent in-flight wallet-listener tasks. Wallet frames are snapshots,
+# so under a WS storm it's safe to drop frames once the backlog exceeds this —
+# the next frame supersedes the dropped one. Prevents unbounded task growth.
+_MAX_INFLIGHT_WALLET_TASKS = 200
+
 
 class AccountWSManager:
     """Orchestrates one BybitWSClient per active account, broadcasting events to connected frontends."""
@@ -47,6 +52,14 @@ class AccountWSManager:
                     return_exceptions=True,
                 )
             self._clients.clear()
+        # Cancel + drain any in-flight wallet-listener tasks so they don't write
+        # during pool teardown ("Task was destroyed but it is pending").
+        if self._background_tasks:
+            pending = list(self._background_tasks)
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            self._background_tasks.clear()
         logger.info("AccountWSManager shut down")
 
     async def start_account(self, account_id: str) -> None:
@@ -144,6 +157,15 @@ class AccountWSManager:
             pass
 
     async def _notify_wallet_listeners(self, account_id: str, wallet_data: dict[str, Any]) -> None:
+        # Bound in-flight listener tasks: a WS storm could otherwise spawn
+        # unbounded tasks. Wallet frames are snapshots, so dropping a frame when
+        # the backlog is large is safe — the next frame supersedes it.
+        if len(self._background_tasks) > _MAX_INFLIGHT_WALLET_TASKS:
+            logger.warning(
+                "wallet-listener backlog %d > %d for account %s; dropping frame",
+                len(self._background_tasks), _MAX_INFLIGHT_WALLET_TASKS, account_id,
+            )
+            return
         for listener in self._wallet_listeners:
             try:
                 task = asyncio.create_task(self._run_wallet_listener(listener, account_id, wallet_data))

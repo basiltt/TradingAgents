@@ -65,17 +65,27 @@ class BybitRateGate:
     async def acquire_async(self, channel: str = "public", *, lane: str = "live") -> None:
         """Acquire a rate-gate slot.
 
-        `lane` selects priority: the default 'live' lane preserves the original
-        behavior for all existing callers (scanner/reconciler/order placement).
-        The 'mcp' lane is subordinate — it reserves a fraction of the budget for
-        the live lane and yields to it, so MCP/sweep traffic can never starve
-        live trading's exchange quota.
+        `lane` selects priority on the private channel:
+        - 'order' — order placement / leverage. Highest priority: uses the FULL
+          budget and the shortest backoff, so a real-money order is never delayed
+          behind background traffic.
+        - 'live' (default) — scanner/reconciler/AI-manager. Reserves a small
+          headroom so it cannot consume the entire budget and starve 'order'.
+        - 'mcp' — subordinate (reserves ~25% for live); MCP/sweep traffic.
         """
         timestamps, max_budget, window = self._get_channel(channel)
-        # subordinate lane: leave headroom for the live lane (reserve ~25%, >=1).
         effective_budget = max_budget
         if lane == "mcp":
+            # subordinate lane: leave headroom for live (reserve ~25%, >=1).
             effective_budget = max(1, int(max_budget * 0.75))
+        elif lane == "live" and channel == "private":
+            # background live traffic leaves a SMALL fixed headroom (1 slot when
+            # the budget is large enough) so order placement — which uses the full
+            # budget — always has room ahead of it, without materially shrinking
+            # the existing live budget.
+            if max_budget > 4:
+                effective_budget = max_budget - 1
+        # 'order' uses the full budget (no reservation against it).
         self._wait_count += 1
         try:
             while True:
@@ -87,9 +97,14 @@ class BybitRateGate:
                         timestamps.append(now)
                         return
                     sleep_time = timestamps[0] - (now - window) + 0.05
-                # mcp lane backs off a touch longer so live calls win contention
-                extra = 0.05 if lane == "mcp" else 0.0
-                await asyncio.sleep(max(0.05, min(sleep_time, window)) + extra)
+                # order lane backs off the least; mcp the most — so orders win.
+                if lane == "order":
+                    extra = 0.0
+                elif lane == "mcp":
+                    extra = 0.05
+                else:
+                    extra = 0.02
+                await asyncio.sleep(max(0.02 if lane == "order" else 0.05, min(sleep_time, window)) + extra)
         finally:
             self._wait_count -= 1
 

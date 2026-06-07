@@ -428,8 +428,13 @@ class CloseRuleEvaluator:
             activation_pct = float(rule.get("threshold_value", 2.0))
             for pos in positions:
                 symbol = pos.get("symbol", "")
-                if not symbol or symbol in actively_trailing:
+                if not symbol:
                     continue
+                # A symbol being externally trailed (e.g. by the AI manager) must
+                # still have its peak UPDATED here, or the peak goes stale and the
+                # next eval after it leaves the external-trailing set fires on a
+                # low/stale peak. We update the peak but skip the CLOSE decision.
+                externally_trailing = symbol in actively_trailing
                 upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)) or 0)
                 entry_price = float(pos.get("avgPrice", 0) or 0)
                 mark_price = float(pos.get("markPrice", 0) or 0)
@@ -454,6 +459,11 @@ class CloseRuleEvaluator:
                     continue
                 if per_unit_pnl > prev_peak:
                     account_peaks[symbol] = per_unit_pnl
+                    continue
+
+                # Peak is current; only THIS evaluator decides the close, and only
+                # when the symbol is not being trailed elsewhere.
+                if externally_trailing:
                     continue
 
                 peak = account_peaks[symbol]
