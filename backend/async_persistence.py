@@ -1522,6 +1522,18 @@ class AsyncAnalysisDB:
         # Use a dedicated connection (not pool) for advisory lock
         conn = await asyncpg.connect(dsn=self._dsn)
         try:
+            # Bound how long any migration statement will WAIT for a table lock. Some
+            # migrations take ACCESS EXCLUSIVE (ALTER COLUMN TYPE rewrites) or SHARE
+            # (CREATE INDEX) locks; during a rolling deploy the previous instance may
+            # still hold conflicting locks (snapshot writes / analytics reads). Without
+            # this, the new instance's migration would block INDEFINITELY waiting for
+            # the lock and hang the deploy. lock_timeout makes it fail fast and retry
+            # on the next boot instead. It does NOT cap a legitimately long rewrite on a
+            # fresh table (that's statement_timeout, deliberately left unset).
+            try:
+                await conn.execute("SET lock_timeout = '30s'")
+            except Exception:
+                logger.warning("could not set lock_timeout on migration connection", exc_info=True)
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version "
                 "(version INTEGER NOT NULL DEFAULT 0)"

@@ -9,7 +9,43 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.services.accounts_service import AccountsService, _now_iso, _date_to_ms, _sanitize_error
+from backend.services.accounts_service import (
+    AccountsService, _now_iso, _date_to_ms, _sanitize_error,
+    clamp_sl_move_to_liquidation,
+)
+
+
+# ── SL-vs-liquidation clamp (money-critical regression) ───────────────────────
+
+
+class TestStopLossLiquidationClamp:
+    """The protective stop must fire BEFORE liquidation. clamp_sl_move_to_liquidation
+    caps the SL price-move so a losing trade stops out instead of liquidating.
+    Regression for the default config (stop_loss_pct=100, leverage=20)."""
+
+    def test_default_config_is_clamped_inside_liquidation(self):
+        # default: stop_loss_pct=100 / leverage=20 = 5.0% move; liquidation ~4.5% →
+        # clamp to 0.9 * (1/20 - 0.005) * 100 = 4.05%
+        out = clamp_sl_move_to_liquidation(Decimal("5.0"), 20)
+        assert out == Decimal("4.05")
+        liq_move = (Decimal("1") / 20 - Decimal("0.005")) * 100  # 4.5%
+        assert out < liq_move
+
+    def test_tight_stop_passes_through_unchanged(self):
+        # stop_loss_pct=50 / leverage=20 = 2.5% move — already safe, untouched
+        assert clamp_sl_move_to_liquidation(Decimal("2.5"), 20) == Decimal("2.5")
+
+    def test_clamped_at_every_leverage(self):
+        # the default stop_loss_pct=100 sits at/beyond liquidation at EVERY leverage
+        for lev in (10, 20, 50):
+            sl_move = Decimal("100") / lev
+            liq_move = (Decimal("1") / lev - Decimal("0.005")) * 100
+            out = clamp_sl_move_to_liquidation(sl_move, lev)
+            assert out < liq_move, f"lev={lev}: clamped SL {out} not inside liq {liq_move}"
+
+    def test_zero_or_negative_inputs_passthrough(self):
+        assert clamp_sl_move_to_liquidation(Decimal("0"), 20) == Decimal("0")
+        assert clamp_sl_move_to_liquidation(Decimal("3"), 0) == Decimal("3")
 
 
 # ── Helper utilities tests ────────────────────────────────────────────────────

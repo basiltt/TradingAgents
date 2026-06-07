@@ -108,6 +108,11 @@ class BybitWSClient:
     async def _run_loop(self) -> None:
         while self._running:
             try:
+                # Gate every (re)connect through the shared ws_connect rate limiter so a
+                # fleet-wide reconnect after a network blip can't burst past Bybit's
+                # connection cap (parity with the public orderbook WS, which already gates).
+                from backend.services.bybit_rate_gate import get_rate_gate
+                await get_rate_gate().acquire_async(channel="ws_connect")
                 await self._connect_and_listen()
             except asyncio.CancelledError:
                 break

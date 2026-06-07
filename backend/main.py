@@ -547,6 +547,13 @@ def create_app() -> FastAPI:
         except asyncio.CancelledError:
             pass
         await _safe_shutdown("scheduler_service", app.state.scheduler_service.shutdown())
+        # Drain the scanner FIRST: an in-flight auto-trade scan places trades THROUGH
+        # accounts_service / ai_manager_service, so the producer must be cancelled and
+        # awaited before those consumers are torn down — otherwise a running scan can
+        # recreate a just-closed Bybit client and place an untracked trade during
+        # shutdown (money-safety). scanner_service.shutdown() cancels + gathers all
+        # in-flight scan tasks.
+        await _safe_shutdown("scanner_service", app.state.scanner_service.shutdown())
         if getattr(app.state, "ai_manager_service", None):
             await _safe_shutdown("ai_manager_service", app.state.ai_manager_service.shutdown())
             from backend.services.ai_manager_llm_provider import close_llm_clients
@@ -568,7 +575,6 @@ def create_app() -> FastAPI:
             await _safe_shutdown("account_ws_manager", app.state.account_ws_manager.shutdown())
         if app.state.accounts_service:
             await _safe_shutdown("accounts_service", app.state.accounts_service.shutdown())
-        await _safe_shutdown("scanner_service", app.state.scanner_service.shutdown())
         if getattr(app.state, "debug_trace_recorder", None):
             await _safe_shutdown("debug_trace_recorder", app.state.debug_trace_recorder.shutdown())
         await _safe_shutdown("analysis_service", app.state.analysis_service.shutdown())

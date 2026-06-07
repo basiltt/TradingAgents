@@ -8,6 +8,7 @@ import math
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from backend.crypto import decrypt_value, encrypt_value, mask_api_key
@@ -26,6 +27,36 @@ _ORDERS_CACHE_TTL_S = 10
 _REFRESH_COOLDOWN_S = 10.0
 _SNAPSHOT_COOLDOWN_S = 30.0
 _SNAPSHOT_RETENTION_DAYS = 1095  # ~3 years
+
+# Tier-1 maintenance margin rate used for the isolated-margin liquidation estimate
+# (matches trading_rules.compute_liquidation_price's default mmr).
+_TIER1_MMR = Decimal("0.005")
+# Fraction of the liquidation distance the stop-loss is allowed to reach. The SL must
+# trigger strictly BEFORE liquidation; 0.9 mirrors the mean-reversion guard
+# (mean_reversion_math.check_geometry / MR_SL_LIQUIDATION).
+_SL_LIQ_SAFETY = Decimal("0.9")
+
+
+def clamp_sl_move_to_liquidation(sl_price_move_pct: Decimal, leverage: int) -> Decimal:
+    """Clamp a stop-loss PRICE-MOVE percent so it triggers before liquidation.
+
+    `sl_price_move_pct` is the adverse price move (in %) at which the SL fires —
+    i.e. stop_loss_pct / leverage. Bybit isolated liquidation occurs at roughly
+    (1/leverage − MMR) of adverse move. A SL placed at/beyond that never fires:
+    the exchange force-liquidates first for a full-margin loss. Returns the input
+    unchanged when it is already safely inside liquidation, else the clamped value
+    (0.9× the liquidation distance). Money-critical: with the default config
+    (stop_loss_pct=100, leverage=20 → 5% move vs ~4.5% liquidation) every losing
+    trade rode to liquidation instead of stopping out.
+    """
+    if sl_price_move_pct <= 0 or leverage <= 0:
+        return sl_price_move_pct
+    lev = Decimal(str(leverage))
+    liq_move_pct = (Decimal("1") / lev - _TIER1_MMR) * Decimal("100")
+    max_sl_pct = liq_move_pct * _SL_LIQ_SAFETY
+    if max_sl_pct > 0 and sl_price_move_pct >= max_sl_pct:
+        return max_sl_pct
+    return sl_price_move_pct
 
 
 def _now_iso() -> str:
@@ -70,12 +101,17 @@ class AccountsService:
         self._refresh_locks: Dict[str, float] = {}
         self._clients: Dict[str, BybitClient] = {}
         self._client_lock = asyncio.Lock()
+        self._shutting_down = False
         self._ws_manager = ws_manager
         self._trade_repo = trade_repo
         self._trade_service = trade_service
 
     async def shutdown(self) -> None:
         """Close all exchange clients and clear caches."""
+        # Set BEFORE closing clients so any in-flight call that races shutdown
+        # (e.g. a scan task not yet fully drained) refuses to recreate a client and
+        # place an untracked trade against the exchange during teardown.
+        self._shutting_down = True
         logger.info("shutdown_start", extra={"client_count": len(self._clients)})
         for cid, client in self._clients.items():
             try:
@@ -158,10 +194,17 @@ class AccountsService:
         """Get or create a BybitClient for the account, decrypting credentials on first call."""
         if account_id in self._clients:
             return self._clients[account_id]
+        # Money-safety: never spin up a NEW exchange client once shutdown has begun.
+        # A scan task racing teardown could otherwise recreate a just-closed client
+        # and place an untracked trade during shutdown.
+        if self._shutting_down:
+            raise RuntimeError("AccountsService is shutting down; refusing to create a new client")
 
         async with self._client_lock:
             if account_id in self._clients:
                 return self._clients[account_id]
+            if self._shutting_down:
+                raise RuntimeError("AccountsService is shutting down; refusing to create a new client")
 
             creds = await self._db.get_account_credentials(account_id)
             if not creds:
@@ -293,6 +336,27 @@ class AccountsService:
             raise ValueError("Stop loss exceeds 100% price move — reduce SL % or increase leverage")
         if side == "Sell" and tp_price_pct > 0 and tp_price_pct >= _HUNDRED:
             raise ValueError("Take profit exceeds 100% price move for short — reduce TP % or increase leverage")
+
+        # ── SL-vs-liquidation clamp (money-critical) ──────────────────────────
+        # The protective stop must trigger BEFORE the position liquidates, else the
+        # exchange force-liquidates for a full-margin loss and the SL never fires.
+        # The default config (stop_loss_pct=100, leverage=20 → 5% move) sat AT/BEYOND
+        # the ~4.5% liquidation distance, so every losing trade rode to liquidation
+        # instead of stopping out (observed in live PnL). Clamp (not reject) so existing
+        # default-config trades still place, now with a stop that actually protects.
+        # Mirrors the mean-reversion path's MR_SL_LIQUIDATION guard.
+        if sl_price_pct > 0:
+            _clamped_sl = clamp_sl_move_to_liquidation(sl_price_pct, int(leverage))
+            if _clamped_sl != sl_price_pct:
+                logger.warning(
+                    "sl_clamped_to_avoid_liquidation",
+                    extra={
+                        "symbol": symbol, "leverage": leverage,
+                        "requested_sl_move_pct": float(sl_price_pct),
+                        "clamped_sl_move_pct": float(_clamped_sl),
+                    },
+                )
+                sl_price_pct = _clamped_sl
 
         # Calculate TP/SL prices (skip when pct is 0 or not provided).
         # Round DIRECTIONALLY (away from the mark) so a tight TP + coarse tick can

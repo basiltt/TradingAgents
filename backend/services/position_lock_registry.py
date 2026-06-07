@@ -48,15 +48,33 @@ class PositionLockRegistry:
             self._last_used[key] = time.monotonic()
 
     async def cleanup_account(self, account_id: str, force: bool = False) -> None:
+        """Remove this account's UNHELD position locks.
+
+        IMPORTANT (money-safety): a held lock is NEVER force-released here. asyncio
+        locks have no owner, so releasing a lock held by ANOTHER coroutine (e.g. the
+        AutoTradeExecutor mid-placement, or the CloseRuleEvaluator) silently breaks
+        mutual exclusion — two coroutines would then believe they hold the same
+        (account, symbol) mutex and could double-place/double-close. The lock's real
+        holder releases it in its own ``finally``; we only reap entries that are
+        currently free. The ``force`` flag is retained for API compatibility but no
+        longer force-releases — a stale-but-held entry is left for ``evict_stale`` /
+        the holder to clean up. To reclaim a lock held by a task being torn down,
+        cancel AND await that task first so its ``finally`` runs before cleanup.
+        """
         async with self._internal_lock:
             keys_to_remove = [k for k in self._locks if k[0] == account_id]
             for key in keys_to_remove:
                 lock = self._locks[key]
-                if lock.locked() and force:
-                    lock.release()
                 if not lock.locked():
                     del self._locks[key]
                     self._last_used.pop(key, None)
+                elif force:
+                    # Held by someone else — do NOT release. Log so a leaked/stuck
+                    # lock is observable rather than silently corrupted.
+                    logger.warning(
+                        "cleanup_account: lock still held, leaving for holder/evict_stale: %s",
+                        key,
+                    )
 
     async def evict_stale(self, max_idle_s: float = 300.0) -> None:
         now = time.monotonic()

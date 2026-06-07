@@ -65,6 +65,31 @@ async def test_cleanup_skips_held_locks(registry):
 
 
 @pytest.mark.asyncio
+async def test_cleanup_force_does_not_release_held_lock(registry):
+    """Money-safety regression (C1): cleanup_account(force=True) must NEVER release
+    a lock held by another coroutine. asyncio locks have no owner, so a force-release
+    would silently let a SECOND coroutine acquire the same (account, symbol) mutex →
+    double-place / double-close. The lock must stay held + present after force-cleanup."""
+    await registry.acquire("acc-1", "BTCUSDT")
+    assert registry._locks[("acc-1", "BTCUSDT")].locked()
+
+    # Simulate the AI-manager disable / stalled-recovery path force-cleaning the account
+    # while the AutoTradeExecutor still holds the lock.
+    await registry.cleanup_account("acc-1", force=True)
+
+    # The held lock must remain held and present — NOT force-released.
+    assert ("acc-1", "BTCUSDT") in registry._locks
+    assert registry._locks[("acc-1", "BTCUSDT")].locked()
+
+    # A second acquire must still BLOCK (mutual exclusion intact) until the real
+    # holder releases.
+    acquired_second = await registry.acquire("acc-1", "BTCUSDT", timeout=0.05)
+    assert acquired_second is False, "force-cleanup must not have freed the held lock"
+
+    registry.release("acc-1", "BTCUSDT")
+
+
+@pytest.mark.asyncio
 async def test_evict_stale(registry):
     await registry.acquire("acc-1", "BTCUSDT")
     registry.release("acc-1", "BTCUSDT")
