@@ -396,3 +396,25 @@ Guarantees: default-off backtest byte-identical (golden 22/22 unchanged); no dri
 (shared pure fns); no look-ahead (closed-candle slices + next-bar-open fill).
 Validation: 535 backtest+regime+live backend + 681 frontend green; tsc clean.
 Commits: backend integration, frontend UI, critical fixes.
+
+## Backtester Review Round — 2026-06-07
+
+Parity/perf/consistency review of the backtest F1/F2/F3 integration. Three reviewers
+(MR-gate-parity, fix-regression, perf+consistency). Findings fixed:
+
+| Sev | Finding | Fix |
+|-----|---------|-----|
+| HIGH (live bug!) | price_drift gate applied to MR using the SIGNAL direction, but MR fades (decoupled axis) -> wrong skips/admits. SD12 says trend-only | added `not mr_fade` in live _try_trade + `not is_mr` in backtest step 17; tests both paths |
+| HIGH (perf) | _build_scan_contexts O(S*(B+M*C)) full re-scans per scan (minutes at 365d/3M-candle, blocked the event loop) | bisect over ascending series + tail-cap to live depths |
+| HIGH (latent parity) | EMA mean used the FULL buffered series; live uses exactly period+1 candles, and EMA value depends on depth | tail-cap mean to period+1, BTC to 2*lookback+1 (= live required_depth); depth-parity test |
+| MED | MR mean-fetch failure swallowed silently | log backtest_scan_ctx_mr_fetch_failed (match file convention) |
+
+Confirmed correct (no change): default-off parity; MR cap counting basis + fill_to_max
+interaction + off-by-one (all sound); look-ahead-fix starvation margins (+4 BTC / +5 MR
+buffer absorbs the dropped candle); the spec-vs-live min_score/confidence "MR exceptions"
+are aspirational (live never gated MR on mr_extreme_min_abs_score — it is a prefetch hint
+only), so backtest matching generic min_score is correct; schema field duplication is the
+established backtest_schemas pattern; engine per-run instance attrs documented single-thread.
+
+Validation: golden 22/22 + regime snapshot byte-identical; 529 backtest+regime + 88 live
+auto-trade/scanner green. Commit add3eb2.
