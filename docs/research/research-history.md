@@ -490,6 +490,37 @@ Comprehensive multi-aspect review (a correctness reviewer on the hand-composed m
 
 ---
 
+## 2026-06-07 — End-to-End Application Review (money-safety + reliability hardening)
+
+**Timestamp:** 2026-06-07 ~22:30 UTC
+**Type:** Full-application review + fixes (no new data analysis)
+**Trigger:** End-to-end review of the whole app (money path, concurrency, data integrity, cross-feature integration) after 5 features were merged in.
+
+### Method
+Fanned out specialized reviewers (money-correctness, concurrency/reliability, data-integrity, cross-feature integration), then **adversarially verified every finding before fixing** — a verification pass refuted several reviewer claims and corrected severities. Only confirmed issues were changed.
+
+### The most important finding (money-critical, production-proven)
+**The default stop-loss sat AT/BEYOND the liquidation price, so losing trades rode to liquidation instead of stopping out.** With the default config (`stop_loss_pct=100`, `leverage=20`), the SL fires at a 5% adverse price move but Bybit liquidation happens at ~4.5% — so the protective stop never triggered. Confirmed at *every* leverage (10×/20×/50×). This directly explains the liquidations recorded in earlier research ("12 liquidations… should be zero with proper SL"; "13 liquidations −$167 at 20× in volatile names"). The mean-reversion path already had the correct guard (`MR_SL_LIQUIDATION`); the trend path had none.
+
+**Fix:** a `clamp_sl_move_to_liquidation()` helper now caps the SL price-move to 0.9× the liquidation distance in `place_trade`, so the stop always fires before liquidation. Clamp (not reject) keeps existing default-config trades placing — now with a stop that actually protects. **Profitability impact: this should eliminate the liquidation losses and convert them into controlled stop-outs (a smaller, bounded loss per trade).**
+
+### Other confirmed fixes
+- **Position-lock force-release (concurrency):** `cleanup_account(force=True)` could release a lock held by another coroutine (asyncio locks have no owner) → two coroutines believing they own the same position → double place/close. Now never force-releases a held lock.
+- **Shutdown ordering:** the scanner was torn down after accounts/AI-manager, so an in-flight scan could place an untracked trade through a closed client during shutdown. Now drains the scanner first + a `_shutting_down` guard refuses new clients during teardown.
+- **MR aggregate-capital guard:** `mr_capital_pct × mr_max_trades` could commit >100% of base capital (over-allocation/liquidation risk) with no validator. Now capped at 100%, matching the trend guard.
+- **Config coherence:** `session_filter_enabled` / `btc_vol_filter_enabled` were silent no-ops without `regime_filter_enabled` — now rejected loudly so a "blocked session" config can't silently trade through every hour.
+- **WS reconnect rate-gate** + **migration `lock_timeout`** (deploy-safety): smaller reliability hardening.
+
+### Deferred (noted, not fixed — lower severity / needs product decision)
+- **Trailing-profit disarm:** once armed, if price retraces below `activation_pct` (still profitable) the trailing close stops being evaluated until uPnL≤0, so a winner can decay toward breakeven. Changing trailing-stop semantics needs a deliberate product call.
+- **Trend partial-fill orphan:** if a trend order fills but the DB write fails, there's no pending-intent (the MR path writes one); the reconciler's symbol/size matching is the only backstop. Worth adding trend-path parity later.
+- **Optimizer on MR-cohort accounts:** the MCP optimizer can sweep trend risk fields (capital_pct/leverage) that are inert on an MR-cohort account, producing misleading "best config" results. The dangerous case (auto-applying MR knobs) is already prevented (deny-from-sweep); making the optimizer MR-aware is an enhancement.
+
+### Verification
+Each fix has regression tests (SL clamp ×4, lock force-release ×1, MR aggregate + coherence validators ×6). App lifespan starts/stops clean with the reordered shutdown; frontend tsc + build pass. The ~42 pre-existing baseline failures (close_positions `cumExecQty` mocks, api-key env tests, sync-persistence-v35-vs-live-DB) are unrelated and predate this review.
+
+---
+
 <!-- NEXT RESEARCH ENTRY GOES BELOW THIS LINE -->
 
 
