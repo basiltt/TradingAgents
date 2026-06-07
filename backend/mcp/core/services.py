@@ -24,6 +24,11 @@ class ServiceAccessors:
         return getattr(self._state, "backtest_service", None)
 
     @property
+    def backtest_runner(self) -> Any:
+        """The BacktestRunner for sweeps (set by the optimizer composition)."""
+        return getattr(self._state, "mcp_backtest_runner", None)
+
+    @property
     def accounts_service(self) -> Any:
         return getattr(self._state, "accounts_service", None)
 
