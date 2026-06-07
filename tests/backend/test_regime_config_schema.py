@@ -84,3 +84,38 @@ def test_extra_keys_rejected_on_strict_ingress():
     # re-validation (AD7) is a separate model handled at the persistence boundary.
     with pytest.raises(ValidationError):
         AutoTradeConfig(account_id="x", totally_unknown_field=1)
+
+
+# ── Money-safety validators (review regressions) ──────────────────────────────
+
+
+def test_mr_aggregate_capital_over_100_rejected():
+    """mr_capital_pct × mr_max_trades must not commit > 100% of base capital
+    (margin over-allocation → forced-liquidation risk). The trend guard only
+    covered capital_pct/max_trades, leaving the MR cohort unbounded before this."""
+    with pytest.raises(ValidationError):
+        _cfg(mean_reversion_enabled=True, mr_capital_pct=40, mr_max_trades=10)  # 400%
+
+
+def test_mr_aggregate_capital_within_100_ok():
+    _cfg(mean_reversion_enabled=True, mr_capital_pct=20, mr_max_trades=5)  # 100% — ok
+    _cfg(mean_reversion_enabled=True, mr_capital_pct=2, mr_max_trades=2)   # 4% default — ok
+
+
+def test_mr_aggregate_capital_not_checked_when_mr_disabled():
+    # over-100 MR values are harmless when MR isn't enabled (the cohort never trades)
+    _cfg(mean_reversion_enabled=False, mr_capital_pct=40, mr_max_trades=10)
+
+
+def test_session_filter_requires_regime_umbrella():
+    """Coherence: a sub-filter without regime_filter_enabled is a silent no-op —
+    reject loudly so the operator doesn't trade through a 'blocked' session."""
+    with pytest.raises(ValidationError):
+        _cfg(session_filter_enabled=True, regime_filter_enabled=False)
+    with pytest.raises(ValidationError):
+        _cfg(btc_vol_filter_enabled=True, regime_filter_enabled=False)
+
+
+def test_sub_filters_ok_with_umbrella():
+    _cfg(regime_filter_enabled=True, session_filter_enabled=True, session_blocked_hours_utc=[1, 2])
+    _cfg(regime_filter_enabled=True, btc_vol_filter_enabled=True, btc_vol_min_threshold=0.8)

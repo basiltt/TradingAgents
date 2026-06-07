@@ -561,6 +561,37 @@ class AutoTradeConfig(BaseModel):
                     f"({effective_trades}) = {self.capital_pct * effective_trades}% "
                     f"exceeds 100% of base capital; reduce capital_pct or max_trades"
                 )
+        # MR-cohort aggregate-capital guard: a mean-reversion account fills toward
+        # mr_max_trades, each position sized at mr_capital_pct of base capital, so the
+        # total committed margin is mr_capital_pct × mr_max_trades. Reject > 100% — the
+        # same margin-over-allocation / forced-liquidation risk the trend guard above
+        # prevents (the trend validator only covers capital_pct/max_trades, leaving the
+        # MR cohort unbounded before this).
+        if self.mean_reversion_enabled:
+            mr_committed = self.mr_capital_pct * self.mr_max_trades
+            if mr_committed > 100:
+                raise ValueError(
+                    f"mr_capital_pct ({self.mr_capital_pct}) × mr_max_trades "
+                    f"({self.mr_max_trades}) = {mr_committed}% exceeds 100% of base "
+                    f"capital; reduce mr_capital_pct or mr_max_trades"
+                )
+        # Coherence guard: the session/BTC-vol sub-filters only take effect when the
+        # regime_filter umbrella is on (gate_session/gate_btc_vol early-return unless
+        # regime_filter_enabled AND the sub-flag). Enabling a sub-filter alone is a
+        # silent no-op — the config LOOKS active but does nothing. Reject loudly so the
+        # operator must enable the umbrella (or turn the sub-filter off) rather than
+        # unknowingly trade through a "blocked" session.
+        if not self.regime_filter_enabled:
+            if self.session_filter_enabled:
+                raise ValueError(
+                    "session_filter_enabled requires regime_filter_enabled=True "
+                    "(the session filter is inert without the regime umbrella)"
+                )
+            if self.btc_vol_filter_enabled:
+                raise ValueError(
+                    "btc_vol_filter_enabled requires regime_filter_enabled=True "
+                    "(the BTC-volatility filter is inert without the regime umbrella)"
+                )
         return self
 
 
