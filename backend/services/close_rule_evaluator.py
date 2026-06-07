@@ -155,7 +155,19 @@ class CloseRuleEvaluator:
         data = wallet_data.get("data", wallet_data) if event_type else wallet_data
 
         try:
-            equity = Decimal(data.get("totalEquity") or "0")
+            # CRITICAL: a missing/empty totalEquity must NEVER be coerced to 0 —
+            # a partial WS frame would then read equity=0, making EQUITY_DROP_PCT
+            # compute a 100% drop and BALANCE_BELOW fire, mass-closing every
+            # position on a transient bad frame. Treat absent equity as "no
+            # reading" and skip this evaluation entirely.
+            raw_equity = data.get("totalEquity")
+            if raw_equity is None or str(raw_equity).strip() == "":
+                logger.warning("WS wallet frame missing totalEquity for account %s; skipping", account_id)
+                return
+            equity = Decimal(str(raw_equity))
+            if equity <= 0:
+                logger.warning("WS wallet equity <= 0 (%s) for account %s; skipping", equity, account_id)
+                return
             pnl = Decimal(data.get("totalPerpUPL") or "0")
             balance = Decimal(data.get("totalWalletBalance") or "0")
         except Exception:
@@ -220,7 +232,16 @@ class CloseRuleEvaluator:
             return
 
         try:
-            equity = Decimal(wallet.get("totalEquity") or "0")
+            # Same equity-0 guard as the WS path: a missing/zero equity reading
+            # must skip evaluation, never coerce to 0 and trigger a mass close.
+            raw_equity = wallet.get("totalEquity")
+            if raw_equity is None or str(raw_equity).strip() == "":
+                logger.warning("Wallet missing totalEquity for account %s; skipping rules", account_id)
+                return
+            equity = Decimal(str(raw_equity))
+            if equity <= 0:
+                logger.warning("Wallet equity <= 0 (%s) for account %s; skipping rules", equity, account_id)
+                return
             pnl = Decimal(wallet.get("totalPerpUPL") or "0")
             balance = Decimal(wallet.get("totalWalletBalance") or "0")
         except Exception:
@@ -361,6 +382,12 @@ class CloseRuleEvaluator:
         threshold = Decimal(rule["threshold_value"])
         reference = Decimal(rule["reference_value"]) if rule.get("reference_value") else None
 
+        # Backstop: an equity-based rule must never fire on a non-positive equity
+        # reading (a bad/partial wallet frame). Callers already skip equity<=0,
+        # but guard here too so no equity rule can mass-close on a zero reading.
+        if trigger_type in ("BALANCE_BELOW", "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART") and equity <= 0:
+            return False
+
         if trigger_type == "BALANCE_BELOW":
             return equity <= threshold
         elif trigger_type == "BALANCE_ABOVE":
@@ -401,8 +428,13 @@ class CloseRuleEvaluator:
             activation_pct = float(rule.get("threshold_value", 2.0))
             for pos in positions:
                 symbol = pos.get("symbol", "")
-                if not symbol or symbol in actively_trailing:
+                if not symbol:
                     continue
+                # A symbol being externally trailed (e.g. by the AI manager) must
+                # still have its peak UPDATED here, or the peak goes stale and the
+                # next eval after it leaves the external-trailing set fires on a
+                # low/stale peak. We update the peak but skip the CLOSE decision.
+                externally_trailing = symbol in actively_trailing
                 upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)) or 0)
                 entry_price = float(pos.get("avgPrice", 0) or 0)
                 mark_price = float(pos.get("markPrice", 0) or 0)
@@ -427,6 +459,11 @@ class CloseRuleEvaluator:
                     continue
                 if per_unit_pnl > prev_peak:
                     account_peaks[symbol] = per_unit_pnl
+                    continue
+
+                # Peak is current; only THIS evaluator decides the close, and only
+                # when the symbol is not being trailed elsewhere.
+                if externally_trailing:
                     continue
 
                 peak = account_peaks[symbol]

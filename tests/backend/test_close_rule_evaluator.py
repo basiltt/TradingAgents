@@ -239,3 +239,29 @@ async def test_handle_breakeven_timeout_with_tick_size():
     )
 
 
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL regression: equity<=0 must NEVER fire an equity-based close.
+# A partial/bad WS wallet frame can yield equity=0; without this guard,
+# EQUITY_DROP_PCT computes a 100% drop and BALANCE_BELOW fires → mass close.
+# ---------------------------------------------------------------------------
+class TestEquityZeroGuard:
+    def test_balance_below_does_not_fire_on_zero_equity(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = _make_rule("BALANCE_BELOW", "1000")
+        # equity=0 is below 1000 but must NOT trigger (bad reading, not a real drop)
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
+
+    def test_equity_drop_pct_does_not_fire_on_zero_equity(self, evaluator: CloseRuleEvaluator) -> None:
+        # reference 5000, equity 0 → naive drop = 100% >= 10% would fire; guarded off
+        rule = _make_rule("EQUITY_DROP_PCT", "10", reference="5000")
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
+
+    def test_equity_drop_pct_smart_does_not_fire_on_zero_equity(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = _make_rule("EQUITY_DROP_PCT_SMART", "10", reference="5000")
+        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
+
+    def test_equity_drop_pct_still_fires_on_real_drop(self, evaluator: CloseRuleEvaluator) -> None:
+        # a genuine drop (equity 4000 from reference 5000 = 20%) still triggers
+        rule = _make_rule("EQUITY_DROP_PCT", "10", reference="5000")
+        assert evaluator._check_condition(rule, Decimal("4000"), Decimal("0"), Decimal("0")) is True

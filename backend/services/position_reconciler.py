@@ -137,15 +137,44 @@ class PositionReconciler:
             trade_groups.setdefault(key, []).append(t)
 
         stale_trades: list[dict] = []
+        # A just-placed trade (DB row exists, but the exchange may not yet reflect
+        # the order, or a limit order is still unfilled) must NOT be judged
+        # "stale" and force-closed in the DB — that would orphan a live position.
+        # Skip trades younger than this grace window from stale detection.
+        from datetime import datetime, timezone, timedelta
+
+        _now = datetime.now(timezone.utc)
+        _grace = timedelta(seconds=90)
+
+        def _is_young(t: dict) -> bool:
+            ts = t.get("created_at") or t.get("opened_at")
+            if ts is None:
+                return False
+            try:
+                if isinstance(ts, str):
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                else:
+                    dt = ts
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return (_now - dt) < _grace
+            except Exception:
+                return False
+
         for key, trades in trade_groups.items():
             exchange_count = position_counts.get(key, 0)
+            # exclude young trades from the "stale" candidate set for this key
+            eligible = [t for t in trades if not _is_young(t)]
+            young_count = len(trades) - len(eligible)
             if exchange_count == 0:
-                # No position on exchange — all DB trades for this key are stale
-                stale_trades.extend(trades)
-            elif exchange_count < len(trades):
-                # Fewer positions than DB trades — oldest ones are likely closed
-                sorted_trades = sorted(trades, key=lambda t: t.get("created_at") or "")
-                stale_trades.extend(sorted_trades[:len(trades) - exchange_count])
+                # No position on exchange — eligible (non-young) DB trades are stale
+                stale_trades.extend(eligible)
+            elif exchange_count < len(eligible):
+                # Fewer positions than eligible DB trades — oldest are likely closed.
+                # Young trades are assumed to occupy exchange slots, so subtract them.
+                sorted_trades = sorted(eligible, key=lambda t: t.get("created_at") or "")
+                n_stale = max(0, len(eligible) - max(0, exchange_count - young_count))
+                stale_trades.extend(sorted_trades[:n_stale])
 
         # Backfill trades are already closed but need PnL data
         all_to_process = stale_trades + backfill_trades

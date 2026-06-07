@@ -19,6 +19,15 @@ import type {
   BacktestCompareResponse,
   CacheStatusResponse,
 } from "@/components/backtest/types";
+import type {
+  MCPConfig,
+  MCPStatus,
+  MCPRegistry,
+  MCPProposal,
+  MCPAuditEntry,
+  MCPSweepJob,
+  MCPSweepResult,
+} from "@/components/mcp/types";
 
 /** Typed error for non-2xx API responses. Contains HTTP status and detail message. */
 export class ApiError extends Error {
@@ -1615,4 +1624,121 @@ export const backtestApi = {
       signal,
     );
   },
+};
+
+/**
+ * MCP (Model Context Protocol) control-plane API.
+ *
+ * Same-origin REST under /api/v1/mcp/*. Drives the operator console: the
+ * master on/off toggle, the context-budget tool manager, the access-token
+ * panel, and the human-approval queue for the agent's config proposals.
+ * Every method throws ApiError on non-2xx (incl. 503 when the MCP module is
+ * absent and 409 on optimistic-concurrency conflicts).
+ */
+export const mcpApi = {
+  getConfig: (signal?: AbortSignal) =>
+    request<MCPConfig>("/api/v1/mcp/config", undefined, signal),
+
+  patchConfig: (
+    patch: Partial<Pick<MCPConfig, "enabled" | "capability_tier" | "enabled_groups" | "enabled_tools">>,
+    expectedRowVersion: number,
+    signal?: AbortSignal,
+  ) =>
+    mutate<MCPConfig>(
+      "PATCH",
+      "/api/v1/mcp/config",
+      { ...patch, expected_row_version: expectedRowVersion },
+      signal,
+    ),
+
+  getStatus: (signal?: AbortSignal) =>
+    request<MCPStatus>("/api/v1/mcp/status", undefined, signal),
+
+  getRegistry: (signal?: AbortSignal) =>
+    request<MCPRegistry>("/api/v1/mcp/registry", undefined, signal),
+
+  applyPreset: (preset: string, expectedRowVersion: number, signal?: AbortSignal) =>
+    mutate<MCPRegistry>(
+      "POST",
+      "/api/v1/mcp/registry/preset",
+      { preset, expected_row_version: expectedRowVersion },
+      signal,
+    ),
+
+  enable: (signal?: AbortSignal) =>
+    mutate<{ enabled: boolean }>("POST", "/api/v1/mcp/enable", {}, signal),
+
+  disable: (kill = false, signal?: AbortSignal) =>
+    mutate<{ enabled: boolean; killed: boolean }>(
+      "POST",
+      `/api/v1/mcp/disable${kill ? "?kill=true" : ""}`,
+      {},
+      signal,
+    ),
+
+  /** Regenerate the bearer token. Returns the plaintext ONCE — never stored. */
+  regenerateToken: (signal?: AbortSignal) =>
+    mutate<{ token: string }>("POST", "/api/v1/mcp/token/regenerate", {}, signal),
+
+  listProposals: (status?: string, signal?: AbortSignal) =>
+    request<{ items: MCPProposal[] }>(
+      `/api/v1/mcp/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+      undefined,
+      signal,
+    ),
+
+  getProposal: (id: string, signal?: AbortSignal) =>
+    request<MCPProposal>(`/api/v1/mcp/proposals/${encodeURIComponent(id)}`, undefined, signal),
+
+  approveProposal: (id: string, signal?: AbortSignal) =>
+    mutate<{ applied: boolean } & Record<string, unknown>>(
+      "POST",
+      `/api/v1/mcp/proposals/${encodeURIComponent(id)}/approve`,
+      {},
+      signal,
+    ),
+
+  rejectProposal: (id: string, signal?: AbortSignal) =>
+    mutate<{ rejected: boolean }>(
+      "POST",
+      `/api/v1/mcp/proposals/${encodeURIComponent(id)}/reject`,
+      {},
+      signal,
+    ),
+
+  revertProposal: (id: string, signal?: AbortSignal) =>
+    mutate<Record<string, unknown>>(
+      "POST",
+      `/api/v1/mcp/proposals/${encodeURIComponent(id)}/revert`,
+      {},
+      signal,
+    ),
+
+  getAudit: (limit = 50, signal?: AbortSignal) =>
+    request<{ items: MCPAuditEntry[] }>(
+      `/api/v1/mcp/audit?limit=${limit}`,
+      undefined,
+      signal,
+    ),
+
+  listSweeps: (limit = 50, signal?: AbortSignal) =>
+    request<{ items: MCPSweepJob[] }>(`/api/v1/mcp/sweeps?limit=${limit}`, undefined, signal),
+
+  getSweep: (id: string, signal?: AbortSignal) =>
+    request<MCPSweepJob>(`/api/v1/mcp/sweeps/${encodeURIComponent(id)}`, undefined, signal),
+
+  getSweepResults: (id: string, objective?: string, signal?: AbortSignal) =>
+    request<{ items: MCPSweepResult[]; reranked_by: string | null }>(
+      `/api/v1/mcp/sweeps/${encodeURIComponent(id)}/results${objective ? `?objective=${encodeURIComponent(objective)}` : ""}`,
+      undefined,
+      signal,
+    ),
+
+  cancelSweep: (id: string, signal?: AbortSignal) =>
+    mutate<{ sweep_id: string; cancelled: boolean }>(
+      "POST",
+      `/api/v1/mcp/sweeps/${encodeURIComponent(id)}/cancel`,
+      {},
+      signal,
+    ),
 };

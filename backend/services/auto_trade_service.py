@@ -43,13 +43,16 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None, position_lock_registry: Any = None):
         self._accounts = accounts_service
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
         self._state: Dict[str, _AccountState] = {}
         self._lock = asyncio.Lock()
+        # Shared per-(account,symbol) lock registry — guards placement against the
+        # AI manager / close loop acting on the same position concurrently.
+        self._position_lock_registry = position_lock_registry
         self._ai_manager_enabled_accounts: set = set()
         self._recorder = recorder
         self._debug_ctx = debug_ctx
@@ -1362,8 +1365,50 @@ class AutoTradeExecutor:
             except Exception:
                 pass  # fail-open: proceed with trade if price check fails
 
+        # Execute trade under the shared per-(account,symbol) lock so the AI
+        # manager / close loop cannot act on this symbol mid-placement, and
+        # re-verify the live position under the lock to close the stale
+        # existing_symbols window (a position opened since the scan started —
+        # by the AI manager, a manual trade, or a prior cycle — must not be
+        # double-placed). Delegated to a helper so the lock is a clean
+        # acquire/try-finally/release around the whole placement.
+        registry = self._position_lock_registry
+        if registry is not None:
+            locked = await registry.acquire(account_id, symbol, timeout=30.0)
+            if not locked:
+                self._emit_decision(account_id, phase, symbol, "skipped", "lock_timeout", result)
+                state.trades_skipped += 1
+                return None
+            try:
+                # Authoritative re-check under the lock against live positions.
+                try:
+                    live = await self._accounts.get_positions(account_id)
+                    live_symbols = {p.get("symbol", "") for p in (live or []) if float(p.get("size", 0) or 0) != 0}
+                    if symbol in live_symbols:
+                        state.existing_symbols.add(symbol)
+                        self._emit_decision(account_id, phase, symbol, "skipped", "already_held_live", result)
+                        state.trades_skipped += 1
+                        return None
+                except Exception:
+                    pass  # fail-open on the re-check: the dedup set + cycle gate still apply
+                return await self._do_place(state, result, direction, cfg, account_id, symbol, phase, mr_fade, ctx)
+            finally:
+                registry.release(account_id, symbol)
+        # No registry wired (e.g. tests) — place without the shared lock.
+        return await self._do_place(state, result, direction, cfg, account_id, symbol, phase, mr_fade, ctx)
+
+    async def _do_place(
+        self, state: "_AccountState", result: Dict[str, Any], direction: str,
+        cfg: Dict[str, Any], account_id: str, symbol: str, phase: str,
+        mr_fade: bool = False, ctx: Any = None,
+    ) -> Optional[TradeExecution]:
         # ── F2 mean-reversion placement parameters (only when routed to MR) ──
         # Defaults = the trend path (unchanged when mr_fade is False => golden-safe).
+        # Computed HERE (inside the locked helper) so the pending-intent write and the
+        # order submission are both protected by the per-(account,symbol) lock.
+        # cohort is re-derived from cfg (same expression as _try_trade) so this helper
+        # is self-contained — it is passed to place_trade as strategy_cohort below.
+        cohort = cfg.get("strategy_cohort") or "trend"
         place_signal_direction = direction
         place_trade_direction = cfg.get("direction", "straight")
         place_leverage = cfg.get("leverage", 20)
@@ -1548,20 +1593,46 @@ class AutoTradeExecutor:
             return execution
 
         except Exception as e:
+            err_str = str(e)
+            # AMBIGUOUS errors: a network failure can occur AFTER the order
+            # reached the exchange (the client raises a "check positions" style
+            # error in that case). Treat these like a timeout — flag the symbol +
+            # direction so the cycle never re-places it, and emit phantom-risk —
+            # rather than assuming the order failed and risking a duplicate.
+            ambiguous_markers = (
+                "check position", "may exist", "may have", "timeout", "timed out",
+                "connection", "network", "read timed", "temporarily", "-1",
+            )
+            is_ambiguous = any(m in err_str.lower() for m in ambiguous_markers)
+            if is_ambiguous:
+                state.existing_symbols.add(symbol)
+                _is_rev = cfg.get("direction") == "reverse"
+                _sig_dir = "short" if direction in ("short", "sell") else "long"
+                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                logger.error("auto_trade_ambiguous_phantom_risk", extra={
+                    "account_id": account_id, "symbol": symbol,
+                    "error": err_str[:512],
+                    "msg": "Ambiguous place error — position MAY exist on exchange without DB rules. Check positions.",
+                })
             execution = TradeExecution(
                 account_id=account_id,
                 symbol=symbol,
                 side=direction,
                 status="failed",
-                error=str(e)[:512],
+                error=err_str[:512],
             )
             state.trades_failed += 1
             state.executions.append(execution)
             logger.warning("auto_trade_failed", extra={
-                "account_id": account_id, "symbol": symbol, "error": str(e)[:512],
+                "account_id": account_id, "symbol": symbol, "error": err_str[:512],
+                "ambiguous": is_ambiguous,
             })
 
-            self._emit_decision(account_id, phase, symbol, "failed", "place_error", result, error=str(e)[:200])
+            self._emit_decision(
+                account_id, phase, symbol, "failed",
+                "ambiguous_place_error" if is_ambiguous else "place_error",
+                result, error=err_str[:200],
+            )
             return execution
 
 

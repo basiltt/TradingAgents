@@ -108,4 +108,5 @@ async def test_bybit_client_uses_gate(monkeypatch):
     with patch("backend.services.bybit_client.get_rate_gate", return_value=mock_gate):
         client = BybitClient("key", "secret", "demo")
         await client._wait_for_rate_limit()
-        mock_gate.acquire_async.assert_called_once_with(channel="private")
+        # default lane is "live"; order placement uses lane="order"
+        mock_gate.acquire_async.assert_called_once_with(channel="private", lane="live")

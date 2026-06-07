@@ -676,10 +676,17 @@ class AnalysisDB:
 
                     max_version = _MIGRATIONS[-1][0] if _MIGRATIONS else 0
                     if current > max_version:
-                        raise RuntimeError(
-                            f"Database schema v{current} is newer than this application "
-                            f"supports (max v{max_version}). Please upgrade the application."
+                        # The async layer (AsyncAnalysisDB) is the sole migration
+                        # OWNER in production and is ahead of this sync consumer's
+                        # migration list. Do NOT raise — the sync path is a
+                        # read-only consumer (tests/legacy) and must coexist with a
+                        # DB already migrated past its own _MIGRATIONS tail.
+                        logger.warning(
+                            "sync persistence: DB schema v%s newer than sync max v%s; "
+                            "skipping sync migrations (async layer owns schema)",
+                            current, max_version,
                         )
+                        return
 
                     if current >= max_version:
                         return

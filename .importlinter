@@ -1,0 +1,41 @@
+[importlinter]
+root_packages =
+    backend
+include_external_packages = True
+
+[importlinter:contract:mcp-core-trading-free]
+name = MCP core must not import trading-specific tools/resources/prompts
+type = forbidden
+source_modules =
+    backend.mcp.core
+forbidden_modules =
+    backend.mcp.tools
+    backend.mcp.resources
+    backend.mcp.prompts
+
+[importlinter:contract:mcp-core-no-trading-services]
+name = MCP core must not import trading domain services
+type = forbidden
+source_modules =
+    backend.mcp.core
+forbidden_modules =
+    backend.services
+    tradingagents
+
+[importlinter:contract:schemas-not-import-mcp]
+name = backend.schemas must not import backend.mcp (removability)
+type = forbidden
+source_modules =
+    backend.schemas
+forbidden_modules =
+    backend.mcp
+
+[importlinter:contract:mcp-one-way-dependency]
+name = Only the mount seam imports backend.mcp (NFR-009 removability)
+type = forbidden
+source_modules =
+    backend.services
+    backend.routers
+    tradingagents
+forbidden_modules =
+    backend.mcp

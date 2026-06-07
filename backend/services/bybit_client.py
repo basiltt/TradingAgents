@@ -124,13 +124,13 @@ class BybitClient:
 
     async def _request(
         self, method: str, path: str, params: dict[str, Any] | None = None,
-        *, retry_on_network_error: bool = True,
+        *, retry_on_network_error: bool = True, lane: str = "live",
     ) -> dict[str, Any]:
         await self._ensure_time_synced()
 
         for attempt in range(_MAX_RETRIES):
             async with self._semaphore:
-                await self._wait_for_rate_limit()
+                await self._wait_for_rate_limit(lane=lane)
                 timestamp = int(time.time() * 1000) + self._time_offset_ms
 
                 if method == "GET" and params:
@@ -214,9 +214,11 @@ class BybitClient:
         except (ValueError, TypeError):
             return None
 
-    async def _wait_for_rate_limit(self) -> None:
-        """Acquire token from centralized IP-level rate gate (private channel)."""
-        await get_rate_gate().acquire_async(channel="private")
+    async def _wait_for_rate_limit(self, *, lane: str = "live") -> None:
+        """Acquire token from centralized IP-level rate gate (private channel).
+        Order placement / leverage use the 'order' lane (highest priority) so a
+        real-money order is never queued behind background traffic."""
+        await get_rate_gate().acquire_async(channel="private", lane=lane)
 
     async def test_connection(self) -> dict[str, Any]:
         try:
@@ -360,7 +362,7 @@ class BybitClient:
         try:
             result = await self._request(
                 "POST", "/v5/order/create", params,
-                retry_on_network_error=False,
+                retry_on_network_error=False, lane="order",
             )
         except BybitAPIError as e:
             _is_pos_mode_err = (
@@ -399,7 +401,7 @@ class BybitClient:
                 "symbol": symbol,
                 "buyLeverage": str(leverage),
                 "sellLeverage": str(leverage),
-            })
+            }, lane="order")
         except BybitAPIError as e:
             if e.ret_code == 110043:
                 logger.debug("Leverage already at target for %s: %s", symbol, e.ret_msg)
@@ -448,7 +450,7 @@ class BybitClient:
         try:
             result = await self._request(
                 "POST", "/v5/order/create", params,
-                retry_on_network_error=False,
+                retry_on_network_error=False, lane="order",
             )
         except BybitAPIError as e:
             _is_position_mode_err = (

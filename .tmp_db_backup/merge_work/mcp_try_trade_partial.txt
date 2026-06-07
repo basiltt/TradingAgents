@@ -1,0 +1,336 @@
+    async def _try_trade(self, state: "_AccountState", result: Dict[str, Any], *, relaxed: bool = False, phase: str = "batch") -> Optional[TradeExecution]:
+        cfg = state.config
+        account_id = cfg.get("account_id", "")
+        if result.get("status") != "completed":
+            return None
+        direction = result.get("direction", "hold")
+        confidence = result.get("confidence", "none")
+        score = abs(result.get("score", 0))
+        ticker = result.get("ticker", "")
+        if not ticker:
+            return None
+        symbol = f"{ticker}USDT" if not ticker.endswith("USDT") else ticker
+
+        blacklist = cfg.get("symbol_blacklist") or []
+        if blacklist and symbol in blacklist:
+            self._emit_decision(account_id, phase, symbol, "skipped", "blacklist", result)
+            state.trades_skipped += 1
+            return None
+        whitelist = cfg.get("symbol_whitelist") or []
+        if whitelist and symbol not in whitelist:
+            self._emit_decision(account_id, phase, symbol, "skipped", "whitelist", result)
+            state.trades_skipped += 1
+            return None
+
+        if symbol in state.existing_symbols:
+            self._emit_decision(account_id, phase, symbol, "skipped", "already_held", result)
+            state.trades_skipped += 1
+            return None
+
+        max_age = cfg.get("max_signal_age_minutes")
+        if max_age and not relaxed and result.get("completed_at"):
+            try:
+                completed = datetime.fromisoformat(result["completed_at"].replace("Z", "+00:00"))
+                age_minutes = (datetime.now(timezone.utc) - completed).total_seconds() / 60
+                if age_minutes > max_age:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "max_signal_age", result, age=age_minutes, max=max_age)
+                    state.trades_skipped += 1
+                    return None
+            except (ValueError, TypeError):
+                pass
+
+        if direction == "hold":
+            self._emit_decision(account_id, phase, symbol, "skipped", "hold_signal", result)
+            return None
+
+        max_same_dir = cfg.get("max_same_direction")
+        if max_same_dir:
+            is_reverse = cfg.get("direction") == "reverse"
+            signal_dir = "short" if direction in ("short", "sell") else "long"
+            actual_dir = ("long" if signal_dir == "short" else "short") if is_reverse else signal_dir
+            same_dir_count = sum(1 for d in state.position_directions.values() if d == actual_dir)
+            if same_dir_count >= max_same_dir:
+                self._emit_decision(account_id, phase, symbol, "skipped", "max_same_direction", result)
+                state.trades_skipped += 1
+                return None
+
+        # Sector concentration limit
+        max_same_sector = cfg.get("max_same_sector")
+        if max_same_sector:
+            _get_sec = self._sector_service.get_sector if self._sector_service else _static_get_sector
+            sector = _get_sec(symbol)
+            if sector != "other":
+                same_sector_count = sum(1 for s in state.existing_symbols if _get_sec(s) == sector)
+                if same_sector_count >= max_same_sector:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "max_same_sector", result, sector=sector)
+                    state.trades_skipped += 1
+                    return None
+
+        # Adaptive blacklist check (pre-computed by scanner_service)
+        adaptive_bl = cfg.get("_computed_adaptive_blacklist")
+        if adaptive_bl:
+            bl_set = adaptive_bl if isinstance(adaptive_bl, set) else set(adaptive_bl)
+            if symbol in bl_set:
+                self._emit_decision(account_id, phase, symbol, "skipped", "adaptive_blacklist", result)
+                state.trades_skipped += 1
+                return None
+
+        # Apply filters (skipped in relaxed/fill mode)
+        signal_sides = cfg.get("signal_sides", "both")
+        if signal_sides != "both":
+            _norm = {"long": "buy", "short": "sell", "Long": "buy", "Short": "sell"}
+            normalized_side = _norm.get(signal_sides, signal_sides)
+            normalized_dir = _norm.get(direction, direction)
+            if normalized_side != normalized_dir:
+                self._emit_decision(account_id, phase, symbol, "skipped", "signal_sides", result)
+                return None
+
+        if not relaxed:
+            min_score = cfg.get("min_score", 0)
+            if score < min_score:
+                self._emit_decision(account_id, phase, symbol, "skipped", "min_score", result, score=score, min_score=min_score)
+                state.trades_skipped += 1
+                return None
+
+            conf_filter = cfg.get("confidence_filter", "any")
+            if conf_filter != "any":
+                conf_order = {"high": 3, "moderate": 2, "low": 1, "none": 0}
+                if conf_order.get(confidence, 0) < conf_order.get(conf_filter, 0):
+                    self._emit_decision(account_id, phase, symbol, "skipped", "confidence_filter", result)
+                    state.trades_skipped += 1
+                    return None
+
+        # Check limits
+        if state.trades_executed >= cfg.get("max_trades", 999):
+            self._emit_decision(account_id, phase, symbol, "skipped", "max_trades", result)
+            state.stopped = True
+            state.stopped_reason = "max_trades_reached"
+            return None
+
+        # Check target goal
+        goal_type = cfg.get("target_goal_type")
+        goal_value = cfg.get("target_goal_value")
+        if goal_type and goal_value:
+            if goal_type == "trade_count" and state.trades_executed >= goal_value:
+                self._emit_decision(account_id, phase, symbol, "skipped", "target_goal_reached", result)
+                state.stopped = True
+                state.stopped_reason = "target_goal_reached"
+                return None
+
+        account_id = cfg["account_id"]
+
+        if state.base_capital is None or state.base_capital <= 0:
+            self._emit_decision(account_id, phase, symbol, "skipped", "no_balance", result)
+            state.stopped = True
+            state.stopped_reason = "no_balance_captured"
+            return None
+
+        # Price drift validation — skip if price already moved too far in signal direction
+        max_drift = cfg.get("max_price_drift_pct")
+        analysis_price = result.get("analysis_price")
+        if max_drift and analysis_price:
+            try:
+                current_price = await self._accounts.get_mark_price(account_id, symbol)
+                drift_pct = ((current_price - analysis_price) / analysis_price) * 100
+                # Buy signal: skip if price already went UP (move consumed)
+                # Sell signal: skip if price already went DOWN (move consumed)
+                if direction in ("buy", "long") and drift_pct > max_drift:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "price_drift", result, drift=drift_pct)
+                    state.trades_skipped += 1
+                    return None
+                if direction in ("sell", "short") and drift_pct < -max_drift:
+                    self._emit_decision(account_id, phase, symbol, "skipped", "price_drift", result, drift=drift_pct)
+                    state.trades_skipped += 1
+                    return None
+            except Exception:
+                pass  # fail-open: proceed with trade if price check fails
+
+        # Execute trade under the shared per-(account,symbol) lock so the AI
+        # manager / close loop cannot act on this symbol mid-placement, and
+        # re-verify the live position under the lock to close the stale
+        # existing_symbols window (a position opened since the scan started —
+        # by the AI manager, a manual trade, or a prior cycle — must not be
+        # double-placed). Delegated to a helper so the lock is a clean
+        # acquire/try-finally/release around the whole placement.
+        registry = self._position_lock_registry
+        if registry is not None:
+            locked = await registry.acquire(account_id, symbol, timeout=30.0)
+            if not locked:
+                self._emit_decision(account_id, phase, symbol, "skipped", "lock_timeout", result)
+                state.trades_skipped += 1
+                return None
+            try:
+                # Authoritative re-check under the lock against live positions.
+                try:
+                    live = await self._accounts.get_positions(account_id)
+                    live_symbols = {p.get("symbol", "") for p in (live or []) if float(p.get("size", 0) or 0) != 0}
+                    if symbol in live_symbols:
+                        state.existing_symbols.add(symbol)
+                        self._emit_decision(account_id, phase, symbol, "skipped", "already_held_live", result)
+                        state.trades_skipped += 1
+                        return None
+                except Exception:
+                    pass  # fail-open on the re-check: the dedup set + cycle gate still apply
+                return await self._do_place(state, result, direction, cfg, account_id, symbol, phase)
+            finally:
+                registry.release(account_id, symbol)
+        # No registry wired (e.g. tests) — place without the shared lock.
+        return await self._do_place(state, result, direction, cfg, account_id, symbol, phase)
+
+    async def _do_place(
+        self, state: "_AccountState", result: Dict[str, Any], direction: str,
+        cfg: Dict[str, Any], account_id: str, symbol: str, phase: str,
+    ) -> Optional[TradeExecution]:
+        # Execute trade
+        try:
+            result_data = await asyncio.wait_for(
+                self._accounts.place_trade(
+                    account_id=account_id,
+                    symbol=symbol,
+                    signal_direction=direction,
+                    trade_direction=cfg.get("direction", "straight"),
+                    leverage=cfg.get("leverage", 20),
+                    take_profit_pct=cfg.get("take_profit_pct", 150),
+                    stop_loss_pct=cfg.get("stop_loss_pct", 100),
+                    capital_pct=cfg.get("capital_pct", 5),
+                    base_capital=state.base_capital,
+                    source="scanner",
+                    scan_result_id=result.get("id"),
+                ),
+                timeout=30.0,
+            )
+            execution = TradeExecution(
+                account_id=account_id,
+                symbol=symbol,
+                side=result_data.get("side", direction),
+                status="success",
+                order_id=result_data.get("trade_id"),
+                details=result_data,
+            )
+            state.trades_executed += 1
+            state.executions.append(execution)
+            state.existing_symbols.add(symbol)
+            if self._recorder is not None and self._debug_ctx is not None:
+                try:
+                    self._recorder.emit_symbol_decision(
+                        self._debug_ctx, account_id=account_id, phase=phase, symbol=symbol,
+                        decision="placed", reason_code="placed_ok", reason_detail={},
+                        scan_score=result.get("score"), scan_confidence=result.get("confidence"),
+                        scan_direction=result.get("direction"), order_id=execution.order_id,
+                    )
+                except Exception:
+                    pass
+            _is_rev = cfg.get("direction") == "reverse"
+            _sig_dir = "short" if direction in ("short", "sell") else "long"
+            state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+            logger.info("auto_trade_executed", extra={
+                "account_id": account_id, "symbol": symbol,
+                "side": execution.side, "order_id": execution.order_id,
+            })
+
+            # Enable AI Manager for this account if configured
+            if cfg.get("ai_manager_enabled") and account_id not in self._ai_manager_enabled_accounts:
+                self._ai_manager_enabled_accounts.add(account_id)
+                if self._ai_manager_service:
+                    try:
+                        # Preserve any existing config — only use defaults if no config exists yet
+                        existing_config = None
+                        try:
+                            existing_dict = await self._ai_manager_service.get_config(account_id)
+                            existing_config = _AIMConfig(**existing_dict)
+                        except Exception:
+                            pass
+                        config_to_use = existing_config or _AIMConfig()
+                        config_to_use.auto_enabled = True
+                        await self._ai_manager_service.enable(account_id, config_to_use)
+                        logger.info("ai_manager_auto_enabled", extra={"account_id": account_id})
+                    except Exception as e:
+                        logger.warning("ai_manager_auto_enable_failed", extra={
+                            "account_id": account_id, "error": str(e)[:200],
+                        })
+
+            return execution
+
+        except asyncio.TimeoutError:
+            # Order may have been submitted to exchange before timeout.
+            # Add to existing_symbols AND position_directions to prevent duplicate/excess trades.
+            state.existing_symbols.add(symbol)
+            _is_rev = cfg.get("direction") == "reverse"
+            _sig_dir = "short" if direction in ("short", "sell") else "long"
+            state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+            execution = TradeExecution(
+                account_id=account_id,
+                symbol=symbol,
+                side=direction,
+                status="failed",
+                error="place_trade timeout (30s) — position may exist on exchange",
+            )
+            state.trades_failed += 1
+            state.executions.append(execution)
+            logger.error("auto_trade_timeout_phantom_risk", extra={
+                "account_id": account_id, "symbol": symbol,
+                "msg": "Trade may have opened on exchange without rules. Check positions.",
+            })
+            self._emit_decision(account_id, phase, symbol, "failed", "timeout", result)
+            return execution
+
+        except Exception as e:
+            err_str = str(e)
+            # AMBIGUOUS errors: a network failure can occur AFTER the order
+            # reached the exchange (the client raises a "check positions" style
+            # error in that case). Treat these like a timeout — flag the symbol +
+            # direction so the cycle never re-places it, and emit phantom-risk —
+            # rather than assuming the order failed and risking a duplicate.
+            ambiguous_markers = (
+                "check position", "may exist", "may have", "timeout", "timed out",
+                "connection", "network", "read timed", "temporarily", "-1",
+            )
+            is_ambiguous = any(m in err_str.lower() for m in ambiguous_markers)
+            if is_ambiguous:
+                state.existing_symbols.add(symbol)
+                _is_rev = cfg.get("direction") == "reverse"
+                _sig_dir = "short" if direction in ("short", "sell") else "long"
+                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                logger.error("auto_trade_ambiguous_phantom_risk", extra={
+                    "account_id": account_id, "symbol": symbol,
+                    "error": err_str[:512],
+                    "msg": "Ambiguous place error — position MAY exist on exchange without DB rules. Check positions.",
+                })
+            execution = TradeExecution(
+                account_id=account_id,
+                symbol=symbol,
+                side=direction,
+                status="failed",
+                error=err_str[:512],
+            )
+            state.trades_failed += 1
+            state.executions.append(execution)
+            logger.warning("auto_trade_failed", extra={
+                "account_id": account_id, "symbol": symbol, "error": err_str[:512],
+                "ambiguous": is_ambiguous,
+            })
+
+            self._emit_decision(
+                account_id, phase, symbol, "failed",
+                "ambiguous_place_error" if is_ambiguous else "place_error",
+                result, error=err_str[:200],
+            )
+            return execution
+
+
+@dataclass
+class _AccountState:
+    config: Dict[str, Any]
+    trades_executed: int = 0
+    trades_failed: int = 0
+    trades_skipped: int = 0
+    base_capital: Optional[float] = None
+    stopped: bool = False
+    stopped_reason: Optional[str] = None
+    rescued_by_recheck: bool = False
+    close_rule_id: Optional[str] = None
+    drawdown_rule_id: Optional[str] = None
+    executions: List[TradeExecution] = field(default_factory=list)
+    existing_symbols: set = field(default_factory=set)
+    position_directions: Dict[str, str] = field(default_factory=dict)
+    created_rule_ids: List[str] = field(default_factory=list)

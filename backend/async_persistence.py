@@ -774,6 +774,176 @@ INSERT INTO debug_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING
 """
 
 
+async def _migrate_mcp_v43(conn) -> None:
+    """v43 — MCP server tables (config/sweep_jobs/sweep_results/audit/proposals/tokens).
+
+    Additive, all-in-one-version (atomic rollback via the runner's per-version
+    transaction). All-new tables; the circular sweep FK is added via a guarded
+    ALTER (Postgres has no ADD CONSTRAINT IF NOT EXISTS for FKs).
+    """
+    # 1. mcp_config singleton
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_config (
+            id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+            enabled BOOLEAN NOT NULL DEFAULT false,
+            bind_host TEXT NOT NULL DEFAULT '127.0.0.1',
+            access_token_hash TEXT,
+            capability_tier TEXT NOT NULL DEFAULT 'READ_ONLY'
+                CHECK (capability_tier IN ('READ_ONLY','BACKTEST','MUTATING_DEMO','LIVE_MONEY')),
+            enabled_groups JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(enabled_groups)='array'),
+            enabled_tools JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(enabled_tools)='object'),
+            safe_mode_flags JSONB NOT NULL
+                DEFAULT '{"read_only":true,"allow_real_trades":false,"allow_debug":false}'
+                CHECK (jsonb_typeof(safe_mode_flags)='object'),
+            config_schema_version INT NOT NULL DEFAULT 1,
+            row_version BIGINT NOT NULL DEFAULT 0,
+            config_epoch BIGINT NOT NULL DEFAULT 0,
+            kill_epoch BIGINT NOT NULL DEFAULT 0,
+            installation_id UUID NOT NULL DEFAULT gen_random_uuid(),
+            leader_host TEXT,
+            leader_pid INT,
+            heartbeat_at TIMESTAMPTZ,
+            audit_retention_days INT NOT NULL DEFAULT 365 CHECK (audit_retention_days BETWEEN 1 AND 3650),
+            sweep_retention_days INT NOT NULL DEFAULT 90 CHECK (sweep_retention_days BETWEEN 1 AND 3650),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    await conn.execute("INSERT INTO mcp_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+    # 2. mcp_sweep_jobs
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_sweep_jobs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            status TEXT NOT NULL DEFAULT 'queued'
+                CHECK (status IN ('queued','running','completed','cancelled','failed','interrupted')),
+            strategy TEXT,
+            param_space JSONB NOT NULL,
+            objective_metric TEXT NOT NULL,
+            total_combos INT NOT NULL CHECK (total_combos > 0),
+            completed_combos INT NOT NULL DEFAULT 0 CHECK (completed_combos <= total_combos),
+            best_result_id UUID,
+            idempotency_key TEXT,
+            principal_token_id TEXT,
+            session_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            CHECK (completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at))
+        )
+        """
+    )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_sweep_idem "
+        "ON mcp_sweep_jobs (principal_token_id, session_id, idempotency_key) "
+        "WHERE idempotency_key IS NOT NULL"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_sweep_jobs_status "
+        "ON mcp_sweep_jobs (status) WHERE status IN ('queued','running')"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_sweep_jobs_created ON mcp_sweep_jobs (created_at)"
+    )
+    # 3. mcp_sweep_results
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_sweep_results (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sweep_id UUID NOT NULL REFERENCES mcp_sweep_jobs(id) ON DELETE CASCADE,
+            config JSONB NOT NULL,
+            config_hash CHAR(64) NOT NULL,
+            backtest_id UUID,
+            metrics JSONB NOT NULL,
+            objective_value NUMERIC(20,8),
+            result_rank INT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (sweep_id, config_hash)
+        )
+        """
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_sweep_results_rank ON mcp_sweep_results (sweep_id, result_rank)"
+    )
+    # 3b. circular FK (guarded; deferrable so dump/restore of the cycle is safe)
+    await conn.execute(
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_mcp_best_result') THEN
+                ALTER TABLE mcp_sweep_jobs ADD CONSTRAINT fk_mcp_best_result
+                    FOREIGN KEY (best_result_id) REFERENCES mcp_sweep_results(id)
+                    ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+            END IF;
+        END $$
+        """
+    )
+    # 4. mcp_audit_log
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_audit_log (
+            id BIGSERIAL PRIMARY KEY,
+            seq BIGINT NOT NULL UNIQUE,
+            prev_hash TEXT,
+            entry_hash TEXT NOT NULL,
+            tool_name TEXT,
+            tool_group TEXT,
+            safety_class TEXT,
+            mutating BOOLEAN NOT NULL DEFAULT false,
+            principal_token_id TEXT,
+            session_id TEXT,
+            correlation_id UUID,
+            args_redacted JSONB,
+            sensitive_payload BYTEA,
+            status TEXT NOT NULL CHECK (status IN ('ok','error','rejected','rate_limited','timeout','interrupted')),
+            error TEXT,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            duration_ms INT CHECK (duration_ms >= 0)
+        )
+        """
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_audit_started ON mcp_audit_log (started_at DESC)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_audit_session ON mcp_audit_log (session_id, started_at DESC)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_audit_tool ON mcp_audit_log (tool_name, tool_group, status)")
+    # 5. mcp_proposals
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_proposals (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sweep_id UUID REFERENCES mcp_sweep_jobs(id) ON DELETE SET NULL,
+            target_schedule_id TEXT,
+            target_config_index INT,
+            config JSONB NOT NULL,
+            diff JSONB NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','approved','rejected','expired','applied','reverted')),
+            approver TEXT,
+            applied_config_version TEXT,
+            risk_verdict JSONB,
+            config_schema_version INT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at TIMESTAMPTZ NOT NULL
+        )
+        """
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_proposals_status ON mcp_proposals (status, created_at DESC)")
+    # 6. mcp_tokens (modeled now, populated in a later phase)
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_tokens (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name TEXT,
+            token_hash TEXT NOT NULL,
+            scope JSONB,
+            principal TEXT,
+            expires_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -1254,6 +1424,45 @@ CREATE INDEX IF NOT EXISTS idx_backtest_trades_run_pnl
     # NOT NULL DEFAULT 'trend' is metadata-only on PG11+ (existing rows backfill instantly)
     # and matches the trades-table convention (migration 44).
     (51, "ALTER TABLE backtest_trades ADD COLUMN IF NOT EXISTS strategy_kind TEXT NOT NULL DEFAULT 'trend' CHECK (strategy_kind IN ('trend','mean_reversion'))"),
+    # ── MCP server (renumbered from the branch's v43–v46 to v52–v55 to resolve a
+    # collision with Regime Multi-Strategy, which already owns v43–v51 and is
+    # applied to the live DB). Internal dependency order preserved: v52 creates
+    # mcp_config, v54 alters it. Migration version ints are positional-only.
+    # v52 — MCP server tables (callable migration; all 6 tables in one version).
+    (52, _migrate_mcp_v43),
+    # v53 — additive backtest_runs tagging for sweep-spawned backtests (separate
+    # version so the MCP table DDL and the backtest_runs ALTER stay independent).
+    (53, """
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'ui';
+ALTER TABLE backtest_runs ADD COLUMN IF NOT EXISTS sweep_id UUID;
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_source ON backtest_runs (source) WHERE source <> 'ui'
+"""),
+    # v54 — one-time data-egress consent timestamp on the MCP config singleton
+    # (FR-033): recorded the first time the operator enables the server.
+    (54, "ALTER TABLE mcp_config ADD COLUMN IF NOT EXISTS egress_consent_at TIMESTAMPTZ"),
+    # v55 — widen money columns from REAL (float4, ~7 sig-digits, lossy for
+    # 6-7 figure cumulative PnL) to NUMERIC(20,8). Additive + lossless (REAL→
+    # NUMERIC widens). Confined to reporting/analytics tables; live close rules
+    # already read equity as Decimal from the wallet, so this fixes reporting
+    # precision without touching execution. USING cast is exact for the stored
+    # float values.
+    (55, """
+ALTER TABLE closed_pnl_records ALTER COLUMN qty TYPE NUMERIC(30,12) USING qty::NUMERIC;
+ALTER TABLE closed_pnl_records ALTER COLUMN avg_entry_price TYPE NUMERIC(30,12) USING avg_entry_price::NUMERIC;
+ALTER TABLE closed_pnl_records ALTER COLUMN avg_exit_price TYPE NUMERIC(30,12) USING avg_exit_price::NUMERIC;
+ALTER TABLE closed_pnl_records ALTER COLUMN closed_pnl TYPE NUMERIC(30,12) USING closed_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN equity TYPE NUMERIC(30,12) USING equity::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN wallet_balance TYPE NUMERIC(30,12) USING wallet_balance::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN available_balance TYPE NUMERIC(30,12) USING available_balance::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN unrealised_pnl TYPE NUMERIC(30,12) USING unrealised_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN realised_pnl TYPE NUMERIC(30,12) USING realised_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN cumulative_pnl TYPE NUMERIC(30,12) USING cumulative_pnl::NUMERIC;
+ALTER TABLE daily_snapshots ALTER COLUMN peak_equity TYPE NUMERIC(30,12) USING peak_equity::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN equity TYPE NUMERIC(30,12) USING equity::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN unrealised_pnl TYPE NUMERIC(30,12) USING unrealised_pnl::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN realised_pnl TYPE NUMERIC(30,12) USING realised_pnl::NUMERIC;
+ALTER TABLE high_freq_snapshots ALTER COLUMN balance TYPE NUMERIC(30,12) USING balance::NUMERIC
+"""),
 ]
 
 
@@ -2390,6 +2599,54 @@ class AsyncAnalysisDB:
             f"UPDATE scheduled_scans SET {', '.join(parts)} WHERE id=${len(params)}",
             *params,
         )
+
+    async def apply_auto_trade_config_atomic(
+        self,
+        schedule_id: str,
+        config_index: int,
+        merged_config: Dict[str, Any],
+        *,
+        expected_prior: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Atomically replace one auto_trade_configs[index] entry under
+        SELECT ... FOR UPDATE. MCP human-apply path ONLY.
+
+        Re-verifies (drift-guard) the targeted entry still matches
+        `expected_prior` before writing, so a concurrent edit between propose and
+        approve can't cause a lost update or wrong-target write. Returns the prior
+        config (for revert). Raises ValueError on missing scan / out-of-range
+        index / drift.
+        """
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "SELECT scan_config FROM scheduled_scans WHERE id=$1 FOR UPDATE",
+                    schedule_id,
+                )
+                if row is None:
+                    raise ValueError(f"scheduled scan {schedule_id!r} not found")
+                raw = row["scan_config"]
+                scan_config = raw if isinstance(raw, dict) else json.loads(raw)
+                configs = scan_config.get("auto_trade_configs") or []
+                if not (0 <= config_index < len(configs)):
+                    raise ValueError(
+                        f"config_index {config_index} out of range (len={len(configs)})"
+                    )
+                prior = dict(configs[config_index])
+                if expected_prior is not None and prior != expected_prior:
+                    raise ValueError(
+                        "auto_trade_configs entry changed since the proposal was "
+                        "created (drift) — re-create the proposal"
+                    )
+                configs[config_index] = merged_config
+                scan_config["auto_trade_configs"] = configs
+                await conn.execute(
+                    "UPDATE scheduled_scans SET scan_config=$1, updated_at=$2 WHERE id=$3",
+                    json.dumps(scan_config),
+                    datetime.now(timezone.utc).isoformat(),
+                    schedule_id,
+                )
+                return prior
 
     async def delete_scheduled_scan(self, schedule_id: str) -> bool:
         result = await self.pool.execute(

@@ -118,6 +118,16 @@ const BacktestComparePageComponent = lazy(() =>
     default: module.BacktestComparePage,
   })),
 );
+const MCPPageComponent = lazy(() =>
+  import("@/components/mcp/MCPPage").then((module) => ({
+    default: module.MCPPage,
+  })),
+);
+const MCPProposalReviewPageComponent = lazy(() =>
+  import("@/components/mcp/MCPProposalReviewPage").then((module) => ({
+    default: module.MCPProposalReviewPage,
+  })),
+);
 
 function RouteLoading() {
   return (
@@ -386,6 +396,32 @@ function BacktestCompareRoutePage() {
   );
 }
 
+function MCPRoutePage() {
+  const navigate = useNavigate();
+  return (
+    <RouteSuspense>
+      <MCPPageComponent
+        onOpenProposal={(proposalId) =>
+          navigate({ to: "/mcp/proposals/$proposalId", params: { proposalId } })
+        }
+      />
+    </RouteSuspense>
+  );
+}
+
+function MCPProposalRoutePage() {
+  const { proposalId } = useParams({ from: "/mcp/proposals/$proposalId" });
+  const navigate = useNavigate();
+  return (
+    <RouteSuspense>
+      <MCPProposalReviewPageComponent
+        proposalId={proposalId}
+        onBack={() => navigate({ to: "/mcp" })}
+      />
+    </RouteSuspense>
+  );
+}
+
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -526,6 +562,20 @@ const backtestRunRoute = createRoute({
 });
 
 
+const mcpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/mcp",
+  component: MCPRoutePage,
+});
+
+
+const mcpProposalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/mcp/proposals/$proposalId",
+  component: MCPProposalRoutePage,
+});
+
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   analysisNewRoute,
@@ -549,6 +599,8 @@ export const routeTree = rootRoute.addChildren([
   backtestCompareRoute,
   backtestRunRoute,
   backtestListRoute,
+  mcpRoute,
+  mcpProposalRoute,
 ]);
 
 export function createAppRouter() {

@@ -294,10 +294,15 @@ class AccountsService:
         if side == "Sell" and tp_price_pct > 0 and tp_price_pct >= _HUNDRED:
             raise ValueError("Take profit exceeds 100% price move for short — reduce TP % or increase leverage")
 
-        # Calculate TP/SL prices (skip when pct is 0 or not provided)
-        def round_price(p: Decimal) -> str:
-            """Round a price down to the instrument's tick size and return as string."""
-            rounded = (p / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
+        # Calculate TP/SL prices (skip when pct is 0 or not provided).
+        # Round DIRECTIONALLY (away from the mark) so a tight TP + coarse tick can
+        # never round back across the mark and get rejected by the exchange, and a
+        # SL never rounds to the wrong side of the entry.
+        from decimal import ROUND_UP
+
+        def round_price(p: Decimal, *, round_up: bool) -> str:
+            rounding = ROUND_UP if round_up else ROUND_DOWN
+            rounded = (p / tick_size).quantize(Decimal("1"), rounding=rounding) * tick_size
             if rounded <= 0:
                 raise ValueError(f"Price rounded to {rounded} after tick alignment — adjust parameters")
             return str(rounded)
@@ -306,18 +311,32 @@ class AccountsService:
         sl_price_str: str | None = None
         if tp_price_pct > 0:
             if side == "Buy":
+                # long TP is ABOVE mark → round UP (away from entry) so it stays
+                # strictly above mark even after tick alignment
                 tp_price = mark_price * (_ONE + tp_price_pct / _HUNDRED)
+                if tp_price > 0:
+                    tp_price_str = round_price(tp_price, round_up=True)
+                    # guarantee at least one tick above mark (else exchange rejects)
+                    if Decimal(tp_price_str) <= mark_price:
+                        tp_price_str = str(((mark_price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) + 1) * tick_size)
             else:
+                # short TP is BELOW mark → round DOWN (away from entry)
                 tp_price = mark_price * (_ONE - tp_price_pct / _HUNDRED)
-            if tp_price > 0:
-                tp_price_str = round_price(tp_price)
+                if tp_price > 0:
+                    tp_price_str = round_price(tp_price, round_up=False)
+                    if Decimal(tp_price_str) >= mark_price:
+                        tp_price_str = str(((mark_price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) - 1) * tick_size)
         if sl_price_pct > 0:
             if side == "Buy":
+                # long SL is BELOW mark → round DOWN (away from entry; slightly wider)
                 sl_price = mark_price * (_ONE - sl_price_pct / _HUNDRED)
+                if sl_price > 0:
+                    sl_price_str = round_price(sl_price, round_up=False)
             else:
+                # short SL is ABOVE mark → round UP (away from entry)
                 sl_price = mark_price * (_ONE + sl_price_pct / _HUNDRED)
-            if sl_price > 0:
-                sl_price_str = round_price(sl_price)
+                if sl_price > 0:
+                    sl_price_str = round_price(sl_price, round_up=True)
 
         logger.info("place_trade_order_params", extra={
             "side": side, "symbol": symbol, "qty": str(qty_rounded),

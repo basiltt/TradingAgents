@@ -2,26 +2,48 @@
 
 **Created:** 2026-06-07
 **Last Updated:** 2026-06-07
-**Current Step:** Step 2 — Requirements Brainstorm
-**Status:** IN_PROGRESS
+**Current Step:** Part 2 implementation — P0–P4 built + reviewed; P1 read-tool gap closed
+**Status:** IN_PROGRESS (implementation; pre-merge)
 **Active Skill:** /new-feature (`~/.claude/skills/new-feature/SKILL.md`)
 
 ---
 
-## Feature Summary
+## Implementation State (authoritative — supersedes the planning-phase log below)
 
-Build an MCP (Model Context Protocol) server that lets an external AI agent drive the
-TradingAgents app: (1) basic features (scans, accounts, positions, trades, portfolio),
-(2) extensive backtesting (run/list/get/compare + parameter sweep optimizer to find the
-optimal AutoTradeConfig), (3) the merged debugging routes (trace forensics + backtest
-introspection). The whole MCP integration is toggleable on/off from the application UI,
-**default OFF**.
+**Branch:** `worktree-mcp-server` · **Commits:** 13 (12 feature/fix + this tracker update)
+**Backend tests:** 217 MCP green · 123 host-app regression green · import-linter 3/3 KEPT
+**Frontend:** tsc 0 errors · eslint clean · vite build clean · OFF-path inert
+
+### Phase completion vs plan
+| Phase | Plan file | Status | Notes |
+|-------|-----------|--------|-------|
+| P0 skeleton | 01-phase-P0 | DONE | registry/auth/audit/dispatch/redact/transport + control-plane + DB v43/v44 |
+| P1 read tools | 02-phase-P1 | DONE (gap closed) | All 9 tool-rows: scans, accounts, **positions, trades, portfolio, analytics, symbols**, scheduled(+get), strategies(+config_current). core/shape.py (projection/keyset/LTTB). Resources (server/info, scan/latest, config/current, **portfolio/snapshot**, **scan/{id} template**). Prompts (optimize_my_config, audit_last_scan, **explain_trade_close**). |
+| P2 tool-budget UI | 03-phase-P2 | DONE | /mcp console: master toggle, context-budget manager, connection/token panel, proposal queue. Enriched /mcp/registry + preset endpoints. |
+| P3 backtest+debug | 04-phase-P3 | DONE | backtest_run/get/list/compare + debug_scan_trace/symbol_decisions + rate-gate mcp lane |
+| P4 optimizer+apply | 05-phase-P4 | DONE | combos/ranker/orchestrator + apply pipeline + full money path (create→approve→apply→revert, drift-guarded, ceiling-enforced) |
+
+### Tools registered (25 total)
+accounts(2), analytics(2), backtest(4), debug(2), optimizer(2), portfolio(1),
+positions(2), scans(2), scheduled(2), strategies(2: strategies_list+config_current), symbols(2), trades(2).
+(`advanced` group intentionally empty — reserved for live-money primitives, deferred.)
+
+### Review passes completed (this implementation)
+- P0–P4 adversarial hardening (3 reviewers) → audit delivery, redaction depth, CancelledError, SL=None ceiling, etc.
+- P2 phase review (frontend + security, 2 reviewers) → 8 findings fixed; preset tier-clamp + exchange_facing exclusion.
+- Final cross-phase review (3 reviewers: money-path / lifecycle / production) → A6 revert-ceiling FIXED, proposal-create wired, audit-chain resilience, lifecycle teardown, NaN ceiling, diff envelope.
+- P1-completion review (redaction surface) → widened money markers (position_value/notional/funding/fee/cost/realised) + ratio-exemption so absolute exchange money is masked by default while ratios/prices survive.
+
+### Known deferrals (documented, not gaps)
+- `advanced` tool group (live-money primitives: place_order/close_position/set_leverage) — out of MVP scope.
+- AI Manager tools — explicitly excluded per original feature scope.
+- Audit/proposal retention purge job — modeled (retention_days columns) but no purge task yet (single-user v1).
+- ProcessPool/shared-memory optimizer execution — in-process orchestrator shipped; ProcessPool is a perf layer over the same pure core.
 
 ---
 
-## Session Log
+## Session Log (planning phase — historical)
 
-### Session 1 — 2026-06-07
 
 | # | Timestamp | Activity | Status | Details |
 |---|-----------|----------|--------|---------|

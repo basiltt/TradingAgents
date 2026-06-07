@@ -62,8 +62,30 @@ class BybitRateGate:
             return self._ws_connect_timestamps, self._ws_connect_max, self._ws_window
         return self._public_timestamps, self._public_max, self._window
 
-    async def acquire_async(self, channel: str = "public") -> None:
+    async def acquire_async(self, channel: str = "public", *, lane: str = "live") -> None:
+        """Acquire a rate-gate slot.
+
+        `lane` selects priority on the private channel:
+        - 'order' — order placement / leverage. Highest priority: uses the FULL
+          budget and the shortest backoff, so a real-money order is never delayed
+          behind background traffic.
+        - 'live' (default) — scanner/reconciler/AI-manager. Reserves a small
+          headroom so it cannot consume the entire budget and starve 'order'.
+        - 'mcp' — subordinate (reserves ~25% for live); MCP/sweep traffic.
+        """
         timestamps, max_budget, window = self._get_channel(channel)
+        effective_budget = max_budget
+        if lane == "mcp":
+            # subordinate lane: leave headroom for live (reserve ~25%, >=1).
+            effective_budget = max(1, int(max_budget * 0.75))
+        elif lane == "live" and channel == "private":
+            # background live traffic leaves a SMALL fixed headroom (1 slot when
+            # the budget is large enough) so order placement — which uses the full
+            # budget — always has room ahead of it, without materially shrinking
+            # the existing live budget.
+            if max_budget > 4:
+                effective_budget = max_budget - 1
+        # 'order' uses the full budget (no reservation against it).
         self._wait_count += 1
         try:
             while True:
@@ -71,11 +93,18 @@ class BybitRateGate:
                     now = time.monotonic()
                     while timestamps and timestamps[0] < now - window:
                         timestamps.popleft()
-                    if len(timestamps) < max_budget:
+                    if len(timestamps) < effective_budget:
                         timestamps.append(now)
                         return
                     sleep_time = timestamps[0] - (now - window) + 0.05
-                await asyncio.sleep(max(0.05, min(sleep_time, window)))
+                # order lane backs off the least; mcp the most — so orders win.
+                if lane == "order":
+                    extra = 0.0
+                elif lane == "mcp":
+                    extra = 0.05
+                else:
+                    extra = 0.02
+                await asyncio.sleep(max(0.02 if lane == "order" else 0.05, min(sleep_time, window)) + extra)
         finally:
             self._wait_count -= 1
 

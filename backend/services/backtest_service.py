@@ -1026,6 +1026,83 @@ class BacktestService:
             logger.warning("instrument_info_resolve_failed", exc_info=False)
             return {}
 
+    async def load_inputs(
+        self, config: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], dict[str, Any]]:
+        """Load (signals, klines snapshot, instrument_info) ONCE for a sweep.
+
+        The optimizer loads the historical signals + klines + instrument params a
+        single time for the baseline date range, then replays every config combo
+        against that same in-sample snapshot via run_one. Returns the three inputs
+        the engine needs. Best-effort/fail-open mirrors _execute_backtest's loaders
+        but without a run row.
+        """
+        signals = await self._load_signals(
+            config.get("scan_source", {}),
+            (config["date_range_start"], config["date_range_end"]),
+        )
+        klines = await self._load_klines(config, signals)
+        instrument_info = await self._resolve_instrument_info(signals)
+        return signals, klines, instrument_info
+
+    async def run_one(
+        self,
+        config: dict[str, Any],
+        signals: list[dict[str, Any]],
+        snapshot: dict[str, list[dict[str, Any]]],
+        instrument_info: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """BacktestRunner adapter: run ONE config against a pre-loaded klines
+        snapshot via the real BacktestEngine and return its metrics dict.
+
+        This is the in-process baseline path the optimizer uses (the ProcessPool
+        worker uses a separate sync entrypoint for the same engine). It does NOT
+        touch the DB — no run row, no persistence — so a sweep can fan thousands
+        of these out cheaply. `snapshot` IS the engine's `klines` argument
+        (symbol → ascending kline dicts), pre-loaded once by the caller.
+
+        `deadline` (monotonic seconds) bounds the run via the engine's
+        cooperative cancel event; on timeout the engine raises BacktestCancelled
+        which we surface as an empty metrics dict (the ranker treats a missing
+        objective as non-finite and excludes it — never a crash).
+        """
+        import threading
+        import time
+
+        from backend.services.backtest_engine import BacktestCancelled, BacktestEngine
+
+        cancel_event = threading.Event()
+        timer: threading.Timer | None = None
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {}
+            timer = threading.Timer(remaining, cancel_event.set)
+            timer.daemon = True
+            timer.start()
+
+        def _run() -> dict[str, Any]:
+            try:
+                engine = BacktestEngine()
+                result = engine.run(
+                    config, signals, snapshot or {}, cancel_event, None, instrument_info or {}
+                )
+                return dict(result.metrics or {})
+            except BacktestCancelled:
+                return {}
+
+        try:
+            loop = asyncio.get_running_loop()
+            executor = getattr(self, "_executor", None)
+            if executor is not None:
+                return await loop.run_in_executor(executor, _run)
+            return await loop.run_in_executor(None, _run)
+        finally:
+            if timer is not None:
+                timer.cancel()
+
     async def _attach_buy_hold(self, config: dict[str, Any], result: Any) -> None:
         """Compute the BTC Buy & Hold benchmark + excess return and merge into metrics.
 

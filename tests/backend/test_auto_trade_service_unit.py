@@ -297,3 +297,39 @@ async def test_try_trade_success_unaffected_by_raising_recorder():
     assert out.status == "success"
     assert state.trades_executed == 1
     assert state.trades_failed == 0   # the raising emit did NOT cause a double-count
+
+
+@pytest.mark.asyncio
+async def test_shared_lock_recheck_skips_position_opened_since_scan():
+    """C2 regression: with the shared position-lock registry, placement re-checks
+    LIVE positions under the lock and skips a symbol opened since the scan started
+    (e.g. by the AI manager) — preventing a duplicate/opposite position."""
+    from backend.services.position_lock_registry import PositionLockRegistry
+
+    mock_accounts = AsyncMock()
+    # the scan's initial snapshot had NO position, but a live re-check finds one
+    mock_accounts.get_positions.return_value = [{"symbol": "BTCUSDT", "size": "0.5"}]
+    mock_accounts.place_trade = AsyncMock()  # must NOT be called
+
+    registry = PositionLockRegistry()
+    executor = AutoTradeExecutor(mock_accounts, None, position_lock_registry=registry)
+
+    # minimal state: symbol not in the stale existing_symbols set
+    from backend.services.auto_trade_service import _AccountState
+    cfg = {"account_id": "acc1", "leverage": 10, "take_profit_pct": 150,
+           "stop_loss_pct": 100, "capital_pct": 5, "direction": "straight"}
+    state = _AccountState(config=cfg)
+    state.base_capital = 1000.0
+    state.existing_symbols = set()  # scan-time snapshot was empty
+
+    result = {"id": "scan-1", "score": 0.9, "status": "completed",
+              "direction": "long", "confidence": "high", "ticker": "BTC"}
+
+    out = await executor._try_trade(state, result, phase="batch")
+    # placement was skipped by the under-lock live re-check
+    mock_accounts.place_trade.assert_not_called()
+    assert state.trades_skipped >= 1
+    assert "BTCUSDT" in state.existing_symbols  # now tracked
+    # the lock was released (re-acquire succeeds immediately)
+    assert await registry.acquire("acc1", "BTCUSDT", timeout=0.5) is True
+    registry.release("acc1", "BTCUSDT")

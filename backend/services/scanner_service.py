@@ -558,6 +558,7 @@ class ScannerService:
                 self._accounts, self._close_svc, self._ai_manager_service,
                 sector_service=self._sector_service,
                 recorder=self._debug_recorder, debug_ctx=debug_ctx,
+                position_lock_registry=getattr(self, "_position_lock_registry", None),
             )
             # ── Regime Multi-Strategy: build the scan-time ScanContext ──
             # Kill-switch is read UNCONDITIONALLY (R3-F1) so master/per-feature kills
@@ -749,6 +750,7 @@ class ScannerService:
                     self._accounts, self._close_svc, self._ai_manager_service,
                     sector_service=self._sector_service,
                     recorder=self._debug_recorder, debug_ctx=debug_ctx,
+                    position_lock_registry=getattr(self, "_position_lock_registry", None),
                 )
                 # Regime Multi-Strategy: rebuild the ScanContext on resume too, else
                 # MR would be silently inert (and the kill-switch unread) for resumed
