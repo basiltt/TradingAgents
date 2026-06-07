@@ -291,3 +291,29 @@ Validation: 295 backend regime+adjacent tests pass; golden snapshot byte-identic
 | Frontend completion (chip/PnL/fleet/preset, wired into pages) | DONE |
 | Final review + fixes (2 rounds + convergence) | DONE |
 | Merge | PENDING |
+
+## Post-merge-gate Audit + Gap Closure — 2026-06-07
+
+User asked "is everything completed per spec+plan?" -> ran a rigorous traceability
+audit (compound-engineering correctness reviewer over spec/plan vs code). It found
+~90% complete with REAL gaps that earlier "DONE" marks overstated. Closed all
+actionable in-scope gaps:
+
+| Gap (from audit) | Was | Fix | Tests |
+|------------------|-----|-----|-------|
+| FR-052 half-missing: AI manager did NOT exclude MR positions | no code in any ai_*.py | get_open_mr_symbols (repo) + snapshot filter + _execute_action guard in ai_manager_task | T-15: test_ai_manager_mr_exclusion.py 7/7 |
+| API K: POST /admin/kill-switch absent | no operator endpoint for feature kills | backend/routers/admin.py (GET+POST) + KillSwitchRequest schema + main.py register | test_admin_kill_switch.py 6/6 |
+| FR-053: recheck dropped MR time-stop | post_scan_recheck reset created_rule_ids but NOT mr_duration_rule_created -> MR positions opened in a recheck had no fast exit | reset the flag in the recheck state-reset block | T-20 in test_mr_cap_and_lifecycle.py |
+| T-19/T-24 named tests absent | behaviors existed, untested | test_mr_cap_and_lifecycle.py (cap cross-phase + resume; new-entries-only) | 4/4 |
+
+Documented divergences (acceptable, not fixed): FR-028 uses concurrent-position cap
+over existing_symbols (rehydrated on resume) rather than a separate per-scan counter
+-- equivalent for an all-MR cohort and resume-safe; migration 45 ships on-boot (not
+CONCURRENTLY). Deferred by scope: regime-segmented backtester (v2), AI-manager MR
+features, both-cohort, signal-breadth/score_gate/realized_vol/session-exit (v2).
+
+Validation: 118 new-work+regime tests + 321 AI-manager tests + 27 recheck tests green;
+main imports clean.
+
+Honest status after closure: all v1-scoped FRs/ACs/named-tests (T-15..T-24) now built
+and tested. Remaining items are explicit v2 scope deferrals, not gaps.

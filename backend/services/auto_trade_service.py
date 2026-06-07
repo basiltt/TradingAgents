@@ -907,6 +907,11 @@ class AutoTradeExecutor:
                         state.close_rule_id = None
                         state.drawdown_rule_id = None
                         state.created_rule_ids = []
+                        # FR-053: the MR time-stop is registered once-per-scan via this
+                        # flag; a recheck is a fresh scan cycle, so reset it or the MR
+                        # fast exit would NOT be recreated for positions opened in the
+                        # recheck (leaving them without their strategy-critical time-stop).
+                        state.mr_duration_rule_created = False
                 self._emit_life(account_id, "post_scan_recheck", "state_reset", new_balance=new_balance)
 
                 # Re-create rules (only once per account, using first state with each config)

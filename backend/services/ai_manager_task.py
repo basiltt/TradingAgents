@@ -105,6 +105,9 @@ class AIManagerTask:
         self._sweep_defense_started_at: Dict[str, float] = {}
         self._sweep_blocked_symbols: set = set()
         self._active_trailing: Dict[str, TrailingState] = {}
+        # FR-052/AC-015: symbols of open mean-reversion positions the AI manager must
+        # NOT manage (F2 owns their exit). Refreshed from the trades table each eval.
+        self._mr_symbols: set = set()
         self._is_hedge_mode: bool = False
         self._cleanup_task: Optional[asyncio.Task] = None
         # Event-driven evaluation trigger
@@ -831,6 +834,14 @@ class AIManagerTask:
         if self._killed:
             return
 
+        # FR-052/AC-015 defense-in-depth: never act on a mean-reversion position even
+        # if one reached here via an emergency/urgent path that bypassed the snapshot
+        # filter. F2's fast time-stop owns MR exits. PAUSE_TRADING (account-level, no
+        # symbol) is unaffected.
+        if symbol and symbol in self._mr_symbols:
+            self._log.info("Skipping AI action on mean-reversion position %s (F2-owned)", symbol)
+            return
+
         if action_type not in _ALLOWED_ACTIONS:
             self._log.warning("Rejected invalid action_type '%s'", action_type)
             return
@@ -1142,6 +1153,12 @@ class AIManagerTask:
         return total
 
     async def _build_graph_state(self) -> Dict[str, Any]:
+        # FR-052/AC-015: refresh the MR-position exclusion set before evaluating so the
+        # LLM never sees (and never acts on) mean-reversion positions. Fail-open.
+        try:
+            self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
+        except Exception:
+            self._mr_symbols = set()
         episodic = []
         patterns = []
         decision_count = 100
@@ -1205,12 +1222,15 @@ class AIManagerTask:
         }
 
     def _build_ws_snapshot_for_eval(self) -> dict:
-        """Build WS snapshot for graph evaluation, excluding trailing symbols."""
+        """Build WS snapshot for graph evaluation, excluding trailing + MR symbols."""
         snapshot = copy.deepcopy(self._ws_buffer)
-        if self._active_trailing:
+        # FR-052/AC-015: never surface mean-reversion positions to the AI manager —
+        # F2's fast time-stop owns their exit; the manager must not double-manage them.
+        excluded = set(self._active_trailing) | set(self._mr_symbols)
+        if excluded:
             snapshot["positions"] = [
                 p for p in (snapshot.get("positions") or [])
-                if p.get("symbol") not in self._active_trailing
+                if p.get("symbol") not in excluded
             ]
         return snapshot
 

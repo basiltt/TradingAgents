@@ -770,6 +770,18 @@ class RotateCredentialsRequest(BaseModel):
     api_secret: str = Field(..., min_length=10)
 
 
+class KillSwitchRequest(BaseModel):
+    """Operator request to flip a feature kill switch (API §K, FR-007).
+
+    ``enabled`` is the operator-facing sense (True = feature allowed to run); the
+    persistence layer stores the inverse ``killed``. ``feature_name`` is validated
+    against the known feature set in the router.
+    """
+    feature_name: str = Field(..., min_length=1, max_length=32)
+    enabled: bool
+    updated_by: Optional[str] = Field(None, max_length=64)
+
+
 
 class PlaceTradeRequest(BaseModel):
     model_config = ConfigDict(strict=True)

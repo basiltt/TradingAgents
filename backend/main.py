@@ -600,6 +600,8 @@ def create_app() -> FastAPI:
     app.include_router(trading_cycles_router, prefix="/api/v1")
     from backend.routers.debug import router as debug_router
     app.include_router(debug_router, prefix="/api/v1")
+    from backend.routers.admin import router as admin_router
+    app.include_router(admin_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
 
