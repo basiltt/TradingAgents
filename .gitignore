@@ -229,4 +229,7 @@ __marimo__/
 .worktrees/
 
  # Ignore all node_modules even if it is in child directories
-node_modules/.tmp_db_backup/
+node_modules/
+
+# Local DB snapshots + one-off migration/merge scratch scripts (never commit)
+.tmp_db_backup/
