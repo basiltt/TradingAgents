@@ -12,13 +12,58 @@ from typing import Any, Optional
 from backend.mcp.repositories.proposal_repo import ProposalRepository
 from backend.mcp.tools.optimizer.apply import (
     ApplyRejected,
+    build_diff,
     sanitize_patch,
+    validate_full_config,
     validate_merged_config,
 )
 
 
 class ProposalApplyError(Exception):
     """Raised when a proposal cannot be applied (expired, drift, invalid, etc.)."""
+
+
+async def create_proposal_from_winner(
+    *,
+    proposal_repo: ProposalRepository,
+    prior_config: dict[str, Any],
+    winner_config: dict[str, Any],
+    target_schedule_id: str,
+    target_config_index: int,
+    risk_verdict: Optional[dict[str, Any]] = None,
+    sweep_id: Optional[str] = None,
+) -> str:
+    """Persist a sweep winner as a PENDING proposal for human approval.
+
+    This is the create side of the money path — invoked from the optimizer tool
+    when a robust winner beats the live config. It validates the proposed config
+    through the SAME sanitize -> ceiling -> merged-validate gates that approval
+    will re-run (fail fast: never store a proposal that could never be applied),
+    and records a per-field diff plus the full prior config (drift baseline).
+
+    The agent never reaches this with apply power: it only creates a pending row;
+    a human must approve before anything touches live config.
+    """
+    # Reject up front if the proposed config can't clear the apply policy — no
+    # point storing a proposal a human could only ever see rejected.
+    sanitized = sanitize_patch(winner_config, reject_if_empty=True)
+    validate_merged_config(prior_config, sanitized)
+
+    diff = build_diff(prior_config, winner_config)
+    if not diff["fields"]:
+        raise ProposalApplyError("winner is identical to the live config; nothing to propose")
+
+    # Store the full merged config (current ⊕ sanitized winner) so approval
+    # applies exactly what was reviewed.
+    merged = {**prior_config, **sanitized}
+    return await proposal_repo.create(
+        sweep_id=sweep_id,
+        target_schedule_id=target_schedule_id,
+        target_config_index=target_config_index,
+        config=merged,
+        diff=diff,
+        risk_verdict=risk_verdict,
+    )
 
 
 async def approve_proposal(
@@ -109,17 +154,13 @@ async def revert_proposal(
 
     target_schedule_id = prop.get("target_schedule_id")
     target_index = prop.get("target_config_index")
-    # revert = write the prior config back; validate it through the model first
+    # revert = write the prior config back. It must clear the SAME absolute
+    # sanity ceiling as a forward apply — a stored prior that exceeds the hard
+    # leverage/capital bounds (or has NaN / no stop loss) must never be restored.
     try:
-        # prior is a full config; validate it standalone via the merge (empty patch
-        # of one sweepable field would reject-empty, so validate prior directly)
-        from backend.schemas import AutoTradeConfig
-
-        model_input = dict(prior)
-        model_input.setdefault("account_id", prior.get("account_id", "mcp-revert"))
-        AutoTradeConfig(**model_input)
-    except Exception as exc:  # noqa: BLE001
-        raise ProposalApplyError(f"prior config no longer valid: {exc}") from exc
+        validate_full_config(prior)
+    except ApplyRejected as exc:
+        raise ProposalApplyError(f"prior config fails the safety ceiling: {exc}") from exc
 
     try:
         await db.apply_auto_trade_config_atomic(

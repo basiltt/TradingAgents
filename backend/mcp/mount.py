@@ -85,6 +85,7 @@ class MCPManager:
         self.audit_writer = None
         self.server = None  # the live MCPServer when enabled, else None
         self._transport_cm = None
+        self.last_error: Optional[str] = None  # last transport-start failure (for status)
 
     async def boot(self) -> None:
         """Initialize repos, repair the singleton, and start the transport iff
@@ -111,39 +112,45 @@ class MCPManager:
 
         discover_tools()  # populate the registry (composition layer, may import tools)
         db = self._app.state.db
-        self.audit_writer = AuditWriter(AuditRepository(db.pool))
-        await self.audit_writer.start()
-        view = MCPConfigView(
-            capability_tier=cfg.capability_tier,
-            enabled_groups=cfg.enabled_groups,
-            enabled_tools=cfg.enabled_tools,
-        )
-        self.server = MCPServer(
-            config_view=view,
-            app_state=self._app.state,
-            audit_writer=self.audit_writer,
-            available=self._service_available,
-            resource_provider=_make_resource_provider(),
-            prompt_provider=_make_prompt_provider(),
-            debug_allowed=bool(cfg.safe_mode_flags.get("allow_debug", False)),
-        )
-        self._app.state.mcp_server = self.server
-        # Build + start the FastMCP streamable-HTTP transport and point the
-        # indirection mount at it. Failure here leaves the server usable
-        # in-process (control-plane) but unreachable over the wire — logged.
+        # Build audit writer + server + transport under ONE guard so a partial
+        # failure can't leave the audit task running orphaned or the server set
+        # while the transport is dead. On any failure: tear down what started,
+        # record the error for the status surface, and degrade to disabled.
         try:
+            self.audit_writer = AuditWriter(AuditRepository(db.pool))
+            await self.audit_writer.start()
+            view = MCPConfigView(
+                capability_tier=cfg.capability_tier,
+                enabled_groups=cfg.enabled_groups,
+                enabled_tools=cfg.enabled_tools,
+            )
+            self.server = MCPServer(
+                config_view=view,
+                app_state=self._app.state,
+                audit_writer=self.audit_writer,
+                available=self._service_available,
+                resource_provider=_make_resource_provider(),
+                prompt_provider=_make_prompt_provider(),
+                debug_allowed=bool(cfg.safe_mode_flags.get("allow_debug", False)),
+            )
+            self._app.state.mcp_server = self.server
+
             from backend.mcp.core.transport import build_fastmcp_app
 
             asgi, manager = build_fastmcp_app(self.server, token_hash=cfg.access_token_hash)
             if manager is not None:
-                import contextlib
-
                 self._transport_cm = manager.run()
                 await self._transport_cm.__aenter__()
             self._app.state.mcp_asgi = asgi
-        except Exception:  # noqa: BLE001 — transport is best-effort; control-plane still works
+            self.last_error = None
+        except Exception as exc:  # noqa: BLE001 — degrade to disabled, never crash the host
             logger.exception("mcp_transport_start_failed")
+            self.last_error = repr(exc)
+            # best-effort teardown of whatever started
+            await self._stop_transport()
             self._app.state.mcp_asgi = None
+            self._app.state.mcp_server = None
+            self.server = None
 
     def _service_available(self, group) -> bool:
         # P0: scans needs the db; everything else assumed available for now.
@@ -155,10 +162,15 @@ class MCPManager:
 
     async def enable(self) -> None:
         cfg = await self.config_repo.get()
-        await self.config_repo.update({"enabled": True}, expected_row_version=cfg.row_version)
-        cfg = await self.config_repo.get()
+        # Start the transport FIRST; only persist enabled=True if it actually
+        # comes up. This prevents a "running-but-dead" half-state where the DB
+        # says enabled but /mcp/rpc 503s. _start_transport degrades to
+        # server=None on failure, so we can detect it.
         if self.server is None:
             await self._start_transport(cfg)
+        if self.server is None:
+            raise RuntimeError(f"mcp transport failed to start: {self.last_error}")
+        await self.config_repo.update({"enabled": True}, expected_row_version=cfg.row_version)
 
     async def disable(self, *, kill: bool = False) -> None:
         if kill:
@@ -180,7 +192,15 @@ class MCPManager:
         if self.server is not None:
             await self.server.shutdown()
             self.server = None
-        self.audit_writer = None
+        # Stop the audit writer task explicitly (server.shutdown also stops it,
+        # but on a PARTIAL start self.server may be None while the writer task is
+        # already running — stop it here so it can never be orphaned/leaked).
+        if self.audit_writer is not None:
+            try:
+                await self.audit_writer.shutdown()
+            except Exception:  # noqa: BLE001
+                logger.exception("mcp_audit_writer_stop_failed")
+            self.audit_writer = None
 
     async def shutdown(self) -> None:
         await self._stop_transport()

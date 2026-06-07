@@ -67,6 +67,11 @@ class OptimizeConfigIn(BaseModel):
     base: Optional[dict[str, Any]] = None
     n: int = Field(default=100, ge=1, le=5000)
     seed: int = 0
+    # Optional apply target: when BOTH are provided and a robust winner beats the
+    # live config, the tool PERSISTS a pending proposal for human approval. With
+    # them absent, the tool is analysis-only (returns the winner, stores nothing).
+    target_schedule_id: Optional[str] = None
+    target_config_index: Optional[int] = Field(default=None, ge=0)
 
 
 class OptimizeConfigOut(BaseModel):
@@ -76,6 +81,9 @@ class OptimizeConfigOut(BaseModel):
     top_n: list[dict[str, Any]]
     fidelity_caveat: str
     objective: str
+    # Set when a proposal was persisted for human approval (apply-target path).
+    proposal_id: Optional[str] = None
+    proposal_error: Optional[str] = None
 
 
 @tool(
@@ -121,11 +129,48 @@ async def optimize_config(args: OptimizeConfigIn, ctx: Any) -> OptimizeConfigOut
     except ComboGenerationError as exc:
         raise MCPValidationError(str(exc)) from exc
 
+    winner = result["winner"]
+    proposal_id: Optional[str] = None
+    proposal_error: Optional[str] = None
+
+    # Apply-target path: when the agent targets a live schedule/config AND a
+    # robust winner beat the baseline, PERSIST a pending proposal for human
+    # approval. The agent never applies — it only enqueues for a human. Any
+    # failure here is reported, not raised, so the analysis result still returns.
+    if winner and args.target_schedule_id is not None and args.target_config_index is not None:
+        db = getattr(ctx.services, "db", None)
+        if db is None or getattr(db, "pool", None) is None:
+            proposal_error = "proposal storage unavailable"
+        else:
+            try:
+                from backend.mcp.repositories.proposal_repo import ProposalRepository
+                from backend.mcp.tools.optimizer.proposal_service import (
+                    ProposalApplyError,
+                    create_proposal_from_winner,
+                )
+
+                repo = ProposalRepository(db.pool)
+                proposal_id = await create_proposal_from_winner(
+                    proposal_repo=repo,
+                    prior_config=args.base or {},
+                    winner_config=winner.get("config", {}),
+                    target_schedule_id=args.target_schedule_id,
+                    target_config_index=args.target_config_index,
+                    risk_verdict={
+                        "robustness": winner.get("verdict"),
+                        "uplift": winner.get("uplift"),
+                    },
+                )
+            except ProposalApplyError as exc:
+                proposal_error = str(exc)
+
     return OptimizeConfigOut(
-        winner=result["winner"],
+        winner=winner,
         keep_current=result["keep_current"],
         total_combos=result["total_combos"],
         top_n=result["ranked"][:20],
         fidelity_caveat=result["fidelity_caveat"],
         objective=result["objective"],
+        proposal_id=proposal_id,
+        proposal_error=proposal_error,
     )

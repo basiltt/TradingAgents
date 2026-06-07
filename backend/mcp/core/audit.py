@@ -10,7 +10,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from typing import Any, Optional, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 def _canonical(payload: dict[str, Any]) -> str:
@@ -80,12 +83,25 @@ class AuditWriter:
             payload = await self._queue.get()
             try:
                 await self._write_one(payload)
+            except asyncio.CancelledError:
+                self._queue.task_done()
+                raise
+            except Exception:  # noqa: BLE001
+                # A write failure must NOT kill the chain writer (it would
+                # silently drop every subsequent audit record). Log and continue;
+                # _write_one commits seq/prev only on success, so the chain stays
+                # consistent and the failed entry is simply absent (a verifiable
+                # gap), not a forged link.
+                logger.exception("audit_write_failed")
             finally:
                 self._queue.task_done()
 
     async def _write_one(self, payload: dict[str, Any]) -> None:
         async with self._lock:
-            self._seq += 1
+            # Compute against the NEXT seq locally; commit self._seq/_prev only
+            # after a successful append so a DB failure cannot desync the chain
+            # counter (which would skip a seq and break verification).
+            next_seq = self._seq + 1
             # Hash over the PERSISTED, canonical record fields so the chain can be
             # independently re-verified from storage (verify_persisted_chain).
             persisted_fields = {
@@ -102,16 +118,18 @@ class AuditWriter:
                 "duration_ms": payload.get("duration_ms"),
             }
             entry_hash = compute_entry_hash(
-                seq=self._seq, prev_hash=self._prev, payload=persisted_fields
+                seq=next_seq, prev_hash=self._prev, payload=persisted_fields
             )
             record = {
                 **persisted_fields,
-                "seq": self._seq,
+                "seq": next_seq,
                 "prev_hash": self._prev,
                 "entry_hash": entry_hash,
                 "audit_payload": persisted_fields,
             }
             await self._repo.append(record)
+            # commit only after durable write
+            self._seq = next_seq
             self._prev = entry_hash
 
     async def drain(self) -> None:

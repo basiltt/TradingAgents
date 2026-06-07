@@ -114,6 +114,7 @@ async def status(request: Request) -> dict[str, Any]:
         "enabled": cfg.enabled,
         "active_tools": len(mgr.server.list_tools()) if running and mgr.server else 0,
         "pending_proposals": await _pending_proposals(mgr),
+        "last_error": getattr(mgr, "last_error", None),
         "last_error_at": None,
     }
 
@@ -139,7 +140,12 @@ async def list_tools(request: Request) -> dict[str, Any]:
 
 
 def _service_available(request: Request, group) -> bool:
-    """Mirror MCPManager._service_available so OFF-state budget reflects reality."""
+    """Delegate to the manager's single source of truth so the OFF-state budget
+    reflects the same availability logic the live resolver uses (no drift)."""
+    mgr = getattr(request.app.state, "mcp_manager", None)
+    if mgr is not None and hasattr(mgr, "_service_available"):
+        return mgr._service_available(group)  # noqa: SLF001 — intentional single-source reuse
+    # Fallback mirrors MCPManager._service_available if the manager is absent.
     from backend.mcp.core.registry import ToolGroup
 
     if group == ToolGroup.SCANS:

@@ -197,7 +197,14 @@ function ProposalCard({
 }) {
   const isPending = proposal.status === "pending";
   const isApplied = proposal.status === "applied";
-  const diff = proposal.diff ?? {};
+  // diff envelope: { before: fullPriorConfig, fields: { name: {from,to} } }.
+  // Render the per-field `fields` map; fall back to the raw diff for older rows.
+  const diffRaw = (proposal.diff ?? {}) as Record<string, unknown>;
+  const diff = (diffRaw.fields && typeof diffRaw.fields === "object"
+    ? diffRaw.fields
+    : // legacy/no-fields: hide the bare `before` snapshot, show nothing rather
+      // than dumping the whole config
+      (("before" in diffRaw) ? {} : diffRaw)) as Record<string, unknown>;
   const verdict = (proposal.risk_verdict ?? {}) as Record<string, unknown>;
   const robustness = typeof verdict.robustness === "string" ? verdict.robustness : null;
   const uplift = verdict.uplift as Record<string, unknown> | undefined;

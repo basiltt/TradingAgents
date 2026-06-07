@@ -157,3 +157,78 @@ async def test_drift_guard_rejects_when_target_changed(mcp_pool):
         )
     with pytest.raises(ProposalApplyError):
         await approve_proposal(proposal_repo=repo, db=_RealDB(mcp_pool), proposal_id=pid, approver="op")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_create_approve_revert_round_trip(mcp_pool):
+    """The full money path: create_proposal_from_winner -> approve (applies) ->
+    revert (restores prior). Proves the previously-unwired create side + that
+    the {before, fields} diff envelope drives approve and revert correctly."""
+    from backend.mcp.repositories.proposal_repo import ProposalRepository
+    from backend.mcp.tools.optimizer.proposal_service import (
+        approve_proposal,
+        create_proposal_from_winner,
+        revert_proposal,
+    )
+
+    prior = _base_config(take_profit_pct=150.0)
+    sid = await _seed_schedule(mcp_pool, [prior])
+    repo = ProposalRepository(mcp_pool)
+
+    # create: a winner that raises take_profit to 250
+    winner = {**prior, "take_profit_pct": 250.0}
+    pid = await create_proposal_from_winner(
+        proposal_repo=repo, prior_config=prior, winner_config=winner,
+        target_schedule_id=sid, target_config_index=0,
+        risk_verdict={"robustness": "HARD"},
+    )
+    stored = await repo.get(pid)
+    assert stored["status"] == "pending"
+    assert stored["diff"]["fields"]["take_profit_pct"] == {"from": 150.0, "to": 250.0}
+    assert stored["diff"]["before"]["take_profit_pct"] == 150.0  # drift baseline present
+
+    # approve -> applied
+    await approve_proposal(proposal_repo=repo, db=_RealDB(mcp_pool), proposal_id=pid, approver="op")
+    async with mcp_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT scan_config FROM scheduled_scans WHERE id=$1", sid)
+    sc = row["scan_config"] if isinstance(row["scan_config"], dict) else json.loads(row["scan_config"])
+    assert sc["auto_trade_configs"][0]["take_profit_pct"] == 250.0
+
+    # revert -> prior restored
+    await revert_proposal(proposal_repo=repo, db=_RealDB(mcp_pool), proposal_id=pid, approver="op")
+    async with mcp_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT scan_config FROM scheduled_scans WHERE id=$1", sid)
+    sc = row["scan_config"] if isinstance(row["scan_config"], dict) else json.loads(row["scan_config"])
+    assert sc["auto_trade_configs"][0]["take_profit_pct"] == 150.0
+    assert (await repo.get(pid))["status"] == "reverted"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_revert_refuses_ceiling_breaching_prior(mcp_pool):
+    """A6: a prior snapshot that breaches the absolute leverage ceiling must NOT
+    be restorable via revert — revert runs the SAME ceiling as a forward apply.
+
+    Setup: the live config IS a breaching prior (leverage=125 > ceiling 50). A
+    sane winner (leverage=50) is approved + applied. Reverting would write 125
+    back to live — the ceiling must refuse it."""
+    from backend.mcp.repositories.proposal_repo import ProposalRepository
+    from backend.mcp.tools.optimizer.proposal_service import (
+        ProposalApplyError,
+        approve_proposal,
+        revert_proposal,
+    )
+
+    prior = _base_config(leverage=125)
+    sid = await _seed_schedule(mcp_pool, [prior])
+    repo = ProposalRepository(mcp_pool)
+    pid = await repo.create(
+        sweep_id=None, target_schedule_id=sid, target_config_index=0,
+        config={"leverage": 50},
+        diff={"before": prior, "fields": {"leverage": {"from": 125, "to": 50}}},
+    )
+    await approve_proposal(proposal_repo=repo, db=_RealDB(mcp_pool), proposal_id=pid, approver="op")
+    # revert would write leverage=125 back → must be refused by the ceiling
+    with pytest.raises(ProposalApplyError):
+        await revert_proposal(proposal_repo=repo, db=_RealDB(mcp_pool), proposal_id=pid, approver="op")

@@ -16,6 +16,7 @@ plane / persistence layer; this module is the pure, unit-testable policy core.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from backend.schemas import AutoTradeConfig
@@ -74,18 +75,32 @@ def sanitize_patch(patch: dict[str, Any], *, reject_if_empty: bool = False) -> d
     return clean
 
 
+def _finite(v: Any) -> float:
+    """Coerce to float, treating NaN/Inf as a ceiling breach (returns a value
+    that fails every bound). NaN comparisons are always False, so NaN must be
+    rejected explicitly or it would slip past `> ceiling` / `< floor` checks."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return math.inf  # non-numeric → fail the > ceiling check
+    if not math.isfinite(f):
+        return math.inf
+    return f
+
+
 def sanity_ceiling_ok(merged: dict[str, Any]) -> bool:
     """Hard non-overridable bounds. Returns False if any is breached.
 
     Fail-closed: a missing/None stop_loss_pct is treated as a breach (a live
-    config with no stop loss at leverage must never pass the ceiling).
+    config with no stop loss at leverage must never pass the ceiling); NaN/Inf
+    in any bounded field is also a breach (NaN comparisons silently pass `>`).
     """
-    if float(merged.get("leverage", 0)) > _MAX_LEVERAGE:
+    if _finite(merged.get("leverage", 0)) > _MAX_LEVERAGE:
         return False
     sl = merged.get("stop_loss_pct")
-    if sl is None or float(sl) < _MIN_STOP_LOSS_PCT:
+    if sl is None or _finite(sl) < _MIN_STOP_LOSS_PCT:
         return False
-    if float(merged.get("capital_pct", 0)) > _MAX_CAPITAL_PCT:
+    if _finite(merged.get("capital_pct", 0)) > _MAX_CAPITAL_PCT:
         return False
     return True
 
@@ -105,3 +120,40 @@ def validate_merged_config(current: dict[str, Any], patch: dict[str, Any]) -> di
     except Exception as exc:  # noqa: BLE001 — surface as a clean rejection
         raise ApplyRejected(f"merged config failed validation: {exc}") from exc
     return merged
+
+
+def build_diff(prior: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
+    """Construct the proposal diff envelope stored in mcp_proposals.diff.
+
+    Shape (consumed by both the drift-guard and the operator UI):
+      {
+        "before": <full prior config>,   # drift baseline + revert source
+        "fields": { field: {"from": old, "to": new}, ... }  # per-field changes
+      }
+    Only sweepable fields that actually changed appear in `fields`. `before` is
+    the COMPLETE prior config so the atomic apply can drift-check against it.
+    """
+    fields: dict[str, dict[str, Any]] = {}
+    for key in SWEEPABLE_FIELDS:
+        if key in proposed and proposed[key] != prior.get(key):
+            fields[key] = {"from": prior.get(key), "to": proposed[key]}
+    return {"before": dict(prior), "fields": fields}
+
+
+def validate_full_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Run a COMPLETE config (not a patch) through the SAME ceiling + model gates.
+
+    Used by revert: restoring a prior config must obey the absolute sanity
+    ceiling exactly like a forward apply — a prior snapshot that exceeds the
+    hard leverage/capital bounds (or has NaN/no stop loss) must never be written
+    back to live config just because it was once stored.
+    """
+    if not sanity_ceiling_ok(config):
+        raise ApplyRejected("config breaches an absolute sanity ceiling")
+    model_input = dict(config)
+    model_input.setdefault("account_id", config.get("account_id", "mcp-revert"))
+    try:
+        AutoTradeConfig(**model_input)
+    except Exception as exc:  # noqa: BLE001
+        raise ApplyRejected(f"config failed validation: {exc}") from exc
+    return config
