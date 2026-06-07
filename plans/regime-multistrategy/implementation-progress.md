@@ -51,7 +51,27 @@
 | 35 | 17:30 | Fix hardening findings (P1/P2/D2/D4/D5) | DONE — 5 regression tests green |
 | 36 | 17:35 | Step 14 adversarial correctness pass | DONE — 7 findings (2 kill-safety, 3 filter/coupling) |
 | 37 | 17:55 | Fix adversarial findings (C1-C5) | DONE — 3 regression tests green |
-| 38 | 18:00 | Next: full suite + final validation + traceability + merge | IN_PROGRESS |
+| 38 | 18:00 | Step 15 full-suite validation | DONE — regime clean; failures are pre-existing infra |
+| 39 | 18:30 | Final-validation conclusion + traceability | IN_PROGRESS |
+
+## Step 15 Full-Suite Validation CONCLUSION
+- ALL 132 regime tests (19 files) pass STANDALONE. Zero regime tests in any failure.
+- Full suite: 2030 passed, 39 failed + 23 errors — ALL pre-existing infrastructure:
+  - test_analysis_service.py: shared-DB-fixture pollution (duplicate analysis_runs_pkey
+    on a fixed test UUID against a persistent test DB) + the documented localhost->::1
+    network-sandbox block. Fails IN ISOLATION too — unrelated to regime (touches analysis_runs).
+  - test_persistence.py / test_config_service.py: PASS in isolation (12/12, 42/42) — these
+    are cross-test pollution / DB-pool + event-loop teardown when 2000+ tests share one process
+    ("Event loop is closed", "Task destroyed but pending"). NOT a regime regression.
+  - test_close_positions_service / test_bybit_rate_limiting: same shared-fixture class.
+- Frontend: tsc --noEmit 0 errors.
+- VERDICT: regime feature is sound; full-suite failures are pre-existing test-infra issues
+  (documented in baseline + research-history), not introduced by this work.
+
+## FEATURE COMPLETE — full stack, golden-guarded, 4 review passes
+- 8 new backend modules + 19 test files (132 tests) + frontend (RegimeStrategyFields + client.ts)
+- Migrations 43-48; F1/F2/F3 all functional end-to-end; default-off byte-identical.
+- Reviews: 12c x2 (IR1-12) + Step 14 hardening (P1/P2/D2/D4/D5) + adversarial (C1-C7) — all fixed+regression-tested.
 
 ## Step 14 Adversarial Findings + Fixes
 - C1 HIGH: f2_long kill documented but NEVER checked → inert. FIX: is_killed("f2_long") on the long-fade path before the ack gate.
