@@ -75,15 +75,18 @@ def sanitize_patch(patch: dict[str, Any], *, reject_if_empty: bool = False) -> d
 
 
 def sanity_ceiling_ok(merged: dict[str, Any]) -> bool:
-    """Hard non-overridable bounds. Returns False if any is breached."""
+    """Hard non-overridable bounds. Returns False if any is breached.
+
+    Fail-closed: a missing/None stop_loss_pct is treated as a breach (a live
+    config with no stop loss at leverage must never pass the ceiling).
+    """
     if float(merged.get("leverage", 0)) > _MAX_LEVERAGE:
         return False
     sl = merged.get("stop_loss_pct")
-    if sl is not None and float(sl) < _MIN_STOP_LOSS_PCT:
+    if sl is None or float(sl) < _MIN_STOP_LOSS_PCT:
         return False
     if float(merged.get("capital_pct", 0)) > _MAX_CAPITAL_PCT:
         return False
-    # TP must be above 0 and SL ordering sane (both > 0 enforced by the model)
     return True
 
 

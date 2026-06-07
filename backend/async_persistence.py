@@ -829,7 +829,7 @@ async def _migrate_mcp_v43(conn) -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             started_at TIMESTAMPTZ,
             completed_at TIMESTAMPTZ,
-            CHECK (completed_at IS NULL OR completed_at >= started_at)
+            CHECK (completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at))
         )
         """
     )

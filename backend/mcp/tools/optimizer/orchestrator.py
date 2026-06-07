@@ -12,11 +12,17 @@ from typing import Any, Optional
 
 from backend.mcp.tools.optimizer.combos import config_hash, generate_combos
 from backend.mcp.tools.optimizer.ranker import (
+    _objective_value,
     compute_uplift,
     rank_results,
     robustly_beats,
     robustness_verdict,
 )
+
+
+def _finite_objective(result: dict[str, Any], objective: str) -> bool:
+    """True if the result's objective metric is a finite (non-NaN/Inf) value."""
+    return _objective_value(result.get("metrics", {}), objective) is not None
 
 
 async def run_sweep_inproc(
@@ -51,7 +57,10 @@ async def run_sweep_inproc(
 
     winner: Optional[dict[str, Any]] = None
     keep_current = False
-    if ranked:
+    if not ranked:
+        # every combo was excluded by constraints -> nothing can beat current
+        keep_current = True
+    else:
         top = ranked[0]
         if baseline_metrics is not None:
             beats = robustly_beats(
@@ -78,8 +87,10 @@ async def run_sweep_inproc(
             else:
                 keep_current = True
         else:
-            # no baseline supplied -> top of the ranking is the winner (no honesty gate)
-            winner = dict(top)
+            # no baseline supplied -> top is the winner, unless its objective is
+            # NaN/Inf (quarantined) in which case there is no valid winner.
+            if _finite_objective(top, objective):
+                winner = dict(top)
 
     return {
         "ranked": ranked,

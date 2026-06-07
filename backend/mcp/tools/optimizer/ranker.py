@@ -135,8 +135,12 @@ def robustly_beats(
 ) -> bool:
     """The full FR-018 bar: uplift >= min, >= min_trades, no DD regression,
     verdict != fragile."""
+    # NaN/Inf candidate objective can never win.
+    cand_finite = _objective_value(candidate, objective)
+    if cand_finite is None:
+        return False
     base_obj = float(baseline.get(objective, 0.0))
-    cand_obj = float(candidate.get(objective, 0.0))
+    cand_obj = cand_finite
     if base_obj == 0:
         uplift_pct = 100.0 if cand_obj > 0 else 0.0
     else:

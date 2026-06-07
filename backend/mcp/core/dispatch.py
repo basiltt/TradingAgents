@@ -11,8 +11,9 @@ is the per-call core and is unit-testable with no transport.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from pydantic import BaseModel, ValidationError
 
@@ -22,6 +23,7 @@ from backend.mcp.core.errors import (
     MCPValidationError,
     map_exception,
 )
+from backend.mcp.core.redact import redact_record
 from backend.mcp.core.registry import ToolSpec, tier_allows
 
 _DEFAULT_TIMEOUT_S = 120.0
@@ -38,12 +40,29 @@ class CallContext:
 
 
 def _ok_result(model: BaseModel) -> dict[str, Any]:
-    data = model.model_dump()
+    # Central redaction backstop: deep-redact every result so a tool that forgets
+    # to redact still cannot leak secrets/raw money (financial detail stays opt-in
+    # at the tool level, which sets the fields before they reach here).
+    data = _deep_redact(model.model_dump())
     return {
         "isError": False,
         "structuredContent": data,
         "content": [{"type": "text", "text": _summary_text(data)}],
     }
+
+
+def _deep_redact(obj: Any) -> Any:
+    """Recursively apply the redaction backstop over a result structure."""
+    if isinstance(obj, dict):
+        # redact_record handles secret-key + exchange-uid + money for this level;
+        # recurse into the surviving values.
+        red = redact_record(obj, allow_financial_detail=True)
+        # allow_financial_detail=True here because tools already applied the
+        # money policy; this backstop's job is the SECRET + uid strip + recursion.
+        return {k: _deep_redact(v) for k, v in red.items()}
+    if isinstance(obj, list):
+        return [_deep_redact(v) for v in obj]
+    return obj
 
 
 def _error_result(code: str, message: str) -> dict[str, Any]:
@@ -67,7 +86,12 @@ async def dispatch(
     timeout_s: float = _DEFAULT_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Run one tool call through the cross-cutting pipeline. Always returns a
-    tool result dict (never raises)."""
+    tool result dict (never raises, except CancelledError which propagates).
+
+    The audit sink may be sync or async; it is awaited BEFORE the result is
+    returned so a mutating call's audit row is durable before the agent sees the
+    response (audit-before-respond).
+    """
     started = ctx.clock.now()
     record: dict[str, Any] = {
         "tool_name": spec.name,
@@ -77,11 +101,12 @@ async def dispatch(
         "principal_token_id": ctx.principal,
         "session_id": ctx.session_id,
         "correlation_id": str(ctx.correlation_id) if ctx.correlation_id else None,
+        "args_redacted": _safe_args(raw_args),
         "status": "ok",
         "error": None,
     }
 
-    def _finalize(result: dict[str, Any], status: str, error: Optional[str]) -> dict[str, Any]:
+    async def _finalize(result: dict[str, Any], status: str, error: Optional[str]) -> dict[str, Any]:
         record["status"] = status
         record["error"] = error
         try:
@@ -90,7 +115,9 @@ async def dispatch(
             )
         except Exception:
             record["duration_ms"] = None
-        audit(record)
+        outcome = audit(record)
+        if inspect.isawaitable(outcome):
+            await outcome
         return result
 
     try:
@@ -107,9 +134,19 @@ async def dispatch(
             raise MCPValidationError(str(ve.errors()[:1])) from ve
         # handler under timeout
         result_model = await asyncio.wait_for(spec.handler(args, ctx), timeout=timeout_s)
-        return _finalize(_ok_result(result_model), "ok", None)
+        return await _finalize(_ok_result(result_model), "ok", None)
+    except asyncio.CancelledError:
+        # cooperative cancellation must propagate, not be swallowed
+        raise
     except asyncio.TimeoutError:
-        return _finalize(_error_result("timeout", "tool timed out"), "timeout", "timeout")
-    except BaseException as exc:  # noqa: BLE001 — catch-all boundary (R-265)
+        return await _finalize(_error_result("timeout", "tool timed out"), "timeout", "timeout")
+    except (Exception, MCPDeniedError) as exc:  # noqa: BLE001 — catch-all boundary (R-265)
         mapped = map_exception(exc)
-        return _finalize(_error_result(mapped.code, mapped.message), mapped.status, mapped.code)
+        return await _finalize(_error_result(mapped.code, mapped.message), mapped.status, mapped.code)
+
+
+def _safe_args(raw_args: dict[str, Any]) -> dict[str, Any]:
+    """Redacted, bounded copy of the call args for the audit record."""
+    if not isinstance(raw_args, dict):
+        return {}
+    return _deep_redact(raw_args)

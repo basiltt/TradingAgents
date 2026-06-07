@@ -13,12 +13,13 @@ from typing import Any
 _SECRET_KEY_MARKERS = ("key", "secret", "token", "password", "credential", "encrypted")
 # Raw exchange identifiers to drop (opaque-id policy).
 _EXCHANGE_ID_KEYS = ("bybit_uid", "uid")
-# Absolute-money fields redacted unless financial-detail is opted in.
-_MONEY_KEYS = (
-    "wallet_balance", "available_balance", "equity", "balance",
-    "realised_pnl", "unrealised_pnl", "realized_pnl", "unrealized_pnl",
-    "closed_pnl", "cumulative_pnl", "margin_used",
-)
+# Absolute-money field MARKERS — substring-matched (so total_equity, net_pnl,
+# usdt_balance, account_balance, etc. are all caught, like secrets are).
+_MONEY_MARKERS = ("balance", "equity", "pnl", "margin")
+
+
+def _is_money_key(lk: str) -> bool:
+    return any(m in lk for m in _MONEY_MARKERS)
 
 
 def strip_secret_keys(payload: dict[str, Any]) -> dict[str, Any]:
@@ -31,19 +32,29 @@ def strip_secret_keys(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def redact_record(record: dict[str, Any], *, allow_financial_detail: bool = False) -> dict[str, Any]:
-    """Redact one record: strip secrets + exchange UIDs; mask absolute money
-    unless financial detail is allowed."""
+    """Redact one record RECURSIVELY: strip secrets + exchange UIDs at every
+    depth; mask absolute money unless financial detail is allowed."""
     out: dict[str, Any] = {}
     for k, v in record.items():
         lk = str(k).lower()
         if any(m in lk for m in _SECRET_KEY_MARKERS):
-            continue  # never emit secrets
+            continue  # never emit secrets (any depth)
         if lk in _EXCHANGE_ID_KEYS:
             continue  # opaque-id policy: drop raw exchange UIDs
-        if (not allow_financial_detail) and lk in _MONEY_KEYS:
+        if (not allow_financial_detail) and _is_money_key(lk):
             out[k] = "redacted"
             continue
-        out[k] = v
+        # recurse into nested structures
+        if isinstance(v, dict):
+            out[k] = redact_record(v, allow_financial_detail=allow_financial_detail)
+        elif isinstance(v, list):
+            out[k] = [
+                redact_record(item, allow_financial_detail=allow_financial_detail)
+                if isinstance(item, dict) else item
+                for item in v
+            ]
+        else:
+            out[k] = v
     return out
 
 

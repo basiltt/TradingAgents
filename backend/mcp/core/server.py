@@ -141,13 +141,7 @@ class MCPServer:
             services=self._services,
             clock=self._clock,
         )
-        return await dispatch(spec, arguments, ctx, audit=self._audit_enqueue)
-
-    def _audit_enqueue(self, record: dict[str, Any]) -> None:
-        # fire-and-forget onto the single writer's queue
-        import asyncio
-
-        asyncio.ensure_future(self._audit.enqueue(record))
+        return await dispatch(spec, arguments, ctx, audit=self._audit.enqueue)
 
     async def shutdown(self) -> None:
         await self._audit.shutdown()

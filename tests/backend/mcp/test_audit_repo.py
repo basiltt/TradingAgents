@@ -52,6 +52,34 @@ async def test_audit_writer_persists_continuous_chain(mcp_pool):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_verify_persisted_chain_detects_tamper(mcp_pool):
+    """The hash chain can be re-verified from storage AND a tampered row fails."""
+    from backend.mcp.repositories.audit_repo import AuditRepository
+
+    repo = AuditRepository(mcp_pool)
+    writer = AuditWriter(repo)
+    await writer.start()
+    try:
+        for i in range(4):
+            await writer.enqueue(
+                {"tool_name": f"t{i}", "tool_group": "scans", "status": "ok",
+                 "args_redacted": {"limit": i}}
+            )
+        await writer.drain()
+    finally:
+        await writer.shutdown()
+
+    # the persisted chain verifies
+    assert await repo.verify_persisted_chain() is True
+
+    # tamper a persisted field -> verification must fail
+    async with mcp_pool.acquire() as conn:
+        await conn.execute("UPDATE mcp_audit_log SET status='error' WHERE seq=2")
+    assert await repo.verify_persisted_chain() is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_audit_chain_resumes_across_writer_restart(mcp_pool):
     from backend.mcp.repositories.audit_repo import AuditRepository
 

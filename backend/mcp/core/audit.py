@@ -86,17 +86,30 @@ class AuditWriter:
     async def _write_one(self, payload: dict[str, Any]) -> None:
         async with self._lock:
             self._seq += 1
-            entry_hash = compute_entry_hash(seq=self._seq, prev_hash=self._prev, payload=payload)
+            # Hash over the PERSISTED, canonical record fields so the chain can be
+            # independently re-verified from storage (verify_persisted_chain).
+            persisted_fields = {
+                "tool_name": payload.get("tool_name"),
+                "tool_group": payload.get("tool_group"),
+                "safety_class": payload.get("safety_class"),
+                "mutating": bool(payload.get("mutating", False)),
+                "principal_token_id": payload.get("principal_token_id"),
+                "session_id": payload.get("session_id"),
+                "correlation_id": payload.get("correlation_id"),
+                "args_redacted": payload.get("args_redacted"),
+                "status": payload.get("status"),
+                "error": payload.get("error"),
+                "duration_ms": payload.get("duration_ms"),
+            }
+            entry_hash = compute_entry_hash(
+                seq=self._seq, prev_hash=self._prev, payload=persisted_fields
+            )
             record = {
-                **{k: payload.get(k) for k in (
-                    "tool_name", "tool_group", "safety_class", "mutating",
-                    "principal_token_id", "session_id", "correlation_id",
-                    "args_redacted", "status", "error", "duration_ms",
-                )},
+                **persisted_fields,
                 "seq": self._seq,
                 "prev_hash": self._prev,
                 "entry_hash": entry_hash,
-                "audit_payload": payload,
+                "audit_payload": persisted_fields,
             }
             await self._repo.append(record)
             self._prev = entry_hash

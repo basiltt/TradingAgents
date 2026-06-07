@@ -74,3 +74,43 @@ class AuditRepository:
                 limit,
             )
         return [dict(r) for r in rows]
+
+    async def verify_persisted_chain(self) -> bool:
+        """Re-verify the hash chain from stored rows. Detects tamper of any
+        persisted field or a broken/forked link."""
+        from backend.mcp.core.audit import verify_chain
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT seq, prev_hash, entry_hash, tool_name, tool_group, "
+                "safety_class, mutating, principal_token_id, session_id, "
+                "correlation_id, args_redacted, status, error, duration_ms "
+                "FROM mcp_audit_log ORDER BY seq"
+            )
+        chain: list[dict[str, Any]] = []
+        for r in rows:
+            args = r["args_redacted"]
+            if isinstance(args, str):
+                args = json.loads(args)
+            payload = {
+                "tool_name": r["tool_name"],
+                "tool_group": r["tool_group"],
+                "safety_class": r["safety_class"],
+                "mutating": r["mutating"],
+                "principal_token_id": r["principal_token_id"],
+                "session_id": r["session_id"],
+                "correlation_id": str(r["correlation_id"]) if r["correlation_id"] else None,
+                "args_redacted": args,
+                "status": r["status"],
+                "error": r["error"],
+                "duration_ms": r["duration_ms"],
+            }
+            chain.append(
+                {
+                    "seq": r["seq"],
+                    "prev_hash": r["prev_hash"],
+                    "entry_hash": r["entry_hash"],
+                    "payload": payload,
+                }
+            )
+        return verify_chain(chain)
