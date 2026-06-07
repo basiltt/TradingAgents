@@ -16,7 +16,6 @@ from backend.mcp.core.dispatch import CallContext, dispatch
 from backend.mcp.core.registry import (
     MCPConfigView,
     ToolSpec,
-    discover_tools,
     resolve_enabled,
 )
 from backend.mcp.core.services import ServiceAccessors
@@ -53,7 +52,6 @@ class MCPServer:
         self._available = available or (lambda group: True)
         self._clock = clock or RealClock()
         self._server_version = server_version
-        discover_tools()
         self._enabled: dict[str, ToolSpec] = {
             s.name: s for s in resolve_enabled(config_view, available=self._available)
         }

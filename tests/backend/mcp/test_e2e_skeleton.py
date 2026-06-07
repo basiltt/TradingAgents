@@ -14,6 +14,9 @@ import pytest
 from backend.mcp.core.audit import AuditWriter
 from backend.mcp.core.registry import MCPConfigView
 from backend.mcp.core.server import MCPServer, negotiate_protocol
+from backend.mcp.discovery import discover_tools
+
+discover_tools()  # populate the registry (mirrors mount._start_transport)
 
 
 class _FakeDB:

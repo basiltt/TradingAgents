@@ -483,6 +483,16 @@ def create_app() -> FastAPI:
         await regime_scheduler.start()
         app.state.regime_scheduler = regime_scheduler
 
+        # MCP boot — AFTER migrations, stale-backtest recovery, and scanner-resume
+        # (so the optional MCP server never delays live-trading startup). Reads the
+        # persisted mcp_config; starts the transport only if enabled. Never raises.
+        try:
+            from backend.mcp.mount import mcp_boot
+            await mcp_boot(app)
+        except Exception:
+            logger.exception("mcp_boot_call_failed")
+            app.state.mcp_server = None
+
         logger.info("app_ready: all services initialised")
         app.state._ready = True
 
@@ -530,6 +540,8 @@ def create_app() -> FastAPI:
             await _safe_shutdown("debug_trace_recorder", app.state.debug_trace_recorder.shutdown())
         await _safe_shutdown("analysis_service", app.state.analysis_service.shutdown())
         await _safe_shutdown("backtest_service", app.state.backtest_service.shutdown())
+        if getattr(app.state, "mcp_manager", None):
+            await _safe_shutdown("mcp_manager", app.state.mcp_manager.shutdown())
         await _safe_shutdown("ws_manager", ws_manager.shutdown())
         from tradingagents.graph.parallel_debate import shutdown_debate_executor
         shutdown_debate_executor()
@@ -598,6 +610,17 @@ def create_app() -> FastAPI:
     app.include_router(debug_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
+
+    # MCP server (AI agent integration) — single integration seam. Installs the
+    # permanent /mcp/rpc indirection mount (503 gate until enabled) + the
+    # /api/v1/mcp/* control-plane router. Reads nothing; opens no DB connection.
+    # Off by default; mcp_boot (in lifespan, after scanner-resume) decides whether
+    # to start the transport. A failure here must never abort trading startup.
+    try:
+        from backend.mcp.mount import register_mcp
+        register_mcp(app)
+    except Exception:
+        logger.exception("mcp_register_failed")
 
     @app.get("/api/v1/healthz")
     async def healthz():
