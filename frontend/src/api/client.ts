@@ -278,6 +278,42 @@ export interface AutoTradeConfig {
   adaptive_blacklist_max_win_rate?: number;
   adaptive_blacklist_lookback_hours?: number;
   ai_pause_cycles?: number | null;
+  // ── Regime Multi-Strategy (3 optional features, all default-off) ──
+  // F1 — Regime/Session Entry Filter
+  regime_filter_enabled?: boolean;
+  session_filter_enabled?: boolean;
+  session_blocked_hours_utc?: number[] | null;
+  session_allowed_hours_utc?: number[] | null;
+  btc_vol_filter_enabled?: boolean;
+  btc_vol_min_threshold?: number | null;
+  btc_vol_max_threshold?: number | null;
+  btc_vol_interval?: "15m" | "1h" | "4h";
+  btc_vol_lookback_candles?: number;
+  // F2 — Mean-Reversion Strategy
+  mean_reversion_enabled?: boolean;
+  mr_short_enabled?: boolean;
+  mr_long_enabled?: boolean;
+  mr_long_ack_requested?: boolean;
+  mr_regime?: "ranging";
+  mr_mean_period?: number;
+  mr_mean_interval?: "15m" | "1h" | "4h";
+  mr_target_capture_pct?: number;
+  mr_tight_stop_pct?: number | null;
+  mr_time_stop_minutes?: number;
+  mr_min_edge_pct?: number;
+  mr_extreme_min_abs_score?: number;
+  mr_capital_pct?: number;
+  mr_leverage?: number;
+  mr_max_trades?: number;
+  // F3 — Strategy-Cohort
+  strategy_cohort?: "trend" | "mean_reversion";
+  // common / classifier-tuning
+  regime_staleness_minutes?: number;
+  regime_volatile_atr?: number;
+  regime_trend_ema_dist_pct?: number;
+  // read-back (response only)
+  strategy_kind?: "trend" | "mean_reversion";
+  f1_active?: boolean;
 }
 
 export interface ScanRequest {
