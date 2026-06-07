@@ -62,8 +62,20 @@ class BybitRateGate:
             return self._ws_connect_timestamps, self._ws_connect_max, self._ws_window
         return self._public_timestamps, self._public_max, self._window
 
-    async def acquire_async(self, channel: str = "public") -> None:
+    async def acquire_async(self, channel: str = "public", *, lane: str = "live") -> None:
+        """Acquire a rate-gate slot.
+
+        `lane` selects priority: the default 'live' lane preserves the original
+        behavior for all existing callers (scanner/reconciler/order placement).
+        The 'mcp' lane is subordinate — it reserves a fraction of the budget for
+        the live lane and yields to it, so MCP/sweep traffic can never starve
+        live trading's exchange quota.
+        """
         timestamps, max_budget, window = self._get_channel(channel)
+        # subordinate lane: leave headroom for the live lane (reserve ~25%, >=1).
+        effective_budget = max_budget
+        if lane == "mcp":
+            effective_budget = max(1, int(max_budget * 0.75))
         self._wait_count += 1
         try:
             while True:
@@ -71,11 +83,13 @@ class BybitRateGate:
                     now = time.monotonic()
                     while timestamps and timestamps[0] < now - window:
                         timestamps.popleft()
-                    if len(timestamps) < max_budget:
+                    if len(timestamps) < effective_budget:
                         timestamps.append(now)
                         return
                     sleep_time = timestamps[0] - (now - window) + 0.05
-                await asyncio.sleep(max(0.05, min(sleep_time, window)))
+                # mcp lane backs off a touch longer so live calls win contention
+                extra = 0.05 if lane == "mcp" else 0.0
+                await asyncio.sleep(max(0.05, min(sleep_time, window)) + extra)
         finally:
             self._wait_count -= 1
 

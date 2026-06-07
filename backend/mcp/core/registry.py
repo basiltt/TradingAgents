@@ -175,11 +175,13 @@ def resolve_enabled(
     config: MCPConfigView,
     *,
     available: Callable[[ToolGroup], bool],
+    debug_allowed: bool = False,
 ) -> list[ToolSpec]:
     """Return the tools that should be advertised, applying:
 
     - most-restrictive group/individual resolution,
     - the capability-tier ceiling,
+    - the allow_debug gate (DEBUG group hidden unless debug_allowed),
     - backing-service availability.
     """
     enabled_groups = set(config.enabled_groups)
@@ -192,6 +194,8 @@ def resolve_enabled(
             continue
         group_on = spec.group.value in enabled_groups
         if not (override is True or group_on):
+            continue
+        if spec.group is ToolGroup.DEBUG and not debug_allowed:
             continue
         if not tier_allows(spec.safety_class, config.capability_tier):
             continue

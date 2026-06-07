@@ -47,6 +47,7 @@ class MCPServer:
         server_version: str = "0.1.0",
         resource_provider: Any | None = None,
         prompt_provider: Any | None = None,
+        debug_allowed: bool = False,
     ) -> None:
         self._config_view = config_view
         self._services = ServiceAccessors(app_state)
@@ -57,7 +58,10 @@ class MCPServer:
         self._resources = resource_provider
         self._prompts = prompt_provider
         self._enabled: dict[str, ToolSpec] = {
-            s.name: s for s in resolve_enabled(config_view, available=self._available)
+            s.name: s
+            for s in resolve_enabled(
+                config_view, available=self._available, debug_allowed=debug_allowed
+            )
         }
 
     # --- MCP surface ---

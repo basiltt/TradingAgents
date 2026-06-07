@@ -124,6 +124,7 @@ class MCPManager:
             available=self._service_available,
             resource_provider=_make_resource_provider(),
             prompt_provider=_make_prompt_provider(),
+            debug_allowed=bool(cfg.safe_mode_flags.get("allow_debug", False)),
         )
         self._app.state.mcp_server = self.server
 
