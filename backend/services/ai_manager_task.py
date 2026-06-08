@@ -7,21 +7,21 @@ cycling through: sleeping → monitoring → analyzing → executing.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import re
 import time
-import copy
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig
+from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_evaluator import AIManagerEvaluator
 from backend.services.ai_manager_event_triggers import EventTriggerDetector
 from backend.services.ai_manager_mtf import MultiTimeframeAnalyzer
-from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_orderbook import OrderBookMonitor
-from backend.services.ai_manager_trailing import TrailingState, TrailingParams
+from backend.services.ai_manager_trailing import TrailingParams, TrailingState
 
 MAX_DAILY_TOKEN_BUDGET = 20_000_000
 
@@ -428,13 +428,13 @@ class AIManagerTask:
             # Fetch positions
             positions = await self._service._accounts_service.get_positions(self._account_id) or []
             self._ws_buffer["positions"] = positions
-            
+
             # Fetch wallet/equity
             wallet = await self._service._accounts_service.get_wallet(self._account_id) or {}
             self._ws_buffer["equity"] = wallet.get("totalEquity")
             self._ws_buffer["available_balance"] = wallet.get("totalWalletBalance")
             self._ws_buffer["wallet"] = wallet
-            
+
             # Initialize peak PnL tracking for active positions
             for pos in positions:
                 symbol = pos.get("symbol")
@@ -443,7 +443,7 @@ class AIManagerTask:
 
             self._log.info("Initialized state from exchange: %d position(s) found", len(positions))
             self._log_async("info", "lifecycle", f"Task started, {len(positions)} open position(s) found")
-            
+
             # Transition to MONITORING if we have open positions on startup
             if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
                 self.transition_to(MONITORING)
@@ -619,8 +619,8 @@ class AIManagerTask:
                 state_dict = await self._build_graph_state()
 
                 # Dashboard enhancement: emit LLM started event
-                from uuid import uuid4
                 import time as _time
+                from uuid import uuid4
                 _eval_cycle_id = uuid4()
                 _call_id = uuid4()
                 _urgency = self._get_urgency()
@@ -2018,7 +2018,10 @@ class AIManagerTask:
             try:
                 await self._service._repo.cleanup_old_data()
             except Exception:
-                logger.debug("Data cleanup failed, will retry next hour")
+                # AI-CONTEXT: use self._log (per-account logger). Bare `logger` is
+                # undefined in this module — referencing it would raise NameError
+                # inside the except handler, masking the original cleanup failure.
+                self._log.debug("Data cleanup failed, will retry next hour")
 
     # --- Dashboard Enhancement: Helper Methods ---
 
@@ -2115,7 +2118,8 @@ class AIManagerTask:
             try:
                 await self._generate_commentary_once()
             except Exception as e:
-                logger.warning("Commentary generation failed for %s: %s", self._account_id, e)
+                # AI-CONTEXT: self._log, not bare `logger` (undefined here).
+                self._log.warning("Commentary generation failed for %s: %s", self._account_id, e)
 
     async def _generate_commentary_once(self) -> None:
         from backend.services.ai_manager_commentary import compute_day_score, generate_template_commentary
@@ -2249,7 +2253,8 @@ class AIManagerTask:
             deleted_calls = await self._service._repo.cleanup_old_llm_calls(days=90)
             deleted_commentary = await self._service._repo.cleanup_old_commentary(days=7)
             if deleted_calls or deleted_commentary:
-                logger.info("Daily cleanup for %s: removed %d LLM calls, %d commentary entries",
-                            self._account_id, deleted_calls, deleted_commentary)
+                # AI-CONTEXT: self._log, not bare `logger` (undefined here).
+                self._log.info("Daily cleanup for %s: removed %d LLM calls, %d commentary entries",
+                               self._account_id, deleted_calls, deleted_commentary)
         except Exception as e:
-            logger.warning("Daily dashboard cleanup failed for %s: %s", self._account_id, e)
+            self._log.warning("Daily dashboard cleanup failed for %s: %s", self._account_id, e)

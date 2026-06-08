@@ -9,12 +9,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
-from backend.services.sector_map import get_sector as _static_get_sector
-from backend.services.scan_context import ScanContext
-from backend.services.strategy_reason_codes import ReasonCode
-from backend.services import strategy_router as _router
 from backend.services import regime_filter as _f1
-
+from backend.services import strategy_router as _router
+from backend.services.scan_context import ScanContext
+from backend.services.sector_map import get_sector as _static_get_sector
+from backend.services.strategy_reason_codes import ReasonCode
 
 logger = logging.getLogger(__name__)
 
@@ -267,8 +266,7 @@ class AutoTradeExecutor:
                                     state.stopped = True
                                     state.stopped_reason = "ai_paused_trading"
                                     break
-                                else:
-                                    await self._close_svc.delete_rule(account_id, rule["id"])
+                                await self._close_svc.delete_rule(account_id, rule["id"])
                             except (ValueError, TypeError):
                                 # Fail-closed: unparseable pause rule = stay paused (safety)
                                 state.stopped = True
@@ -379,7 +377,8 @@ class AutoTradeExecutor:
                 # Breakeven timeout rule (move TP to breakeven after X hours)
                 breakeven_hours = state.config.get("breakeven_timeout_hours")
                 if breakeven_hours and breakeven_hours > 0 and self._close_svc:
-                    from datetime import datetime, timezone as tz
+                    from datetime import datetime
+                    from datetime import timezone as tz
                     try:
                         rule = await self._close_svc.create_rule(
                             account_id=account_id,
@@ -396,7 +395,8 @@ class AutoTradeExecutor:
                 # Max trade duration rule (force close all after X hours)
                 max_duration_hours = state.config.get("max_trade_duration_hours")
                 if max_duration_hours and max_duration_hours > 0 and self._close_svc:
-                    from datetime import datetime, timezone as tz
+                    from datetime import datetime
+                    from datetime import timezone as tz
                     try:
                         rule = await self._close_svc.create_rule(
                             account_id=account_id,
@@ -873,8 +873,7 @@ class AutoTradeExecutor:
                                     if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
                                         paused = True
                                         break
-                                    else:
-                                        await self._close_svc.delete_rule(account_id, rule["id"])
+                                    await self._close_svc.delete_rule(account_id, rule["id"])
                                 except (ValueError, TypeError):
                                     paused = True
                                     logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id})
@@ -964,7 +963,8 @@ class AutoTradeExecutor:
                         # Breakeven timeout rule
                         breakeven_hours = state.config.get("breakeven_timeout_hours")
                         if breakeven_hours and breakeven_hours > 0:
-                            from datetime import datetime, timezone as tz
+                            from datetime import datetime
+                            from datetime import timezone as tz
                             try:
                                 rule = await self._close_svc.create_rule(
                                     account_id=account_id,
@@ -982,7 +982,8 @@ class AutoTradeExecutor:
                         # Max trade duration rule
                         max_duration_hours = state.config.get("max_trade_duration_hours")
                         if max_duration_hours and max_duration_hours > 0:
-                            from datetime import datetime, timezone as tz
+                            from datetime import datetime
+                            from datetime import timezone as tz
                             try:
                                 rule = await self._close_svc.create_rule(
                                     account_id=account_id,
@@ -1067,8 +1068,8 @@ class AutoTradeExecutor:
         Fail-closed: missing/stale regime, missing mean/price, geometry guards, and
         the long-ack gate all skip the trade. Uses the pure mean_reversion_math fns.
         """
-        from backend.services import mean_reversion_math as _mr
         from backend.services import f2_long_ack as _ack
+        from backend.services import mean_reversion_math as _mr
         account_id = cfg.get("account_id", "")
         now = datetime.now(timezone.utc)
 
@@ -1496,7 +1497,8 @@ class AutoTradeExecutor:
                 # correct for an MR cohort: every position on the account is MR (the
                 # `both` cohort was cut, so there's no trend position to clobber). Created
                 # once per account per scan (flag-guarded), like the trend duration rule.
-                from datetime import datetime as _dt, timezone as _tz
+                from datetime import datetime as _dt
+                from datetime import timezone as _tz
                 try:
                     _mins = float(cfg.get("mr_time_stop_minutes", 120))
                     _rule = await self._close_svc.create_rule(

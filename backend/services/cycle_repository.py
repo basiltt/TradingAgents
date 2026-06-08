@@ -98,28 +98,27 @@ class CycleRepository:
         if bad_keys:
             raise ValueError(f"Invalid update columns: {bad_keys}")
 
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    "SELECT status FROM trading_cycles WHERE id = $1 FOR UPDATE",
-                    cycle_id,
-                )
-                if not row:
-                    return False
-                if row["status"] in _TERMINAL_STATUSES:
-                    return False
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT status FROM trading_cycles WHERE id = $1 FOR UPDATE",
+                cycle_id,
+            )
+            if not row:
+                return False
+            if row["status"] in _TERMINAL_STATUSES:
+                return False
 
-                sets = ["status = $2"]
-                vals: list = [cycle_id, new_status]
-                for i, (col, val) in enumerate(kwargs.items(), start=3):
-                    sets.append(f"{col} = ${i}")
-                    vals.append(val)
+            sets = ["status = $2"]
+            vals: list = [cycle_id, new_status]
+            for i, (col, val) in enumerate(kwargs.items(), start=3):
+                sets.append(f"{col} = ${i}")
+                vals.append(val)
 
-                await conn.execute(
-                    f"UPDATE trading_cycles SET {', '.join(sets)} WHERE id = $1",
-                    *vals,
-                )
-                return True
+            await conn.execute(
+                f"UPDATE trading_cycles SET {', '.join(sets)} WHERE id = $1",
+                *vals,
+            )
+            return True
 
     async def add_trade(self, cycle_id: int, trade_data: dict) -> int:
         error_msg = trade_data.get("error_msg")

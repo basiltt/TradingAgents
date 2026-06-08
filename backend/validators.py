@@ -7,7 +7,6 @@ import os
 import socket
 from urllib.parse import urlparse
 
-
 _CGN_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
 
 

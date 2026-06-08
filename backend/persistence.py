@@ -2462,13 +2462,9 @@ class AnalysisDB:
         """Convert DB row to JSON-safe dict."""
         result = {}
         for k, v in dict(row).items():
-            if isinstance(v, datetime):
+            if isinstance(v, datetime) or isinstance(v, date):
                 result[k] = v.isoformat()
-            elif isinstance(v, date):
-                result[k] = v.isoformat()
-            elif isinstance(v, uuid.UUID):
-                result[k] = str(v)
-            elif isinstance(v, Decimal):
+            elif isinstance(v, uuid.UUID) or isinstance(v, Decimal):
                 result[k] = str(v)
             else:
                 result[k] = v

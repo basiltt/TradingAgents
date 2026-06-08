@@ -12,8 +12,12 @@ from backend.ai_manager_schemas import AIManagerConfigPatch
 from backend.rate_limit import check_rate_limit as _check_rate_limit
 from backend.routers._validators import validate_account_id as _validate_account_id
 from backend.schemas.ai_manager_dashboard import (
-    LLMCallEntry, LLMCallListResponse, CapabilitiesResponse,
-    MarketInsightResponse, AnalysisContextResponse, ErrorResponse,
+    AnalysisContextResponse,
+    CapabilitiesResponse,
+    ErrorResponse,
+    LLMCallEntry,
+    LLMCallListResponse,
+    MarketInsightResponse,
 )
 from backend.services.ai_manager_capabilities_status import CapabilitiesStatusAggregator
 
@@ -49,7 +53,7 @@ async def enable_ai_manager(request: Request, account_id: str):
     await _check_rate_limit(account_id)
     svc = _get_service(request)
     from backend.ai_manager_schemas import AIManagerConfig
-    
+
     existing_config = None
     try:
         existing_config = await svc.get_config(account_id)
@@ -60,7 +64,7 @@ async def enable_ai_manager(request: Request, account_id: str):
         config = AIManagerConfig(**existing_config)
     else:
         config = AIManagerConfig()
-    
+
     config.auto_enabled = False
     await svc.enable(account_id, config)
     return {"status": "enabled", "account_id": account_id}

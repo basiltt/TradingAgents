@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections import deque, OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import asdict
 from typing import Any, Deque, Dict, List, Tuple
 

@@ -1234,7 +1234,8 @@ class CreateCloseRuleRequest(BaseModel):
     @field_validator("threshold_value")
     @classmethod
     def validate_threshold(cls, v: str) -> str:
-        from decimal import Decimal as D, InvalidOperation
+        from decimal import Decimal as D
+        from decimal import InvalidOperation
         try:
             val = D(v)
         except (InvalidOperation, ValueError):
@@ -1282,7 +1283,8 @@ class UpdateCloseRuleRequest(BaseModel):
     def validate_threshold(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
-        from decimal import Decimal as D, InvalidOperation
+        from decimal import Decimal as D
+        from decimal import InvalidOperation
         try:
             val = D(v)
         except (InvalidOperation, ValueError):

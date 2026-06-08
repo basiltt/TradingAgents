@@ -109,57 +109,56 @@ class AIManagerRepository:
     async def insert_decision(
         self, account_id: str, decision_data: Dict[str, Any], hmac_key: str
     ) -> Tuple[int, datetime]:
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                # Advisory lock serializes all chain appends for this account (covers genesis case)
-                await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1))", account_id
-                )
-                prev_row = await conn.fetchrow(
-                    "SELECT decision_hash FROM ai_manager_decisions "
-                    "WHERE account_id = $1 ORDER BY timestamp DESC, id DESC LIMIT 1 "
-                    "FOR UPDATE",
+        async with self._pool.acquire() as conn, conn.transaction():
+            # Advisory lock serializes all chain appends for this account (covers genesis case)
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))", account_id
+            )
+            prev_row = await conn.fetchrow(
+                "SELECT decision_hash FROM ai_manager_decisions "
+                "WHERE account_id = $1 ORDER BY timestamp DESC, id DESC LIMIT 1 "
+                "FOR UPDATE",
+                account_id,
+            )
+            prev_hash = prev_row["decision_hash"] if prev_row else GENESIS_PREV_HASH
+
+            ts = decision_data["timestamp"]
+            symbol = decision_data.get("action_taken", {}).get("symbol", "")
+            decision_hash = hmac.new(
+                hmac_key.encode(),
+                "|".join([
+                    prev_hash,
                     account_id,
-                )
-                prev_hash = prev_row["decision_hash"] if prev_row else GENESIS_PREV_HASH
+                    ts.isoformat(),
+                    decision_data["action_type"],
+                    symbol,
+                    f"{decision_data['confidence']:.4f}",
+                ]).encode(),
+                hashlib.sha256,
+            ).hexdigest()
 
-                ts = decision_data["timestamp"]
-                symbol = decision_data.get("action_taken", {}).get("symbol", "")
-                decision_hash = hmac.new(
-                    hmac_key.encode(),
-                    "|".join([
-                        prev_hash,
-                        account_id,
-                        ts.isoformat(),
-                        decision_data["action_type"],
-                        symbol,
-                        f"{decision_data['confidence']:.4f}",
-                    ]).encode(),
-                    hashlib.sha256,
-                ).hexdigest()
-
-                row = await conn.fetchrow(
-                    """INSERT INTO ai_manager_decisions
+            row = await conn.fetchrow(
+                """INSERT INTO ai_manager_decisions
                     (account_id, timestamp, evaluation_type, urgency, state_snapshot,
                      action_taken, reasoning, confidence, graph_path, strategy_version,
                      prev_decision_hash, decision_hash, chain_key_version)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                     RETURNING id, timestamp""",
-                    account_id,
-                    ts,
-                    decision_data["evaluation_type"],
-                    decision_data["urgency"],
-                    json.dumps(decision_data.get("state_snapshot", {})),
-                    json.dumps(decision_data["action_taken"]),
-                    decision_data["reasoning"],
-                    decision_data["confidence"],
-                    decision_data.get("graph_path"),
-                    decision_data.get("strategy_version", "default"),
-                    prev_hash,
-                    decision_hash,
-                    decision_data.get("chain_key_version", 1),
-                )
-                return (row["id"], row["timestamp"])
+                account_id,
+                ts,
+                decision_data["evaluation_type"],
+                decision_data["urgency"],
+                json.dumps(decision_data.get("state_snapshot", {})),
+                json.dumps(decision_data["action_taken"]),
+                decision_data["reasoning"],
+                decision_data["confidence"],
+                decision_data.get("graph_path"),
+                decision_data.get("strategy_version", "default"),
+                prev_hash,
+                decision_hash,
+                decision_data.get("chain_key_version", 1),
+            )
+            return (row["id"], row["timestamp"])
 
     async def update_decision_outcome(
         self, decision_id: int, decision_timestamp: datetime, outcome: Dict[str, Any]

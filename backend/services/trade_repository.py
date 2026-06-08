@@ -71,17 +71,14 @@ VALID_EVENT_TYPES = {
 
 class TradeNotFound(Exception):
     """Raised when a trade ID does not exist in the database."""
-    pass
 
 
 class InvalidStatusTransition(Exception):
     """Raised when a status change violates the trade state machine."""
-    pass
 
 
 class ConcurrentModification(Exception):
     """Raised when the trade version has changed since it was last read."""
-    pass
 
 
 class TradeRepository:

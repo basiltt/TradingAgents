@@ -7,12 +7,12 @@ import logging
 import math
 import time
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from backend.crypto import decrypt_value, encrypt_value, mask_api_key
 from backend.async_persistence import AsyncAnalysisDB
+from backend.crypto import decrypt_value, encrypt_value, mask_api_key
 from backend.services.bybit_client import BybitAPIError, BybitClient
 
 logger = logging.getLogger(__name__)
@@ -262,7 +262,7 @@ class AccountsService:
         TP/SL percentages are leverage-adjusted (e.g. 100% TP at 10x = 10% price move).
         Qty is calculated from base_capital * capital_pct, leveraged, divided by mark price.
         """
-        from decimal import Decimal, ROUND_DOWN
+        from decimal import ROUND_DOWN, Decimal
 
         _VALID_PLACEMENT_SOURCES = {"manual", "cycle", "scanner"}
         if source not in _VALID_PLACEMENT_SOURCES:
@@ -426,38 +426,37 @@ class AccountsService:
         trade_record = None
         if self._trade_repo:
             try:
-                async with self._db.pool.acquire() as conn:
-                    async with conn.transaction():
-                        trade_record = await self._trade_repo.create_trade(
-                            conn, account_id=account_id, symbol=symbol,
-                            side=side, qty=float(qty_rounded), leverage=leverage,
-                            margin_mode="isolated", order_type="market",
-                            source=source, source_id=source_id, scan_result_id=scan_result_id,
-                            stop_loss_price=float(sl_price_str) if sl_price_str else None,
-                            take_profit_price=float(tp_price_str) if tp_price_str else None,
-                            mark_price_at_open=float(mark_price),
-                            capital_pct=capital_pct, base_capital=base_capital,
-                            signal_direction=signal_direction, trade_direction=trade_direction,
-                            take_profit_pct=take_profit_pct, stop_loss_pct=stop_loss_pct,
-                            strategy_kind=strategy_kind, strategy_cohort=strategy_cohort,
-                            f1_active=f1_active,
-                            actor="system" if source == "cycle" else "user",
-                        )
-                        await self._trade_repo.update_trade_status(
-                            conn, trade_id=str(trade_record["id"]),
-                            account_id=account_id,
-                            expected_version=trade_record["version"],
-                            new_status="open",
-                            event_type="filled", actor="system",
-                            updates={
-                                "order_id": result.get("orderId", ""),
-                                "filled_qty": float(result.get("cumExecQty") or qty_rounded),
-                                "entry_price": float(result.get("avgPrice") or mark_price),
-                                "avg_fill_price": float(result.get("avgPrice") or mark_price),
-                                "fees": float(result.get("cumExecFee") or 0),
-                                "opened_at": datetime.now(timezone.utc),
-                            },
-                        )
+                async with self._db.pool.acquire() as conn, conn.transaction():
+                    trade_record = await self._trade_repo.create_trade(
+                        conn, account_id=account_id, symbol=symbol,
+                        side=side, qty=float(qty_rounded), leverage=leverage,
+                        margin_mode="isolated", order_type="market",
+                        source=source, source_id=source_id, scan_result_id=scan_result_id,
+                        stop_loss_price=float(sl_price_str) if sl_price_str else None,
+                        take_profit_price=float(tp_price_str) if tp_price_str else None,
+                        mark_price_at_open=float(mark_price),
+                        capital_pct=capital_pct, base_capital=base_capital,
+                        signal_direction=signal_direction, trade_direction=trade_direction,
+                        take_profit_pct=take_profit_pct, stop_loss_pct=stop_loss_pct,
+                        strategy_kind=strategy_kind, strategy_cohort=strategy_cohort,
+                        f1_active=f1_active,
+                        actor="system" if source == "cycle" else "user",
+                    )
+                    await self._trade_repo.update_trade_status(
+                        conn, trade_id=str(trade_record["id"]),
+                        account_id=account_id,
+                        expected_version=trade_record["version"],
+                        new_status="open",
+                        event_type="filled", actor="system",
+                        updates={
+                            "order_id": result.get("orderId", ""),
+                            "filled_qty": float(result.get("cumExecQty") or qty_rounded),
+                            "entry_price": float(result.get("avgPrice") or mark_price),
+                            "avg_fill_price": float(result.get("avgPrice") or mark_price),
+                            "fees": float(result.get("cumExecFee") or 0),
+                            "opened_at": datetime.now(timezone.utc),
+                        },
+                    )
                 if self._trade_service:
                     self._trade_service.invalidate_stats_cache(account_id)
                     if trade_record:

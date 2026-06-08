@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from backend.services.ai_manager_prompts import sanitize_for_injection
 

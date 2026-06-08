@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.schemas.debug import DebugConfigUpdate

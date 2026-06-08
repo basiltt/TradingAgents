@@ -8,7 +8,6 @@ P4 sweep machinery.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from backend.mcp.core.netguard import _is_loopback_host
 

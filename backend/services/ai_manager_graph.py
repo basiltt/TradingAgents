@@ -22,8 +22,8 @@ from backend.services.ai_manager_prompts import (
     build_system_prompt,
     sanitize_for_injection,
     sanitize_llm_output,
-    validate_regime,
     validate_market_session,
+    validate_regime,
 )
 
 logger = logging.getLogger(__name__)

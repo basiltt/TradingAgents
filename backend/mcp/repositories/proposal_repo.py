@@ -105,22 +105,21 @@ class ProposalRepository:
     ) -> dict[str, Any]:
         """Validate + apply a status transition. Raises ValueError on an illegal
         transition or unknown proposal."""
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                r = await conn.fetchrow(
-                    "SELECT status FROM mcp_proposals WHERE id=$1 FOR UPDATE", proposal_id
-                )
-                if r is None:
-                    raise ValueError(f"proposal {proposal_id!r} not found")
-                cur = r["status"]
-                if to_status not in _VALID_TRANSITIONS.get(cur, set()):
-                    raise ValueError(f"illegal transition {cur} -> {to_status}")
-                await conn.execute(
-                    "UPDATE mcp_proposals SET status=$1, approver=COALESCE($2,approver), "
-                    "applied_config_version=COALESCE($3,applied_config_version) WHERE id=$4",
-                    to_status, approver, applied_config_version, proposal_id,
-                )
-                row = await conn.fetchrow("SELECT * FROM mcp_proposals WHERE id=$1", proposal_id)
+        async with self._pool.acquire() as conn, conn.transaction():
+            r = await conn.fetchrow(
+                "SELECT status FROM mcp_proposals WHERE id=$1 FOR UPDATE", proposal_id
+            )
+            if r is None:
+                raise ValueError(f"proposal {proposal_id!r} not found")
+            cur = r["status"]
+            if to_status not in _VALID_TRANSITIONS.get(cur, set()):
+                raise ValueError(f"illegal transition {cur} -> {to_status}")
+            await conn.execute(
+                "UPDATE mcp_proposals SET status=$1, approver=COALESCE($2,approver), "
+                "applied_config_version=COALESCE($3,applied_config_version) WHERE id=$4",
+                to_status, approver, applied_config_version, proposal_id,
+            )
+            row = await conn.fetchrow("SELECT * FROM mcp_proposals WHERE id=$1", proposal_id)
         return _row(row)
 
     async def pending_count(self) -> int:

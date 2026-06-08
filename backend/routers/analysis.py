@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from backend.schemas import AnalysisRequest, AnalysisCreateResponse, PROVIDER_API_KEY_MAP
+from backend.schemas import PROVIDER_API_KEY_MAP, AnalysisCreateResponse, AnalysisRequest
 from backend.services.analysis_service import ConcurrencyLimitError
 
 router = APIRouter(tags=["analysis"])

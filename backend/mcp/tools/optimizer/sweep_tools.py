@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 from backend.mcp.core.errors import MCPServiceUnavailableError, MCPValidationError
 from backend.mcp.core.registry import SafetyClass, ToolGroup, tool
 from backend.mcp.tools.optimizer.combos import (
-    ComboGenerationError,
     MAX_SWEEP_COMBOS,
+    ComboGenerationError,
     _grid_count,
     config_hash,
     generate_combos,

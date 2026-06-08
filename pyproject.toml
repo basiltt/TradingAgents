@@ -65,3 +65,41 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+# ── Ruff: strict-but-pragmatic lint config for the `backend/` package ──────────
+# AI-CONTEXT: Scoped to backend/ (the /production-ready target). The selected rule
+# families prioritise correctness, bug-prone patterns, async safety, and modern
+# Python idioms over pure cosmetics, which keeps the finding count tractable on a
+# ~47.6k-LOC codebase while still catching real defects (e.g. F821 undefined names,
+# B904 exception-chaining loss, B-series footguns). Cosmetic/high-churn rules
+# (annotation style migrations, long-line reflow) are deferred via `ignore` and
+# handled deliberately rather than via a mass auto-rewrite.
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "build", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "SIM", "UP", "I", "C4", "PIE", "RET", "PERF", "ASYNC"]
+ignore = [
+    "E501",   # line-too-long — addressed deliberately, not via mass reflow
+    "UP006",  # non-pep585-annotation (Dict->dict) — large annotation churn, defer
+    "UP007",  # non-pep604-annotation-union (Optional[X]->X|None style) — defer
+    "UP035",  # deprecated-import (typing.Dict etc.) — paired with UP006, defer
+    "UP037",  # quoted-annotation — defer with annotation cleanup
+    "UP045",  # non-pep604-annotation-optional — defer
+    "SIM105", # suppressible-exception (contextlib.suppress) — readability tradeoff
+    "RET504", # unnecessary-assign-before-return — often aids debuggability
+    "RET505", # superfluous-else-return — stylistic, keep explicit branches
+]
+# AI-CONTEXT: FastAPI's dependency-injection idiom legitimately calls
+# Query()/Depends()/Path() in argument defaults; B008 is a false positive there.
+flake8-bugbear.extend-immutable-calls = [
+    "fastapi.Query", "fastapi.Depends", "fastapi.Path", "fastapi.Header",
+    "fastapi.Body", "fastapi.Form", "fastapi.File", "fastapi.Cookie",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert-heavy patterns and broader imports.
+"tests/**" = ["B011"]
+

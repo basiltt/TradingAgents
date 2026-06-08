@@ -352,7 +352,7 @@ class TradingCycleEngine:
         except asyncio.CancelledError:
             self._active_tasks.pop(cycle_id, None)
             raise
-        except Exception as e:
+        except Exception:
             logger.exception("Cycle %d failed unexpectedly", cycle_id)
             await self._finalize_cycle(cycle_id, "failed", "circuit_breaker")
         finally:

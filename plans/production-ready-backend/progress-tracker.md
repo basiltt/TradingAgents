@@ -35,7 +35,7 @@ After any context compaction: read THIS tracker, then re-read `~/.claude/skills/
 
 ### Regression-detection strategy (given 16-min full suite + order-dependent tests)
 - **Per-fix gate:** run the specific changed test file(s) IN ISOLATION single-proc; a regression = a test green-in-isolation that my change turns red.
-- **Phase-boundary gate:** run full backend suite single-proc (excl mcp), diff failed-set vs the 35-failure baseline; new failures = regressions to revert.
+- **Phase-boundary gate:** run TARGETED test batches (per changed-module) single-proc. NOTE: the FULL single-proc suite is BRITTLE — aborts on interpreter-teardown lock races (ThreadPoolExecutor `_global_shutdown_lock`) under pytest-timeout, producing a no-summary timeout. Use targeted batches of ~6 files instead (fast + reliable). Reserve a full run only for the final Step 8 gate, in small chunks.
 - NEVER use xdist `-n` as a gate (false failures from order-dependence). xdist only for quick non-isolation-sensitive scans.
 - Baseline failed-set snapshot: plans/production-ready-backend/baseline-failures.txt
 

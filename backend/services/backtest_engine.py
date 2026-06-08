@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 class BacktestCancelled(Exception):
     """Raised when a backtest is cancelled via cancel_event."""
-    pass
 
 
 @dataclass
@@ -487,8 +486,8 @@ class BacktestEngine:
         _open_position from the REAL next-bar-open entry (more faithful + no look-ahead,
         no entry-price hack). A missing mean fails closed (MR unavailable)."""
         from backend.services import features as _feat
-        from backend.services import strategy_router as _router
         from backend.services import regime_filter as _f1
+        from backend.services import strategy_router as _router
 
         ctx = self._ctx
         cohort = _feat.resolve_cohort(config.get("strategy_cohort"), None) or "trend"
@@ -819,9 +818,14 @@ class BacktestEngine:
     ) -> bool:
         """Open a new position from a qualifying signal. Returns True on success."""
         from backend.services.trading_rules import (
-            determine_side, apply_slippage, compute_tp_sl,
-            compute_position_size, compute_liquidation_price,
-            compute_fee, compute_locked_margin, round_price_to_tick,
+            apply_slippage,
+            compute_fee,
+            compute_liquidation_price,
+            compute_locked_margin,
+            compute_position_size,
+            compute_tp_sl,
+            determine_side,
+            round_price_to_tick,
         )
 
         ticker = signal["ticker"]
@@ -1292,7 +1296,7 @@ class BacktestEngine:
                     else:
                         positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
                     continue
-                elif pos.side == "Sell" and high >= pos.liq_price:
+                if pos.side == "Sell" and high >= pos.liq_price:
                     if pos.sl_price > 0 and pos.sl_price < pos.liq_price and high >= pos.sl_price:
                         positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
                     else:
@@ -1353,7 +1357,10 @@ class BacktestEngine:
     ) -> None:
         """Close a position: compute PnL, update wallet, record trade."""
         from backend.services.trading_rules import (
-            compute_unrealized_pnl, compute_fee, compute_liquidation_pnl, apply_slippage,
+            apply_slippage,
+            compute_fee,
+            compute_liquidation_pnl,
+            compute_unrealized_pnl,
         )
 
         # Compute realized PnL
@@ -1583,7 +1590,10 @@ class BacktestEngine:
         window shrinks to one minute and the firing time/price match the true crossing.
         """
         from backend.services.trading_rules import (
-            compute_unrealized_pnl, check_equity_drop, check_close_on_profit, check_equity_rise,
+            check_close_on_profit,
+            check_equity_drop,
+            check_equity_rise,
+            compute_unrealized_pnl,
         )
 
         if not state.open_positions:
@@ -1743,7 +1753,7 @@ class BacktestEngine:
         3. If per_unit_pnl > stored_peak: update peak (new high)
         4. If per_unit_pnl < peak × 0.5: CLOSE position
         """
-        from backend.services.trading_rules import compute_unrealized_pnl, check_trailing_activation
+        from backend.services.trading_rules import check_trailing_activation, compute_unrealized_pnl
 
         trailing_pct = config.get("trailing_profit_pct", 0)
         if not trailing_pct:

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import ROUND_DOWN, Decimal
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)

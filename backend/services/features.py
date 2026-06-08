@@ -7,7 +7,7 @@ feature or changing the kill-switch key set is a one-file edit, not a four-file 
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 # Kill-switch feature keys understood across the system. "__all__" is the master kill.
 # Per-account cohorts map to f1 (trend) / f2 (mean_reversion); f2_long is the extra

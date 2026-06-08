@@ -193,7 +193,7 @@ async def _fix_close_rules_constraints(conn) -> None:
     """)
     for row in rows:
         await conn.execute(f'ALTER TABLE close_rules DROP CONSTRAINT {row["conname"]}')
-    
+
     # 2. Add new check constraint allowing BREAKEVEN_TIMEOUT and MAX_DURATION
     await conn.execute("""
         ALTER TABLE close_rules ADD CONSTRAINT close_rules_trigger_type_check
@@ -1514,9 +1514,8 @@ class AsyncAnalysisDB:
 
     @asynccontextmanager
     async def _transaction(self):
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                yield conn
+        async with self.pool.acquire() as conn, conn.transaction():
+            yield conn
 
     async def _apply_migrations(self) -> None:
         # Use a dedicated connection (not pool) for advisory lock
@@ -1654,13 +1653,9 @@ class AsyncAnalysisDB:
         """Convert DB row to JSON-safe dict."""
         result = {}
         for k, v in dict(row).items():
-            if isinstance(v, datetime):
+            if isinstance(v, datetime) or isinstance(v, date):
                 result[k] = v.isoformat()
-            elif isinstance(v, date):
-                result[k] = v.isoformat()
-            elif isinstance(v, uuid.UUID):
-                result[k] = str(v)
-            elif isinstance(v, Decimal):
+            elif isinstance(v, uuid.UUID) or isinstance(v, Decimal):
                 result[k] = str(v)
             else:
                 result[k] = v
@@ -2641,36 +2636,35 @@ class AsyncAnalysisDB:
         config (for revert). Raises ValueError on missing scan / out-of-range
         index / drift.
         """
-        async with self.pool.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    "SELECT scan_config FROM scheduled_scans WHERE id=$1 FOR UPDATE",
-                    schedule_id,
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT scan_config FROM scheduled_scans WHERE id=$1 FOR UPDATE",
+                schedule_id,
+            )
+            if row is None:
+                raise ValueError(f"scheduled scan {schedule_id!r} not found")
+            raw = row["scan_config"]
+            scan_config = raw if isinstance(raw, dict) else json.loads(raw)
+            configs = scan_config.get("auto_trade_configs") or []
+            if not (0 <= config_index < len(configs)):
+                raise ValueError(
+                    f"config_index {config_index} out of range (len={len(configs)})"
                 )
-                if row is None:
-                    raise ValueError(f"scheduled scan {schedule_id!r} not found")
-                raw = row["scan_config"]
-                scan_config = raw if isinstance(raw, dict) else json.loads(raw)
-                configs = scan_config.get("auto_trade_configs") or []
-                if not (0 <= config_index < len(configs)):
-                    raise ValueError(
-                        f"config_index {config_index} out of range (len={len(configs)})"
-                    )
-                prior = dict(configs[config_index])
-                if expected_prior is not None and prior != expected_prior:
-                    raise ValueError(
-                        "auto_trade_configs entry changed since the proposal was "
-                        "created (drift) — re-create the proposal"
-                    )
-                configs[config_index] = merged_config
-                scan_config["auto_trade_configs"] = configs
-                await conn.execute(
-                    "UPDATE scheduled_scans SET scan_config=$1, updated_at=$2 WHERE id=$3",
-                    json.dumps(scan_config),
-                    datetime.now(timezone.utc).isoformat(),
-                    schedule_id,
+            prior = dict(configs[config_index])
+            if expected_prior is not None and prior != expected_prior:
+                raise ValueError(
+                    "auto_trade_configs entry changed since the proposal was "
+                    "created (drift) — re-create the proposal"
                 )
-                return prior
+            configs[config_index] = merged_config
+            scan_config["auto_trade_configs"] = configs
+            await conn.execute(
+                "UPDATE scheduled_scans SET scan_config=$1, updated_at=$2 WHERE id=$3",
+                json.dumps(scan_config),
+                datetime.now(timezone.utc).isoformat(),
+                schedule_id,
+            )
+            return prior
 
     async def delete_scheduled_scan(self, schedule_id: str) -> bool:
         result = await self.pool.execute(

@@ -32,7 +32,8 @@ from backend.services.trade_repository import (
     InvalidStatusTransition,
     TradeNotFound,
 )
-from backend.utils import serialize_trade as _serialize_trade, validate_trade_id as _validate_trade_id
+from backend.utils import serialize_trade as _serialize_trade
+from backend.utils import validate_trade_id as _validate_trade_id
 
 logger = logging.getLogger(__name__)
 

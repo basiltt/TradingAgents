@@ -8,19 +8,25 @@ import copy
 import json
 import logging
 import os
-import uuid
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from langgraph.errors import GraphRecursionError
 
-from backend.utils import mask_secrets
+from backend.async_persistence import AsyncAnalysisDB
 from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
-from backend.async_persistence import AsyncAnalysisDB
 from backend.services.config_service import ConfigService
-from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, ProgressEvent, ReportChunkEvent
+from backend.stream_parser import (
+    ProgressEvent,
+    ReportChunkEvent,
+    StreamParserState,
+    make_seq_counter,
+    parse_stream_chunk,
+)
+from backend.utils import mask_secrets
 from backend.validators import validate_backend_url
 from backend.ws_manager import WSManager
 
@@ -580,8 +586,8 @@ class AnalysisService:
         # --- TA Pre-Filter gate (crypto only) ---
         if config.get("ta_prefilter_enabled") and config.get("asset_type") == "crypto":
             try:
+                from tradingagents.dataflows.bybit_data import get_shared_circuit_breaker, get_shared_limiter
                 from tradingagents.ta_prefilter import TAPreFilterEngine
-                from tradingagents.dataflows.bybit_data import get_shared_limiter, get_shared_circuit_breaker
                 with self._prefilter_init_lock:
                     if self._prefilter_limiter is None:
                         self._prefilter_limiter = get_shared_limiter()
@@ -659,8 +665,9 @@ class AnalysisService:
         # For crypto: fetch live price + lower-timeframe candles so all agents
         # are aware of the current market price, not just historical klines.
         if config.get("asset_type") == "crypto" and hasattr(graph, "_crypto_shared"):
-            from tradingagents.dataflows.bybit_data import build_current_price_context
             import time as _time
+
+            from tradingagents.dataflows.bybit_data import build_current_price_context
             as_of_ms = int(_time.time() * 1000)
             try:
                 price_ctx = build_current_price_context(

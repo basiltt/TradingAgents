@@ -11,10 +11,10 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from backend.schemas import (
-    CreateStrategyRequest,
-    UpdateStrategyRequest,
     VALID_STRATEGY_CATEGORIES,
     VALID_STRATEGY_STATUSES,
+    CreateStrategyRequest,
+    UpdateStrategyRequest,
 )
 
 router = APIRouter(tags=["strategies"])

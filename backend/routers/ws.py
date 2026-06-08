@@ -80,10 +80,10 @@ async def analysis_ws(websocket: WebSocket, run_id: str):
             if msg_type == "frame_too_large":
                 await websocket.close(code=1009, reason="Frame too large")
                 break
-            elif msg_type == "rate_limited":
+            if msg_type == "rate_limited":
                 await websocket.close(code=1008, reason="Rate limit exceeded")
                 break
-            elif msg_type == "replay":
+            if msg_type == "replay":
                 snapshot = event_bus.get_snapshot(run_id)
                 for event in snapshot:
                     await ws_manager.send_to(conn, event)
@@ -117,7 +117,7 @@ async def scanner_ws(websocket: WebSocket):
             if msg_type == "frame_too_large":
                 await websocket.close(code=1009, reason="Frame too large")
                 break
-            elif msg_type == "rate_limited":
+            if msg_type == "rate_limited":
                 await websocket.close(code=1008, reason="Rate limit exceeded")
                 break
     except WebSocketDisconnect:

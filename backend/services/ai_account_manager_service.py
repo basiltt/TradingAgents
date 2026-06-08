@@ -360,25 +360,25 @@ class AIAccountManagerService:
         state = await self._repo.get_state(account_id)
         if not state:
             return None
-        
+
         # Resolve real-time FSM state from in-memory task if active
         fsm_state = state["fsm_state"]
         task = self._tasks.get(account_id)
-        
+
         emergency_ref_equity = state.get("emergency_ref_equity")
         emergency_cooldown_until = state.get("emergency_cooldown_until")
         raw_closed_symbols = state.get("emergency_closed_symbols")
-        
+
         if task and not task.is_dead():
             fsm_state = task.state
             now_mono = _time.monotonic()
             now_utc = datetime.now(timezone.utc)
-            
+
             # Get real-time ref equity
             ws_buf = getattr(task, "_ws_buffer", None)
             if isinstance(ws_buf, dict):
                 emergency_ref_equity = ws_buf.get("_emergency_ref_equity")
-            
+
             # Get real-time cooldown
             cooldown_val = getattr(task, "_emergency_cooldown_until", None)
             if isinstance(cooldown_val, (int, float)):
@@ -389,7 +389,7 @@ class AIAccountManagerService:
                     emergency_cooldown_until = None
             else:
                 emergency_cooldown_until = None
-                
+
             # Get real-time closed symbols
             closed_syms = getattr(task, "_emergency_closed_symbols", None)
             if isinstance(closed_syms, dict):
@@ -716,7 +716,7 @@ class AIAccountManagerService:
                     if not config:
                         from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
                         config = _AIMConfig()
-                    
+
                     config.auto_enabled = True
                     logger.info("Auto-starting AI manager for account %s due to scheduled scan setting", account_id)
                     await self.enable(account_id, config)
@@ -733,7 +733,7 @@ class AIAccountManagerService:
                             config = _AIMConfig(**existing_config)
                         except Exception:
                             pass
-                        
+
                         # Only auto-disable accounts that were auto-started (not manually enabled by user)
                         if config and config.auto_enabled:
                             logger.info(

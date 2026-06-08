@@ -6,8 +6,8 @@ import asyncio
 import logging
 from typing import Any, Callable, Coroutine, Dict, Set
 
-from backend.crypto import decrypt_value
 from backend.async_persistence import AsyncAnalysisDB
+from backend.crypto import decrypt_value
 from backend.services.bybit_ws_client import BybitWSClient
 
 logger = logging.getLogger(__name__)

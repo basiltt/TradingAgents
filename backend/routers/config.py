@@ -3,7 +3,11 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from backend.schemas import ConfigUpdateRequest
-from tradingagents.llm_clients import configure_llm_concurrency, configure_llm_concurrency_async, configure_llm_min_spacing
+from tradingagents.llm_clients import (
+    configure_llm_concurrency,
+    configure_llm_concurrency_async,
+    configure_llm_min_spacing,
+)
 
 router = APIRouter(tags=["config"])
 

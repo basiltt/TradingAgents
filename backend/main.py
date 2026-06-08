@@ -3,32 +3,34 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import concurrent.futures
 import gc
-import logging
 import json as _json
+import logging
 import os
 import re as _re
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Coroutine
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from backend.event_bus import EventBus
 from backend.async_persistence import AsyncAnalysisDB
+from backend.event_bus import EventBus
 from backend.observability import ObservabilityMiddleware, configure_structured_logging, metrics
 from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
 from backend.services.scanner_service import ScannerService
-from tradingagents.llm_clients import configure_llm_concurrency, configure_llm_concurrency_async, configure_llm_min_spacing
-from tradingagents.dataflows.coingecko_data import get_coingecko_status
 from backend.ws_manager import WSManager
-
+from tradingagents.dataflows.coingecko_data import get_coingecko_status
+from tradingagents.llm_clients import (
+    configure_llm_concurrency,
+    configure_llm_concurrency_async,
+    configure_llm_min_spacing,
+)
 
 _project_root = Path(__file__).resolve().parent.parent
 load_dotenv(_project_root / ".env")
@@ -238,8 +240,8 @@ def create_app() -> FastAPI:
         # startup — degrade to None and continue, mirroring backtest_service recovery.
         debug_recorder = None
         try:
-            from backend.services.debug_trace_repository import DebugTraceRepository
             from backend.services.debug_trace_recorder import DebugTraceRecorder
+            from backend.services.debug_trace_repository import DebugTraceRepository
             debug_repo = DebugTraceRepository(db.pool)
             debug_recorder = DebugTraceRecorder(debug_repo)
             await debug_recorder.start()
@@ -269,8 +271,8 @@ def create_app() -> FastAPI:
         )
 
         # Sector classification service (CoinGecko + LLM + DB cache)
-        from backend.services.sector_service import SectorService
         from backend.services.ai_manager_llm_provider import create_llm_callable
+        from backend.services.sector_service import SectorService
         _sector_llm, _ = create_llm_callable()
         sector_service = SectorService(db.pool, llm_callable=_sector_llm)
         await sector_service.load_cache()
@@ -281,8 +283,8 @@ def create_app() -> FastAPI:
         app.state.strategy_service = StrategyService(db=db)
 
         # Backtesting service (always-on, no credentials needed)
-        from backend.services.kline_cache_service import KlineCacheService
         from backend.services.backtest_service import BacktestService
+        from backend.services.kline_cache_service import KlineCacheService
         app.state.kline_cache_service = KlineCacheService(db=db)
         app.state.backtest_service = BacktestService(
             db=db, kline_cache=app.state.kline_cache_service,
@@ -432,10 +434,10 @@ def create_app() -> FastAPI:
                 ai_manager_service._model_name = resolved_model
                 logger.info("AI Manager LLM callable configured (model=%s)", resolved_model)
 
+            from backend.services.decay_detector import DecayDetector
+            from backend.services.signal_performance_service import SignalPerformanceMaterializer
             from backend.services.trade_repository import TradeRepository
             from backend.services.trade_service import TradeService
-            from backend.services.signal_performance_service import SignalPerformanceMaterializer
-            from backend.services.decay_detector import DecayDetector
             trade_repo = TradeRepository(db=db)
             decay_detector = DecayDetector(db=db, ws_manager=account_ws_mgr)
             signal_perf = SignalPerformanceMaterializer(db=db, decay_detector=decay_detector)
@@ -480,10 +482,11 @@ def create_app() -> FastAPI:
             import csv as _csv
             import io as _io
             import time as _time
+
             from tradingagents.dataflows.bybit_data import (
                 get_bybit_klines,
-                get_shared_limiter,
                 get_shared_circuit_breaker,
+                get_shared_limiter,
             )
 
             pos_rows = await db.pool.fetch(
@@ -649,25 +652,25 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "X-Requested-With"],
     )
 
-    from backend.routers.config import router as config_router
-    from backend.routers.models import router as models_router
-    from backend.routers.checkpoints import router as checkpoints_router
-    from backend.routers.memory import router as memory_router
+    from backend.routers.accounts import router as accounts_router
+    from backend.routers.ai_manager import router as ai_manager_router
     from backend.routers.analysis import router as analysis_router
-    from backend.routers.symbols import router as symbols_router
+    from backend.routers.analytics import router as analytics_router
+    from backend.routers.backtest import router as backtest_router
+    from backend.routers.checkpoints import router as checkpoints_router
+    from backend.routers.close_positions import router as close_positions_router
+    from backend.routers.config import router as config_router
+    from backend.routers.memory import router as memory_router
+    from backend.routers.models import router as models_router
+    from backend.routers.portfolio import router as portfolio_router
     from backend.routers.scanner import router as scanner_router
+    from backend.routers.scheduled_scans import router as scheduled_scans_router
+    from backend.routers.signal_analytics import router as signal_analytics_router
+    from backend.routers.strategies import router as strategies_router
+    from backend.routers.symbols import router as symbols_router
+    from backend.routers.trades import router as trades_router
     from backend.routers.ws import router as ws_router
     from backend.routers.ws_accounts import router as ws_accounts_router
-    from backend.routers.accounts import router as accounts_router
-    from backend.routers.trades import router as trades_router
-    from backend.routers.portfolio import router as portfolio_router
-    from backend.routers.analytics import router as analytics_router
-    from backend.routers.strategies import router as strategies_router
-    from backend.routers.scheduled_scans import router as scheduled_scans_router
-    from backend.routers.close_positions import router as close_positions_router
-    from backend.routers.ai_manager import router as ai_manager_router
-    from backend.routers.signal_analytics import router as signal_analytics_router
-    from backend.routers.backtest import router as backtest_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
