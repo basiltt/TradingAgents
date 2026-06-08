@@ -71,6 +71,30 @@ class TestStoreKlines:
         # Should have called executemany or execute
         assert mock_db.pool.executemany.called or mock_db.pool.execute.called
 
+    @pytest.mark.asyncio
+    async def test_coverage_count_never_decreases(self, mock_db):
+        """_update_coverage must NOT clobber an existing (larger) candle_count with a
+        smaller batch's count. Regression: ON CONFLICT DO UPDATE SET candle_count =
+        EXCLUDED.candle_count overwrote a full day (288) with a later 1-candle store,
+        making get_coverage_gaps see 1/288 and refetch that day on EVERY run forever.
+        The upsert must keep the GREATEST count (store only ever inserts, never deletes)."""
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+        klines = [
+            {"open_time": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+             "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
+        ]
+        await svc.store_klines("BTCUSDT", "5m", klines)
+        # find the coverage upsert query among the executemany calls
+        cov_calls = [c for c in mock_db.pool.executemany.call_args_list
+                     if "kline_cache_coverage" in str(c.args[0])]
+        assert cov_calls, "expected a coverage upsert"
+        sql = cov_calls[0].args[0]
+        assert "GREATEST" in sql, (
+            "coverage upsert must use GREATEST so a smaller later batch can't shrink the "
+            f"recorded candle_count; got: {sql}"
+        )
+
 
 class TestGetCoverageGaps:
     """Test gap detection in cached kline data."""
@@ -252,3 +276,57 @@ class TestEnsureCoverage:
         assert stats["fetched"] == 0
         assert stats["failed"] == 1
         mock_store.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fetches_only_gap_days_not_full_range(self, mock_db):
+        """ensure_coverage must fetch ONLY the span covering the gap days, not the whole
+        [start, end] window. Regression: it always refetched the full range per gapped
+        symbol — and once the partial-day fix marked the (always-incomplete) current day
+        as a gap, EVERY symbol refetched its ENTIRE history from Bybit on EVERY run,
+        making warm-up crawl and the cache feel like it never persisted.
+
+        Here days Jan 1-9 are fully cached; only Jan 10 (the last/partial day) is a gap.
+        The fetch must START on/after Jan 10, not Jan 1."""
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+
+        # Jan 1..9 fully covered (288 each); Jan 10 absent → the only gap.
+        mock_db.pool.fetch.return_value = [
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, d).date(), "candle_count": 288}
+            for d in range(1, 10)
+        ]
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 10, 23, 59, tzinfo=timezone.utc)
+
+        with patch.object(
+            svc, "_fetch_klines_from_bybit",
+            new=AsyncMock(return_value=[
+                {"open_time": datetime(2026, 1, 10, 0, 0, tzinfo=timezone.utc),
+                 "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}]),
+        ) as mock_fetch, patch.object(svc, "store_klines", new=AsyncMock(return_value=1)):
+            await svc.ensure_coverage(["BTCUSDT"], "5m", start, end)
+
+        mock_fetch.assert_awaited()
+        fetch_start = mock_fetch.await_args.args[2]
+        fetch_end = mock_fetch.await_args.args[3]
+        assert fetch_start >= datetime(2026, 1, 10, tzinfo=timezone.utc), (
+            f"fetch must start at the gap day (Jan 10), not the full range; got {fetch_start}"
+        )
+        assert fetch_end >= datetime(2026, 1, 10, tzinfo=timezone.utc)
+
+    @pytest.mark.asyncio
+    async def test_no_fetch_when_fully_cached(self, mock_db):
+        """When every requested day is fully cached, ensure_coverage must NOT hit Bybit
+        at all (cache hit = fast). This is the common 2nd-run case the slowness broke."""
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+        mock_db.pool.fetch.return_value = [
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, d).date(), "candle_count": 288}
+            for d in range(1, 4)
+        ]
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 3, 23, 59, tzinfo=timezone.utc)
+        with patch.object(svc, "_fetch_klines_from_bybit", new=AsyncMock()) as mock_fetch:
+            stats = await svc.ensure_coverage(["BTCUSDT"], "5m", start, end)
+        mock_fetch.assert_not_awaited()
+        assert stats["fetched"] == 0 and not stats["symbols_with_gaps"]

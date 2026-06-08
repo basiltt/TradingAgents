@@ -43,6 +43,10 @@ _MAX_CONCURRENT = 3
 _TIMEOUT_SECONDS = 120
 # Target points for the equity curve served to the frontend (LTTB downsample)
 _EQUITY_TARGET_POINTS = 2000
+# Share of the progress bar reserved for the pre-simulation cache warm-up, so the bar
+# advances during a slow fetch instead of freezing at 0%. The engine passes then fill
+# the remaining [_WARMUP_BAND, 100].
+_WARMUP_BAND = 10
 # Per-client create rate limit: max creates in a sliding window
 _RATE_LIMIT_MAX = 1000
 _RATE_LIMIT_WINDOW_SECONDS = 3600
@@ -684,6 +688,14 @@ class BacktestService:
 
             await self._mark_status(run_id, "running", started=True)
 
+            # Progress plumbing — defined up-front so the cache warm-up (below) can
+            # report into the reserved warm-up band. `loop` is the running event loop
+            # (engine progress callbacks hop to it from pool threads); progress_state
+            # keeps the last OVERALL scaled value so progress stays monotonic across the
+            # warm-up + both engine passes.
+            loop = asyncio.get_running_loop()
+            progress_state = {"last": 0}
+
             signals = await self._load_signals(
                 config.get("scan_source", {}),
                 (config["date_range_start"], config["date_range_end"]),
@@ -706,9 +718,21 @@ class BacktestService:
                 try:
                     symbols = sorted({s["ticker"] for s in signals})
                     interval = config.get("simulation_interval", "5m")
+                    # Warm-up owns the first WARMUP_BAND% of the progress bar so the bar
+                    # ADVANCES during the (potentially slow) fetch instead of freezing at
+                    # 0%. ensure_coverage calls back with 0-100 of warm-up; we scale it
+                    # into [0, WARMUP_BAND] and write it straight to the DB (we're already
+                    # on the event loop here — no thread hop needed).
+                    def _warm_progress(warm_pct: int) -> None:
+                        scaled = self._scale_progress(warm_pct, 0, _WARMUP_BAND)
+                        if scaled > progress_state["last"]:
+                            progress_state["last"] = scaled
+                            self._schedule_progress(run_id, scaled)
+
                     cov = await self._kline_cache.ensure_coverage(
                         symbols, interval,
                         config["date_range_start"], config["date_range_end"],
+                        on_progress=_warm_progress,
                     )
                     logger.info("backtest_cache_warmed", extra={"run_id": run_id, **(cov or {})})
                 except Exception:  # noqa: BLE001 — warming is best-effort, never fatal
@@ -737,9 +761,6 @@ class BacktestService:
             timer = threading.Timer(_TIMEOUT_SECONDS, _on_timeout)
             timer.daemon = True
             timer.start()
-
-            loop = asyncio.get_running_loop()
-            progress_state = {"last": 0}
 
             def _make_progress_cb(band_lo: int, band_hi: int):
                 """Build an engine progress callback scoped to the [band_lo, band_hi]
@@ -782,22 +803,24 @@ class BacktestService:
             # before. fine_klines={} keeps the engine on its 5m path either way.
             drilldown_on = config.get("drilldown_enabled", True) and self._kline_cache is not None
             fine_klines: dict[str, dict[int, list[dict[str, Any]]]] = {}
-            # Progress banding: when drill-down runs the engine TWICE, Phase A owns the
-            # first half of the bar (0-49%) and Phase B the second (50-100%), so the
-            # polled progress_pct climbs across BOTH passes instead of freezing at 0%
-            # through the (previously silent) Phase A. Single-pass runs use the full
-            # 0-100% band. The post-A fine-kline fetch sits at the 49/50 seam.
+            # Progress banding: the cache warm-up already filled [0, _WARMUP_BAND]. The
+            # engine passes fill the REMAINDER. When drill-down runs the engine TWICE,
+            # Phase A owns the first half of that remainder and Phase B the second, so
+            # the polled progress_pct climbs monotonically across warm-up + both passes
+            # instead of freezing. Single-pass runs use the whole remaining band. The
+            # post-A fine-kline fetch sits at the seam between the two engine bands.
             if drilldown_on:
-                phase_a_cb = _make_progress_cb(0, 49)
+                _mid = _WARMUP_BAND + (100 - _WARMUP_BAND) // 2
+                phase_a_cb = _make_progress_cb(_WARMUP_BAND, _mid)
                 phase_a = await loop.run_in_executor(
                     self._executor,
                     lambda: engine.run(config, signals, klines, cancel_event, phase_a_cb, instrument_info, scan_contexts),
                 )
                 if not (cancel_event.is_set() or timed_out.is_set()):
                     fine_klines = await self._build_fine_klines(config, phase_a.trades or [])
-                phase_b_cb = _make_progress_cb(50, 100)
+                phase_b_cb = _make_progress_cb(_mid, 100)
             else:
-                phase_b_cb = _make_progress_cb(0, 100)
+                phase_b_cb = _make_progress_cb(_WARMUP_BAND, 100)
 
             result = await loop.run_in_executor(
                 self._executor,

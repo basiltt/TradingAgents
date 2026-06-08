@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, date, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -201,10 +201,14 @@ class KlineCacheService:
         interval: str,
         start: datetime,
         end: datetime,
+        on_progress: Optional[Callable[[int], None]] = None,
     ) -> dict[str, Any]:
         """Ensure kline data is cached for all symbols in the date range.
 
-        Checks for gaps and fetches missing data from Bybit API.
+        Checks for gaps and fetches missing data from Bybit API. on_progress, when
+        supplied, is called with an integer 0-100 reflecting how many of the gapped
+        symbols have been processed — so a caller (the backtest) can surface warm-up
+        progress instead of pinning its bar at 0% through a long fetch.
 
         Args:
             symbols: List of symbols needed.
@@ -232,16 +236,28 @@ class KlineCacheService:
             extra={"gap_count": len(gaps), "symbols": list(gaps.keys())[:10]},
         )
 
-        # Fill each gapped symbol from Bybit. We fetch the FULL requested window
-        # per symbol (the fetcher paginates and clips to [start, end]); storing is
-        # idempotent (ON CONFLICT DO NOTHING) so re-fetching already-cached days is
-        # harmless. One symbol's failure must not abort the rest, so each is
-        # isolated — a symbol the exchange returns nothing for is counted failed
-        # (and its gap entry retained) rather than silently dropped.
+        # Fill each gapped symbol from Bybit, fetching ONLY the span covering that
+        # symbol's gap days — NOT the whole [start, end] window. Fetching the full range
+        # every time is catastrophic once the partial-day fix marks the (always-
+        # incomplete) current day as a gap: every symbol would refetch its entire history
+        # on every run, making warm-up crawl. We fetch [min_gap_day, max_gap_day + 1d]
+        # clipped to the requested window, so a single stale/partial day pulls only that
+        # day, not months. Storing is idempotent (ON CONFLICT DO NOTHING). One symbol's
+        # failure must not abort the rest, so each is isolated — a symbol the exchange
+        # returns nothing for is counted failed (and its gap entry retained).
         still_missing: list[str] = []
-        for symbol in gaps:
+        total_gaps = len(gaps)
+        for idx, symbol in enumerate(gaps):
+            gap_days = gaps[symbol]
+            # Span the gap days only. lo = first gap day's 00:00 (clamped to start);
+            # hi = last gap day's end-of-day (clamped to end) so the fetch is bounded.
+            lo_day = min(gap_days)
+            hi_day = max(gap_days)
+            fetch_start = max(start, datetime(lo_day.year, lo_day.month, lo_day.day, tzinfo=timezone.utc))
+            day_after_hi = datetime(hi_day.year, hi_day.month, hi_day.day, tzinfo=timezone.utc) + timedelta(days=1)
+            fetch_end = min(end, day_after_hi)
             try:
-                fetched = await self._fetch_klines_from_bybit(symbol, interval, start, end)
+                fetched = await self._fetch_klines_from_bybit(symbol, interval, fetch_start, fetch_end)
             except Exception:  # noqa: BLE001 — per-symbol isolation; network/parse errors
                 logger.exception("kline_ensure_fetch_failed", extra={"symbol": symbol})
                 fetched = []
@@ -253,6 +269,12 @@ class KlineCacheService:
 
             await self.store_klines(symbol, interval, fetched)
             stats["fetched"] += 1
+
+            if on_progress is not None and total_gaps:
+                try:
+                    on_progress(int(((idx + 1) / total_gaps) * 100))
+                except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
+                    pass
 
         # symbols_with_gaps now reflects what's STILL uncovered after fetching, so
         # the caller (backtest pre-flight / cache_status) sees the true post-warmup
@@ -278,12 +300,19 @@ class KlineCacheService:
             d = open_time.date() if isinstance(open_time, datetime) else open_time
             date_counts[d] = date_counts.get(d, 0) + 1
 
-        # Upsert coverage records
+        # Upsert coverage records. Use GREATEST so the recorded count only ever GROWS:
+        # store_klines inserts with ON CONFLICT DO NOTHING (it never deletes), so a later
+        # partial store (e.g. a single backfilled candle, or a narrow gap-day refetch)
+        # must NOT clobber a day that was already fully covered. The old
+        # `candle_count = EXCLUDED.candle_count` overwrote 288 with the latest batch's
+        # smaller count, making get_coverage_gaps see the day as a perpetual gap and
+        # refetch it on every run.
         query = """
             INSERT INTO kline_cache_coverage (symbol, interval, date, candle_count, fetched_at)
             VALUES ($1, $2, $3, $4, now())
             ON CONFLICT (symbol, interval, date)
-            DO UPDATE SET candle_count = EXCLUDED.candle_count, fetched_at = now()
+            DO UPDATE SET candle_count = GREATEST(kline_cache_coverage.candle_count, EXCLUDED.candle_count),
+                          fetched_at = now()
         """
         records = [(symbol, interval, d, count) for d, count in date_counts.items()]
         await self._db.pool.executemany(query, records)

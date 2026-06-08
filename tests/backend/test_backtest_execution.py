@@ -469,7 +469,7 @@ class TestExecution:
             order.append("load")
             return {"BTCUSDT": [{"open_time": 0, "close": 1.0}]}
 
-        async def _ensure_spy(symbols, interval, start, end):
+        async def _ensure_spy(symbols, interval, start, end, on_progress=None):
             order.append("ensure")
             return {"cached": 1, "fetched": 1, "failed": 0}
 
@@ -493,6 +493,58 @@ class TestExecution:
         kc.ensure_coverage.assert_awaited()
         assert order[:2] == ["ensure", "load"], (
             f"ensure_coverage must run BEFORE _load_klines; call order was {order}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_warmup_reports_progress_into_reserved_band(self, mock_db):
+        """The cache warm-up must report progress so the bar ADVANCES during a slow
+        fetch instead of pinning at 0%. ensure_coverage receives an on_progress callback;
+        driving it to 100 must produce a DB progress write inside the warm-up band (>0,
+        <= the band ceiling), proving the bar moves before the engine even starts."""
+        from backend.services.backtest_service import BacktestService, _WARMUP_BAND
+        from backend.schemas.backtest_schemas import SimulationResult
+        kc = MagicMock()
+        progress_writes: list = []
+
+        async def _ensure_spy(symbols, interval, start, end, on_progress=None):
+            # Simulate warm-up advancing from 0 to 100% of the fetch.
+            if on_progress:
+                on_progress(50)
+                on_progress(100)
+            return {"cached": 0, "fetched": 1, "failed": 0}
+
+        kc.ensure_coverage = AsyncMock(side_effect=_ensure_spy)
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+
+        async def _capture_progress(run_id, pct):
+            progress_writes.append(pct)
+
+        sig = [{"ticker": "BTCUSDT", "signal_time": datetime(2026, 1, 1, tzinfo=timezone.utc)}]
+        with patch.object(service, "_load_signals", new=AsyncMock(return_value=sig)), \
+             patch.object(service, "_load_klines",
+                          new=AsyncMock(return_value={"BTCUSDT": [{"open_time": 0, "close": 1.0}]})), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_check_kline_coverage", new=MagicMock()), \
+             patch.object(service, "_check_total_kline_budget", new=MagicMock()), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=AsyncMock()), \
+             patch.object(service, "_update_progress", new=_capture_progress), \
+             patch("backend.services.backtest_engine.BacktestEngine.run",
+                   return_value=SimulationResult(trades=[], equity_curve=[],
+                                                 metrics={"total_trades": 0}, warnings=[],
+                                                 filter_stats={})):
+            await service._execute_backtest("run-warmprog", _make_config())
+            # let the scheduled progress-write tasks run
+            await asyncio.sleep(0)
+
+        warmup_writes = [p for p in progress_writes if 0 < p <= _WARMUP_BAND]
+        assert warmup_writes, (
+            f"expected a progress write inside the warm-up band (0, {_WARMUP_BAND}]; "
+            f"got writes {progress_writes}"
         )
 
     @pytest.mark.asyncio
