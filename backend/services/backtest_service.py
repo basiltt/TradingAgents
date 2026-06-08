@@ -529,8 +529,12 @@ class BacktestService:
         trade at a pre-analysis price the live account never got (the scan takes
         minutes), systematically inflating PnL. COALESCE falls back to started_at for
         any legacy scan missing completed_at. The date-range WHERE still filters on
-        started_at (the user picks the window by when scans RAN). A deterministic
-        `, sr.id` tiebreak makes the per-scan ordering stable on equal abs(score).
+        started_at (the user picks the window by when scans RAN). On equal abs(score)
+        the per-symbol analysis completed_at (from analysis_runs) breaks the tie,
+        DESC (latest-analyzed first) — mirroring production auto_trade_service's
+        `sorted(key=lambda r: (abs(score), completed_at), reverse=True)`, so the
+        backtest selects the SAME top-N symbols a live cycle would. sr.id is a final
+        tiebreak for determinism when completed_at is equal/NULL.
 
         Returns:
             List of signal dicts with: id, ticker, direction, confidence,
@@ -547,12 +551,13 @@ class BacktestService:
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
+                LEFT JOIN analysis_runs ar ON ar.run_id = sr.run_id
                 WHERE s.schedule_id = $1
                   AND s.started_at::timestamptz >= $2
                   AND s.started_at::timestamptz <= $3
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY signal_time, ABS(sr.score) DESC, sr.id
+                ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, schedule_id, start, end)
@@ -565,10 +570,11 @@ class BacktestService:
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
+                LEFT JOIN analysis_runs ar ON ar.run_id = sr.run_id
                 WHERE s.scan_id = ANY($1)
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY signal_time, ABS(sr.score) DESC, sr.id
+                ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, scan_ids)
@@ -580,11 +586,12 @@ class BacktestService:
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
+                LEFT JOIN analysis_runs ar ON ar.run_id = sr.run_id
                 WHERE s.started_at::timestamptz >= $1
                   AND s.started_at::timestamptz <= $2
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY signal_time, ABS(sr.score) DESC, sr.id
+                ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, start, end)

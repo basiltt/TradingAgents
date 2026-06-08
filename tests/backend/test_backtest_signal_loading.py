@@ -114,8 +114,8 @@ class TestLoadSignals:
         """signal_time MUST anchor to the scan's completed_at (when production actually
         traded — after the full per-ticker analysis), with a started_at fallback. Using
         started_at would enter at a pre-analysis price the live account never got,
-        systematically inflating PnL. Also asserts the deterministic id tiebreak so the
-        per-scan ordering is stable on equal abs(score)."""
+        systematically inflating PnL. Also asserts the per-symbol analysis completed_at
+        tiebreak so the per-scan ranking matches production on equal abs(score)."""
         from backend.services.backtest_service import BacktestService
         service = BacktestService(db=mock_db)
         mock_db.pool.fetch = AsyncMock(return_value=[])
@@ -133,6 +133,43 @@ class TestLoadSignals:
             # Anchor: COALESCE(completed_at, started_at) AS signal_time — NOT bare started_at.
             assert "COALESCE(s.completed_at, s.started_at)" in query
             assert "AS signal_time" in query
-            # Deterministic tiebreak on equal abs(score).
-            assert "ABS(sr.score) DESC, sr.id" in query
+            # Production-faithful tiebreak on equal abs(score): the per-symbol analysis
+            # completed_at, DESC (latest-completed first), mirroring auto_trade_service's
+            # sorted(key=lambda r: (abs(score), completed_at), reverse=True). A plain
+            # sr.id tiebreak picked DIFFERENT top-N symbols than production on equal
+            # scores — see test_ranks_equal_scores_by_analysis_completed_at_desc.
+            assert "ABS(sr.score) DESC" in query
+            assert "ar.completed_at DESC" in query
+
+    @pytest.mark.asyncio
+    async def test_ranks_equal_scores_by_analysis_completed_at_desc(self, mock_db):
+        """REGRESSION: on equal abs(score), the backtest must rank candidates by their
+        per-symbol analysis completed_at DESCENDING, matching production's
+        auto_trade_service ranking `sorted((abs(score), completed_at), reverse=True)`.
+
+        The prior `ORDER BY ... sr.id` tiebreak diverged: in a real scan with five
+        equal -7 signals, production took the three LATEST-analyzed (RUNE/1000FLOKI/
+        CROSS) while the id-ordered backtest took the three lowest-id (CROSS/1000FLOKI/
+        PUMPBTC) — different trades from the identical signal set. The fix joins
+        analysis_runs to recover completed_at and orders by it."""
+        from backend.services.backtest_service import BacktestService
+        service = BacktestService(db=mock_db)
+        mock_db.pool.fetch = AsyncMock(return_value=[])
+        for mode_src in (
+            {"mode": "schedule", "schedule_id": "s1"},
+            {"mode": "explicit", "scan_ids": ["x"]},
+            {"mode": "date_range"},
+        ):
+            await service._load_signals(
+                mode_src,
+                (datetime(2026, 1, 1, tzinfo=timezone.utc),
+                 datetime(2026, 1, 31, tzinfo=timezone.utc)),
+            )
+            query = mock_db.pool.fetch.call_args[0][0]
+            # Must JOIN analysis_runs to recover the per-symbol completion time.
+            assert "analysis_runs" in query
+            assert "ar.run_id = sr.run_id" in query
+            # Tiebreak orders by completed_at DESC (production parity), not bare id.
+            assert "ar.completed_at DESC" in query
+
 
