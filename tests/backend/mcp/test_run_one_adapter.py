@@ -77,6 +77,37 @@ async def test_run_one_returns_finite_metrics():
 
 
 @pytest.mark.asyncio
+async def test_run_one_never_triggers_drilldown():
+    """Sweep immunity: run_one (the optimizer adapter) calls the pure engine directly
+    and must NEVER pass fine_klines — even with drilldown_enabled=True in config — so
+    an N-combo sweep can't N×-multiply 1m fetches or diverge from the 5m engine."""
+    from unittest.mock import MagicMock, patch
+    from backend.services.backtest_service import BacktestService
+
+    svc = BacktestService.__new__(BacktestService)
+    captured = {}
+
+    class _FakeResult:
+        metrics = {"net_profit_pct": 0.0}
+
+    def _capture_run(*args, **kwargs):
+        captured["nargs"] = len(args)
+        captured["fine_in_kwargs"] = "fine_klines" in kwargs
+        # args: (config, signals, klines, cancel_event, on_progress, instrument_info)
+        captured["passes_fine_positionally"] = len(args) >= 8
+        return _FakeResult()
+
+    with patch("backend.services.backtest_engine.BacktestEngine.run", side_effect=_capture_run):
+        await svc.run_one(_min_config(drilldown_enabled=True), [_signal()],
+                          {"BTCUSDT": _kline_series()}, {}, deadline=None)
+
+    assert captured["fine_in_kwargs"] is False
+    assert captured["passes_fine_positionally"] is False, (
+        "run_one passed an 8th positional arg — drill-down leaked into the sweep path"
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_one_empty_signals_is_safe():
     """No signals → engine returns empty-but-valid metrics, run_one does not crash."""
     from backend.services.backtest_service import BacktestService

@@ -45,6 +45,11 @@ class BacktestCreateRequest(BaseModel):
     slippage_bps: int = Field(default=2, ge=0, le=50)
     funding_rate_model: Literal["none", "fixed_8h"] = "none"
     funding_rate_fixed_pct: float = Field(default=0.01, ge=-0.5, le=0.5)
+    # 1-minute drill-down: refine entry fill + TP/SL/liq first-touch ordering using
+    # 1m candles for the entry/exit bars of actual trades. On by default for single
+    # interactive backtests (the service runs a cheap two-phase pass). The optimizer
+    # sweep calls the pure engine directly and is unaffected regardless.
+    drilldown_enabled: bool = True
 
     # AutoTradeConfig fields (trade decision params)
     direction: Literal["straight", "reverse"] = "straight"

@@ -21,6 +21,25 @@ class TestBacktestCreateRequest:
         assert req.take_profit_pct == 150.0  # default
         assert req.fee_rate_pct == 0.055  # default
 
+    def test_drilldown_enabled_defaults_true_and_round_trips(self):
+        """1m drill-down is on by default for interactive backtests; the flag must
+        survive model_dump() so it reaches the service's run config."""
+        from backend.schemas.backtest_schemas import BacktestCreateRequest, ScanSource
+        kw = dict(
+            starting_capital=10000.0,
+            date_range_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            date_range_end=datetime(2026, 1, 31, tzinfo=timezone.utc),
+            scan_source=ScanSource(mode="date_range"),
+        )
+        default = BacktestCreateRequest(**kw)
+        assert default.drilldown_enabled is True
+        assert default.model_dump()["drilldown_enabled"] is True
+
+        off = BacktestCreateRequest(drilldown_enabled=False, **kw)
+        assert off.drilldown_enabled is False
+        assert off.model_dump()["drilldown_enabled"] is False
+
+
     def test_defaults_match_production_autotradeconfig(self):
         """The backtest's defaults for the shared AutoTradeConfig fields MUST equal
         production's AutoTradeConfig defaults, so a backtest reflects ~100% real-world
