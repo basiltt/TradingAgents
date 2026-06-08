@@ -233,3 +233,10 @@ node_modules/
 
 # Local DB snapshots + one-off migration/merge scratch scripts (never commit)
 .tmp_db_backup/
+
+# Backtest fidelity-verification scratch (diagnostics, replay harnesses, prod CSVs) —
+# kept on disk for re-runs, never committed.
+.tmp_fidelity/
+
+# MCP server config (contains bearer token) — never commit
+.mcp.json
