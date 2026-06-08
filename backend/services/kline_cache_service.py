@@ -199,14 +199,41 @@ class KlineCacheService:
             "symbols_with_gaps": list(gaps.keys()),
         }
 
-        # TODO: Phase 2 Task 2.2 will add actual Bybit fetching here
-        # For now, just report the gaps
-        if gaps:
-            logger.info(
-                "kline_coverage_gaps_found",
-                extra={"gap_count": len(gaps), "symbols": list(gaps.keys())[:10]},
-            )
+        if not gaps:
+            return stats
 
+        logger.info(
+            "kline_coverage_gaps_found",
+            extra={"gap_count": len(gaps), "symbols": list(gaps.keys())[:10]},
+        )
+
+        # Fill each gapped symbol from Bybit. We fetch the FULL requested window
+        # per symbol (the fetcher paginates and clips to [start, end]); storing is
+        # idempotent (ON CONFLICT DO NOTHING) so re-fetching already-cached days is
+        # harmless. One symbol's failure must not abort the rest, so each is
+        # isolated — a symbol the exchange returns nothing for is counted failed
+        # (and its gap entry retained) rather than silently dropped.
+        still_missing: list[str] = []
+        for symbol in gaps:
+            try:
+                fetched = await self._fetch_klines_from_bybit(symbol, interval, start, end)
+            except Exception:  # noqa: BLE001 — per-symbol isolation; network/parse errors
+                logger.exception("kline_ensure_fetch_failed", extra={"symbol": symbol})
+                fetched = []
+
+            if not fetched:
+                stats["failed"] += 1
+                still_missing.append(symbol)
+                continue
+
+            await self.store_klines(symbol, interval, fetched)
+            stats["fetched"] += 1
+
+        # symbols_with_gaps now reflects what's STILL uncovered after fetching, so
+        # the caller (backtest pre-flight / cache_status) sees the true post-warmup
+        # state rather than the pre-fetch gap list.
+        stats["symbols_with_gaps"] = still_missing
+        stats["cached"] = len(symbols) - len(still_missing)
         return stats
 
     async def _update_coverage(

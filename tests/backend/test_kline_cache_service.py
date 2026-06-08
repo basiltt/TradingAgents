@@ -130,3 +130,74 @@ class TestEnsureCoverage:
 
         stats = await svc.ensure_coverage(["BTCUSDT"], "5m", start, end)
         assert "cached" in stats or "fetched" in stats
+
+    @pytest.mark.asyncio
+    async def test_fetches_and_stores_when_gap_exists(self, mock_db):
+        """When a symbol has a coverage gap, ensure_coverage must fetch the
+        missing klines from Bybit and store them — not silently no-op.
+
+        Regression: ensure_coverage was a stub that computed gaps, logged, and
+        returned fetched=0 without ever calling the (working) fetcher, leaving the
+        kline cache with no writer and every backtest failing coverage pre-flight.
+        """
+        from backend.services.kline_cache_service import KlineCacheService
+
+        svc = KlineCacheService(db=mock_db)
+
+        # Coverage table is EMPTY → the whole range is a gap.
+        mock_db.pool.fetch.return_value = []
+
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 23, 59, tzinfo=timezone.utc)
+
+        fetched_candles = [
+            {"open_time": datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+             "open": 50000.0, "high": 50100.0, "low": 49900.0,
+             "close": 50050.0, "volume": 100.0},
+            {"open_time": datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc),
+             "open": 50050.0, "high": 50200.0, "low": 50000.0,
+             "close": 50150.0, "volume": 80.0},
+        ]
+
+        with patch.object(
+            svc, "_fetch_klines_from_bybit",
+            new=AsyncMock(return_value=fetched_candles),
+        ) as mock_fetch, patch.object(
+            svc, "store_klines",
+            new=AsyncMock(return_value=len(fetched_candles)),
+        ) as mock_store:
+            stats = await svc.ensure_coverage(["BTCUSDT"], "5m", start, end)
+
+        # It must have actually fetched the missing symbol...
+        mock_fetch.assert_awaited()
+        assert mock_fetch.await_args.args[0] == "BTCUSDT"
+        # ...and persisted what it fetched...
+        mock_store.assert_awaited()
+        assert mock_store.await_args.args[0] == "BTCUSDT"
+        # ...and reported a non-zero fetched count.
+        assert stats["fetched"] >= 1
+        assert stats["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_records_failure_when_fetch_returns_nothing(self, mock_db):
+        """A symbol the exchange returns no data for is counted as failed, not
+        silently dropped (so the caller can surface a real coverage problem)."""
+        from backend.services.kline_cache_service import KlineCacheService
+
+        svc = KlineCacheService(db=mock_db)
+        mock_db.pool.fetch.return_value = []  # full gap
+
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 23, 59, tzinfo=timezone.utc)
+
+        with patch.object(
+            svc, "_fetch_klines_from_bybit",
+            new=AsyncMock(return_value=[]),
+        ), patch.object(
+            svc, "store_klines", new=AsyncMock(return_value=0),
+        ) as mock_store:
+            stats = await svc.ensure_coverage(["DEADUSDT"], "5m", start, end)
+
+        assert stats["fetched"] == 0
+        assert stats["failed"] == 1
+        mock_store.assert_not_awaited()
