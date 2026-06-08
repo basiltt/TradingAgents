@@ -61,7 +61,7 @@ def _validate_account_ids(raw: str | None) -> list[str] | None:
         try:
             _uuid.UUID(aid)
         except (ValueError, AttributeError):
-            raise ValueError(f"Invalid account ID: {aid}")
+            raise ValueError(f"Invalid account ID: {aid}") from None
     return ids
 
 
@@ -83,7 +83,7 @@ def _validate_date(raw: str | None, name: str) -> datetime | None:
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid {name}: expected ISO 8601 datetime")
+        raise ValueError(f"Invalid {name}: expected ISO 8601 datetime") from None
 
 
 @router.get("/trades")
@@ -129,7 +129,7 @@ async def list_trades_cross_account(
                 cursor_last_sort_value = parts[0] if parts[0] != "NULL" else None
                 cursor_last_id = str(_uuid.UUID(parts[1]))
             except Exception:
-                raise ValueError("Invalid cursor format")
+                raise ValueError("Invalid cursor format") from None
 
     except ValueError as e:
         logger.warning("list_trades_validation_error", extra={"error": str(e)[:200]})

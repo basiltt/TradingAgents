@@ -489,7 +489,14 @@ class CloseRuleEvaluator:
     def _check_time_elapsed(self, rule: dict) -> bool:
         """Check if elapsed time since reference_value exceeds threshold_value hours."""
         try:
-            ref_str = rule.get("reference_value", "")
+            # AI-CONTEXT: `.get(key, "")` returns None when the key EXISTS with a None
+            # value (the "" default only applies when the key is absent). A bare
+            # None.replace(...) below would raise AttributeError, which is NOT in the
+            # except tuple and would escape uncaught. Guard explicitly.
+            ref_str = rule.get("reference_value") or ""
+            if not ref_str:
+                logger.warning("invalid_time_rule_data", extra={"rule_id": rule.get("id"), "reason": "missing reference_value"})
+                return False
             threshold_hours = float(rule["threshold_value"])
             start_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
             if start_time.tzinfo is None:

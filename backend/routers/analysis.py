@@ -18,7 +18,7 @@ def _validate_run_id(run_id: str) -> None:
     try:
         uuid.UUID(run_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid run_id format")
+        raise HTTPException(status_code=400, detail="Invalid run_id format") from None
 
 
 @router.post("/analysis", response_model=AnalysisCreateResponse, status_code=201)
@@ -38,9 +38,9 @@ async def start_analysis(request: Request, body: AnalysisRequest):
     try:
         run_id = await request.app.state.analysis_service.start_analysis(body.model_dump())
     except ConcurrencyLimitError as e:
-        raise HTTPException(status_code=429, detail=str(e))
+        raise HTTPException(status_code=429, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     return AnalysisCreateResponse(run_id=run_id, status="running")
 

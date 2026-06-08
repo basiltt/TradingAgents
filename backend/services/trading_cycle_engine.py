@@ -229,7 +229,7 @@ class TradingCycleEngine:
         try:
             cycle_id = await self._repo.create_cycle(cfg)
         except asyncpg.UniqueViolationError:
-            raise CycleAlreadyActiveError()
+            raise CycleAlreadyActiveError() from None
 
         task = asyncio.create_task(self._execute_cycle(cycle_id, filtered, cfg))
         self._active_tasks[cycle_id] = task

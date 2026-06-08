@@ -12,5 +12,5 @@ def validate_account_id(account_id: str) -> str:
     try:
         _uuid.UUID(account_id)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid account ID format")
+        raise HTTPException(400, detail="Invalid account ID format") from None
     return account_id

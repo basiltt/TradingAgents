@@ -9,7 +9,7 @@ import uuid as _uuid
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -46,7 +46,7 @@ def _validate_id(value: str, name: str = "ID") -> str:
     try:
         _uuid.UUID(value)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail=f"Invalid {name} format")
+        raise HTTPException(400, detail=f"Invalid {name} format") from None
     return value
 
 
@@ -533,7 +533,11 @@ async def get_trade_events(request: Request, account_id: str, trade_id: str):
 @router.post("/accounts/{account_id}/trades/{trade_id}/close")
 async def close_trade(
     request: Request, account_id: str, trade_id: str,
-    body: TradeCloseRequest = TradeCloseRequest(),
+    # AI-CONTEXT: Body(default_factory=...) constructs a FRESH TradeCloseRequest
+    # per request when the body is omitted. A bare `= TradeCloseRequest()` default
+    # is evaluated ONCE at import and shared across all requests — a mutable
+    # Pydantic v2 model, so concurrent requests could observe each other's state.
+    body: TradeCloseRequest = Body(default_factory=TradeCloseRequest),
 ):
     """Close a trade (full or partial) via the exchange."""
     _validate_account_id(account_id)

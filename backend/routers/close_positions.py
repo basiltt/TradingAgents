@@ -32,7 +32,7 @@ def _validate_id(value: str, name: str = "ID") -> str:
     try:
         _uuid.UUID(value)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail=f"Invalid {name} format")
+        raise HTTPException(400, detail=f"Invalid {name} format") from None
     return value
 
 

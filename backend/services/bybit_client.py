@@ -156,7 +156,7 @@ class BybitClient:
                 except aiohttp.ClientError:
                     if not retry_on_network_error:
                         logger.error(f"Bybit network error on {path} (no retry for safety)")
-                        raise BybitAPIError(-1, "Network error — order may or may not have been placed, check positions")
+                        raise BybitAPIError(-1, "Network error — order may or may not have been placed, check positions") from None
                     if attempt < _MAX_RETRIES - 1:
                         delay = _RETRY_BASE_DELAY * (2 ** attempt)
                         jitter = random.uniform(0, delay * 0.1)
@@ -165,7 +165,7 @@ class BybitClient:
                         await asyncio.sleep(total_delay)
                         continue
                     logger.error(f"Bybit network error on {path} after {_MAX_RETRIES} attempts")
-                    raise BybitAPIError(-1, "Network error")
+                    raise BybitAPIError(-1, "Network error") from None
 
                 if data is None:
                     raise BybitAPIError(-1, "Empty response from Bybit API")

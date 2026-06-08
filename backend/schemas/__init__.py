@@ -168,7 +168,7 @@ class AnalysisRequest(BaseModel):
         try:
             d = date.fromisoformat(v)
         except ValueError:
-            raise ValueError("Invalid date format, expected YYYY-MM-DD")
+            raise ValueError("Invalid date format, expected YYYY-MM-DD") from None
         if d > date.today():
             raise ValueError("Analysis date cannot be in the future")
         return v
@@ -650,7 +650,7 @@ class ScanRequest(BaseModel):
         try:
             d = date.fromisoformat(v)
         except ValueError:
-            raise ValueError("Invalid date format, expected YYYY-MM-DD")
+            raise ValueError("Invalid date format, expected YYYY-MM-DD") from None
         if d > date.today():
             raise ValueError("Analysis date cannot be in the future")
         return v
@@ -988,7 +988,7 @@ class ScheduleConfig(BaseModel):
             try:
                 datetime.fromisoformat(v.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                raise ValueError("run_at must be a valid ISO 8601 datetime string")
+                raise ValueError("run_at must be a valid ISO 8601 datetime string") from None
         return v
 
     @field_validator("time")
@@ -1111,7 +1111,7 @@ class CreateScheduledScanRequest(BaseModel):
                 try:
                     AutoTradeConfig(**cfg)
                 except Exception as e:
-                    raise ValueError(f"auto_trade_configs[{i}]: {e}")
+                    raise ValueError(f"auto_trade_configs[{i}]: {e}") from e
         return v
 
     @model_validator(mode="after")
@@ -1239,7 +1239,7 @@ class CreateCloseRuleRequest(BaseModel):
         try:
             val = D(v)
         except (InvalidOperation, ValueError):
-            raise ValueError("threshold_value must be a valid number")
+            raise ValueError("threshold_value must be a valid number") from None
         if val <= 0:
             raise ValueError("threshold_value must be positive")
         if val > D("10000000"):
@@ -1288,7 +1288,7 @@ class UpdateCloseRuleRequest(BaseModel):
         try:
             val = D(v)
         except (InvalidOperation, ValueError):
-            raise ValueError("threshold_value must be a valid number")
+            raise ValueError("threshold_value must be a valid number") from None
         if val <= 0:
             raise ValueError("threshold_value must be positive")
         return v

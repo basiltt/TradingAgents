@@ -127,7 +127,16 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 
 ## Decided Log (Debate Resolution Protocol)
 _(entries added as findings are resolved; check before applying any contradicting fix)_
-- None yet
+- DECIDED-1 (R1): `ai_manager_task.py` exception handlers use `self._log` (per-account logger), NOT bare `logger`. Evidence: class defines `self._log = logging.getLogger(...)` at __init__; module has no `logger`. Status: FINAL.
+- DECIDED-2 (R1): `backtest_service.py` resolves `ScanContext` annotation via a `TYPE_CHECKING` import; runtime import stays lazy inside `_build_scan_contexts()` to avoid the scan_context→services→backtest_service cycle. Status: FINAL.
+- DECIDED-3 (R1): `trade_service._broadcast` uses `is not None` (not truthiness) for `realized_pnl`/`net_pnl` so a breakeven 0.0 PnL is broadcast as 0.0, not null. Status: FINAL.
+- DECIDED-4 (R1): `close_rule_evaluator._check_time_elapsed` guards `reference_value` for None/empty before `.replace()` (a None value with key present escaped the except tuple as AttributeError). Status: FINAL.
+- DECIDED-5 (R1): `accounts.close_trade` body uses `Body(default_factory=TradeCloseRequest)` not a shared mutable `TradeCloseRequest()` default. Status: FINAL.
+- DECIDED-6 (R1): `accounts_service.create_account` raises RuntimeError if post-insert `get_account` returns None (removed bare `# type: ignore` that hid the Optional mismatch). Status: FINAL.
+- DECIDED-7 (R1): B904 exception chaining — convention: `except ... as <var>:` → `raise ... from <var>`; `except SomeError:` (no var, user-facing replacement msg) → `raise ... from None`. Applied to all 76 sites. Status: FINAL.
+
+## Test-quality findings (for Phase 4)
+- TQ-1: `tests/backend/test_validators.py` + `test_security.py` leak global env state (`ALLOW_LOCAL_LLM_BACKEND`) without cleanup → order-dependent failures (validators 25/25 alone, 14 fail when co-run after security). Fix in Phase 4: monkeypatch.delenv or autouse cleanup fixture. This is THE cause of the "14 validator failures" seen under xdist and batched runs — NOT a code bug.
 
 ## Activity Log
 - 2026-06-09: Step 0 started. Worktree created from local HEAD (verified 17 backtest commits present). ruff installed. Baseline lint = 36 errors incl. 5 F821 real bugs. Backend test baseline running in bg.

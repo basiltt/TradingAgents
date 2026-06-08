@@ -34,7 +34,7 @@ def _validate_date_param(value: str | None, name: str) -> str | None:
     try:
         date.fromisoformat(value)
     except ValueError:
-        raise HTTPException(422, detail=f"Invalid {name} format, expected YYYY-MM-DD")
+        raise HTTPException(422, detail=f"Invalid {name} format, expected YYYY-MM-DD") from None
     return value
 
 
@@ -49,7 +49,7 @@ def _validate_account_id(account_id: str) -> str:
     try:
         _uuid.UUID(account_id)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid account ID format")
+        raise HTTPException(400, detail="Invalid account ID format") from None
     return account_id
 
 
@@ -61,7 +61,7 @@ def _resolve_dates(
             s = date.fromisoformat(start_date)
             e = date.fromisoformat(end_date)
         except ValueError:
-            raise HTTPException(422, detail="Invalid date format, expected YYYY-MM-DD")
+            raise HTTPException(422, detail="Invalid date format, expected YYYY-MM-DD") from None
         if s > e:
             raise HTTPException(422, detail="start_date must be before or equal to end_date")
         return start_date, end_date

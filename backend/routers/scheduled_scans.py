@@ -23,7 +23,7 @@ def _validate_uuid(value: str) -> None:
     try:
         uuid.UUID(value)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+        raise HTTPException(status_code=400, detail="Invalid ID format") from None
 
 
 def _get_service(request: Request):
@@ -47,7 +47,7 @@ async def create_schedule(request: Request, body: CreateScheduledScanRequest):
     try:
         result = await svc.create(body.model_dump())
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
@@ -89,9 +89,9 @@ async def update_schedule(request: Request, schedule_id: str, body: UpdateSchedu
     try:
         result = await svc.update(schedule_id, body.model_dump(exclude_unset=True))
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
@@ -112,9 +112,9 @@ async def pause_schedule(request: Request, schedule_id: str):
     try:
         result = await svc.pause(schedule_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
@@ -125,9 +125,9 @@ async def resume_schedule(request: Request, schedule_id: str):
     try:
         result = await svc.resume(schedule_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
@@ -138,9 +138,9 @@ async def trigger_schedule(request: Request, schedule_id: str):
     try:
         result = await svc.trigger(schedule_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=429, detail=str(e))
+        raise HTTPException(status_code=429, detail=str(e)) from e
     resp = _redact_response(result)
     if schedule_id in svc.get_running_schedule_ids():
         resp.is_running = True

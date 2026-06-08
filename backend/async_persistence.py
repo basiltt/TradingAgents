@@ -1679,7 +1679,7 @@ class AsyncAnalysisDB:
                 run.get("asset_type", "stock"),
             )
         except asyncpg.UniqueViolationError:
-            raise ValueError(f"Run {run['run_id']} already exists")
+            raise ValueError(f"Run {run['run_id']} already exists") from None
 
     async def update_run_status(
         self,
@@ -2594,7 +2594,7 @@ class AsyncAnalysisDB:
                 data["updated_at"],
             )
         except asyncpg.UniqueViolationError:
-            raise ValueError(f"Scheduled scan {data['id']} already exists")
+            raise ValueError(f"Scheduled scan {data['id']} already exists") from None
 
     async def update_scheduled_scan(self, schedule_id: str, fields: Dict[str, Any]) -> None:
         allowed = {

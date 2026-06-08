@@ -744,7 +744,7 @@ class AnalysisDB:
                 conn.commit()
             except psycopg2.IntegrityError:
                 conn.rollback()
-                raise ValueError(f"Run {run['run_id']} already exists")
+                raise ValueError(f"Run {run['run_id']} already exists") from None
             except Exception:
                 conn.rollback()
                 raise
@@ -1946,7 +1946,7 @@ class AnalysisDB:
                 conn.commit()
             except psycopg2.IntegrityError:
                 conn.rollback()
-                raise ValueError(f"Scheduled scan {data['id']} already exists")
+                raise ValueError(f"Scheduled scan {data['id']} already exists") from None
             except Exception:
                 conn.rollback()
                 raise

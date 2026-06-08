@@ -518,7 +518,13 @@ class AccountsService:
         if self._ws_manager:
             asyncio.ensure_future(self._ws_manager.start_account(account_id))
         logger.info("create_account_done", extra={"account_id": account_id, "account_type": account_type})
-        return result  # type: ignore
+        # AI-CONTEXT: get_account() is typed Optional[...]; the bare `# type: ignore`
+        # previously hid that. The row was just inserted, but a concurrent delete
+        # could race it to None — fail loudly with a clear error rather than return
+        # None where callers (and the -> Dict[str, Any] contract) expect a dict.
+        if result is None:
+            raise RuntimeError(f"account {account_id} vanished immediately after creation")
+        return result
 
     async def list_accounts(self) -> List[Dict[str, Any]]:
         """Return all trading accounts with masked API keys."""

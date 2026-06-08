@@ -235,7 +235,7 @@ async def patch_config(request: Request, body: ConfigPatch) -> dict[str, Any]:
     try:
         await mgr.config_repo.update(patch, expected_row_version=body.expected_row_version)
     except MCPConflictError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     return await get_config(request)
 
 
@@ -551,7 +551,7 @@ async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
             expected_row_version=body.expected_row_version,
         )
     except MCPConflictError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     # Return the fresh registry. We deliberately do NOT special-case body.preset
     # here: when several presets share this exact tool set, active_presets reports
     # ALL of them and the UI highlights each — identical to what a later cold GET
@@ -669,7 +669,7 @@ async def approve_proposal_endpoint(request: Request, proposal_id: str) -> dict[
     except ProposalApplyError as exc:
         await _audit_control_plane(mgr, action="proposal_approve", outcome="rejected",
                                    mutating=True, detail={"proposal_id": proposal_id, "error": str(exc)})
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     await _audit_control_plane(mgr, action="proposal_approve", outcome="applied",
                                mutating=True, detail={"proposal_id": proposal_id})
     return {"applied": True, **summary}
@@ -681,7 +681,7 @@ async def reject_proposal_endpoint(request: Request, proposal_id: str) -> dict[s
     try:
         await repo.transition(proposal_id, to_status="rejected", approver="operator")
     except ValueError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     await _audit_control_plane(mgr, action="proposal_reject", outcome="rejected",
                                mutating=False, detail={"proposal_id": proposal_id})
     return {"rejected": True}
@@ -703,7 +703,7 @@ async def revert_proposal_endpoint(request: Request, proposal_id: str) -> dict[s
             proposal_repo=repo, db=db, proposal_id=proposal_id, approver="operator",
         )
     except ProposalApplyError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     await _audit_control_plane(mgr, action="proposal_revert", outcome="reverted",
                                mutating=True, detail={"proposal_id": proposal_id})
     return summary

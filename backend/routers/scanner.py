@@ -25,7 +25,7 @@ def _validate_scan_id(scan_id: str) -> None:
     try:
         uuid.UUID(scan_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid scan_id format")
+        raise HTTPException(status_code=400, detail="Invalid scan_id format") from None
 
 
 def _validate_scan_response(raw: dict) -> dict:
@@ -59,7 +59,7 @@ async def start_scan(request: Request, body: ScanRequest):
     try:
         scan_id = await request.app.state.scanner_service.start_scan(scan_config)
     except ScannerBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"scan_id": scan_id, "status": "running"}
 
 
@@ -102,7 +102,7 @@ async def delete_scan(request: Request, scan_id: str):
     try:
         result = await request.app.state.scanner_service.delete_scan(scan_id)
     except ScannerBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if result is None:
         raise HTTPException(status_code=404, detail="Scan not found")
     return result

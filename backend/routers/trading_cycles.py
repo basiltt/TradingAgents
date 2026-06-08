@@ -39,9 +39,9 @@ async def create_cycle(request: Request, body: CreateCycleRequest):
         result = await engine.start_cycle(body)
         return CycleResponse(**result)
     except AccountNotConfiguredError as e:
-        raise HTTPException(503, detail=e.safe_message)
+        raise HTTPException(503, detail=e.safe_message) from e
     except CycleError as e:
-        raise HTTPException(400, detail=e.safe_message)
+        raise HTTPException(400, detail=e.safe_message) from e
 
 
 @router.get("/trading-cycles")
@@ -68,9 +68,9 @@ async def dry_run(request: Request, body: CreateCycleRequest):
         result = await engine.dry_run(body)
         return DryRunResponse(**result)
     except AccountNotConfiguredError as e:
-        raise HTTPException(503, detail=e.safe_message)
+        raise HTTPException(503, detail=e.safe_message) from e
     except CycleError as e:
-        raise HTTPException(400, detail=e.safe_message)
+        raise HTTPException(400, detail=e.safe_message) from e
 
 
 @router.get("/trading-cycles/{cycle_id}")
@@ -89,6 +89,6 @@ async def stop_cycle(request: Request, cycle_id: int):
         result = await engine.stop_cycle(cycle_id)
         return CycleResponse(**result)
     except CycleNotFoundError:
-        raise HTTPException(404, detail="Cycle not found")
+        raise HTTPException(404, detail="Cycle not found") from None
     except CycleNotRunningError:
-        raise HTTPException(409, detail="Cycle is not running")
+        raise HTTPException(409, detail="Cycle is not running") from None

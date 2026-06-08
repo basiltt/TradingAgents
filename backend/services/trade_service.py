@@ -537,8 +537,12 @@ class TradeService:
                     "account_id": trade["account_id"],
                     "symbol": trade["symbol"],
                     "close_reason": trade.get("close_reason"),
-                    "realized_pnl": float(trade["realized_pnl"]) if trade.get("realized_pnl") else None,
-                    "net_pnl": float(trade["net_pnl"]) if trade.get("net_pnl") else None,
+                    # AI-CONTEXT: explicit `is not None` check, NOT truthiness — a
+                    # breakeven close has realized_pnl == 0.0, which is falsy. Using
+                    # `if trade.get("realized_pnl")` would broadcast a real 0 PnL as
+                    # null, corrupting the client's running PnL tally.
+                    "realized_pnl": float(trade["realized_pnl"]) if trade.get("realized_pnl") is not None else None,
+                    "net_pnl": float(trade["net_pnl"]) if trade.get("net_pnl") is not None else None,
                 }
             elif event_type == "trade.opened":
                 payload = {

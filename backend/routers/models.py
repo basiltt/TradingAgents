@@ -53,7 +53,7 @@ def _validate_url_ssrf(url: str) -> None:
             raise HTTPException(400, detail="URLs targeting private networks are not allowed")
     except ValueError:
         if host.endswith(".internal") or host.endswith(".local"):
-            raise HTTPException(400, detail="URLs targeting internal domains are not allowed")
+            raise HTTPException(400, detail="URLs targeting internal domains are not allowed") from None
 
 
 class ConnectivityRequest(BaseModel):

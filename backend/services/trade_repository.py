@@ -463,7 +463,7 @@ class TradeRepository:
                 cursor_val = parts[0] if parts[0] != "NULL" else None
                 cursor_id = uuid.UUID(parts[1])
             except Exception:
-                raise ValueError("Invalid cursor format")
+                raise ValueError("Invalid cursor format") from None
 
             if cursor_val is not None:
                 params.append(cursor_val)

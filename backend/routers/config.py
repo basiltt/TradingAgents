@@ -23,18 +23,18 @@ async def update_config(request: Request, body: ConfigUpdateRequest):
         try:
             int(body.overrides["llm_max_concurrent"])
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="llm_max_concurrent must be an integer")
+            raise HTTPException(status_code=400, detail="llm_max_concurrent must be an integer") from None
 
     if "llm_min_spacing_ms" in body.overrides:
         try:
             int(body.overrides["llm_min_spacing_ms"])
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="llm_min_spacing_ms must be an integer")
+            raise HTTPException(status_code=400, detail="llm_min_spacing_ms must be an integer") from None
 
     try:
         request.app.state.config_service.update_config(body.overrides)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     if "llm_max_concurrent" in body.overrides:
         configure_llm_concurrency(int(body.overrides["llm_max_concurrent"]))

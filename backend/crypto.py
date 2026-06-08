@@ -27,7 +27,7 @@ def decrypt_value(ciphertext: bytes | memoryview) -> str:
     try:
         return _get_fernet().decrypt(ciphertext).decode()
     except InvalidToken:
-        raise RuntimeError("Failed to decrypt value — encryption key may have been rotated")
+        raise RuntimeError("Failed to decrypt value — encryption key may have been rotated") from None
 
 
 def mask_api_key(api_key: str) -> str:

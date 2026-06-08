@@ -33,7 +33,7 @@ def _validate_id(strategy_id: str) -> str:
     try:
         _uuid.UUID(strategy_id)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid strategy ID format")
+        raise HTTPException(400, detail="Invalid strategy ID format") from None
     return strategy_id
 
 

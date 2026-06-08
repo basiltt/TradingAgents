@@ -59,4 +59,4 @@ def validate_trade_id(trade_id: str) -> None:
     try:
         _uuid.UUID(trade_id)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid trade ID format")
+        raise HTTPException(400, detail="Invalid trade ID format") from None
