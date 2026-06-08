@@ -445,3 +445,87 @@ class TestDrilldownEntry:
             "fabricated an SL exit from the entry bar's PRE-fill low of 50 (look-ahead)"
         )
 
+
+class TestDrilldownExit:
+    """1-minute EXIT drill-down: when a 5m exit bar straddles BOTH TP and SL, the 5m
+    engine resolves pessimistically (SL wins). With a 1m window the engine must take
+    the level actually touched FIRST. Without fine data → unchanged pessimistic SL.
+    """
+
+    BASE = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    def _cfg(self):
+        # long, 10x, TP +5% (→105), SL -5% (→95). entry at 100 (5m open, no entry drill).
+        return _laconfig(
+            capital_pct=20.0, leverage=10, take_profit_pct=50.0, stop_loss_pct=50.0,
+            fee_rate_pct=0.0, slippage_bps=0,
+        )
+
+    def _signal(self):
+        # aligned signal → entry bar is 12:05, fills at its open (100). No entry drill.
+        return [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                 "score": 8, "signal_time": self.BASE + timedelta(minutes=3, seconds=47),
+                 "scan_id": "s1", "signal_source": "structured", "analysis_price": 100.0}]
+
+    def _klines(self, straddle_bar_idx=3):
+        """Flat 100 except the straddle bar, whose 5m high≥105 (TP) AND low≤95 (SL)."""
+        out = []
+        for i in range(12):
+            t = self.BASE + timedelta(minutes=i * 5)
+            if i == 1:   # entry bar opens at 100
+                out.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            elif i == straddle_bar_idx:
+                out.append({"open_time": t, "open": 100.0, "high": 106.0, "low": 94.0, "close": 100.0, "volume": 100.0})
+            else:
+                out.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+        return {"BTCUSDT": out}, self.BASE + timedelta(minutes=straddle_bar_idx * 5)
+
+    def _exit_window(self, bar_open, order):
+        """1m candles for the straddle bar. order='sl_first' touches 94 (SL) at min 0
+        then 106 (TP) at min 3; 'tp_first' reverses."""
+        seq = []
+        for m in range(5):
+            t = bar_open + timedelta(minutes=m)
+            if order == "sl_first":
+                lo, hi = (94.0, 100.0) if m == 0 else (100.0, 106.0) if m == 3 else (100.0, 100.0)
+            else:  # tp_first
+                lo, hi = (100.0, 106.0) if m == 0 else (94.0, 100.0) if m == 3 else (100.0, 100.0)
+            seq.append({"open_time": t, "open": 100.0, "high": hi, "low": lo, "close": 100.0, "volume": 10.0})
+        return {"BTCUSDT": {int(bar_open.timestamp()): seq}}
+
+    def test_sl_touched_first_picks_sl(self):
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        fine = self._exit_window(bar, "sl_first")
+        r = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines=fine)
+        assert r.trades[0]["close_reason"] == "sl"
+
+    def test_tp_touched_first_picks_tp(self):
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        fine = self._exit_window(bar, "tp_first")
+        r = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines=fine)
+        assert r.trades[0]["close_reason"] == "tp", (
+            "TP was touched first in the 1m sequence but drill-down picked SL"
+        )
+
+    def test_no_fine_data_keeps_pessimistic_sl(self):
+        from backend.services.backtest_engine import BacktestEngine
+        klines, _ = self._klines()
+        r = BacktestEngine().run(self._cfg(), self._signal(), klines)  # no fine
+        assert r.trades[0]["close_reason"] == "sl", (
+            "without 1m data, a TP&SL-straddle bar must keep the pessimistic SL default"
+        )
+
+    def test_single_1m_candle_double_touch_stays_pessimistic(self):
+        """If the FIRST 1m candle itself straddles both TP and SL, order is still
+        unknowable below 1m → keep pessimistic SL (long)."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        seq = [{"open_time": bar, "open": 100.0, "high": 106.0, "low": 94.0, "close": 100.0, "volume": 10.0}]
+        seq += [{"open_time": bar + timedelta(minutes=m), "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 10.0} for m in range(1, 5)]
+        fine = {"BTCUSDT": {int(bar.timestamp()): seq}}
+        r = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines=fine)
+        assert r.trades[0]["close_reason"] == "sl"
+
+

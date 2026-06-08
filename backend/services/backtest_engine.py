@@ -771,6 +771,46 @@ class BacktestEngine:
             return pos.entry_price, pos.entry_price
         return max(fk["high"] for fk in post), min(fk["low"] for fk in post)
 
+    def _resolve_exit_fine(
+        self, pos: "Position", window: list[dict[str, Any]]
+    ) -> Optional[tuple[str, float]]:
+        """Walk a 5m exit bar's 1m candles in order and return the FIRST of
+        liquidation / SL / TP actually touched → (close_reason, exit_price). Used only
+        when ≥2 of those levels fall inside the 5m bar's range (ambiguous order), to
+        replace the pessimistic "SL-wins" 5m default with the real first-touch.
+
+        Within a single 1m candle the order STILL can't be known (its own high & low
+        could both cross), so per-candle we keep the same pessimistic precedence the 5m
+        path uses: liquidation, then SL, then TP. 1m shrinks the ambiguity window but
+        cannot fully remove it. On a 1m-drilled entry bar, only post-entry 1m candles
+        are considered. Returns None if no level is touched in the window.
+        """
+        candles = window
+        if pos.entry_fine_minute is not None and pos.entry_bar_open is not None:
+            candles = [c for c in window if c["open_time"] >= pos.entry_fine_minute]
+        for c in candles:
+            hi, lo = c["high"], c["low"]
+            if pos.side == "Buy":
+                # liquidation first (lowest price), then SL-if-closer, then TP.
+                if lo <= pos.liq_price:
+                    if pos.sl_price > 0 and pos.sl_price > pos.liq_price and lo <= pos.sl_price:
+                        return "sl", pos.sl_price
+                    return "liquidation", pos.liq_price
+                if pos.sl_price > 0 and lo <= pos.sl_price:
+                    return "sl", pos.sl_price
+                if pos.tp_price > 0 and hi >= pos.tp_price:
+                    return "tp", pos.tp_price
+            else:
+                if hi >= pos.liq_price:
+                    if pos.sl_price > 0 and pos.sl_price < pos.liq_price and hi >= pos.sl_price:
+                        return "sl", pos.sl_price
+                    return "liquidation", pos.liq_price
+                if pos.sl_price > 0 and hi >= pos.sl_price:
+                    return "sl", pos.sl_price
+                if pos.tp_price > 0 and lo <= pos.tp_price:
+                    return "tp", pos.tp_price
+        return None
+
     def _open_position(
         self,
         config: dict[str, Any],
@@ -1192,6 +1232,26 @@ class BacktestEngine:
                 else:
                     pos.max_favorable_price = min(pos.max_favorable_price, low) if pos.max_favorable_price > 0 else low
                     pos.max_adverse_price = max(pos.max_adverse_price, high)
+
+                # ── 1-minute EXIT DRILL-DOWN ──
+                # When this 5m bar has ≥2 of {liq, sl, tp} inside its range, the order
+                # they were hit is ambiguous and the 5m path resolves it pessimistically
+                # (SL/liq wins). If a 1m window exists for this bar, walk it to take the
+                # REAL first-touch instead. One-level-only bars are already exact at 5m
+                # (the trigger is that level's price) → no drill needed.
+                levels_in_range = 0
+                for lvl in (pos.liq_price, pos.sl_price, pos.tp_price):
+                    if lvl and low <= lvl <= high:
+                        levels_in_range += 1
+                if levels_in_range >= 2:
+                    window = self._fine_window(pos.symbol, candle_time)
+                    if window:
+                        drilled = self._resolve_exit_fine(pos, window)
+                        if drilled is not None:
+                            positions_to_close.append((pos, drilled[0], drilled[1], candle_time))
+                            continue
+                        # window present but nothing touched (shouldn't happen when a
+                        # level is in the 5m range) → fall through to 5m logic.
 
                 # LIQUIDATION (SL-wins-if-closer). The `sl_price > 0` guards are
                 # defence-in-depth: a non-positive SL (should never happen now that
