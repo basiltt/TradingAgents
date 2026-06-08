@@ -1157,7 +1157,7 @@ class BacktestEngine:
 
             # --- EQUITY RULES (complete latest_prices for ALL symbols) ---
             if state.open_positions and state.cycle_start_equity > 0:
-                self._evaluate_equity_rules(config, state, latest_prices, candle_time, fee_rate)
+                self._evaluate_equity_rules(config, state, latest_prices, candle_time, fee_rate, candles_at_time)
 
             # --- TRAILING PROFIT (per symbol, using that symbol's candle) ---
             trailing_pct = config.get("trailing_profit_pct")
@@ -1282,11 +1282,20 @@ class BacktestEngine:
         latest_prices: dict[str, float],
         candle_time: datetime,
         fee_rate: float,
+        candles_at_time: Optional[dict[str, dict]] = None,
     ) -> None:
         """Evaluate equity-based close rules: EQUITY_DROP_PCT, SMART, close_on_profit.
 
         Called once per candle AFTER TP/SL closures (wallet already updated).
         Uses per-symbol latest close price for unrealized PnL calculation.
+
+        Drawdown is additionally evaluated on the bar's INTRA-CANDLE adverse extreme
+        (high for shorts, low for longs), not just the close: production's drawdown
+        rule runs on live WS equity ticks with zero debounce, so a transient
+        intra-minute breach that recovers by the bar close still fires live. A
+        close-only backtest would miss it and hold positions production flattened.
+        candles_at_time supplies this bar's OHLC per symbol; when absent (callers
+        that don't pass it) the evaluator degrades to close-only (prior behaviour).
         """
         from backend.services.trading_rules import (
             compute_unrealized_pnl, check_equity_drop, check_close_on_profit, check_equity_rise,
@@ -1295,11 +1304,15 @@ class BacktestEngine:
         if not state.open_positions:
             return
 
-        # Compute current equity (wallet + sum of unrealized PnL)
+        candles_at_time = candles_at_time or {}
+
+        # Compute current equity at the bar CLOSE (wallet + Σ unrealized PnL at the
+        # per-symbol latest close). This drives the profit-side goals (rise /
+        # close_on_profit), which live evaluates with a ~1.5s debounce — close
+        # granularity is the faithful sampling there.
         total_upnl = 0.0
         losing_positions = []
         for pos in state.open_positions:
-            # Use per-symbol latest price (not a single symbol's close)
             current_price = latest_prices.get(pos.symbol, pos.entry_price)
             upnl = compute_unrealized_pnl(pos.entry_price, current_price, pos.qty, pos.side)
             total_upnl += upnl
@@ -1308,10 +1321,41 @@ class BacktestEngine:
 
         equity = state.wallet_balance + total_upnl
 
-        # --- EQUITY_DROP_PCT / EQUITY_DROP_PCT_SMART ---
+        # --- EQUITY_DROP_PCT / EQUITY_DROP_PCT_SMART (INTRABAR-AWARE) ---
         max_drawdown_pct = config.get("max_drawdown_pct", 100.0)
         if max_drawdown_pct < 100.0:
-            if check_equity_drop(equity, state.cycle_start_equity, max_drawdown_pct):
+            # Worst-case intra-candle equity: value every open position at its
+            # adverse extreme THIS bar (short → high, long → low). A position with
+            # no candle this timestamp keeps its latest-close mark (no new info).
+            # This is the price at which the live tick-driven rule would have seen
+            # the deepest drawdown within the bar.
+            drawdown_upnl = 0.0
+            adverse_price: dict[str, float] = {}
+            for pos in state.open_positions:
+                candle = candles_at_time.get(pos.symbol)
+                if candle is not None:
+                    extreme = candle["high"] if pos.side == "Sell" else candle["low"]
+                else:
+                    extreme = latest_prices.get(pos.symbol, pos.entry_price)
+                adverse_price[pos.symbol] = extreme
+                drawdown_upnl += compute_unrealized_pnl(
+                    pos.entry_price, extreme, pos.qty, pos.side
+                )
+            intrabar_equity = state.wallet_balance + drawdown_upnl
+            # Fire on the worse of (close, intrabar) — the intrabar extreme is by
+            # construction ≤ close-equity for a drawdown, so this strictly widens
+            # detection to real breaches the close hid; it never fires when even the
+            # adverse extreme stays above the threshold (verified by the control test).
+            drop_equity = min(equity, intrabar_equity)
+
+            def _exit_px(pos: "Position") -> float:
+                # Close at the adverse extreme when the breach was intrabar (so the
+                # booked exit reflects where the rule tripped), else the latest close.
+                if intrabar_equity < equity:
+                    return adverse_price.get(pos.symbol, latest_prices.get(pos.symbol, pos.entry_price))
+                return latest_prices.get(pos.symbol, pos.entry_price)
+
+            if check_equity_drop(drop_equity, state.cycle_start_equity, max_drawdown_pct):
                 if config.get("smart_drawdown_close"):
                     # SMART is ONE-SHOT per scan window. Production closes the losing
                     # symbols once, transitions the rule to "executed", and does NOT
@@ -1321,11 +1365,22 @@ class BacktestEngine:
                     # and stayed active, letting SMART re-fire on a winner that later
                     # turned losing within the same window — closing positions
                     # production would have held. Gate on the fired-flag for parity.
+                    #
+                    # Losers are judged at the SAME adverse extreme used for the
+                    # breach, so a position only pulled negative by the intrabar wick
+                    # is correctly closed (matching live, which sees the live tick).
+                    intrabar_losers = [
+                        pos for pos in state.open_positions
+                        if compute_unrealized_pnl(
+                            pos.entry_price, adverse_price.get(pos.symbol, pos.entry_price),
+                            pos.qty, pos.side,
+                        ) < 0
+                    ]
                     if state.smart_drawdown_fired:
                         pass  # already fired this scan window — production holds
-                    elif losing_positions:
-                        for pos in list(losing_positions):
-                            self._close_position(state, pos, "equity_drop_smart", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+                    elif intrabar_losers:
+                        for pos in list(intrabar_losers):
+                            self._close_position(state, pos, "equity_drop_smart", _exit_px(pos), candle_time, fee_rate)
                         # Mark one-shot fired. Do NOT re-anchor cycle_start_equity:
                         # production leaves the (now-executed) rule's reference
                         # untouched, and the shared reference still feeds the
@@ -1340,7 +1395,7 @@ class BacktestEngine:
                 else:
                     # Non-SMART: close ALL positions, deactivate cycle
                     for pos in list(state.open_positions):
-                        self._close_position(state, pos, "equity_drop", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+                        self._close_position(state, pos, "equity_drop", _exit_px(pos), candle_time, fee_rate)
                     state.cycle_start_equity = 0  # Cycle terminated
                 return  # Don't evaluate further rules after equity drop
 

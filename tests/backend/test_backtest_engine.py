@@ -275,3 +275,77 @@ class TestEntryNoLookAhead:
         # TP (105) is hit on the 12:25 bar, NOT the 12:05 entry bar.
         assert trade["close_reason"] == "tp"
         assert trade["exit_time"] == base + timedelta(minutes=5 * 5)
+
+
+class TestIntrabarEquityDrawdown:
+    """EQUITY_DROP must react to an intra-candle drawdown breach, mirroring live.
+
+    Production's close-rule evaluator runs on WS wallet ticks with zero debounce
+    (close_rule_evaluator.py: drawdown split, immediate eval) — Bybit's live
+    `totalEquity` reflects the real-time mark, so a transient intra-minute breach
+    of the drawdown threshold FIRES. A candle-based backtest that only checks the
+    bar CLOSE misses a breach that happened on the bar's high/low and then
+    recovered by close — under-closing and holding positions production would have
+    flattened. The engine must therefore evaluate equity drawdown on the bar's
+    adverse extreme (high for shorts, low for longs), not just its close.
+    """
+
+    def _short_signal(self):
+        sig_t = datetime(2026, 1, 1, 12, 3, 47, tzinfo=timezone.utc)
+        return [{"id": 1, "ticker": "BTCUSDT", "direction": "sell", "confidence": "high",
+                 "score": 8, "signal_time": sig_t, "scan_id": "s1",
+                 "signal_source": "structured", "analysis_price": 100.0}]
+
+    def _cfg(self):
+        # capital_pct 100 + leverage 10: a +5% adverse move on a short is a
+        # 50% equity drawdown. stop_loss_pct huge so SL never pre-empts the
+        # equity rule; TP huge so no TP. fee/slippage 0 for exact arithmetic.
+        return _laconfig(
+            capital_pct=100.0, leverage=10, take_profit_pct=900.0,
+            stop_loss_pct=900.0, max_drawdown_pct=50.0, smart_drawdown_close=False,
+        )
+
+    def test_intrabar_breach_on_high_fires_equity_drop(self):
+        """Entry short @100. A later bar spikes to high=105 (a +5% adverse move =
+        50% drawdown at 10x/100%) then CLOSES back at 100. The breach happened
+        intrabar; close hides it. The engine MUST fire equity_drop on that bar."""
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        candles = []
+        for i in range(20):
+            t = base + timedelta(minutes=i * 5)
+            if i == 1:      # 12:05 entry bar — flat 100 (fills at open 100)
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            elif i == 5:    # 12:25 — spikes to 105 intrabar, recovers to 100 at close
+                candles.append({"open_time": t, "open": 100.0, "high": 105.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            else:
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+        result = BacktestEngine().run(self._cfg(), self._short_signal(), {"BTCUSDT": candles})
+        assert len(result.trades) == 1
+        trade = result.trades[0]
+        assert trade["close_reason"] == "equity_drop", (
+            f"expected intrabar equity_drop, got {trade['close_reason']!r} "
+            "(engine only checked the bar close and missed the high=105 breach)"
+        )
+        # Fired on the 12:25 bar, not later.
+        assert trade["exit_time"] == base + timedelta(minutes=5 * 5)
+
+    def test_no_breach_when_high_stays_under_threshold(self):
+        """Control: same setup but the spike only reaches high=104 (40% drawdown,
+        under the 50% threshold). The engine must NOT fire equity_drop — guards
+        against an over-firing fix that closes on any adverse wick."""
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        candles = []
+        for i in range(8):
+            t = base + timedelta(minutes=i * 5)
+            if i == 5:      # high 104 = 40% drawdown < 50% threshold
+                candles.append({"open_time": t, "open": 100.0, "high": 104.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            else:
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+        result = BacktestEngine().run(self._cfg(), self._short_signal(), {"BTCUSDT": candles})
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] != "equity_drop", (
+            "fired equity_drop on a 40% wick — over-firing below the 50% threshold"
+        )
+
