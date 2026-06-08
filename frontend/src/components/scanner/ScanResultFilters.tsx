@@ -25,6 +25,7 @@ const FILTER_NEU_CLASSES = {
   success: "bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]",
   danger: "bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]",
   warning: "bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))]",
+  neutral: "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]",
 } as const;
 
 function FilterChip({
@@ -125,10 +126,7 @@ export function useScanFilters(results: ScanResultItem[], storageKey = "default"
       items = items.filter((r) => r.ticker.toLowerCase().includes(q));
     }
     if (filters.signal.size > 0) {
-      items = items.filter((r) => {
-        const dir = r.direction === "hold" || r.direction === "unknown" ? "hold" : r.direction;
-        return filters.signal.has(dir);
-      });
+      items = items.filter((r) => filters.signal.has(signalBucket(r)));
     }
     if (filters.confidence.size > 0) {
       items = items.filter((r) => filters.confidence.has(r.confidence));
@@ -241,6 +239,7 @@ export function ScanResultFiltersBar({
               <FilterChip label="Buy" active={filters.signal.has("buy")} color="success" onClick={() => update("signal", toggleSet(filters.signal, "buy"))} />
               <FilterChip label="Sell" active={filters.signal.has("sell")} color="danger" onClick={() => update("signal", toggleSet(filters.signal, "sell"))} />
               <FilterChip label="Hold" active={filters.signal.has("hold")} color="warning" onClick={() => update("signal", toggleSet(filters.signal, "hold"))} />
+              <FilterChip label="Skipped" active={filters.signal.has("skipped")} color="neutral" onClick={() => update("signal", toggleSet(filters.signal, "skipped"))} />
             </FilterSection>
 
             <FilterSection label="Confidence">
