@@ -865,6 +865,31 @@ class ScannerService:
             "auto_trade_summaries": scan.get("auto_trade_summaries") or [],
         }
 
+    async def _append_auto_trade_results(self, scan_id: str, executions: list) -> None:
+        """Append execution outcomes to a scan's auto_trade_results under the lock.
+
+        Re-fetches the scan inside the lock (it may have been evicted/cancelled
+        between phases) and extends ``auto_trade_results`` with the standard
+        6-field outcome dict. A no-op if the scan is gone or ``executions`` is
+        empty. AI-CONTEXT: centralizes the lock + re-fetch + extend pattern that
+        the batch / fill / post-scan-recheck phases each performed identically.
+
+        Args:
+            scan_id: The scan whose results buffer to append to.
+            executions: TradeExecution-like objects with symbol/side/status/
+                order_id/error/account_id attributes.
+        """
+        if not executions:
+            return
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            if scan:
+                scan["auto_trade_results"].extend(
+                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                    for e in executions
+                )
+
     async def _run_scan(self, scan_id: str, symbols_override: Optional[List[str]] = None) -> None:
         try:
             if symbols_override is not None:
@@ -983,44 +1008,20 @@ class ScannerService:
             if executor and all_results and not cancelled and not too_many_failures:
                 try:
                     batch_executions = await executor.execute_batch(all_results)
-                    if batch_executions:
-                        async with self._lock:
-                            scan = self._scans.get(scan_id)
-                            if scan:
-                                scan["auto_trade_results"].extend(
-                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
-                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                                    for e in batch_executions
-                                )
+                    await self._append_auto_trade_results(scan_id, batch_executions)
                 except Exception as e:
                     logger.warning("auto_trade_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
                 # Fill remaining slots for immediate-mode configs with fill_to_max_trades
                 try:
                     fill_executions = await executor.fill_immediate_remaining(all_results)
-                    if fill_executions:
-                        async with self._lock:
-                            scan = self._scans.get(scan_id)
-                            if scan:
-                                scan["auto_trade_results"].extend(
-                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
-                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                                    for e in fill_executions
-                                )
+                    await self._append_auto_trade_results(scan_id, fill_executions)
                 except Exception as e:
                     logger.warning("auto_trade_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
                 # Post-scan re-check: handle accounts where conditions changed during the scan
                 # (positions closed by TP/SL/drawdown, or close_on_profit_pct threshold now met)
                 try:
                     recheck_executions = await executor.post_scan_recheck(all_results)
-                    if recheck_executions:
-                        async with self._lock:
-                            scan = self._scans.get(scan_id)
-                            if scan:
-                                scan["auto_trade_results"].extend(
-                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
-                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                                    for e in recheck_executions
-                                )
+                    await self._append_auto_trade_results(scan_id, recheck_executions)
                 except Exception as e:
                     logger.warning("auto_trade_post_scan_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 

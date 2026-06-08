@@ -855,6 +855,40 @@ class AIManagerTask:
         except Exception:
             self._log.warning("Failed to reset half_open_used")
 
+    def _build_standard_decision_data(
+        self, now_utc: datetime, action_type: str, symbol: str, result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build the audit-trail decision record for a STANDARD (non-emergency) action.
+
+        AI-CONTEXT: the ADJUST_TP_SL and close-action paths in _execute_action built
+        this identical 11-field dict inline; centralizing it keeps the persisted audit
+        shape (consumed by insert_decision + the dashboard) consistent. The emergency
+        fast-path uses a different snapshot/reasoning shape and intentionally does NOT
+        use this helper.
+
+        Args:
+            now_utc: Decision timestamp (UTC).
+            action_type: The action being taken (e.g. CLOSE_LONG, ADJUST_TP_SL).
+            symbol: The position symbol the action targets.
+            result: The graph/LLM result dict (provides reason, confidence, graph_path).
+
+        Returns:
+            The decision-data dict passed to repo.insert_decision().
+        """
+        return {
+            "timestamp": now_utc,
+            "action_type": action_type,
+            "evaluation_type": "standard",
+            "urgency": self._get_urgency(),
+            "state_snapshot": copy.deepcopy(self._ws_buffer),
+            "action_taken": {"action": action_type, "symbol": symbol},
+            "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
+            "confidence": result.get("confidence", 0.0),
+            "graph_path": result.get("graph_path"),
+            "strategy_version": self._config.strategy_version,
+            "chain_key_version": _CHAIN_KEY_VERSION,
+        }
+
     async def _execute_action(self, result: Dict[str, Any]) -> None:
         action_type = result.get("action", "HOLD")
         symbol = result.get("symbol", "")
@@ -1016,19 +1050,7 @@ class AIManagerTask:
 
             if action_type == "ADJUST_TP_SL":
                 now_utc = datetime.now(timezone.utc)
-                decision_data = {
-                    "timestamp": now_utc,
-                    "action_type": action_type,
-                    "evaluation_type": "standard",
-                    "urgency": self._get_urgency(),
-                    "state_snapshot": copy.deepcopy(self._ws_buffer),
-                    "action_taken": {"action": action_type, "symbol": symbol},
-                    "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
-                    "confidence": result.get("confidence", 0.0),
-                    "graph_path": result.get("graph_path"),
-                    "strategy_version": self._config.strategy_version,
-                    "chain_key_version": _CHAIN_KEY_VERSION,
-                }
+                decision_data = self._build_standard_decision_data(now_utc, action_type, symbol, result)
                 decision_id, decision_ts = await self._service._repo.insert_decision(
                     self._account_id, decision_data, self._service._hmac_key
                 )
@@ -1053,19 +1075,7 @@ class AIManagerTask:
                 return
 
             now_utc = datetime.now(timezone.utc)
-            decision_data = {
-                "timestamp": now_utc,
-                "action_type": action_type,
-                "evaluation_type": "standard",
-                "urgency": self._get_urgency(),
-                "state_snapshot": copy.deepcopy(self._ws_buffer),
-                "action_taken": {"action": action_type, "symbol": symbol},
-                "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
-                "confidence": result.get("confidence", 0.0),
-                "graph_path": result.get("graph_path"),
-                "strategy_version": self._config.strategy_version,
-                "chain_key_version": _CHAIN_KEY_VERSION,
-            }
+            decision_data = self._build_standard_decision_data(now_utc, action_type, symbol, result)
 
             decision_id, decision_ts = await self._service._repo.insert_decision(
                 self._account_id, decision_data, self._service._hmac_key
