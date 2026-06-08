@@ -58,6 +58,13 @@ class Position:
     # negative = credit). Folded into the recorded trade pnl at close so that
     # sum(trade.pnl) reconciles with the wallet/final_equity.
     funding_paid: float = 0.0
+    # 1-minute drill-down state. entry_bar_open = the 5m bar (open_time) the entry
+    # filled in; entry_fine_minute = the exact 1m candle open the fill happened at
+    # (None ⇒ no entry drill-down). On that one 5m bar, the position's same-bar
+    # evaluation is restricted to 1m candles with open_time >= entry_fine_minute so
+    # pre-fill price action can't fabricate an exit/drawdown (look-ahead guard).
+    entry_bar_open: Optional[datetime] = None
+    entry_fine_minute: Optional[datetime] = None
 
 
 @dataclass
@@ -111,6 +118,7 @@ class BacktestEngine:
         on_progress: Optional[Callable[[int], None]] = None,
         instrument_info: Optional[dict[str, dict[str, float]]] = None,
         scan_contexts: Optional[dict[str, Any]] = None,
+        fine_klines: Optional[dict[str, dict[int, list[dict[str, Any]]]]] = None,
     ) -> SimulationResult:
         """Execute the backtest simulation.
 
@@ -146,6 +154,14 @@ class BacktestEngine:
         self._scan_contexts: dict[str, Any] = scan_contexts or {}
         self._ctx: Any = None            # current scan's ScanContext (or None)
         self._mr_mean: float | None = None  # scan-time EMA mean for the signal being opened (MR)
+
+        # 1-minute drill-down windows: {symbol: {bar_open_epoch: [1m candles covering
+        # that 5m bar, ascending]}}. None/{} ⇒ NO drill-down ⇒ every drill code path
+        # short-circuits and the engine is byte-identical to the 5m-only behaviour
+        # (golden guarantee). The service builds this only for the entry+exit bars of
+        # actual trades (two-phase). The engine branches solely on the PRESENCE of a
+        # window here — never on any config flag.
+        self._fine_klines: dict[str, dict[int, list[dict[str, Any]]]] = fine_klines or {}
 
         # Initialize state
         starting_capital = config["starting_capital"]
@@ -710,6 +726,51 @@ class BacktestEngine:
 
         return True  # All 17 filters passed
 
+    def _fine_window(
+        self, symbol: str, bar_open_time: datetime
+    ) -> Optional[list[dict[str, Any]]]:
+        """Return the 1-minute candles covering the 5m bar that opens at
+        `bar_open_time`, or None when no drill-down window was injected for it.
+
+        Keyed by the integer epoch of the bar's open_time (the same tz-aware
+        datetime the candle loop iterates). None ⇒ caller uses 5m logic unchanged.
+        """
+        if not self._fine_klines:
+            return None
+        per_symbol = self._fine_klines.get(symbol)
+        if not per_symbol:
+            return None
+        return per_symbol.get(int(bar_open_time.timestamp()))
+
+    def _bar_extremes_for(
+        self, pos: "Position", candle: dict[str, Any], candle_time: datetime
+    ) -> tuple[float, float]:
+        """Return the (high, low) of `candle` to use when evaluating `pos` on this bar.
+
+        Normally the 5m candle's own high/low. BUT on the position's ENTRY bar, when
+        the entry was 1m-drilled, the pre-fill minutes of that 5m bar are not post-entry
+        — using the full 5m high/low would let price action BEFORE the fill fabricate a
+        TP/SL/liq exit or an adverse-drawdown excursion (look-ahead). In that case we
+        return the high/low of only the POST-ENTRY 1m candles (open_time >=
+        entry_fine_minute). If for any reason the 1m window is unavailable, fall back to
+        the 5m extremes (fail-soft, same as no drill-down).
+        """
+        if (
+            pos.entry_fine_minute is None
+            or pos.entry_bar_open is None
+            or candle_time != pos.entry_bar_open
+        ):
+            return candle["high"], candle["low"]
+        window = self._fine_window(pos.symbol, pos.entry_bar_open)
+        if not window:
+            return candle["high"], candle["low"]
+        post = [fk for fk in window if fk["open_time"] >= pos.entry_fine_minute]
+        if not post:
+            # Filled on the last 1m of the bar → no post-entry action this bar; use the
+            # fill price itself so nothing triggers from pre-entry movement.
+            return pos.entry_price, pos.entry_price
+        return max(fk["high"] for fk in post), min(fk["low"] for fk in post)
+
     def _open_position(
         self,
         config: dict[str, Any],
@@ -750,10 +811,30 @@ class BacktestEngine:
         # is correct. Fallback: a signal after the last candle has no future bar to fill
         # against → use the last available close (the only price we have).
         entry_base_price = symbol_klines[-1]["close"]
+        entry_bar_open: Optional[datetime] = None
         for k in symbol_klines:
             if k["open_time"] >= current_time:
                 entry_base_price = k["open"]
+                entry_bar_open = k["open_time"]
                 break
+
+        # ── 1-minute ENTRY DRILL-DOWN ──
+        # When a 1m window exists for this 5m entry bar, fill at the 1m open of the
+        # first 1m candle at/after current_time (the scan's completed_at) — far closer
+        # to production's actual fill instant than the 5m bar open. We also record the
+        # entry 1m timestamp + bar so the entry bar's SAME-BAR evaluation (TP/SL/liq AND
+        # this position's equity-drawdown contribution) restricts to its POST-ENTRY 1m
+        # sub-sequence — otherwise pre-fill 1m moves would fabricate an exit / drawdown
+        # on the entry bar (look-ahead). No window ⇒ unchanged 5m next-bar-open.
+        entry_fine_minute: Optional[datetime] = None
+        if entry_bar_open is not None:
+            fine = self._fine_window(ticker, entry_bar_open)
+            if fine:
+                for fk in fine:
+                    if fk["open_time"] >= current_time:
+                        entry_base_price = fk["open"]
+                        entry_fine_minute = fk["open_time"]
+                        break
 
         # Apply slippage to get the actual ENTRY FILL price (used for PnL, fee, and
         # margin — mirrors production filling a market order at the slipped avgPrice).
@@ -894,6 +975,9 @@ class BacktestEngine:
             # F2: tag MR positions + carry their fast time-stop (minutes).
             strategy_kind=("mean_reversion" if mr_placement else "trend"),
             time_stop_minutes=(float(config.get("mr_time_stop_minutes", 120)) if mr_placement else None),
+            # 1m drill-down: the bar/minute the entry filled in (None unless drilled).
+            entry_bar_open=entry_bar_open,
+            entry_fine_minute=entry_fine_minute,
         )
         state.open_positions.append(position)
         state.signals_entered += 1  # lifetime counter (stats + target_goal early-stop)
@@ -1097,8 +1181,9 @@ class BacktestEngine:
                 candle = candles_at_time.get(pos.symbol)
                 if not candle:
                     continue
-                high = candle["high"]
-                low = candle["low"]
+                # Effective bar extremes: 5m high/low normally, but POST-ENTRY 1m
+                # high/low on a 1m-drilled position's own entry bar (look-ahead guard).
+                high, low = self._bar_extremes_for(pos, candle, candle_time)
 
                 # Update MFE/MAE
                 if pos.side == "Buy":
@@ -1334,7 +1419,11 @@ class BacktestEngine:
             for pos in state.open_positions:
                 candle = candles_at_time.get(pos.symbol)
                 if candle is not None:
-                    extreme = candle["high"] if pos.side == "Sell" else candle["low"]
+                    # Entry-bar guard: a 1m-drilled position uses its POST-ENTRY 1m
+                    # extreme on its own entry bar, so pre-fill price action can't
+                    # fabricate a drawdown close (look-ahead). Otherwise the 5m extreme.
+                    hi, lo = self._bar_extremes_for(pos, candle, candle_time)
+                    extreme = hi if pos.side == "Sell" else lo
                 else:
                     extreme = latest_prices.get(pos.symbol, pos.entry_price)
                 adverse_price[pos.symbol] = extreme

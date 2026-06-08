@@ -349,3 +349,99 @@ class TestIntrabarEquityDrawdown:
             "fired equity_drop on a 40% wick — over-firing below the 50% threshold"
         )
 
+
+def _fine_key(bar_open_dt):
+    """Epoch key the engine uses to index a 1m window by its 5m bar open."""
+    return int(bar_open_dt.timestamp())
+
+
+class TestDrilldownEntry:
+    """1-minute ENTRY drill-down: when a 1m window is injected for the entry bar, the
+    fill should use the 1m open at/after the signal time (closer to production's
+    actual fill instant) instead of the coarse 5m bar open — AND the entry bar's
+    pre-fill minutes must not fabricate an exit (look-ahead guard). With NO fine data
+    the engine must be byte-identical to today.
+    """
+
+    BASE = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    def _cfg(self, **ov):
+        base = dict(capital_pct=20.0, leverage=10, take_profit_pct=900.0,
+                    stop_loss_pct=900.0, fee_rate_pct=0.0, slippage_bps=0)
+        base.update(ov)
+        return _laconfig(**base)
+
+    def _signal(self):
+        # signal at 12:03:47 (unaligned) → entry bar is the 12:05 5m candle
+        return [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                 "score": 8, "signal_time": self.BASE + timedelta(minutes=3, seconds=47),
+                 "scan_id": "s1", "signal_source": "structured", "analysis_price": 100.0}]
+
+    def _klines(self):
+        # 12:00 pre-signal flat 100; 12:05 entry bar OPENS at 100 but the 5m close is
+        # 110; later bars flat 110 so no TP (tp huge anyway).
+        out = []
+        for i in range(20):
+            t = self.BASE + timedelta(minutes=i * 5)
+            if i == 1:   # 12:05 entry bar
+                out.append({"open_time": t, "open": 100.0, "high": 112.0, "low": 100.0, "close": 110.0, "volume": 100.0})
+            elif i == 0:
+                out.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            else:
+                out.append({"open_time": t, "open": 110.0, "high": 110.0, "low": 110.0, "close": 110.0, "volume": 100.0})
+        return {"BTCUSDT": out}
+
+    def test_entry_fills_at_one_minute_open_not_five_minute_open(self):
+        from backend.services.backtest_engine import BacktestEngine
+        klines = self._klines()
+        entry_bar = self.BASE + timedelta(minutes=5)  # 12:05 bar open
+        # 1m candles for the 12:05 bar: 12:05,06,07,08,09. Signal is 12:03:47 → first
+        # 1m at/after it within THIS bar is 12:05 (open 103) — but we set the minute
+        # the engine should pick (12:05) to open at 103, distinct from the 5m open 100.
+        fine = {"BTCUSDT": {_fine_key(entry_bar): [
+            {"open_time": entry_bar + timedelta(minutes=m),
+             "open": 103.0 if m == 0 else 105.0,
+             "high": 105.0, "low": 103.0, "close": 105.0, "volume": 10.0}
+            for m in range(5)
+        ]}}
+        result = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines=fine)
+        assert len(result.trades) == 1
+        # Entry fills at the 1m open (103), NOT the 5m bar open (100).
+        assert result.trades[0]["entry_price"] == pytest.approx(103.0), (
+            f"entry should drill to the 1m open 103, got {result.trades[0]['entry_price']}"
+        )
+
+    def test_no_fine_klines_is_byte_identical(self):
+        """A run with fine_klines=None must equal a run that never passes the param —
+        proves the drill-down code is fully inert without injected 1m data."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines = self._klines()
+        a = BacktestEngine().run(self._cfg(), self._signal(), klines)
+        b = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines=None)
+        c = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines={})
+        assert a.trades == b.trades == c.trades
+        assert a.metrics.get("net_profit") == b.metrics.get("net_profit") == c.metrics.get("net_profit")
+
+    def test_entry_bar_pre_fill_spike_does_not_fire_exit(self):
+        """The entry 5m bar has a low of 50 (a huge pre-fill drop), but the 1m fill is
+        at 12:05 and the post-entry 1m candles never reach the SL. A close-only or
+        5m-high/low eval would fire SL from the pre-entry low; drill-down must not."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines = self._klines()
+        # make the 12:05 5m bar dip to 50 intrabar (pre-fill), recover to 110 close
+        klines["BTCUSDT"][1] = {"open_time": self.BASE + timedelta(minutes=5),
+                                "open": 100.0, "high": 112.0, "low": 50.0, "close": 110.0, "volume": 100.0}
+        entry_bar = self.BASE + timedelta(minutes=5)
+        # post-entry 1m candles stay 103-110 (never near a stop)
+        fine = {"BTCUSDT": {_fine_key(entry_bar): [
+            {"open_time": entry_bar + timedelta(minutes=m), "open": 103.0,
+             "high": 110.0, "low": 103.0, "close": 110.0, "volume": 10.0}
+            for m in range(5)
+        ]}}
+        cfg = self._cfg(stop_loss_pct=50.0)  # SL ~95 for a long at 103/10x → 50 would hit it
+        result = BacktestEngine().run(cfg, self._signal(), klines, fine_klines=fine)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] != "sl", (
+            "fabricated an SL exit from the entry bar's PRE-fill low of 50 (look-ahead)"
+        )
+
