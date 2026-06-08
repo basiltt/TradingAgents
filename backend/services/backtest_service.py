@@ -928,7 +928,12 @@ class BacktestService:
             et, xt = t.get("entry_time"), t.get("exit_time")
             epochs: set[int] = set()
             if isinstance(et, datetime):
-                epochs.add(_bar_open_epoch(et))
+                # Entry fills at the NEXT bar's open when the signal instant isn't
+                # bar-aligned, so the actual entry bar may be entry_time's bar OR the
+                # one after. Fetch both (forward neighbour) so the engine's real entry
+                # bar always has a 1m window.
+                ee = _bar_open_epoch(et)
+                epochs.update({ee, ee + bar_s})
             if isinstance(xt, datetime):
                 xe = _bar_open_epoch(xt)
                 epochs.update({xe - bar_s, xe, xe + bar_s})  # exit ±1 neighbour

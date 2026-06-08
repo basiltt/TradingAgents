@@ -445,6 +445,9 @@ class TestBuildFineKlines:
         assert "BTCUSDT" in out
         # entry bar (12:05) bucket present, keyed by its epoch
         assert int(entry_bar.timestamp()) in out["BTCUSDT"]
+        # the entry bar's FORWARD neighbour (12:10) is also fetched — a non-bar-aligned
+        # signal fills at the NEXT bar's open, so the real entry bar may be the next one.
+        assert int((entry_bar + timedelta(minutes=5)).timestamp()) in out["BTCUSDT"]
         # exit bar (12:20) bucket present
         assert int(exit_bar.timestamp()) in out["BTCUSDT"]
         # each bucket holds 5 one-minute candles, sorted

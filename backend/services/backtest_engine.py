@@ -742,6 +742,16 @@ class BacktestEngine:
             return None
         return per_symbol.get(int(bar_open_time.timestamp()))
 
+    @staticmethod
+    def _sim_bar_seconds(symbol_klines: list[dict[str, Any]]) -> int:
+        """Infer the simulation bar size (seconds) from the spacing of the first two
+        candles. Falls back to 300 (5m) when fewer than 2 are available."""
+        if len(symbol_klines) >= 2:
+            s = int((symbol_klines[1]["open_time"] - symbol_klines[0]["open_time"]).total_seconds())
+            if s > 0:
+                return s
+        return 300
+
     def _bar_extremes_for(
         self, pos: "Position", candle: dict[str, Any], candle_time: datetime
     ) -> tuple[float, float]:
@@ -866,15 +876,34 @@ class BacktestEngine:
         # this position's equity-drawdown contribution) restricts to its POST-ENTRY 1m
         # sub-sequence — otherwise pre-fill 1m moves would fabricate an exit / drawdown
         # on the entry bar (look-ahead). No window ⇒ unchanged 5m next-bar-open.
+        # ── 1-minute ENTRY DRILL-DOWN ──
+        # Production fills a market order at the scan's completed_at INSTANT (mid-5m-bar).
+        # The 5m engine can't do that safely — filling mid-bar would let the bar's
+        # pre-fill high/low fabricate exits (look-ahead) — so it defers to the NEXT 5m
+        # bar's open. At 1m resolution we DO know the exact minute, so we fill at the 1m
+        # candle at/after current_time *within the bar that CONTAINS current_time* (the
+        # signal's own 5m bar), and restrict that position's same-bar evaluation to its
+        # post-entry 1m minutes (no look-ahead). This lands the fill ~one 5m bar earlier
+        # — exactly where production filled. We look in the signal bar's window first;
+        # if it has a 1m candle >= current_time we use it, else fall back to the 5m
+        # next-bar-open (entry_bar_open) and, failing that, its 1m window.
         entry_fine_minute: Optional[datetime] = None
-        if entry_bar_open is not None:
-            fine = self._fine_window(ticker, entry_bar_open)
-            if fine:
-                for fk in fine:
-                    if fk["open_time"] >= current_time:
-                        entry_base_price = fk["open"]
-                        entry_fine_minute = fk["open_time"]
-                        break
+        sim_secs = self._sim_bar_seconds(symbol_klines)
+        signal_bar_epoch = (int(current_time.timestamp()) // sim_secs) * sim_secs if sim_secs else None
+        for cand_bar_epoch in (signal_bar_epoch,
+                               int(entry_bar_open.timestamp()) if entry_bar_open else None):
+            if cand_bar_epoch is None:
+                continue
+            cand_bar_open = datetime.fromtimestamp(cand_bar_epoch, tz=timezone.utc)
+            fine = self._fine_window(ticker, cand_bar_open)
+            if not fine:
+                continue
+            picked = next((fk for fk in fine if fk["open_time"] >= current_time), None)
+            if picked is not None:
+                entry_base_price = picked["open"]
+                entry_fine_minute = picked["open_time"]
+                entry_bar_open = cand_bar_open  # the bar the fill ACTUALLY lands in
+                break
 
         # Apply slippage to get the actual ENTRY FILL price (used for PnL, fee, and
         # margin — mirrors production filling a market order at the slipped avgPrice).
