@@ -148,9 +148,7 @@ def compute_indicators(candles: list[dict]) -> dict:
     bb_width = _bb_width_at(closes)
 
     # Build a history of BB widths for median computation.
-    bb_widths: list[float] = []
-    for i in range(20, len(closes) + 1):
-        bb_widths.append(_bb_width_at(closes[:i]))
+    bb_widths: list[float] = [_bb_width_at(closes[:i]) for i in range(20, len(closes) + 1)]
     bb_width_median = statistics.median(bb_widths) if bb_widths else bb_width
 
     # --- ADX(14) simplified ---

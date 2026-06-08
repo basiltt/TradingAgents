@@ -43,8 +43,7 @@ class ConfigService:
             if val is not None:
                 resolved[key] = val
 
-        for key, val in self._overrides.items():
-            resolved[key] = val
+        resolved.update(self._overrides)
 
         return {
             "defaults": mask_secrets(defaults),

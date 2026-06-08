@@ -638,9 +638,8 @@ class AutoTradeExecutor:
             return executions
 
     def get_summaries(self) -> List[Dict[str, Any]]:
-        summaries = []
-        for state in self._state.values():
-            summaries.append({
+        return [
+            {
                 "account_id": state.config["account_id"],
                 "trades_executed": state.trades_executed,
                 "trades_failed": state.trades_failed,
@@ -653,8 +652,9 @@ class AutoTradeExecutor:
                      "order_id": e.order_id, "error": e.error}
                     for e in state.executions
                 ],
-            })
-        return summaries
+            }
+            for state in self._state.values()
+        ]
 
     async def emit_account_summaries(self) -> int:
         """Emit one account-trace per state. Returns the distinct account count.

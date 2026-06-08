@@ -1074,21 +1074,26 @@ class CreateScheduledScanRequest(BaseModel):
             raise ValueError("scan_config too large (max 64KB)")
         if "provider" in v and v["provider"] is not None and v["provider"] not in VALID_PROVIDERS:
             raise ValueError(f"Invalid provider: {v['provider']}")
-        if "workflow_mode" in v and v["workflow_mode"] is not None:
-            if v["workflow_mode"] not in ("quick_trade", "deep_analysis"):
-                raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
+        if (
+            "workflow_mode" in v and v["workflow_mode"] is not None
+            and v["workflow_mode"] not in ("quick_trade", "deep_analysis")
+        ):
+            raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
         for model_key in ("deep_think_llm", "quick_think_llm"):
             if model_key in v and v[model_key] is not None and not MODEL_ID_RE.match(v[model_key]):
                 raise ValueError(f"Invalid model ID for {model_key}")
-        if "research_depth" in v and v["research_depth"] is not None:
-            if not (1 <= int(v["research_depth"]) <= 5):
-                raise ValueError("research_depth must be between 1 and 5")
-        if "max_debate_rounds" in v and v["max_debate_rounds"] is not None:
-            if not (1 <= int(v["max_debate_rounds"]) <= 10):
-                raise ValueError("max_debate_rounds must be between 1 and 10")
-        if "max_risk_discuss_rounds" in v and v["max_risk_discuss_rounds"] is not None:
-            if not (1 <= int(v["max_risk_discuss_rounds"]) <= 10):
-                raise ValueError("max_risk_discuss_rounds must be between 1 and 10")
+        if "research_depth" in v and v["research_depth"] is not None and not (1 <= int(v["research_depth"]) <= 5):
+            raise ValueError("research_depth must be between 1 and 5")
+        if (
+            "max_debate_rounds" in v and v["max_debate_rounds"] is not None
+            and not (1 <= int(v["max_debate_rounds"]) <= 10)
+        ):
+            raise ValueError("max_debate_rounds must be between 1 and 10")
+        if (
+            "max_risk_discuss_rounds" in v and v["max_risk_discuss_rounds"] is not None
+            and not (1 <= int(v["max_risk_discuss_rounds"]) <= 10)
+        ):
+            raise ValueError("max_risk_discuss_rounds must be between 1 and 10")
         if "max_parallel" in v and v["max_parallel"] is not None and not (1 <= int(v["max_parallel"]) <= 25):
             raise ValueError("max_parallel must be between 1 and 25")
         if "analysts" in v and v["analysts"] is not None:

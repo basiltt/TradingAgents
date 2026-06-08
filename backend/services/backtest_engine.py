@@ -407,9 +407,11 @@ class BacktestEngine:
         # Step 3: Apply filter chain (strict pass)
         entered = 0
         for sig in unique_signals:
-            if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
-                if self._open_position(config, sig, klines, state, current_time):
-                    entered += 1
+            if (
+                self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False)
+                and self._open_position(config, sig, klines, state, current_time)
+            ):
+                entered += 1
 
         # Step 4: fill_to_max_trades relaxed pass
         if config.get("fill_to_max_trades") and entered < config.get("max_trades", 999):
@@ -419,9 +421,11 @@ class BacktestEngine:
             for sig in remaining:
                 if entered >= config.get("max_trades", 999):
                     break
-                if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True):
-                    if self._open_position(config, sig, klines, state, current_time, relaxed=True):
-                        entered += 1
+                if (
+                    self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
+                    and self._open_position(config, sig, klines, state, current_time, relaxed=True)
+                ):
+                    entered += 1
 
         return entered
 
@@ -436,9 +440,11 @@ class BacktestEngine:
         """Process signals in immediate mode: one-at-a-time, no dedup."""
         entered = 0
         for sig in scan_signals:
-            if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
-                if self._open_position(config, sig, klines, state, current_time):
-                    entered += 1
+            if (
+                self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False)
+                and self._open_position(config, sig, klines, state, current_time)
+            ):
+                entered += 1
 
         # fill_to_max_trades backfill — mirrors production's fill_immediate_remaining
         # (auto_trade_service), which after the strict immediate pass relaxes the
@@ -455,9 +461,11 @@ class BacktestEngine:
             for sig in remaining:
                 if state.scan_entered >= config.get("max_trades", 999):
                     break
-                if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True):
-                    if self._open_position(config, sig, klines, state, current_time, relaxed=True):
-                        entered += 1
+                if (
+                    self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
+                    and self._open_position(config, sig, klines, state, current_time, relaxed=True)
+                ):
+                    entered += 1
         return entered
 
     @staticmethod
@@ -641,10 +649,12 @@ class BacktestEngine:
         # user knows results may diverge from live trading (which DOES enforce it).
 
         # 10. Adaptive blacklist (computed from backtest's own trade history)
-        if config.get("adaptive_blacklist_enabled"):
-            if self._is_adaptively_blacklisted(config, ticker, state, current_time):
-                state.signals_filtered += 1
-                return False
+        if (
+            config.get("adaptive_blacklist_enabled")
+            and self._is_adaptively_blacklisted(config, ticker, state, current_time)
+        ):
+            state.signals_filtered += 1
+            return False
 
         # 11. Signal sides filter — also signal-space; SKIP for MR (live C4 fix; MR
         # side is governed by mr_short_enabled/mr_long_enabled, not signal_sides).
@@ -1711,12 +1721,16 @@ class BacktestEngine:
         # now enforces the same cross-field rule, but defend in depth here too.)
         close_on_profit = config.get("close_on_profit_pct")
         target_goal_value = config.get("target_goal_value")
-        if close_on_profit and target_goal_value and state.cycle_start_equity > 0:
-            if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value):
-                for pos in list(state.open_positions):
-                    self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
-                state.cycle_start_equity = 0  # Cycle terminated
-                return  # Cycle closed — don't also evaluate the rise goal this candle
+        if (
+            close_on_profit
+            and target_goal_value
+            and state.cycle_start_equity > 0
+            and check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value)
+        ):
+            for pos in list(state.open_positions):
+                self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+            state.cycle_start_equity = 0  # Cycle terminated
+            return  # Cycle closed — don't also evaluate the rise goal this candle
 
         # --- EQUITY_RISE_PCT (target_goal_type == "profit_pct") ---
         # Production maps a profit_pct target goal to an EQUITY_RISE_PCT close rule
@@ -1729,11 +1743,11 @@ class BacktestEngine:
             config.get("target_goal_type") == "profit_pct"
             and target_goal_value
             and state.cycle_start_equity > 0
+            and check_equity_rise(equity, state.cycle_start_equity, target_goal_value)
         ):
-            if check_equity_rise(equity, state.cycle_start_equity, target_goal_value):
-                for pos in list(state.open_positions):
-                    self._close_position(state, pos, "equity_rise", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
-                state.cycle_start_equity = 0  # Cycle terminated
+            for pos in list(state.open_positions):
+                self._close_position(state, pos, "equity_rise", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+            state.cycle_start_equity = 0  # Cycle terminated
 
     def _evaluate_trailing_profit_for_symbol(
         self,

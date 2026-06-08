@@ -605,9 +605,8 @@ class BacktestService:
             rows = await self._db.pool.fetch(query, start, end)
 
         # Convert asyncpg Records to plain dicts
-        signals = []
-        for row in rows:
-            signals.append({
+        signals = [
+            {
                 "id": row["id"],
                 "ticker": row["ticker"],
                 "direction": row["direction"],
@@ -617,7 +616,9 @@ class BacktestService:
                 "scan_id": row["scan_id"],
                 "signal_source": row.get("signal_source", "unknown"),
                 "analysis_price": float(row["analysis_price"]) if row.get("analysis_price") else None,
-            })
+            }
+            for row in rows
+        ]
 
         logger.info(
             "backtest_signals_loaded",
@@ -812,10 +813,9 @@ class BacktestService:
                 lambda: engine.run(config, signals, klines, cancel_event, phase_b_cb, instrument_info, scan_contexts, fine_klines or None),
             )
             engine_done = True
-            if fine_klines:
-                # Tell the consumer drill-down actually ran (and on how many trades).
-                if result.warnings is not None:
-                    result.warnings.append(f"drilldown_applied_{len(fine_klines)}_symbols")
+            # Tell the consumer drill-down actually ran (and on how many trades).
+            if fine_klines and result.warnings is not None:
+                result.warnings.append(f"drilldown_applied_{len(fine_klines)}_symbols")
 
             # Surface config knobs the engine cannot honor so results aren't
             # silently misleading. max_same_sector needs the IO-bound sector
@@ -1014,10 +1014,11 @@ class BacktestService:
         # neighbour) to every OTHER trade that was open at that time. Bounded by the
         # number of portfolio closes; still only the bars that can actually fire.
         _PORTFOLIO_REASONS = {"equity_drop", "equity_drop_smart", "equity_rise", "close_on_profit"}
-        portfolio_exits: list[tuple[int, datetime]] = []
-        for t in trades:
-            if t.get("close_reason") in _PORTFOLIO_REASONS and isinstance(t.get("exit_time"), datetime):
-                portfolio_exits.append((_bar_open_epoch(t["exit_time"]), t["exit_time"]))
+        portfolio_exits: list[tuple[int, datetime]] = [
+            (_bar_open_epoch(t["exit_time"]), t["exit_time"])
+            for t in trades
+            if t.get("close_reason") in _PORTFOLIO_REASONS and isinstance(t.get("exit_time"), datetime)
+        ]
         for fire_epoch, _fire_time in portfolio_exits:
             fire_epochs = {fire_epoch - bar_s, fire_epoch, fire_epoch + bar_s}
             for t in trades:

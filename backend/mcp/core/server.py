@@ -104,22 +104,20 @@ class MCPServer:
         return "http-agent"
 
     def list_tools(self) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for spec in self._enabled.values():
-            out.append(
-                {
-                    "name": spec.name,
-                    "description": spec.description,
-                    "inputSchema": spec.input_schema.model_json_schema(),
-                    "annotations": {
-                        "readOnlyHint": not spec.mutating,
-                        "destructiveHint": spec.mutating,
-                        "idempotentHint": not spec.mutating,
-                        "openWorldHint": spec.exchange_facing,
-                    },
-                }
-            )
-        return out
+        return [
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "inputSchema": spec.input_schema.model_json_schema(),
+                "annotations": {
+                    "readOnlyHint": not spec.mutating,
+                    "destructiveHint": spec.mutating,
+                    "idempotentHint": not spec.mutating,
+                    "openWorldHint": spec.exchange_facing,
+                },
+            }
+            for spec in self._enabled.values()
+        ]
 
     # --- resources / prompts (P1) — providers injected at composition time ---
 

@@ -1866,10 +1866,7 @@ class AnalysisDB:
             except Exception:
                 conn.rollback()
                 raise
-        result = []
-        for r in rows:
-            result.append(self._deserialize_strategy(r))
-        return result
+        return [self._deserialize_strategy(r) for r in rows]
 
     def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
         with self._get_conn() as conn:

@@ -78,13 +78,12 @@ class BybitRateGate:
         if lane == "mcp":
             # subordinate lane: leave headroom for live (reserve ~25%, >=1).
             effective_budget = max(1, int(max_budget * 0.75))
-        elif lane == "live" and channel == "private":
+        elif lane == "live" and channel == "private" and max_budget > 4:
             # background live traffic leaves a SMALL fixed headroom (1 slot when
             # the budget is large enough) so order placement — which uses the full
             # budget — always has room ahead of it, without materially shrinking
             # the existing live budget.
-            if max_budget > 4:
-                effective_budget = max_budget - 1
+            effective_budget = max_budget - 1
         # 'order' uses the full budget (no reservation against it).
         self._wait_count += 1
         try:

@@ -670,9 +670,9 @@ class ScannerService:
             result = [self._serialize(s) for s in self._scans.values()]
         if self._db:
             db_scans = await self._db.list_scans()
-            for ds in db_scans:
-                if ds["scan_id"] not in in_memory_ids:
-                    result.append(self._serialize_db(ds))
+            result.extend(
+                self._serialize_db(ds) for ds in db_scans if ds["scan_id"] not in in_memory_ids
+            )
         result.sort(key=lambda s: s.get("started_at") or "", reverse=True)
         return result
 

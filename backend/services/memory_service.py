@@ -28,16 +28,17 @@ class MemoryService:
         log = TradingMemoryLog({"memory_log_path": self._path})
         raw_entries = log.load_entries()
 
-        entries: List[Dict[str, Any]] = []
-        for e in raw_entries:
-            entries.append({
+        entries: List[Dict[str, Any]] = [
+            {
                 "ticker": e.get("ticker", ""),
                 "date": e.get("date", ""),
                 "decision": e.get("rating", ""),
                 "confidence": "pending" if e.get("pending") else (e.get("raw") or "resolved"),
                 "status": "pending" if e.get("pending") else "resolved",
                 "reasoning": e.get("decision", "") or None,
-            })
+            }
+            for e in raw_entries
+        ]
 
         self._cache = entries
         self._cache_mtime = mtime
