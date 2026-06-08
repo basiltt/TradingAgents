@@ -89,6 +89,13 @@ ignore = [
     "UP037",  # quoted-annotation — defer with annotation cleanup
     "UP045",  # non-pep604-annotation-optional — defer
     "SIM105", # suppressible-exception (contextlib.suppress) — readability tradeoff
+    # AI-CONTEXT: SIM108 (if/else -> ternary) is DISABLED because applying it to this
+    # codebase repeatedly produces NESTED ternaries (e.g.
+    # `0.0 if v is None else -v if d == "max" else v`), which the project's own
+    # type-safety standard explicitly forbids ("No nested ternaries"). The explicit
+    # if/else blocks are clearer for these multi-branch value selections. Enabling
+    # the rule would trade clarity for line-count and violate the standard.
+    "SIM108",
     "RET504", # unnecessary-assign-before-return — often aids debuggability
     "RET505", # superfluous-else-return — stylistic, keep explicit branches
     # AI-CONTEXT: PERF203 (try/except inside a loop) is a FALSE POSITIVE for this
