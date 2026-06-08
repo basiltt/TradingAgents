@@ -210,6 +210,53 @@ class TestCloseSingleTrade:
         mock_repo.reconcile_close.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_close_failure_position_gone_preserves_intended_reason(self, service, mock_repo, mock_accounts):
+        """Regression: when an auto-trade close (e.g. the +15% equity target) places its
+        exchange order but the API call ERRORS, yet the position is actually GONE on the
+        exchange (the close executed), the trade must be recorded with the INTENDED close
+        reason — NOT downgraded to 'external'. The old code dropped close_reason on the
+        failure path, so a rule-triggered mass-close got mislabeled 'external', corrupting
+        close-reason analytics and making the close look like an unexplained intervention."""
+        trade = _make_trade()
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.place_market_close_order = AsyncMock(side_effect=Exception("timeout"))
+        client.get_positions = AsyncMock(return_value=[])  # position GONE → close executed
+        mock_accounts.get_client.return_value = client
+        mock_repo.reconcile_close.return_value = _make_trade(status="closed")
+
+        with pytest.raises(Exception, match="timeout"):
+            await service.close_single_trade(
+                "acc-1", str(trade["id"]),
+                close_reason="rule_triggered", close_rule_id="rule-xyz",
+            )
+        mock_repo.reconcile_close.assert_awaited_once()
+        kwargs = mock_repo.reconcile_close.call_args.kwargs
+        assert kwargs["close_reason"] == "rule_triggered", (
+            f"failure-path reconcile must preserve the intended reason, got {kwargs.get('close_reason')!r}"
+        )
+        assert kwargs.get("close_rule_id") == "rule-xyz"
+
+    @pytest.mark.asyncio
+    async def test_close_failure_unknown_reason_still_external(self, service, mock_repo, mock_accounts):
+        """Control: a plain manual close with no specific rule, failing with the position
+        gone, may still record 'external' (we genuinely don't know the exchange-side
+        cause). The fix must only PRESERVE a known auto-trade reason, not invent one."""
+        trade = _make_trade()
+        mock_repo.get_trade.return_value = trade
+        client = AsyncMock()
+        client.place_market_close_order = AsyncMock(side_effect=Exception("boom"))
+        client.get_positions = AsyncMock(return_value=[])
+        mock_accounts.get_client.return_value = client
+        mock_repo.reconcile_close.return_value = _make_trade(status="closed")
+
+        # close_reason left at its default sentinel for "manual single click"
+        with pytest.raises(Exception, match="boom"):
+            await service.close_single_trade("acc-1", str(trade["id"]))
+        kwargs = mock_repo.reconcile_close.call_args.kwargs
+        assert kwargs["close_reason"] in ("manual_single", "external")
+
+    @pytest.mark.asyncio
     async def test_close_failure_position_exists_reverts(self, service, mock_repo, mock_accounts, mock_ws):
         trade = _make_trade()
         mock_repo.get_trade.return_value = trade

@@ -259,7 +259,7 @@ class TradeService:
             logger.warning("bybit_close_failed", extra={
                 "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"], "error": str(e),
             })
-            await self._handle_close_failure(client, trade, version)
+            await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
             raise
 
         if not result.get("avgPrice"):
@@ -323,7 +323,7 @@ class TradeService:
                 "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
                 "qty": qty, "error": str(e),
             })
-            await self._handle_close_failure(client, trade, version)
+            await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
             raise
 
         if not result.get("avgPrice"):
@@ -386,8 +386,20 @@ class TradeService:
 
         return child
 
-    async def _handle_close_failure(self, client: Any, trade: dict, version: int) -> None:
-        """Revert trade status from 'closing' back to 'open' after exchange failure."""
+    async def _handle_close_failure(
+        self, client: Any, trade: dict, version: int,
+        close_reason: str = "external", close_rule_id: str | None = None,
+    ) -> None:
+        """Revert trade status from 'closing' back to 'open' after exchange failure.
+
+        When the exchange order call ERRORED but the position is actually GONE on the
+        exchange (the close executed despite the failed response), the trade is recorded
+        as closed. In that case we preserve the INTENDED close_reason (e.g. the
+        auto-trade rule that fired) instead of defaulting to 'external' — a known
+        auto-trade close that merely lost its API confirmation must not be mislabeled as
+        an unexplained external close (which corrupts close-reason analytics). Only when
+        the caller had no specific reason does it fall back to 'external'.
+        """
         account_id = trade["account_id"]
         trade_id = str(trade["id"])
         previous_status = trade.get("status")
@@ -402,13 +414,19 @@ class TradeService:
             position_gone = False
 
         if position_gone:
+            # The close DID execute on the exchange — record it with the intended reason.
+            # PnL is left at zero here (the failed call returned no fill data); the
+            # position_reconciler backfills the real exit_price/PnL from Bybit's closed-
+            # PnL history afterward, preserving this reason.
+            resolved_reason = close_reason or "external"
             try:
                 async with self._db.pool.acquire() as conn:
                     async with conn.transaction():
                         await self._repo.reconcile_close(
                             conn, trade_id=trade_id, account_id=account_id,
                             exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
-                            fees=0.0, net_pnl=0.0, close_reason="external",
+                            fees=0.0, net_pnl=0.0, close_reason=resolved_reason,
+                            close_rule_id=close_rule_id,
                         )
                 self.invalidate_stats_cache(account_id)
                 return

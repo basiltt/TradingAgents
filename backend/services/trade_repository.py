@@ -322,9 +322,15 @@ class TradeRepository:
         self, conn, *, trade_id: str, account_id: str,
         exit_price: float, realized_pnl: float,
         realized_pnl_pct: float, fees: float,
-        net_pnl: float, close_reason: str,
+        net_pnl: float, close_reason: str, close_rule_id: str | None = None,
     ) -> dict:
-        """Close a trade without version check, used for external/reconciliation closes."""
+        """Close a trade without version check, used for external/reconciliation closes.
+
+        close_rule_id is optional: when the close was driven by a known auto-trade rule
+        whose exchange confirmation failed (the order executed but the API errored), the
+        caller passes the rule id so the recovered close keeps its provenance instead of
+        looking like an unexplained external close.
+        """
         tid = uuid.UUID(trade_id)
         if close_reason not in VALID_CLOSE_REASONS:
             raise ValueError(f"Invalid close_reason: {close_reason}")
@@ -347,10 +353,12 @@ class TradeRepository:
         result = await conn.fetchrow(
             "UPDATE trades SET status = 'closed', version = version + 1, "
             "exit_price = $1, realized_pnl = $2, realized_pnl_pct = $3, "
-            "fees = $4, net_pnl = $5, closed_at = NOW(), close_reason = $6 "
+            "fees = $4, net_pnl = $5, closed_at = NOW(), close_reason = $6, "
+            "close_rule_id = COALESCE($10, close_rule_id) "
             "WHERE id = $7 AND account_id = $8 AND version = $9 RETURNING *",
             exit_price, realized_pnl, realized_pnl_pct,
             fees, net_pnl, close_reason, tid, account_id, expected_version,
+            uuid.UUID(close_rule_id) if close_rule_id else None,
         )
         if not result:
             logger.warning("concurrent_modification", extra={"trade_id": trade_id, "context": "reconcile"})
