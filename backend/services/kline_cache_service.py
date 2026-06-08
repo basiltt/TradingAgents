@@ -318,8 +318,8 @@ class KlineCacheService:
         Returns:
             List of kline dicts sorted ascending by open_time.
         """
-        # Convert interval format: "5m" → "5", "1h" → "60", "4h" → "240"
-        interval_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
+        # Convert interval format: "1m" → "1", "5m" → "5", "1h" → "60", "4h" → "240"
+        interval_map = {"1m": "1", "5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
         bybit_interval = interval_map.get(interval, interval)
 
         start_ms = int(start.timestamp() * 1000)

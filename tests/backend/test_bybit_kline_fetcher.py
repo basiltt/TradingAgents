@@ -81,6 +81,39 @@ class TestBybitKlineFetcher:
         assert klines[0]["open"] == 50000.0
 
     @pytest.mark.asyncio
+    async def test_one_minute_interval_maps_to_bybit_1(self, mock_response_page):
+        """1m drill-down requires the cache to fetch the Bybit "1" interval code.
+        The interval_map historically lacked "1m" (5m/15m/1h/4h/1d only), so a 1m
+        request would pass "1m" through verbatim and Bybit would reject it."""
+        from backend.services.kline_cache_service import KlineCacheService
+
+        mock_db = MagicMock()
+        mock_db.pool = AsyncMock()
+        svc = KlineCacheService(db=mock_db)
+
+        captured = {}
+        ok_resp = _make_mock_resp(200, mock_response_page)
+
+        async def capturing_get(*args, **kwargs):
+            captured["params"] = kwargs.get("params")
+            return ok_resp
+
+        client = MagicMock()
+        client.get = capturing_get
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("backend.services.kline_cache_service.httpx.AsyncClient", return_value=cm):
+            start = datetime.fromtimestamp(1704109800, tz=timezone.utc)
+            end = datetime.fromtimestamp(1704110500, tz=timezone.utc)
+            await svc._fetch_klines_from_bybit("BTCUSDT", "1m", start, end)
+
+        assert captured["params"]["interval"] == "1", (
+            f"expected Bybit interval '1' for '1m', got {captured['params']['interval']!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_handles_empty_response(self):
         from backend.services.kline_cache_service import KlineCacheService
 

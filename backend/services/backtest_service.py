@@ -37,7 +37,7 @@ _MAX_CANDLES = 105_120
 # range (the per-symbol _MAX_CANDLES cap alone doesn't bound the product).
 _MAX_TOTAL_KLINES = 3_000_000
 # Candles per day by simulation interval (24h)
-_CANDLES_PER_DAY = {"5m": 288, "15m": 96, "1h": 24, "4h": 6}
+_CANDLES_PER_DAY = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6}
 # Concurrency / timeout
 _MAX_CONCURRENT = 3
 _TIMEOUT_SECONDS = 120
@@ -867,7 +867,7 @@ class BacktestService:
 
     @staticmethod
     def _interval_minutes(interval: str) -> int:
-        return {"5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 60)
+        return {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 60)
 
     async def _build_scan_contexts(
         self, config: dict[str, Any], signals: list[dict[str, Any]]
