@@ -220,9 +220,12 @@ export function signalBucket(r: ScanResultItem): "buy" | "sell" | "hold" | "skip
 - `ScanHistoryPage.tsx` (scan cards grid, ~line 244): alongside the existing buy/sell display,
   show a "skipped" indicator from `scan.skipped_count` when `> 0` (small muted badge, e.g.
   "N skipped"). Optionally display the de-skipped hold using the §6.3 subtraction.
-- `HistoryList.tsx` (dashboard, ~line 348): if it surfaces hold/skipped at the aggregate
-  level, apply the same treatment. (Primary stat shown there is Buy Signals; adding skipped is
-  optional polish — include a muted skipped count if it fits the existing stat row.)
+- `HistoryList.tsx` (dashboard) — **excluded after plan review.** This component renders
+  *analysis runs*, not scan summaries: its items come from the analyses endpoint (keyed by
+  `run_id`), and its buy/sell stats are derived from per-run trade-score snapshots, not scan
+  `direction_counts`. It has no `skipped_count`/`signal_source` data, so there is nothing to
+  surface here. Do not modify it. (The earlier "optional polish" framing was a misdirection;
+  the plan's Task 9 documents this explicitly.)
 - These are counts only — **no** list or filter at the aggregate level (no row data available,
   and not needed).
 
@@ -268,15 +271,18 @@ export function signalBucket(r: ScanResultItem): "buy" | "sell" | "hold" | "skip
 - `backend/services/scanner_service.py` — surface `skipped_count` in `_serialize` and
   `_serialize_db`.
 
-**Frontend (6 files):**
+**Frontend (5 files + 1 new test):**
 - `frontend/src/api/client.ts` — `signal_source?` on `ScanResultItem`; `skipped_count?` on
   scan summary type(s).
 - `frontend/src/components/scanner/ScanResultFilters.tsx` — Skipped chip + bucket predicate +
-  shared `signalBucket` helper.
+  shared `signalBucket` helper + `neutral` chip color.
 - `frontend/src/components/scanner/ScannerPage.tsx` — 4th card + skipped section + bucketing.
 - `frontend/src/components/scanner/ScanDetailPage.tsx` — 4th card + skipped section + bucketing.
-- `frontend/src/components/scanner/ScanHistoryPage.tsx` — skipped badge on scan cards.
-- `frontend/src/components/dashboard/HistoryList.tsx` — optional skipped count in stat row.
+- `frontend/src/components/scanner/ScanHistoryPage.tsx` — skipped count on scan cards.
+- `frontend/src/components/scanner/__tests__/signalBucket.test.ts` — **new** helper unit tests.
+
+**Explicitly NOT modified:** `frontend/src/components/dashboard/HistoryList.tsx` (renders
+analysis runs, not scans — see §6.7).
 
 **No** files in `tradingagents/ta_prefilter/`, no schema/migration files, no auto-trade files.
 

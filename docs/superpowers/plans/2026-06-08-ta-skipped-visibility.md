@@ -19,14 +19,15 @@
 - `backend/persistence.py` — sync `AnalysisDB.list_scans()`: mirror the same aggregate.
 - `backend/services/scanner_service.py` — `_serialize()` (in-memory scans) and `_serialize_db()` (DB scans): expose `skipped_count` in the serialized scan summary.
 
-**Frontend (6 files modified, 1 test file created):**
+**Frontend (5 files modified, 1 test file created):**
 - `frontend/src/api/client.ts` — add `signal_source?: string` to `ScanResultItem`; add `skipped_count?: number` to `ScanStatus`.
 - `frontend/src/components/scanner/ScanResultFilters.tsx` — export `signalBucket()` helper; add "Skipped" filter chip; route the signal predicate through the helper.
 - `frontend/src/components/scanner/ScannerPage.tsx` — derive `skippedResults`, revise `holdResults`, add 4th "TA Skipped" metric card + collapsible section.
 - `frontend/src/components/scanner/ScanDetailPage.tsx` — same bucketing + 4th summary box + `CollapsibleSection`.
 - `frontend/src/components/scanner/ScanHistoryPage.tsx` — show skipped count on scan cards (subtract from Hold cell).
-- `frontend/src/components/dashboard/HistoryList.tsx` — optional muted skipped count (deferred to a single optional step).
 - `frontend/src/components/scanner/__tests__/signalBucket.test.ts` — **created**: unit tests for the shared helper.
+
+> **NOT modified:** `frontend/src/components/dashboard/HistoryList.tsx` — investigated during review and found to render analysis runs (not scans), so it has no `skipped_count`/`direction_counts` to surface. See Task 9 for the rationale. Do not edit it.
 
 **Test files touched:**
 - `tests/backend/test_persistence_scanner.py` — add `skipped_count` tests for sync `list_scans`.
@@ -72,7 +73,7 @@ def test_list_scans_skipped_count_zero_when_none(db):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/backend/test_persistence_scanner.py::test_list_scans_hydrates_skipped_count tests/backend/test_persistence_scanner.py::test_list_scans_skipped_count_zero_when_none -v`
-Expected: FAIL — `skipped_count` is `None` (key absent), so `assert ... == 2` / `== 0` fail with `AssertionError`.
+Expected: **FAIL** (`AssertionError` — `skipped_count` is `None` because the key is absent) — **but only when a live test database is reachable.** This module calls `pytest.skip(..., allow_module_level=True)` at import time if PostgreSQL is unavailable (`_ensure_test_db()`, test file lines 16–31), so with no DB the entire module **SKIPS** instead of failing. Ensure a test DB is configured (`TEST_DATABASE_URL`, default `postgresql://postgres:...@localhost:5432/tradingagents_test`) before relying on the red-green signal. If you see `SKIPPED`, start/point-to a Postgres instance and re-run.
 
 - [ ] **Step 3: Implement the aggregate in sync `list_scans`**
 
@@ -418,32 +419,53 @@ Replace it with:
 
 (`signalBucket` is defined in the same file from Task 4 — no import needed.)
 
-- [ ] **Step 2: Add the "Skipped" chip to the Signal filter group**
+- [ ] **Step 2: Add a `neutral` color to `FILTER_NEU_CLASSES`**
 
-The current Signal `FilterSection` (~line 232) has Buy/Sell/Hold chips. Add a Skipped chip after Hold:
+The Skipped chip should render in a muted/slate tone (spec §6.5), distinct from Hold's amber. `FilterChip`'s `color` prop defaults to `"accent"` (line 25), and `FILTER_NEU_CLASSES` (lines ~15–20) only defines `accent`/`success`/`danger`/`warning` — so a chip with no `color` renders **accent-colored when active**, not muted. Add a `neutral` key. The current map is:
+
+```ts
+const FILTER_NEU_CLASSES = {
+  accent: "bg-[color-mix(in_oklch,var(--neu-accent)_10%,var(--neu-surface-base))] text-[var(--neu-accent)] border-[color-mix(in_oklch,var(--neu-accent)_20%,var(--neu-stroke-soft))]",
+  success: "bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]",
+  danger: "bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]",
+  warning: "bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))]",
+} as const;
+```
+
+Add the `neutral` line:
+
+```ts
+  warning: "bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))]",
+  neutral: "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]",
+} as const;
+```
+
+(`color?: keyof typeof FILTER_NEU_CLASSES` on `FilterChip` automatically accepts the new key — no prop-type edit needed.)
+
+- [ ] **Step 3: Add the "Skipped" chip to the Signal filter group**
+
+The current Signal `FilterSection` (~line 232) has Buy/Sell/Hold chips. Add a Skipped chip after Hold, with the new `neutral` color:
 
 ```tsx
             <FilterSection label="Signal">
               <FilterChip label="Buy" active={filters.signal.has("buy")} color="success" onClick={() => update("signal", toggleSet(filters.signal, "buy"))} />
               <FilterChip label="Sell" active={filters.signal.has("sell")} color="danger" onClick={() => update("signal", toggleSet(filters.signal, "sell"))} />
               <FilterChip label="Hold" active={filters.signal.has("hold")} color="warning" onClick={() => update("signal", toggleSet(filters.signal, "hold"))} />
-              <FilterChip label="Skipped" active={filters.signal.has("skipped")} onClick={() => update("signal", toggleSet(filters.signal, "skipped"))} />
+              <FilterChip label="Skipped" active={filters.signal.has("skipped")} color="neutral" onClick={() => update("signal", toggleSet(filters.signal, "skipped"))} />
             </FilterSection>
 ```
 
-(The Skipped chip omits `color`, defaulting to the neutral `accent`-less muted styling already used by the Confidence/Status chips.)
-
-- [ ] **Step 3: Typecheck**
+- [ ] **Step 4: Typecheck**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: no errors.
 
-- [ ] **Step 4: Run the scanner filter-related tests**
+- [ ] **Step 5: Run the scanner filter-related tests**
 
 Run: `cd frontend && npx vitest run src/components/scanner`
 Expected: PASS (existing scanner tests unaffected; `signalBucket` test passes).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add frontend/src/components/scanner/ScanResultFilters.tsx
@@ -606,15 +628,26 @@ with:
   const skippedResults = filteredResults.filter((r) => signalBucket(r) === "skipped");
 ```
 
-- [ ] **Step 2: Add the 4th summary box**
+- [ ] **Step 2: Widen the grid, fix the Hold box col-span, and add the 4th box**
 
-The summary grid (~lines 477–490) is `<div className="grid grid-cols-2 sm:grid-cols-3 gap-3">`. Widen it when skipped exist and append a 4th box. Replace the wrapping `<div className="grid grid-cols-2 sm:grid-cols-3 gap-3">` opening tag with:
+The summary grid (~lines 477–490) is `<div className="grid grid-cols-2 sm:grid-cols-3 gap-3">`, and the Hold box (~line 486) carries `col-span-2 sm:col-span-1` to fill the orphaned 3rd slot of a 3-up grid on mobile. When a 4th (Skipped) box is added, that `col-span-2` would force Hold to span the full mobile row, pushing Skipped into an unbalanced orphaned cell. So the Hold col-span must become conditional.
+
+First, replace the grid wrapper opening tag (line 477):
 
 ```tsx
         <div className={cn("grid grid-cols-2 gap-3", skippedResults.length > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
 ```
 
-Then, immediately before the closing `</div>` of that grid (after the Hold / Neutral box at ~line 489), add:
+Then replace the entire Hold / Neutral box (lines ~486–489) so its mobile col-span only applies in the 3-box case:
+
+```tsx
+          <div className={cn("rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 text-center border-none", skippedResults.length > 0 ? "" : "col-span-2 sm:col-span-1")}>
+            <div className="text-2xl font-bold text-[var(--neu-warning)] leading-none">{holdResults.length}</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)] mt-2">Hold / Neutral</div>
+          </div>
+```
+
+Then, immediately after that Hold box (before the grid's closing `</div>`), add the 4th box:
 
 ```tsx
           {skippedResults.length > 0 && (
@@ -625,7 +658,7 @@ Then, immediately before the closing `</div>` of that grid (after the Hold / Neu
           )}
 ```
 
-Note: the existing Hold box has `col-span-2 sm:col-span-1` to balance a 3-up grid on small screens. With a 4th box the 2-col mobile layout stays even, so leave the Hold box classes as-is — four boxes wrap 2×2 on mobile cleanly.
+Result: with no skipped, the grid is the original 3-up (Hold keeps `col-span-2 sm:col-span-1`). With skipped, the grid is `sm:grid-cols-4`, Hold drops `col-span-2`, and all four boxes wrap 2×2 on mobile and 4-up on `sm+`. (`cn` is already imported in this file — confirmed at line 8.)
 
 - [ ] **Step 3: Add the Skipped `CollapsibleSection`**
 
@@ -729,45 +762,25 @@ git commit -m "feat(scanner): show TA skipped count on history scan cards"
 
 ---
 
-## Task 9 (optional polish): Dashboard `HistoryList.tsx` skipped count
+## Task 9: Dashboard `HistoryList.tsx` — DO NOT IMPLEMENT (out of scope)
 
-The dashboard history surfaces aggregate stats; its primary stat is Buy Signals. Adding a skipped count here is optional polish, not a core requirement. Include only if it fits the existing stat row cleanly. **Skip this task if the stat row has no natural slot — it is explicitly optional per the spec (§6.7).**
+**Decision: skip this component. No code change.** During plan review this was found to be a misdirection — the spec's §6.7 "optional polish" framing is misleading.
 
-**Files:**
-- Modify: `frontend/src/components/dashboard/HistoryList.tsx` (~lines 335–349)
+`frontend/src/components/dashboard/HistoryList.tsx` lists **analysis runs, not scans**. Evidence:
+- It queries the analyses endpoint and uses the `["analyses"]` query key, with `allItems = data?.items` (~line 124) where each item is an analysis run keyed by `run_id` (~line 127).
+- `buyCount`/`sellCount` are derived from per-run trade-score snapshots via `parseTradeCard(snap.reports)` (~lines 140–146, 315–333) — they are NOT scan `direction_counts`.
+- These items have no `direction_counts`, no `signal_source`, and no `skipped_count`. `skipped_count` is a `ScanStatus` concept (scan summaries), which this component never handles.
 
-- [ ] **Step 1: Inspect the current stat derivation**
+Adding `const skippedCount = allItems.reduce((sum, i) => sum + ((i as { skipped_count?: number }).skipped_count ?? 0), 0)` would type-compile only because of the cast, and would **always sum to 0** — a permanently-zero stat that misleads users. That is worse than omitting it.
 
-Run: `grep -n "buyCount\|sellCount\|skipped\|direction_counts\|stats=" frontend/src/components/dashboard/HistoryList.tsx`
-Read the surrounding code to find how `buyCount` is aggregated across items.
+The TA-skipped feature is about *scan* results. The scan-facing surfaces (live scanner, scan detail, scan history cards) are fully covered by Tasks 6–8. Requirements R1–R7 are satisfied without touching `HistoryList`.
 
-- [ ] **Step 2: If a `skipped_count` is available on the items, aggregate and add a stat**
+- [ ] **Step 1: Confirm and move on**
 
-If the items carry `skipped_count`, add (mirroring `buyCount`):
+No file change. Verify the premise still holds (in case the component was refactored):
 
-```ts
-  const skippedCount = allItems.reduce((sum, i) => sum + ((i as { skipped_count?: number }).skipped_count ?? 0), 0);
-```
-
-And add a stat entry to the `stats={[...]}` array (after Buy Signals, ~line 348), using a neutral tone:
-
-```ts
-          { label: "TA Skipped", value: String(skippedCount), tone: "neutral" },
-```
-
-If the item type here does not include `skipped_count` (this list may use a different shape than `ScanStatus`), **do not force it** — skip this task and note it in the tracker. The core requirement (R1–R7) is already satisfied by Tasks 1–8.
-
-- [ ] **Step 3: Typecheck**
-
-Run: `cd frontend && npx tsc --noEmit`
-Expected: no errors.
-
-- [ ] **Step 4: Commit (only if changed)**
-
-```bash
-git add frontend/src/components/dashboard/HistoryList.tsx
-git commit -m "feat(dashboard): show aggregate TA skipped count in history stats"
-```
+Run: `grep -n "listAnalyses\|listScans\|data?.items\|run_id\|skipped_count\|direction_counts" frontend/src/components/dashboard/HistoryList.tsx`
+Expected: matches for analyses/`run_id`-style access and NO `skipped_count`/`direction_counts`/`listScans`. If that holds, leave the file untouched and proceed to Task 10. (If the component has since been changed to render scan summaries typed as `ScanStatus`, only then revisit — but that is not the case today.)
 
 ---
 
@@ -780,7 +793,7 @@ Run the complete validation gates (per project rules: tests, typecheck, build mu
 - [ ] **Step 1: Backend test suite**
 
 Run: `python -m pytest tests/backend/test_persistence_scanner.py tests/backend/test_scanner_service.py -v`
-Expected: PASS, including the new `skipped_count` tests and all pre-existing scanner tests (no regressions).
+Expected: PASS, including the new `skipped_count` tests and all pre-existing scanner tests (no regressions). Note: `test_persistence_scanner.py` requires a live PostgreSQL (`TEST_DATABASE_URL`) and SKIPs at module level without one — a SKIP is not a pass, so ensure a DB is configured to actually exercise the persistence tests. `test_scanner_service.py` (the `_serialize`/`_serialize_db` tests) needs no DB and must pass unconditionally.
 
 - [ ] **Step 2: Frontend tests**
 
@@ -826,7 +839,10 @@ git commit -m "test(scanner): verify TA skipped visibility end-to-end"
 - **No DB migration:** `scan_results.signal_source` already exists (default `'unknown'`; skipped rows already written as `'ta_prefilter'`). Do not add a migration.
 - **`direction_counts` stays raw:** never subtract skipped at the API layer — the subtraction happens only in the aggregate-view display code (Task 8). Other consumers rely on the raw grouping.
 - **Single source of truth:** all bucketing routes through `signalBucket()` (Task 4). If you find yourself re-deriving "is this skipped?" inline, use the helper instead.
+- **`signalBucket` precedence is intentional:** it checks `signal_source === "ta_prefilter"` *before* direction, so a row's skipped status wins over buy/sell. Today every skipped row is persisted with `direction = "hold"` (see spec §5), so this never reclassifies a real buy/sell. But if a future change ever writes a `ta_prefilter` row with `direction = "buy"/"sell"`, `signalBucket` will classify it as `"skipped"` and it will NOT appear in the Buy/Sell buckets — by design (skipped means "never analyzed", so it has no real signal). The `signalBucket` test explicitly locks this precedence in.
 - **Fail-open safety:** prefilter errors/insufficient-data proceed to LLM with a non-`ta_prefilter` `signal_source`, so they correctly never land in the skipped bucket — no special handling needed.
+- **`HistoryList.tsx` is deliberately untouched** (Task 9): it renders analysis runs, not scans, and has no skipped concept. Do not add a permanently-zero stat there.
+- **Line-number anchors will drift:** every step also quotes the exact code block to find/replace, so locate by the quoted text, not the `~line` hint.
 
 
 
