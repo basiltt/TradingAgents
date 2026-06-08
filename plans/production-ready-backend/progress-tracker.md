@@ -136,12 +136,21 @@ Completed (R1, all verified ruff0/mypy0/tests-pass/0-regressions):
 
 Remaining Phase 2 findings (from R1 review — for continuation):
 - DECIDED-skip: 5 auto_trade close-rule blocks (differ in 8 observable ways — riskier than dup).
-- ai_manager_task decision_data dict literal 3× → _build_decision_data() — MEDIUM, pending
+- DONE: ai_manager_task decision_data dict 3× → _build_standard_decision_data (2 sites; emergency stays bespoke)
+- DONE: scanner auto_trade_results.extend 3× → _append_auto_trade_results
 - auto_trade PAUSE_TRADING check 2× + force-close-profit 2× → helpers — MEDIUM, pending
-- scanner auto_trade_results.extend 3× → helper — MEDIUM, pending
-- GOD-METHODS (decompose carefully w/ tests): _execute_action(287), init_balances(308), post_scan_recheck(333), main.lifespan(440), _run_scan(227) — MEDIUM
+- GOD-METHODS (decompose carefully w/ tests): _execute_action(287), init_balances(308), post_scan_recheck(333), main.lifespan(440), _run_scan(227) — MEDIUM, HIGHER RISK
 - routers Bybit-error handler 8× → helper — MEDIUM, pending
 - trading_cycle_engine: scan-age + fetch-validate dup (start_cycle/dry_run) — pending
+
+## RESUME POINT (read this first after compaction)
+Phase 1 COMPLETE (ruff 0, mypy 0, 14 real bugs fixed). Phase 2 IN_PROGRESS — 6 clean DRY/SRP
+refactors done & committed (frozensets, _extract_upnl, analytics helper, _validate_pnl_range,
+portfolio_stats.py, clamp_limit, scanner extend helper, decision-data builder). Remaining Phase 2:
+the GOD-METHOD decompositions + medium DRY items listed above. Then Phases 2.5→7.
+Test gate: single-proc targeted batches (NEVER xdist); baseline-failures.txt = the 35 known
+pre-existing failures (any OTHER failure = your regression). Standard cmd in "Test infra note".
+All work committed on branch worktree-production-ready-backend-hardening (15 commits from 7ca17c9).
 
 ## Decided Log (Debate Resolution Protocol)
 _(entries added as findings are resolved; check before applying any contradicting fix)_
