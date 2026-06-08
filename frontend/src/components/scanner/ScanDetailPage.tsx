@@ -6,7 +6,7 @@ import { apiClient, type ScanResultItem } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
+import { useScanFilters, ScanResultFiltersBar, signalBucket } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { NeuScoreBar } from "@/design-system/neumorphism";
@@ -329,9 +329,10 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
     );
   }
 
-  const buyResults = filteredResults.filter((r) => r.direction === "buy");
-  const sellResults = filteredResults.filter((r) => r.direction === "sell");
-  const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown" || !r.direction);
+  const buyResults = filteredResults.filter((r) => signalBucket(r) === "buy");
+  const sellResults = filteredResults.filter((r) => signalBucket(r) === "sell");
+  const holdResults = filteredResults.filter((r) => signalBucket(r) === "hold");
+  const skippedResults = filteredResults.filter((r) => signalBucket(r) === "skipped");
   const progress = scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0;
   const isCrypto = scan.asset_type === "crypto" || results.some((r) => /USDT$/.test(r.ticker));
   const handleTrade = isCrypto ? (symbol: string, direction: "buy" | "sell") => setTradeTarget({ symbol, direction }) : undefined;
@@ -474,7 +475,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
         )}
 
         {/* Summary boxes */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className={cn("grid grid-cols-2 gap-3", skippedResults.length > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
           <div className="rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 text-center border-none">
             <div className="text-2xl font-bold text-[var(--neu-success)] leading-none">{buyResults.length}</div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)] mt-2">Buy Signals</div>
@@ -483,10 +484,16 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             <div className="text-2xl font-bold text-[var(--neu-danger)] leading-none">{sellResults.length}</div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)] mt-2">Sell Signals</div>
           </div>
-          <div className="rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 text-center border-none col-span-2 sm:col-span-1">
+          <div className={cn("rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 text-center border-none", skippedResults.length > 0 ? "" : "col-span-2 sm:col-span-1")}>
             <div className="text-2xl font-bold text-[var(--neu-warning)] leading-none">{holdResults.length}</div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)] mt-2">Hold / Neutral</div>
           </div>
+          {skippedResults.length > 0 && (
+            <div className="rounded-[var(--neu-radius-md)] bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] p-4 text-center border-none">
+              <div className="text-2xl font-bold text-[var(--neu-text-muted)] leading-none">{skippedResults.length}</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--neu-text-muted)] mt-2">TA Skipped</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -516,6 +523,11 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
       {holdResults.length > 0 && (
         <CollapsibleSection title="Hold / Neutral" count={holdResults.length} dotColor="bg-amber-500">
           <ResultsTable results={holdResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
+        </CollapsibleSection>
+      )}
+      {skippedResults.length > 0 && (
+        <CollapsibleSection title="TA Skipped" count={skippedResults.length} dotColor="bg-slate-400">
+          <ResultsTable results={skippedResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
         </CollapsibleSection>
       )}
 
