@@ -105,9 +105,9 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 ## Phase Status
 | Phase | Name | Budget | Status | Rounds | Findings |
 |---|---|---|---|---|---|
-| 0 | Discovery & Baseline | — | IN_PROGRESS | — | 5 baseline bugs |
-| 1 | Type Safety & Linting | 24 | PENDING | 0 | — |
-| 2 | Clean Code & Patterns | 28 | PENDING | 0 | — |
+| 0 | Discovery & Baseline | — | DONE | — | 5 baseline bugs |
+| 1 | Type Safety & Linting | 24 | DONE (gate met) | 3 | 14 real bugs + 76 B904; ruff 325→0, mypy 94→0 |
+| 2 | Clean Code & Patterns | 28 | IN_PROGRESS | 0 | — |
 | 2.5 | Documentation | 22 | PENDING | 0 | — |
 | 2.75 | Maintainability | 20 | PENDING | 0 | — |
 | 3 | Logging | 20 | PENDING | 0 | — |
