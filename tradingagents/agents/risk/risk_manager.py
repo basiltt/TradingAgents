@@ -16,11 +16,13 @@ from tradingagents.agents.schemas import (
     render_risk_assessment,
 )
 from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.dual_node import dual_node
 from tradingagents.agents.utils.state_filter import (
     filter_state_for_read,
     validate_state_write,
 )
 from tradingagents.agents.utils.structured import (
+    ainvoke_structured_or_freetext,
     bind_structured,
     invoke_structured_or_freetext,
 )
@@ -68,7 +70,7 @@ _RISK_USER = (
 def create_risk_manager(llm, max_leverage: int = 20):
     structured_llm = bind_structured(llm, RiskAssessment, "Risk Manager")
 
-    def node(state):
+    def _prepare(state):
         filtered = filter_state_for_read(state, "risk_manager")
         company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
@@ -105,15 +107,9 @@ def create_risk_manager(llm, max_leverage: int = 20):
             },
         ]
 
-        text, obj = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_risk_assessment,
-            "Risk Manager",
-            schema=RiskAssessment,
-        )
+        return cfg_max_leverage, prompt
 
+    def _apply(cfg_max_leverage, text, obj):
         if obj is not None:
             if not obj.findings:
                 overall = RiskVerdict.REJECT
@@ -147,4 +143,28 @@ def create_risk_manager(llm, max_leverage: int = 20):
         }
         return validate_state_write(updates, "risk_manager")
 
-    return node
+    def node(state):
+        cfg_max_leverage, prompt = _prepare(state)
+        text, obj = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_risk_assessment,
+            "Risk Manager",
+            schema=RiskAssessment,
+        )
+        return _apply(cfg_max_leverage, text, obj)
+
+    async def anode(state):
+        cfg_max_leverage, prompt = _prepare(state)
+        text, obj = await ainvoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_risk_assessment,
+            "Risk Manager",
+            schema=RiskAssessment,
+        )
+        return _apply(cfg_max_leverage, text, obj)
+
+    return dual_node(node, anode)

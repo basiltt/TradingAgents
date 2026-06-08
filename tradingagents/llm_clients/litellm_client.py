@@ -13,7 +13,12 @@ from typing import Any, Optional
 import httpx
 from langchain_community.chat_models import ChatLiteLLM
 
-from .base_client import BaseLLMClient, normalize_content, llm_rate_limited_invoke
+from .base_client import (
+    BaseLLMClient,
+    normalize_content,
+    llm_rate_limited_invoke,
+    allm_rate_limited_invoke,
+)
 from .model_families import model_rejects_sampling_params
 
 logger = logging.getLogger(__name__)
@@ -109,6 +114,27 @@ class NormalizedChatLiteLLM(ChatLiteLLM):
             # OFF". Without this, both look identical (no INFO line below).
             logger.debug("LLM cache | injection attempted | model=%s", self.model)
         result = normalize_content(llm_rate_limited_invoke(super().invoke, input, config, **kwargs))
+        try:
+            from tradingagents.llm_clients.base_client import extract_cache_metrics
+            m = extract_cache_metrics(result)
+            if m["cache_read"] is not None or m["cache_creation"] is not None:
+                logger.info("LLM cache | model=%s input=%s cache_read=%s cache_creation=%s",
+                            self.model, m["input_tokens"], m["cache_read"], m["cache_creation"])
+        except Exception:
+            pass  # never let metric logging break a call
+        return result
+
+    async def ainvoke(self, input, config=None, **kwargs):
+        """Async mirror of invoke(). IDENTICAL behavior — same prompt-cache injection,
+        same normalize_content, same cache-metric logging — but routes through the async
+        rate limiter + native async transport (super().ainvoke) so it never blocks the
+        event loop. Output is byte-identical to invoke() for the same input."""
+        if getattr(self, "_cache_enabled", False) and str(self.model).startswith("anthropic/"):
+            input = self._inject_cache_control(input)
+            logger.debug("LLM cache | injection attempted (async) | model=%s", self.model)
+        result = normalize_content(
+            await allm_rate_limited_invoke(super().ainvoke, input, config, **kwargs)
+        )
         try:
             from tradingagents.llm_clients.base_client import extract_cache_metrics
             m = extract_cache_metrics(result)

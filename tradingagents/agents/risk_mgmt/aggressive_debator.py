@@ -1,7 +1,10 @@
 
 
+from tradingagents.agents.utils.dual_node import dual_node
+
+
 def create_aggressive_debator(llm):
-    def aggressive_node(state) -> dict:
+    def _prepare(state):
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         aggressive_history = risk_debate_state.get("aggressive_history", "")
@@ -30,8 +33,9 @@ Here is the current conversation history: {history} Here are the last arguments 
 
 Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting."""
 
-        response = llm.invoke(prompt)
+        return risk_debate_state, history, aggressive_history, prompt
 
+    def _apply(risk_debate_state, history, aggressive_history, response) -> dict:
         argument = f"Aggressive Analyst: {response.content}"
 
         new_risk_debate_state = {
@@ -50,4 +54,12 @@ Engage actively by addressing any specific concerns raised, refuting the weaknes
 
         return {"risk_debate_state": new_risk_debate_state}
 
-    return aggressive_node
+    def aggressive_node(state) -> dict:
+        risk_debate_state, history, aggressive_history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, aggressive_history, llm.invoke(prompt))
+
+    async def aaggressive_node(state) -> dict:
+        risk_debate_state, history, aggressive_history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, aggressive_history, await llm.ainvoke(prompt))
+
+    return dual_node(aggressive_node, aaggressive_node)

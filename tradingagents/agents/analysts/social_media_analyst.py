@@ -1,9 +1,10 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.utils.agent_utils import build_instrument_context, get_language_instruction, get_news
+from tradingagents.agents.utils.dual_node import dual_node
 
 
 def create_social_media_analyst(llm):
-    def social_media_analyst_node(state):
+    def _prepare(state):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
 
@@ -41,8 +42,9 @@ def create_social_media_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(state["messages"])
+        return chain
 
+    def _apply(result):
         report = ""
 
         if len(result.tool_calls) == 0:
@@ -53,4 +55,12 @@ def create_social_media_analyst(llm):
             "sentiment_report": report,
         }
 
-    return social_media_analyst_node
+    def social_media_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(chain.invoke(state["messages"]))
+
+    async def asocial_media_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(await chain.ainvoke(state["messages"]))
+
+    return dual_node(social_media_analyst_node, asocial_media_analyst_node)

@@ -25,7 +25,7 @@ from backend.services.analysis_service import AnalysisService
 from backend.services.config_service import ConfigService
 from backend.services.memory_service import MemoryService
 from backend.services.scanner_service import ScannerService
-from tradingagents.llm_clients import configure_llm_concurrency, configure_llm_min_spacing
+from tradingagents.llm_clients import configure_llm_concurrency, configure_llm_concurrency_async, configure_llm_min_spacing
 from tradingagents.dataflows.coingecko_data import get_coingecko_status
 from backend.ws_manager import WSManager
 
@@ -211,6 +211,9 @@ def create_app() -> FastAPI:
 
         llm_max = _validated_int("LLM_MAX_CONCURRENT", 0, 0, 1000)
         configure_llm_concurrency(llm_max)
+        # Mirror the SAME limit onto the async path so the async graph (flag ON) applies
+        # identical provider concurrency pressure as the sync path — no behavior change.
+        configure_llm_concurrency_async(llm_max)
         llm_spacing = _validated_int("LLM_MIN_SPACING_MS", 0, 0, 60000)
         configure_llm_min_spacing(llm_spacing)
 

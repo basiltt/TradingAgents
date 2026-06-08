@@ -91,7 +91,7 @@ class TestParallelRiskRound1:
             }}
 
         node = create_parallel_risk_round1([bull_debater, bear_debater])
-        result = node(_base_state())
+        result = node.invoke(_base_state())
 
         rds = result["risk_debate_state"]
         assert rds["count"] == 2
@@ -144,7 +144,7 @@ class TestParallelRiskRound1:
             }}
 
         node = create_parallel_risk_round1([agg, con, neu])
-        result = node(_base_state())
+        result = node.invoke(_base_state())
 
         rds = result["risk_debate_state"]
         assert rds["count"] == 3
@@ -176,7 +176,7 @@ class TestParallelRiskRound1:
             }}
 
         node = create_parallel_risk_round1([slow_bull, slow_bear])
-        result = node(_base_state())
+        result = node.invoke(_base_state())
         assert result["risk_debate_state"]["count"] == 2
 
     def test_propagates_exceptions(self):
@@ -193,7 +193,7 @@ class TestParallelRiskRound1:
 
         node = create_parallel_risk_round1([good, bad])
         with pytest.raises(RuntimeError, match="LLM failed"):
-            node(_base_state())
+            node.invoke(_base_state())
 
 
 class TestParallelResearcherRound1:
@@ -217,7 +217,7 @@ class TestParallelResearcherRound1:
             }}
 
         node = create_parallel_researcher_round1(bull, bear)
-        result = node(_base_state())
+        result = node.invoke(_base_state())
 
         ids = result["investment_debate_state"]
         assert ids["count"] == 2
@@ -246,7 +246,7 @@ class TestParallelResearcherRound1:
             }}
 
         node = create_parallel_researcher_round1(bull, bear)
-        result = node(_base_state())
+        result = node.invoke(_base_state())
         assert result["investment_debate_state"]["count"] == 2
 
 

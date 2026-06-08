@@ -46,7 +46,7 @@ class TestMarketAnalyst:
                 "company_of_interest": "AAPL",
                 "messages": [],
             }
-            result = node(state)
+            result = node.invoke(state)
 
         assert result["market_report"] == "Market is bullish"
         assert "messages" in result
@@ -70,7 +70,7 @@ class TestMarketAnalyst:
                 "company_of_interest": "AAPL",
                 "messages": [],
             }
-            result = node(state)
+            result = node.invoke(state)
 
         assert result["market_report"] == ""
 
@@ -97,7 +97,7 @@ def _test_analyst_node(module_path, create_fn_name, report_key, patches):
             "company_of_interest": "AAPL",
             "messages": [],
         }
-        result = node(state)
+        result = node.invoke(state)
 
     assert result[report_key] == "Report content"
     assert "messages" in result
@@ -154,7 +154,7 @@ class TestFundamentalsAnalyst:
                 "company_of_interest": "AAPL",
                 "messages": [],
             }
-            result = node(state)
+            result = node.invoke(state)
 
         assert result["fundamentals_report"] == "Report content"
         assert "messages" in result

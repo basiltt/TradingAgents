@@ -39,7 +39,27 @@ class Reflector:
         Used by Phase B deferred reflection. The final_trade_decision already
         synthesises all analyst insights, so no separate market context is needed.
         """
-        messages = [
+        return self.quick_thinking_llm.invoke(
+            self._reflection_messages(final_decision, raw_return, alpha_return)
+        ).content
+
+    async def areflect_on_final_decision(
+        self,
+        final_decision: str,
+        raw_return: float,
+        alpha_return: float,
+    ) -> str:
+        """Async mirror of reflect_on_final_decision — identical prompt/messages, only
+        awaited. (Phase B reflection runs AFTER trade outcomes are known, off the scan
+        hot path; provided for callers on the event loop.)"""
+        result = await self.quick_thinking_llm.ainvoke(
+            self._reflection_messages(final_decision, raw_return, alpha_return)
+        )
+        return result.content
+
+    def _reflection_messages(self, final_decision: str, raw_return: float, alpha_return: float):
+        """Shared message builder for the sync/async reflection calls."""
+        return [
             ("system", self.log_reflection_prompt),
             (
                 "human",
@@ -50,4 +70,3 @@ class Reflector:
                 ),
             ),
         ]
-        return self.quick_thinking_llm.invoke(messages).content

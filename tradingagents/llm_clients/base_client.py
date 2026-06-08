@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
+import asyncio
 import logging
 import threading
 import time
@@ -13,6 +14,15 @@ _llm_sem_lock = threading.Lock()
 _llm_min_spacing_ms: int = 0
 _llm_last_request_ts: float = 0
 _llm_spacing_lock = threading.Lock()
+
+# --- async mirrors (used only by the async graph path; see allm_rate_limited_invoke) ---
+# Kept SEPARATE from the threading primitives above: an asyncio.Semaphore is bound to a
+# running loop and must never be acquired from worker threads. The configured LIMIT is the
+# same integer as the sync semaphore so provider pressure is identical on either path.
+_allm_semaphore: "asyncio.Semaphore | None" = None
+_allm_limit: int = 0
+_allm_last_request_ts: float = 0.0
+_allm_spacing_lock: "asyncio.Lock | None" = None
 
 _LLM_MAX_RETRIES = 5
 _LLM_BASE_DELAY = 1.0
@@ -89,6 +99,71 @@ def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
             if sem is not None:
                 sem.release()
         time.sleep(delay)
+    raise last_exc  # unreachable but keeps type checkers happy
+
+
+def configure_llm_concurrency_async(max_concurrent: int) -> None:
+    """Async mirror of configure_llm_concurrency. Sets the LIMIT only; the actual
+    asyncio.Semaphore is created lazily on the running loop in allm_rate_limited_invoke
+    (a semaphore can't be safely created before the loop exists / across loops)."""
+    global _allm_limit, _allm_semaphore
+    _allm_limit = max(0, max_concurrent)
+    _allm_semaphore = None  # force lazy re-create against the active loop with the new limit
+    if _allm_limit <= 0:
+        logger.info("LLM concurrency (async): unlimited")
+    else:
+        logger.info("LLM concurrency (async) limit set to %d", _allm_limit)
+
+
+def _get_async_sem() -> "asyncio.Semaphore | None":
+    """Lazily bind the async semaphore to the current running loop."""
+    global _allm_semaphore
+    if _allm_limit <= 0:
+        return None
+    if _allm_semaphore is None:
+        _allm_semaphore = asyncio.Semaphore(_allm_limit)
+    return _allm_semaphore
+
+
+async def allm_rate_limited_invoke(super_ainvoke, input, config=None, **kwargs):
+    """Async mirror of llm_rate_limited_invoke. IDENTICAL retry/backoff/spacing/concurrency
+    semantics — only awaited (asyncio.sleep / asyncio.Semaphore) instead of blocking, so it
+    never stalls the event loop. Reuses _is_retryable verbatim so retry decisions match the
+    sync path exactly."""
+    global _allm_last_request_ts, _allm_spacing_lock
+    last_exc: Exception | None = None
+    for attempt in range(_LLM_MAX_RETRIES):
+        if _llm_min_spacing_ms > 0:
+            if _allm_spacing_lock is None:
+                _allm_spacing_lock = asyncio.Lock()
+            gap = 0.0
+            async with _allm_spacing_lock:
+                now = time.monotonic()
+                elapsed_ms = (now - _allm_last_request_ts) * 1000
+                if _allm_last_request_ts > 0 and elapsed_ms < _llm_min_spacing_ms:
+                    gap = (_llm_min_spacing_ms - elapsed_ms) / 1000
+                _allm_last_request_ts = time.monotonic() + gap
+            if gap > 0:
+                logger.debug("Spacing LLM call (async): waiting %.1fms", gap * 1000)
+                await asyncio.sleep(gap)
+        sem = _get_async_sem()
+        if sem is not None:
+            await sem.acquire()
+        try:
+            return await super_ainvoke(input, config, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if not _is_retryable(exc) or attempt == _LLM_MAX_RETRIES - 1:
+                raise
+            delay = min(_LLM_BASE_DELAY * (2 ** attempt), _LLM_MAX_DELAY)
+            logger.warning(
+                "LLM call failed (async, attempt %d/%d), retrying in %.1fs: %s",
+                attempt + 1, _LLM_MAX_RETRIES, delay, exc,
+            )
+        finally:
+            if sem is not None:
+                sem.release()
+        await asyncio.sleep(delay)
     raise last_exc  # unreachable but keeps type checkers happy
 
 

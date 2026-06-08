@@ -4,11 +4,12 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
     get_stock_data,
 )
+from tradingagents.agents.utils.dual_node import dual_node
 
 
 def create_market_analyst(llm):
 
-    def market_analyst_node(state):
+    def _prepare(state):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
 
@@ -68,8 +69,9 @@ Volume-Based Indicators:
         prompt = prompt.partial(instrument_context=instrument_context)
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        return chain
 
+    def _apply(result):
         report = ""
 
         if len(result.tool_calls) == 0:
@@ -80,4 +82,12 @@ Volume-Based Indicators:
             "market_report": report,
         }
 
-    return market_analyst_node
+    def market_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(chain.invoke(state["messages"]))
+
+    async def amarket_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(await chain.ainvoke(state["messages"]))
+
+    return dual_node(market_analyst_node, amarket_analyst_node)

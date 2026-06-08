@@ -6,10 +6,11 @@ from tradingagents.agents.utils.agent_utils import (
     get_income_statement,
     get_language_instruction,
 )
+from tradingagents.agents.utils.dual_node import dual_node
 
 
 def create_fundamentals_analyst(llm):
-    def fundamentals_analyst_node(state):
+    def _prepare(state):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
 
@@ -49,8 +50,9 @@ def create_fundamentals_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(state["messages"])
+        return chain
 
+    def _apply(result):
         report = ""
 
         if len(result.tool_calls) == 0:
@@ -61,4 +63,12 @@ def create_fundamentals_analyst(llm):
             "fundamentals_report": report,
         }
 
-    return fundamentals_analyst_node
+    def fundamentals_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(chain.invoke(state["messages"]))
+
+    async def afundamentals_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(await chain.ainvoke(state["messages"]))
+
+    return dual_node(fundamentals_analyst_node, afundamentals_analyst_node)

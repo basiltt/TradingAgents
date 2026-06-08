@@ -16,7 +16,9 @@ from tradingagents.agents.schemas import (
     render_compliance_check,
 )
 from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.dual_node import dual_node
 from tradingagents.agents.utils.structured import (
+    ainvoke_structured_or_freetext,
     bind_structured,
     invoke_structured_or_freetext,
 )
@@ -54,7 +56,7 @@ _COMPLIANCE_USER = (
 def create_compliance_officer(llm, max_leverage: int = 20):
     structured_llm = bind_structured(llm, ComplianceCheck, "Compliance Officer")
 
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "compliance_officer")
@@ -77,14 +79,10 @@ def create_compliance_officer(llm, max_leverage: int = 20):
             },
         ]
 
-        text, obj = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_compliance_check,
-            "Compliance Officer",
-            schema=ComplianceCheck,
-        )
+        return prompt
+
+    def _apply(text, obj):
+        from tradingagents.agents.utils.state_filter import validate_state_write
 
         if obj is not None:
             # Programmatic override: if ANY individual finding is Block,
@@ -119,4 +117,28 @@ def create_compliance_officer(llm, max_leverage: int = 20):
         }
         return validate_state_write(updates, "compliance_officer")
 
-    return node
+    def node(state):
+        prompt = _prepare(state)
+        text, obj = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_compliance_check,
+            "Compliance Officer",
+            schema=ComplianceCheck,
+        )
+        return _apply(text, obj)
+
+    async def anode(state):
+        prompt = _prepare(state)
+        text, obj = await ainvoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_compliance_check,
+            "Compliance Officer",
+            schema=ComplianceCheck,
+        )
+        return _apply(text, obj)
+
+    return dual_node(node, anode)

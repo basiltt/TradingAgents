@@ -31,7 +31,7 @@ def _render_fundamentals_analyst(date="2026-06-06", symbol="BTCUSDT",
          patch("tradingagents.agents.analysts.fundamentals_analyst.build_instrument_context",
                return_value=instrument):
         node = create_fundamentals_analyst(mock_llm)
-        node({"trade_date": date, "company_of_interest": symbol, "messages": []})
+        node.invoke({"trade_date": date, "company_of_interest": symbol, "messages": []})
     return captured["messages"]
 
 

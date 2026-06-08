@@ -178,7 +178,7 @@ class TestTraderAgent:
         )
         llm = _two_pass_trader_llm(captured, proposal=proposal)
         trader = create_trader(llm)
-        result = trader(_make_trader_state())
+        result = trader.invoke(_make_trader_state())
         plan = result["trader_investment_plan"]
         assert "**Action**: Buy" in plan
         assert "**Entry Price**: 189.5" in plan
@@ -190,7 +190,7 @@ class TestTraderAgent:
         captured = {}
         llm = _two_pass_trader_llm(captured)
         trader = create_trader(llm)
-        trader(_make_trader_state())
+        trader.invoke(_make_trader_state())
         prompt = captured["direction_prompt"]
         user_msg = next(m["content"] for m in prompt if m["role"] == "user")
         assert "Investment Plan" in user_msg
@@ -202,7 +202,7 @@ class TestTraderAgent:
         state["current_price_context"] = "Last Price: 95000.0\n24h High: 96500.0"
         llm = _two_pass_trader_llm(captured)
         trader = create_trader(llm)
-        trader(state)
+        trader.invoke(state)
         prompt = captured["levels_prompt"]
         user_msg = next(m["content"] for m in prompt if m["role"] == "user")
         assert "LIVE PRICE DATA" in user_msg
@@ -215,7 +215,7 @@ class TestTraderAgent:
         state["technical_levels_summary"] = "RSI: 65, ATR: 3.2, Close: 189.0"
         llm = _two_pass_trader_llm(captured)
         trader = create_trader(llm)
-        trader(state)
+        trader.invoke(state)
         prompt = captured["levels_prompt"]
         user_msg = next(m["content"] for m in prompt if m["role"] == "user")
         assert "TECHNICAL LEVELS" in user_msg
@@ -230,7 +230,7 @@ class TestTraderAgent:
         llm.with_structured_output.side_effect = NotImplementedError("provider unsupported")
         llm.invoke.return_value = MagicMock(content=plain_response)
         trader = create_trader(llm)
-        result = trader(_make_trader_state())
+        result = trader.invoke(_make_trader_state())
         plan = result["trader_investment_plan"]
         assert "FINAL TRANSACTION PROPOSAL" in plan
 
@@ -250,7 +250,7 @@ class TestTraderAgent:
         )
         llm = _two_pass_trader_llm(captured, direction=direction, proposal=proposal)
         trader = create_trader(llm)
-        result = trader(_make_trader_state())
+        result = trader.invoke(_make_trader_state())
         obj = result["_trader_signal_data"]
         assert obj.action == TraderAction.SELL
         assert obj.invalidation_thesis == "Reclaim above 186 invalidates."
@@ -272,7 +272,7 @@ class TestTraderAgent:
         )
         llm = _two_pass_trader_llm(captured, direction=direction, proposal=proposal)
         trader = create_trader(llm)
-        result = trader(_make_trader_state())
+        result = trader.invoke(_make_trader_state())
         obj = result["_trader_signal_data"]
         assert obj.action == TraderAction.BUY
         assert "FINAL TRANSACTION PROPOSAL: **BUY**" in result["trader_investment_plan"]
@@ -291,7 +291,7 @@ class TestTraderAgent:
         )
         llm = _two_pass_trader_llm(captured, proposal=proposal)
         trader = create_trader(llm)
-        result = trader(state)
+        result = trader.invoke(state)
         assert "No live price feed was available" in result["trader_investment_plan"]
 
     def test_live_price_no_warning(self):
@@ -307,7 +307,7 @@ class TestTraderAgent:
         )
         llm = _two_pass_trader_llm(captured, proposal=proposal)
         trader = create_trader(llm)
-        result = trader(state)
+        result = trader.invoke(state)
         assert "No live price feed" not in result["trader_investment_plan"]
 
 
@@ -357,7 +357,7 @@ class TestResearchManagerAgent:
         )
         llm = _structured_rm_llm(captured, plan)
         rm = create_research_manager(llm)
-        result = rm(_make_rm_state())
+        result = rm.invoke(_make_rm_state())
         ip = result["investment_plan"]
         assert "**Recommendation**: Overweight" in ip
         assert "**Rationale**: Bull case" in ip
@@ -368,7 +368,7 @@ class TestResearchManagerAgent:
         captured = {}
         llm = _structured_rm_llm(captured)
         rm = create_research_manager(llm)
-        rm(_make_rm_state())
+        rm.invoke(_make_rm_state())
         prompt = captured["prompt"]
         for tier in ("Buy", "Overweight", "Hold", "Underweight", "Sell"):
             assert f"**{tier}**" in prompt, f"missing {tier} in prompt"
@@ -379,5 +379,5 @@ class TestResearchManagerAgent:
         llm.with_structured_output.side_effect = NotImplementedError("provider unsupported")
         llm.invoke.return_value = MagicMock(content=plain_response)
         rm = create_research_manager(llm)
-        result = rm(_make_rm_state())
+        result = rm.invoke(_make_rm_state())
         assert result["investment_plan"] == plain_response

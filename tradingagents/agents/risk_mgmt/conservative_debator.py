@@ -1,7 +1,10 @@
 
 
+from tradingagents.agents.utils.dual_node import dual_node
+
+
 def create_conservative_debator(llm):
-    def conservative_node(state) -> dict:
+    def _prepare(state):
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         conservative_history = risk_debate_state.get("conservative_history", "")
@@ -30,8 +33,9 @@ Here is the current conversation history: {history} Here is the last response fr
 
 Engage by questioning their optimism and emphasizing the potential downsides they may have overlooked. Address each of their counterpoints to showcase why a conservative stance is ultimately the safest path for the firm's assets. Focus on debating and critiquing their arguments to demonstrate the strength of a low-risk strategy over their approaches. Output conversationally as if you are speaking without any special formatting."""
 
-        response = llm.invoke(prompt)
+        return risk_debate_state, history, conservative_history, prompt
 
+    def _apply(risk_debate_state, history, conservative_history, response) -> dict:
         argument = f"Conservative Analyst: {response.content}"
 
         new_risk_debate_state = {
@@ -52,4 +56,12 @@ Engage by questioning their optimism and emphasizing the potential downsides the
 
         return {"risk_debate_state": new_risk_debate_state}
 
-    return conservative_node
+    def conservative_node(state) -> dict:
+        risk_debate_state, history, conservative_history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, conservative_history, llm.invoke(prompt))
+
+    async def aconservative_node(state) -> dict:
+        risk_debate_state, history, conservative_history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, conservative_history, await llm.ainvoke(prompt))
+
+    return dual_node(conservative_node, aconservative_node)

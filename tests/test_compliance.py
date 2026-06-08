@@ -111,7 +111,7 @@ class TestComplianceOfficerAgent:
         llm.with_structured_output.return_value = structured_mock
 
         officer = create_compliance_officer(llm)
-        result = officer(_make_compliance_state())
+        result = officer.invoke(_make_compliance_state())
 
         assert "Pass" in result["compliance_result"]
         assert result["_compliance_verdict"] == "Pass"
@@ -134,7 +134,7 @@ class TestComplianceOfficerAgent:
         llm.with_structured_output.return_value = structured_mock
 
         officer = create_compliance_officer(llm)
-        result = officer(_make_compliance_state())
+        result = officer.invoke(_make_compliance_state())
 
         assert result["_compliance_verdict"] == "Block"
 
@@ -162,7 +162,7 @@ class TestComplianceOfficerAgent:
         llm.with_structured_output.return_value = structured_mock
 
         officer = create_compliance_officer(llm)
-        result = officer(_make_compliance_state())
+        result = officer.invoke(_make_compliance_state())
 
         assert result["_compliance_verdict"] == "Block"
 
@@ -174,7 +174,7 @@ class TestComplianceOfficerAgent:
         )
 
         officer = create_compliance_officer(llm)
-        result = officer(_make_compliance_state())
+        result = officer.invoke(_make_compliance_state())
 
         assert result["_compliance_verdict"] == "Block"
 
@@ -187,7 +187,7 @@ class TestComplianceOfficerAgent:
         )
 
         officer = create_compliance_officer(llm)
-        result = officer(_make_compliance_state())
+        result = officer.invoke(_make_compliance_state())
 
         # Even though text says "flag", structured parse failure = BLOCK
         assert result["_compliance_verdict"] == "Block"
@@ -201,7 +201,7 @@ class TestComplianceOfficerAgent:
         )
 
         officer = create_compliance_officer(llm)
-        result = officer(_make_compliance_state())
+        result = officer.invoke(_make_compliance_state())
 
         assert result["_compliance_verdict"] == "Flag"
 
@@ -228,7 +228,7 @@ class TestExecutionMonitorAgent:
         }
 
         monitor = create_execution_monitor(llm)
-        result = monitor(state)
+        result = monitor.invoke(state)
 
         assert "Execution Monitor Notes" in result["final_trade_decision"]
         assert "Slippage" in result["execution_notes"]
@@ -245,6 +245,6 @@ class TestExecutionMonitorAgent:
         }
 
         monitor = create_execution_monitor(llm)
-        result = monitor(state)
+        result = monitor.invoke(state)
 
         assert "No concerns." in result["execution_notes"]

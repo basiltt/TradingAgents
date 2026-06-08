@@ -15,12 +15,14 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.dual_node import dual_node
 from tradingagents.agents.utils.prompt_guard import wrap_external_data
 from tradingagents.agents.utils.state_filter import (
     filter_state_for_read,
     validate_state_write,
 )
 from tradingagents.agents.utils.structured import (
+    ainvoke_structured_or_freetext,
     bind_structured,
     invoke_structured_or_freetext,
 )
@@ -29,7 +31,7 @@ from tradingagents.agents.utils.structured import (
 def create_portfolio_manager(llm):
     structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
 
-    def portfolio_manager_node(state) -> dict:
+    def _prepare(state):
         filtered = filter_state_for_read(state, "portfolio_manager")
         company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
@@ -77,15 +79,9 @@ def create_portfolio_manager(llm):
 
 Be decisive and ground every conclusion in specific evidence from the analysts. Include a confidence score (1-10) reflecting your overall conviction.{get_language_instruction()}"""
 
-        final_trade_decision, decision_obj = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_pm_decision,
-            "Portfolio Manager",
-            schema=PortfolioDecision,
-        )
+        return risk_debate_state, prompt
 
+    def _apply(risk_debate_state, final_trade_decision, decision_obj) -> dict:
         new_risk_debate_state = {
             "judge_decision": final_trade_decision,
             "history": risk_debate_state.get("history", ""),
@@ -106,4 +102,28 @@ Be decisive and ground every conclusion in specific evidence from the analysts. 
         }
         return validate_state_write(updates, "portfolio_manager")
 
-    return portfolio_manager_node
+    def portfolio_manager_node(state) -> dict:
+        risk_debate_state, prompt = _prepare(state)
+        final_trade_decision, decision_obj = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_pm_decision,
+            "Portfolio Manager",
+            schema=PortfolioDecision,
+        )
+        return _apply(risk_debate_state, final_trade_decision, decision_obj)
+
+    async def aportfolio_manager_node(state) -> dict:
+        risk_debate_state, prompt = _prepare(state)
+        final_trade_decision, decision_obj = await ainvoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_pm_decision,
+            "Portfolio Manager",
+            schema=PortfolioDecision,
+        )
+        return _apply(risk_debate_state, final_trade_decision, decision_obj)
+
+    return dual_node(portfolio_manager_node, aportfolio_manager_node)

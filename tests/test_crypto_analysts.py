@@ -71,7 +71,7 @@ class TestCryptoTechnicalAnalyst:
             mock_prompt = MagicMock()
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
             mock_split.return_value.partial.return_value = mock_prompt
-            result = node(state)
+            result = node.invoke(state)
             assert "market_report" in result
             assert result["market_report"] == "BTC is bullish"
 
@@ -85,7 +85,7 @@ class TestCryptoNewsAnalyst:
 
         node = create_crypto_news_analyst(llm)
         state = _base_state()
-        result = node(state)
+        result = node.invoke(state)
         assert "news_report" in result
 
 
@@ -100,7 +100,7 @@ class TestCryptoDerivativesAnalyst:
 
         node = create_crypto_derivatives_analyst(llm, tools)
         state = _base_state()
-        result = node(state)
+        result = node.invoke(state)
         assert "derivatives_report" in result
 
 
@@ -122,7 +122,7 @@ class TestCryptoTrader:
         node = create_crypto_trader(llm)
         state = _base_state()
         state["investment_plan"] = "Analysts say buy"
-        result = node(state)
+        result = node.invoke(state)
         assert "trader_investment_plan" in result
         assert "Long" in result["trader_investment_plan"]
 
@@ -155,7 +155,7 @@ class TestCryptoTrader:
         node = create_crypto_trader(llm)
         state = _base_state()
         state["investment_plan"] = "Analysts say buy"
-        result = node(state)
+        result = node.invoke(state)
         assert llm.invoke.call_count == 2
         assert "Long" in result["trader_investment_plan"]
 
@@ -177,7 +177,7 @@ class TestCryptoTrader:
         node = create_crypto_trader(llm)
         state = _base_state()
         state["investment_plan"] = "Analysts say buy"
-        result = node(state)
+        result = node.invoke(state)
         assert "error" in result["trader_investment_plan"].lower() or "failed" in result["trader_investment_plan"].lower()
 
 
@@ -189,7 +189,7 @@ class TestCryptoRiskDebaters:
         node = create_crypto_risk_bull_debater(llm)
         state = _base_state()
         state["trader_investment_plan"] = "Long BTC 5x"
-        result = node(state)
+        result = node.invoke(state)
         assert "risk_debate_state" in result
         assert result["risk_debate_state"]["count"] == 1
 
@@ -200,7 +200,7 @@ class TestCryptoRiskDebaters:
         node = create_crypto_risk_bear_debater(llm)
         state = _base_state()
         state["trader_investment_plan"] = "Long BTC 5x"
-        result = node(state)
+        result = node.invoke(state)
         assert "risk_debate_state" in result
         assert result["risk_debate_state"]["count"] == 1
 
@@ -218,7 +218,7 @@ class TestCryptoPortfolioManager:
         state["investment_plan"] = "Buy BTC"
         state["trader_investment_plan"] = "Long BTC"
         state["risk_debate_state"]["history"] = "Bull: good. Bear: risky."
-        result = node(state)
+        result = node.invoke(state)
         assert "final_trade_decision" in result
         assert "_pm_signal_data" in result
 
@@ -233,7 +233,7 @@ class TestCryptoPortfolioManager:
         state = _base_state()
         state["past_context"] = "lost money last time"
         state["risk_debate_state"]["history"] = "debate"
-        result = node(state)
+        result = node.invoke(state)
         assert "Decision with lessons" in result["final_trade_decision"]
 
 
@@ -245,7 +245,7 @@ class TestCryptoTechnicalAnalystNoTools:
         unrelated.name = "unrelated"
         node = create_crypto_technical_analyst(llm, [unrelated])
         with pytest.raises(ValueError, match="No technical analysis tools"):
-            node(_base_state())
+            node.invoke(_base_state())
 
 
 class TestCryptoDerivativesNoTools:
@@ -254,7 +254,7 @@ class TestCryptoDerivativesNoTools:
         llm = MagicMock()
         node = create_crypto_derivatives_analyst(llm, [])
         with pytest.raises(ValueError, match="No derivatives tools"):
-            node(_base_state())
+            node.invoke(_base_state())
 
 
 class TestCryptoFundamentalsAnalyst:
@@ -272,7 +272,7 @@ class TestCryptoFundamentalsAnalyst:
             mock_prompt = MagicMock()
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
             mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
-            result = node(_base_state())
+            result = node.invoke(_base_state())
             assert result["crypto_fundamentals_report"] == "fundamentals"
 
     def test_no_tools_raises(self):
@@ -280,7 +280,7 @@ class TestCryptoFundamentalsAnalyst:
         llm = MagicMock()
         node = create_crypto_fundamentals_analyst(llm, [])
         with pytest.raises(ValueError, match="No market data tool"):
-            node(_base_state())
+            node.invoke(_base_state())
 
 
 class TestCryptoSocialAnalyst:
@@ -298,7 +298,7 @@ class TestCryptoSocialAnalyst:
             mock_prompt = MagicMock()
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
             mock_tpl.from_messages.return_value.partial.return_value = mock_prompt
-            result = node(_base_state())
+            result = node.invoke(_base_state())
             assert result["sentiment_report"] == "social data"
 
 
@@ -319,7 +319,7 @@ class TestCryptoToolCallsBranch:
             mock_prompt = MagicMock()
             mock_prompt.__or__ = MagicMock(return_value=mock_chain)
             mock_split.return_value.partial.return_value = mock_prompt
-            result = node(_base_state())
+            result = node.invoke(_base_state())
             assert result["market_report"] == "Analysis report here"
 
 
@@ -332,7 +332,7 @@ class TestCryptoDebaterExtraReports:
         state = _base_state()
         state["crypto_fundamentals_report"] = "cf"
         state["sentiment_report"] = "sent"
-        result = node(state)
+        result = node.invoke(state)
         assert result["risk_debate_state"]["latest_speaker"] == "Bull"
 
     def test_bear_with_extra_reports(self):
@@ -343,7 +343,7 @@ class TestCryptoDebaterExtraReports:
         state = _base_state()
         state["crypto_fundamentals_report"] = "cf"
         state["sentiment_report"] = "sent"
-        result = node(state)
+        result = node.invoke(state)
         assert result["risk_debate_state"]["latest_speaker"] == "Bear"
 
 
@@ -364,7 +364,7 @@ class TestCryptoTraderAllReports:
         state = _base_state()
         state["crypto_fundamentals_report"] = "cf"
         state["sentiment_report"] = "sent"
-        result = node(state)
+        result = node.invoke(state)
         assert result["sender"] == "CryptoTrader"
 
     def test_unparseable_both_attempts(self):
@@ -374,7 +374,7 @@ class TestCryptoTraderAllReports:
         node = create_crypto_trader(llm)
         state = _base_state()
         state["investment_plan"] = "Buy BTC"
-        result = node(state)
+        result = node.invoke(state)
         assert "Error" in result["trader_investment_plan"] or "failure" in result["trader_investment_plan"].lower()
         assert llm.invoke.call_count == 2
 
@@ -382,6 +382,6 @@ class TestCryptoTraderAllReports:
         from tradingagents.agents.crypto_analysts import create_crypto_trader
         llm = MagicMock()
         node = create_crypto_trader(llm)
-        result = node(_base_state())
+        result = node.invoke(_base_state())
         assert "No Trade" in result["trader_investment_plan"]
         assert llm.invoke.call_count == 0

@@ -14,6 +14,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.dual_node import dual_node
 from tradingagents.agents.utils.prompt_guard import wrap_external_data
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ _MONITOR_PROMPT = (
 
 
 def create_execution_monitor(llm):
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "execution_monitor")
@@ -60,7 +61,11 @@ def create_execution_monitor(llm):
             language_instruction=get_language_instruction(),
         )
 
-        response = llm.invoke(prompt)
+        return prompt, final_decision
+
+    def _apply(final_decision, response):
+        from tradingagents.agents.utils.state_filter import validate_state_write
+
         notes = response.content or ""
 
         updated_decision = (
@@ -76,4 +81,12 @@ def create_execution_monitor(llm):
             "sender": "Execution Monitor",
         }, "execution_monitor")
 
-    return node
+    def node(state):
+        prompt, final_decision = _prepare(state)
+        return _apply(final_decision, llm.invoke(prompt))
+
+    async def anode(state):
+        prompt, final_decision = _prepare(state)
+        return _apply(final_decision, await llm.ainvoke(prompt))
+
+    return dual_node(node, anode)

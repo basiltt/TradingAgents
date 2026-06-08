@@ -144,6 +144,37 @@ class _FallbackStructured:
                 raise
         raise last_exc or RuntimeError("All structured methods failed")
 
+    async def ainvoke(self, prompt: Any) -> Any:
+        """Async mirror of invoke(). IDENTICAL fallthrough + skip-method semantics — only
+        awaits bound.ainvoke instead of calling bound.invoke. _skip_methods is shared with
+        the sync path (a method that 400s is skipped on either)."""
+        last_exc = None
+        for method, bound in self._bindings:
+            if method in self._skip_methods:
+                continue
+            try:
+                result = await bound.ainvoke(prompt)
+                if result is None:
+                    logger.debug(
+                        "%s: method=%s returned None, trying next",
+                        self._agent_name, method,
+                    )
+                    last_exc = ValueError("structured call returned None")
+                    continue
+                return result
+            except Exception as exc:
+                exc_str = str(exc)
+                if "400" in exc_str or "invalid_request" in exc_str.lower():
+                    logger.debug(
+                        "%s: method=%s rejected at invoke time (%s), trying next",
+                        self._agent_name, method, exc,
+                    )
+                    self._skip_methods.add(method)
+                    last_exc = ValueError(str(exc))
+                    continue
+                raise
+        raise last_exc or RuntimeError("All structured methods failed")
+
 
 def invoke_structured_or_freetext(
     structured_llm: Optional[Any],
@@ -172,4 +203,32 @@ def invoke_structured_or_freetext(
 
     schema_hint = _schema_instruction(schema) if schema else ""
     response = plain_llm.invoke(_augment_prompt(prompt, schema_hint))
+    return response.content or "", None
+
+
+async def ainvoke_structured_or_freetext(
+    structured_llm: Optional[Any],
+    plain_llm: Any,
+    prompt: Any,
+    render: Callable[[T], str],
+    agent_name: str,
+    schema: Optional[type[T]] = None,
+) -> tuple[str, Optional[BaseModel]]:
+    """Async mirror of invoke_structured_or_freetext. IDENTICAL behavior — structured
+    call first, render on success, free-text fallback on any failure — only awaited. Output
+    matches the sync function for the same input."""
+    if structured_llm is not None:
+        try:
+            result = await structured_llm.ainvoke(prompt)
+            if result is None:
+                raise ValueError("structured call returned None")
+            return render(result), result
+        except Exception as exc:
+            logger.warning(
+                "%s: structured-output invocation failed (%s); retrying once as free text",
+                agent_name, exc,
+            )
+
+    schema_hint = _schema_instruction(schema) if schema else ""
+    response = await plain_llm.ainvoke(_augment_prompt(prompt, schema_hint))
     return response.content or "", None

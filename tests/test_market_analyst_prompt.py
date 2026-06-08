@@ -29,7 +29,7 @@ def _render_market_analyst():
          patch("tradingagents.agents.analysts.market_analyst.build_instrument_context",
                return_value="Asset: BTCUSDT futures"):
         node = create_market_analyst(mock_llm)
-        node({"trade_date": "2026-06-06", "company_of_interest": "BTCUSDT", "messages": []})
+        node.invoke({"trade_date": "2026-06-06", "company_of_interest": "BTCUSDT", "messages": []})
     return captured["messages"]
 
 
@@ -61,7 +61,7 @@ class TestMarketAnalystContentPreserved:
             from tradingagents.agents.analysts.market_analyst import create_market_analyst
             with patch("tradingagents.agents.analysts.market_analyst.get_language_instruction", return_value=""), \
                  patch("tradingagents.agents.analysts.market_analyst.build_instrument_context", return_value=instrument):
-                create_market_analyst(mock_llm)({"trade_date": date, "company_of_interest": symbol, "messages": []})
+                create_market_analyst(mock_llm).invoke({"trade_date": date, "company_of_interest": symbol, "messages": []})
             return _msg_text([m for m in captured["m"] if isinstance(m, SystemMessage)][0])
         a = _sys_for("2026-06-06", "BTCUSDT", "Asset: BTC")
         b = _sys_for("2025-01-02", "ETHUSDT", "Asset: ETH")

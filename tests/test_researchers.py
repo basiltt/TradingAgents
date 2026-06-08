@@ -32,7 +32,7 @@ class TestBullResearcher:
         from tradingagents.agents.researchers.bull_researcher import create_bull_researcher
         llm = MagicMock()
         node = create_bull_researcher(llm)
-        assert callable(node)
+        assert hasattr(node, "invoke")
 
     def test_invokes_llm_and_returns_state(self):
         from tradingagents.agents.researchers.bull_researcher import create_bull_researcher
@@ -40,7 +40,7 @@ class TestBullResearcher:
         llm.invoke.return_value = MagicMock(content="Strong growth ahead")
         node = create_bull_researcher(llm)
         state = _make_full_state(_make_debate_state(count=1, current_response="Bear says risk"))
-        result = node(state)
+        result = node.invoke(state)
         assert "investment_debate_state" in result
         ds = result["investment_debate_state"]
         assert "Bull Analyst: Strong growth ahead" in ds["current_response"]
@@ -53,7 +53,7 @@ class TestBullResearcher:
         llm.invoke.return_value = MagicMock(content="Bull point")
         node = create_bull_researcher(llm)
         state = _make_full_state(_make_debate_state(bear_history="Prior bear arg", count=0))
-        result = node(state)
+        result = node.invoke(state)
         assert result["investment_debate_state"]["bear_history"] == "Prior bear arg"
 
 
@@ -62,7 +62,7 @@ class TestBearResearcher:
         from tradingagents.agents.researchers.bear_researcher import create_bear_researcher
         llm = MagicMock()
         node = create_bear_researcher(llm)
-        assert callable(node)
+        assert hasattr(node, "invoke")
 
     def test_invokes_llm_and_returns_state(self):
         from tradingagents.agents.researchers.bear_researcher import create_bear_researcher
@@ -70,7 +70,7 @@ class TestBearResearcher:
         llm.invoke.return_value = MagicMock(content="Risks are mounting")
         node = create_bear_researcher(llm)
         state = _make_full_state(_make_debate_state(count=1, current_response="Bull says buy"))
-        result = node(state)
+        result = node.invoke(state)
         ds = result["investment_debate_state"]
         assert "Bear Analyst: Risks are mounting" in ds["current_response"]
         assert ds["count"] == 2
@@ -82,5 +82,5 @@ class TestBearResearcher:
         llm.invoke.return_value = MagicMock(content="Bear point")
         node = create_bear_researcher(llm)
         state = _make_full_state(_make_debate_state(bull_history="Prior bull arg", count=0))
-        result = node(state)
+        result = node.invoke(state)
         assert result["investment_debate_state"]["bull_history"] == "Prior bull arg"

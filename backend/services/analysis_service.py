@@ -26,6 +26,15 @@ from backend.ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
 
+
+def _async_graph_enabled() -> bool:
+    """Feature flag for the async graph execution path (Phase 3 of the sync→async
+    LLM conversion). Default OFF → the proven sync path (graph.stream in a thread pool)
+    runs unchanged. Set TRADINGAGENTS_ASYNC_GRAPH=1 to drive the SAME graph via astream
+    on the event loop (non-blocking LLM calls → real per-symbol concurrency). Read live
+    (not cached) so it can be flipped without a code change."""
+    return (os.environ.get("TRADINGAGENTS_ASYNC_GRAPH", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
 def _safe_int_env(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if raw is None:
@@ -365,13 +374,23 @@ class AnalysisService:
 
             callback = WebCallbackHandler(run_id=run_id, event_bus=self._bus)
 
-            result = await asyncio.wait_for(
-                asyncio.get_running_loop().run_in_executor(
-                    _get_graph_executor(), self._execute_graph,
-                    run_id, request, config, callback, cancel_event,
-                ),
-                timeout=_WALL_TIMEOUT,
-            )
+            if _async_graph_enabled():
+                # Flag ON: drive the graph via astream ON THE EVENT LOOP. The LLM calls
+                # inside the agent nodes are non-blocking, so many symbols progress
+                # concurrently without the 8-thread graph-executor ceiling.
+                result = await asyncio.wait_for(
+                    self._aexecute_graph(run_id, request, config, callback, cancel_event),
+                    timeout=_WALL_TIMEOUT,
+                )
+            else:
+                # Flag OFF (default): the proven sync path — graph runs in the thread pool.
+                result = await asyncio.wait_for(
+                    asyncio.get_running_loop().run_in_executor(
+                        _get_graph_executor(), self._execute_graph,
+                        run_id, request, config, callback, cancel_event,
+                    ),
+                    timeout=_WALL_TIMEOUT,
+                )
 
             # Save snapshot before marking completed so the scanner never reads
             # a completed run without its reports already persisted in the DB.
@@ -430,12 +449,18 @@ class AnalysisService:
             evt = self._completion_events.get(run_id)
             if evt:
                 evt.set()
-            async with self._lock:
-                self._zombie_count += 1
-            asyncio.get_running_loop().call_later(
-                _HARD_TIMEOUT - _WALL_TIMEOUT,
-                lambda rid: asyncio.create_task(self._reclaim_zombie_async(rid)), run_id,
-            )
+            # Zombie tracking exists ONLY for the SYNC path: a timed-out graph keeps running
+            # in the thread-pool executor (a real zombie holding a worker slot until
+            # _HARD_TIMEOUT). The async path's asyncio.wait_for cancels the coroutine
+            # cleanly on timeout — no lingering thread — so counting it as a zombie would
+            # spuriously trip the _MAX_ZOMBIES gate and reject new analyses.
+            if not _async_graph_enabled():
+                async with self._lock:
+                    self._zombie_count += 1
+                asyncio.get_running_loop().call_later(
+                    _HARD_TIMEOUT - _WALL_TIMEOUT,
+                    lambda rid: asyncio.create_task(self._reclaim_zombie_async(rid)), run_id,
+                )
 
         except Exception as e:
             logger.error("Analysis %s failed: %s", run_id, e, exc_info=True)
@@ -535,6 +560,23 @@ class AnalysisService:
         self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
         callback: Any, cancel_event: threading.Event,
     ) -> Optional[Dict[str, Any]]:
+        prep = self._prepare_graph_run(run_id, request, config, callback)
+        if prep.get("early_result") is not None:
+            return prep["early_result"]
+        graph, init_state, args = prep["graph"], prep["init_state"], prep["args"]
+        last_chunk = self._drive_stream_sync(run_id, graph, init_state, args, config, cancel_event)
+        self._persist_signal_sections(run_id, last_chunk)
+        return last_chunk
+
+    def _prepare_graph_run(
+        self, run_id: str, request: Dict[str, Any], config: Dict[str, Any], callback: Any,
+    ) -> Dict[str, Any]:
+        """Shared graph SETUP for both the sync and async execution paths: TA pre-filter
+        gate, graph construction, initial state, crypto price-context, and stream args.
+        Returns {"early_result": dict} when analysis should short-circuit (prefilter skip
+        or missing graph lib), else {"graph", "init_state", "args"}. This is SYNC and does
+        blocking I/O (prefilter, memory log, Bybit price fetch) — the async caller runs it
+        in a thread so the event loop is never stalled by setup."""
         # --- TA Pre-Filter gate (crypto only) ---
         if config.get("ta_prefilter_enabled") and config.get("asset_type") == "crypto":
             try:
@@ -565,8 +607,8 @@ class AnalysisService:
                         run_id, "_ta_prefilter",
                         json.dumps(pf_result.to_dict()),
                     )
-                    return {"final_trade_decision": f"SKIPPED by TA Pre-Filter: {pf_result.reason}",
-                            "ta_prefilter": pf_result.to_dict()}
+                    return {"early_result": {"final_trade_decision": f"SKIPPED by TA Pre-Filter: {pf_result.reason}",
+                            "ta_prefilter": pf_result.to_dict()}}
             except Exception as exc:
                 logger.warning("TA pre-filter error for %s, proceeding anyway: %s", request["ticker"], exc)
 
@@ -574,7 +616,7 @@ class AnalysisService:
             from tradingagents.graph.trading_graph import TradingAgentsGraph
         except ImportError:
             logger.warning("TradingAgentsGraph not available, using mock")
-            return {"final_trade_decision": "Mock decision — TradingAgentsGraph not installed"}
+            return {"early_result": {"final_trade_decision": "Mock decision — TradingAgentsGraph not installed"}}
 
         # Determine analysts: user-specified > quick_trade defaults > full defaults
         explicit_analysts = request.get("analysts")
@@ -634,6 +676,11 @@ class AnalysisService:
 
         args = graph.propagator.get_graph_args(callbacks=[callback])
 
+        return {"early_result": None, "graph": graph, "init_state": init_state, "args": args}
+
+    def _drive_stream_sync(self, run_id, graph, init_state, args, config, cancel_event):
+        """Run the compiled graph via the SYNC stream and emit/persist per chunk.
+        This is the existing, proven path (flag OFF) — behavior is unchanged."""
         last_chunk = None
         seq = make_seq_counter()
         parser_state = StreamParserState(
@@ -661,8 +708,68 @@ class AnalysisService:
                 phase="warning",
                 detail=f"Recursion limit ({config.get('max_recur_limit', 100)}) reached — returning partial results",
             ))
+        return last_chunk
 
-        self._persist_signal_sections(run_id, last_chunk)
+    async def _aexecute_graph(
+        self, run_id: str, request: Dict[str, Any], config: Dict[str, Any],
+        callback: Any, cancel_event: threading.Event,
+    ) -> Optional[Dict[str, Any]]:
+        """ASYNC mirror of _execute_graph (flag ON). The SAME compiled graph and the SAME
+        shared setup run, but the graph is driven via astream ON THE EVENT LOOP so the LLM
+        calls inside the agent nodes are non-blocking and many symbols progress concurrently.
+        The blocking setup (prefilter, memory log, Bybit price fetch) runs in a thread so it
+        never stalls the loop. Output is identical to the sync path — same nodes, same order."""
+        prep = await asyncio.to_thread(
+            self._prepare_graph_run, run_id, request, config, callback
+        )
+        if prep.get("early_result") is not None:
+            return prep["early_result"]
+        graph, init_state, args = prep["graph"], prep["init_state"], prep["args"]
+        last_chunk = await self._adrive_stream(run_id, graph, init_state, args, config, cancel_event)
+        # _persist_signal_sections does sync DB writes — keep it off the loop.
+        await asyncio.to_thread(self._persist_signal_sections, run_id, last_chunk)
+        return last_chunk
+
+    async def _adrive_stream(self, run_id, graph, init_state, args, config, cancel_event):
+        """Async mirror of _drive_stream_sync: drive the graph via astream, emit on-loop
+        (emit, not emit_threadsafe), and persist report sections via the async DB sink.
+        Same chunk parsing, same events, same cancellation check as the sync path.
+
+        KNOWN, INTENTIONAL DIFFERENCE (observability only, NOT trading output): chunk events
+        here emit immediately on-loop, while the sync WebCallbackHandler runs in executor
+        threads and routes its events through emit_threadsafe (deferred via
+        call_soon_threadsafe). So the live agent-reasoning FEED and the snapshot `messages`
+        list MAY be ordered slightly differently between flag-off and flag-on. The
+        final_trade_decision and all report sections are UNAFFECTED — they come from chunk
+        events and are persisted via keyed/idempotent upserts, so the golden-diff (which
+        compares decision + structured signal + report sections) is unaffected."""
+        last_chunk = None
+        seq = make_seq_counter()
+        parser_state = StreamParserState(
+            workflow_mode=config.get("workflow_mode", "deep_analysis"),
+            asset_type=config.get("asset_type", "stock"),
+        )
+        try:
+            async for chunk in graph.graph.astream(init_state, **args):
+                if cancel_event.is_set():
+                    break
+
+                events = parse_stream_chunk(chunk, seq=seq, state=parser_state)
+                for event in events:
+                    self._bus.emit(run_id, event)
+                    if isinstance(event, ReportChunkEvent) and event.section:
+                        await self._db.save_report_section(run_id, event.section, event.content)
+
+                last_chunk = chunk
+        except GraphRecursionError:
+            logger.warning(
+                "Analysis %s hit recursion limit (%s) — returning partial results",
+                run_id, config.get("max_recur_limit", 100),
+            )
+            self._bus.emit(run_id, ProgressEvent(
+                phase="warning",
+                detail=f"Recursion limit ({config.get('max_recur_limit', 100)}) reached — returning partial results",
+            ))
         return last_chunk
 
     async def _reclaim_zombie_async(self, run_id: str) -> None:

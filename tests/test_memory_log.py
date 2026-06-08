@@ -594,7 +594,7 @@ class TestPortfolioManagerInjection:
         llm = _structured_pm_llm(captured)
         pm_node = create_portfolio_manager(llm)
         state = _make_pm_state(past_context="[2026-01-05 | NVDA | Buy | +5.0% | +2.0% | 5d]\nGreat call.")
-        pm_node(state)
+        pm_node.invoke(state)
         assert "Lessons from prior decisions and outcomes" in captured["prompt"]
         assert "Great call." in captured["prompt"]
 
@@ -604,7 +604,7 @@ class TestPortfolioManagerInjection:
         llm = _structured_pm_llm(captured)
         pm_node = create_portfolio_manager(llm)
         state = _make_pm_state(past_context="")
-        pm_node(state)
+        pm_node.invoke(state)
         assert "Lessons from prior decisions" not in captured["prompt"]
 
     def test_pm_returns_rendered_markdown_with_rating(self):
@@ -621,7 +621,7 @@ class TestPortfolioManagerInjection:
         )
         llm = _structured_pm_llm(captured, decision)
         pm_node = create_portfolio_manager(llm)
-        result = pm_node(_make_pm_state())
+        result = pm_node.invoke(_make_pm_state())
         md = result["final_trade_decision"]
         assert "**Rating**: Overweight" in md
         assert "**Executive Summary**: Build position gradually" in md
@@ -638,7 +638,7 @@ class TestPortfolioManagerInjection:
         llm.with_structured_output.side_effect = NotImplementedError("provider unsupported")
         llm.invoke.return_value = MagicMock(content=plain_response)
         pm_node = create_portfolio_manager(llm)
-        result = pm_node(_make_pm_state())
+        result = pm_node.invoke(_make_pm_state())
         assert result["final_trade_decision"] == plain_response
         assert result["_pm_signal_data"] is None   # free-text path yields no object
 

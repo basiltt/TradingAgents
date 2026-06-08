@@ -82,7 +82,7 @@ class TestRiskManagerNode:
             "market_microstructure": None,
             "messages": [],
         }
-        result = node(state)
+        result = node.invoke(state)
         assert result.get("_risk_manager_verdict") == "Reject"
         assert "risk_manager_result" in result
 
@@ -113,7 +113,7 @@ class TestRiskManagerNode:
             "market_microstructure": None,
             "messages": [],
         }
-        result = node(state)
+        result = node.invoke(state)
         assert result.get("_risk_manager_verdict") == "Approve"
 
 
@@ -141,7 +141,7 @@ class TestExecutionMonitorNode:
             "compliance_result": "Pass",
             "messages": [],
         }
-        result = node(state)
+        result = node.invoke(state)
         assert "execution_notes" in result
         assert "Execution Monitor Notes" in result.get("final_trade_decision", "")
         assert result["final_trade_decision"].startswith("<external_data")
@@ -163,7 +163,7 @@ class TestExecutionMonitorNode:
             "compliance_result": "",
             "messages": [],
         }
-        result = node(state)
+        result = node.invoke(state)
         from tradingagents.agents.constants import WRITABLE_KEYS
         allowed = set(WRITABLE_KEYS["execution_monitor"]) | {"messages", "sender"}
         assert set(result.keys()).issubset(allowed)

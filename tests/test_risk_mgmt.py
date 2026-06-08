@@ -36,14 +36,14 @@ class TestAggressiveDebator:
     def test_creates_callable(self):
         from tradingagents.agents.risk_mgmt.aggressive_debator import create_aggressive_debator
         node = create_aggressive_debator(MagicMock())
-        assert callable(node)
+        assert hasattr(node, "invoke")
 
     def test_invokes_llm_and_returns_state(self):
         from tradingagents.agents.risk_mgmt.aggressive_debator import create_aggressive_debator
         llm = MagicMock()
         llm.invoke.return_value = MagicMock(content="High risk, high reward")
         node = create_aggressive_debator(llm)
-        result = node(_make_full_state(_make_risk_state(count=1)))
+        result = node.invoke(_make_full_state(_make_risk_state(count=1)))
         ds = result["risk_debate_state"]
         assert "Aggressive Analyst" in ds["current_aggressive_response"]
         assert ds["count"] == 2
@@ -59,7 +59,7 @@ class TestAggressiveDebator:
             neutral_history="prior neutral",
             count=0,
         ))
-        result = node(state)
+        result = node.invoke(state)
         assert result["risk_debate_state"]["conservative_history"] == "prior conservative"
         assert result["risk_debate_state"]["neutral_history"] == "prior neutral"
 
@@ -70,7 +70,7 @@ class TestConservativeDebator:
         llm = MagicMock()
         llm.invoke.return_value = MagicMock(content="Caution advised")
         node = create_conservative_debator(llm)
-        result = node(_make_full_state(_make_risk_state(count=2)))
+        result = node.invoke(_make_full_state(_make_risk_state(count=2)))
         ds = result["risk_debate_state"]
         assert "Conservative Analyst" in ds["current_conservative_response"]
         assert ds["count"] == 3
@@ -83,7 +83,7 @@ class TestNeutralDebator:
         llm = MagicMock()
         llm.invoke.return_value = MagicMock(content="Balanced view")
         node = create_neutral_debator(llm)
-        result = node(_make_full_state(_make_risk_state(count=3)))
+        result = node.invoke(_make_full_state(_make_risk_state(count=3)))
         ds = result["risk_debate_state"]
         assert "Neutral Analyst" in ds["current_neutral_response"]
         assert ds["count"] == 4

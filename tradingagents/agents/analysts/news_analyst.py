@@ -5,10 +5,11 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
     get_news,
 )
+from tradingagents.agents.utils.dual_node import dual_node
 
 
 def create_news_analyst(llm):
-    def news_analyst_node(state):
+    def _prepare(state):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
 
@@ -46,8 +47,9 @@ def create_news_analyst(llm):
         prompt = prompt.partial(instrument_context=instrument_context)
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        return chain
 
+    def _apply(result):
         report = ""
 
         if len(result.tool_calls) == 0:
@@ -58,4 +60,12 @@ def create_news_analyst(llm):
             "news_report": report,
         }
 
-    return news_analyst_node
+    def news_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(chain.invoke(state["messages"]))
+
+    async def anews_analyst_node(state):
+        chain = _prepare(state)
+        return _apply(await chain.ainvoke(state["messages"]))
+
+    return dual_node(news_analyst_node, anews_analyst_node)

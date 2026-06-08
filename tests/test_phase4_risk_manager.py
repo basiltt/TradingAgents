@@ -64,7 +64,7 @@ class TestRiskManagerAgent:
         from tradingagents.agents.risk.risk_manager import create_risk_manager
         llm = MagicMock()
         node = create_risk_manager(llm)
-        assert callable(node)
+        assert hasattr(node, "invoke")
 
     def test_fail_closed_on_freetext(self):
         from tradingagents.agents.risk.risk_manager import create_risk_manager
@@ -85,7 +85,7 @@ class TestRiskManagerAgent:
             "market_microstructure": {},
             "risk_debate_state": {"history": ""},
         }
-        result = node(state)
+        result = node.invoke(state)
         assert result["_risk_manager_verdict"] == "Reject"
 
 
@@ -121,7 +121,7 @@ class TestCryptoPMStructuredOutput:
             "max_leverage": 20,
             "risk_manager_result": "",
         }
-        result = node(state)
+        result = node.invoke(state)
         assert "final_trade_decision" in result
         assert "_pm_signal_data" in result
 
@@ -232,7 +232,7 @@ class TestRiskManagerOverrideLogic:
             "tradingagents.agents.risk.risk_manager.invoke_structured_or_freetext",
             return_value=(render_risk_assessment(assessment), assessment),
         ):
-            result = node(self._base_state())
+            result = node.invoke(self._base_state())
         assert result["_risk_manager_verdict"] == "Reject"
 
     def test_modify_finding_sets_modify(self):
@@ -249,7 +249,7 @@ class TestRiskManagerOverrideLogic:
             "tradingagents.agents.risk.risk_manager.invoke_structured_or_freetext",
             return_value=(render_risk_assessment(assessment), assessment),
         ):
-            result = node(self._base_state())
+            result = node.invoke(self._base_state())
         assert result["_risk_manager_verdict"] == "Modify"
 
     def test_adjusted_leverage_capped(self):
@@ -267,7 +267,7 @@ class TestRiskManagerOverrideLogic:
             "tradingagents.agents.risk.risk_manager.invoke_structured_or_freetext",
             return_value=(render_risk_assessment(assessment), assessment),
         ):
-            result = node(self._base_state())
+            result = node.invoke(self._base_state())
         assert result["_risk_manager_verdict"] == "Modify"
 
     def test_all_approve_passthrough(self):
@@ -284,7 +284,7 @@ class TestRiskManagerOverrideLogic:
             "tradingagents.agents.risk.risk_manager.invoke_structured_or_freetext",
             return_value=(render_risk_assessment(assessment), assessment),
         ):
-            result = node(self._base_state())
+            result = node.invoke(self._base_state())
         assert result["_risk_manager_verdict"] == "Approve"
 
     def test_empty_findings_rejected(self):
@@ -300,5 +300,5 @@ class TestRiskManagerOverrideLogic:
             "tradingagents.agents.risk.risk_manager.invoke_structured_or_freetext",
             return_value=(render_risk_assessment(assessment), assessment),
         ):
-            result = node(self._base_state())
+            result = node.invoke(self._base_state())
         assert result["_risk_manager_verdict"] == "Reject"

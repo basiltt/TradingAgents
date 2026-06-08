@@ -25,6 +25,7 @@ from tradingagents.agents.utils.signal_validation import (
     extract_current_price,
 )
 from tradingagents.agents.utils.prompt_guard import wrap_external_data
+from tradingagents.agents.utils.dual_node import dual_node
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ _ANALYST_SYSTEM_PREFIX = _ANALYST_STABLE_PREFIX + _ANALYST_VOLATILE_TAIL
 
 
 def create_crypto_technical_analyst(llm, crypto_tools: list):
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "technical_analyst")
         current_date = filtered.get("trade_date", "")
@@ -129,8 +130,10 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(filtered.get("messages", []))
+        return filtered, chain
 
+    def _apply(result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         report = result.content or ""
         return validate_state_write({
             "messages": [result],
@@ -138,11 +141,19 @@ def create_crypto_technical_analyst(llm, crypto_tools: list):
             "technical_levels_summary": report,
         }, "technical_analyst")
 
-    return node
+    def node(state):
+        filtered, chain = _prepare(state)
+        return _apply(chain.invoke(filtered.get("messages", [])))
+
+    async def anode(state):
+        filtered, chain = _prepare(state)
+        return _apply(await chain.ainvoke(filtered.get("messages", [])))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_derivatives_analyst(llm, crypto_tools: list):
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "derivatives_analyst")
         current_date = filtered.get("trade_date", "")
@@ -194,16 +205,26 @@ def create_crypto_derivatives_analyst(llm, crypto_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(filtered.get("messages", []))
+        return filtered, chain
 
+    def _apply(result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         report = result.content or ""
         return validate_state_write({"messages": [result], "derivatives_report": report}, "derivatives_analyst")
 
-    return node
+    def node(state):
+        filtered, chain = _prepare(state)
+        return _apply(chain.invoke(filtered.get("messages", [])))
+
+    async def anode(state):
+        filtered, chain = _prepare(state)
+        return _apply(await chain.ainvoke(filtered.get("messages", [])))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_news_analyst(llm):
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "news_analyst")
         current_date = filtered.get("trade_date", "")
@@ -241,16 +262,26 @@ def create_crypto_news_analyst(llm):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(filtered.get("messages", []))
+        return filtered, chain
 
+    def _apply(result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         report = result.content or ""
         return validate_state_write({"messages": [result], "news_report": report}, "news_analyst")
 
-    return node
+    def node(state):
+        filtered, chain = _prepare(state)
+        return _apply(chain.invoke(filtered.get("messages", [])))
+
+    async def anode(state):
+        filtered, chain = _prepare(state)
+        return _apply(await chain.ainvoke(filtered.get("messages", [])))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "fundamentals_analyst")
         current_date = filtered.get("trade_date", "")
@@ -294,16 +325,26 @@ def create_crypto_fundamentals_analyst(llm, coingecko_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(filtered.get("messages", []))
+        return filtered, chain
 
+    def _apply(result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         report = result.content or ""
         return validate_state_write({"messages": [result], "crypto_fundamentals_report": report}, "fundamentals_analyst")
 
-    return node
+    def node(state):
+        filtered, chain = _prepare(state)
+        return _apply(chain.invoke(filtered.get("messages", [])))
+
+    async def anode(state):
+        filtered, chain = _prepare(state)
+        return _apply(await chain.ainvoke(filtered.get("messages", [])))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_social_analyst(llm, coingecko_tools: list):
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "social_analyst")
         current_date = filtered.get("trade_date", "")
@@ -343,18 +384,28 @@ def create_crypto_social_analyst(llm, coingecko_tools: list):
         )
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(filtered.get("messages", []))
+        return filtered, chain
 
+    def _apply(result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         report = result.content or ""
         return validate_state_write({"messages": [result], "sentiment_report": report}, "social_analyst")
 
-    return node
+    def node(state):
+        filtered, chain = _prepare(state)
+        return _apply(chain.invoke(filtered.get("messages", [])))
+
+    async def anode(state):
+        filtered, chain = _prepare(state)
+        return _apply(await chain.ainvoke(filtered.get("messages", [])))
+
+    return dual_node(node, anode)
 
 
 def create_confluence_checker(llm):
     """Agent that cross-checks all analyst reports for contradictions and consensus."""
 
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
         filtered = filter_state_for_read(state, "confluence_checker")
         crypto_interval = filtered.get("crypto_interval")
@@ -413,13 +464,24 @@ def create_confluence_checker(llm):
             "Be concise. Focus on actionable information for a trader."
         )
 
-        result = llm.invoke(prompt)
+        return prompt
+
+    def _apply(result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         return validate_state_write({
             "confluence_summary": result.content,
             "sender": "ConfluenceChecker",
         }, "confluence_checker")
 
-    return node
+    def node(state):
+        prompt = _prepare(state)
+        return _apply(llm.invoke(prompt))
+
+    async def anode(state):
+        prompt = _prepare(state)
+        return _apply(await llm.ainvoke(prompt))
+
+    return dual_node(node, anode)
 
 
 # ---------------------------------------------------------------------------
@@ -428,8 +490,8 @@ def create_confluence_checker(llm):
 
 
 def create_crypto_bull_researcher(llm):
-    def node(state):
-        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+    def _prepare(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read
 
         filtered = filter_state_for_read(state, "bull_researcher")
         investment_debate_state = filtered.get("investment_debate_state", {})
@@ -465,10 +527,11 @@ Debate history: {history}
 Last bear argument: {current_response}
 
 Present the evidence-based bull case for this asset."""
+        return investment_debate_state, history, bull_history, prompt
 
-        response = llm.invoke(prompt)
+    def _apply(investment_debate_state, history, bull_history, response):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         argument = f"Bull Analyst: {response.content}"
-
         new_state = {
             "history": history + "\n" + argument,
             "bull_history": bull_history + "\n" + argument,
@@ -476,15 +539,22 @@ Present the evidence-based bull case for this asset."""
             "current_response": argument,
             "count": investment_debate_state.get("count", 0) + 1,
         }
-
         return validate_state_write({"investment_debate_state": new_state}, "bull_researcher")
 
-    return node
+    def node(state):
+        ids, history, bull_history, prompt = _prepare(state)
+        return _apply(ids, history, bull_history, llm.invoke(prompt))
+
+    async def anode(state):
+        ids, history, bull_history, prompt = _prepare(state)
+        return _apply(ids, history, bull_history, await llm.ainvoke(prompt))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_bear_researcher(llm):
-    def node(state):
-        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+    def _prepare(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read
 
         filtered = filter_state_for_read(state, "bear_researcher")
         investment_debate_state = filtered.get("investment_debate_state", {})
@@ -520,8 +590,10 @@ Debate history: {history}
 Last bull argument: {current_response}
 
 Present the evidence-based bear case for this asset."""
+        return investment_debate_state, history, bear_history, prompt
 
-        response = llm.invoke(prompt)
+    def _apply(investment_debate_state, history, bear_history, response):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         argument = f"Bear Analyst: {response.content}"
 
         new_state = {
@@ -534,7 +606,15 @@ Present the evidence-based bear case for this asset."""
 
         return validate_state_write({"investment_debate_state": new_state}, "bear_researcher")
 
-    return node
+    def node(state):
+        ids, history, bear_history, prompt = _prepare(state)
+        return _apply(ids, history, bear_history, llm.invoke(prompt))
+
+    async def anode(state):
+        ids, history, bear_history, prompt = _prepare(state)
+        return _apply(ids, history, bear_history, await llm.ainvoke(prompt))
+
+    return dual_node(node, anode)
 
 
 # ---------------------------------------------------------------------------
@@ -548,11 +628,12 @@ def create_crypto_research_manager(llm):
     from tradingagents.agents.utils.structured import (
         bind_structured,
         invoke_structured_or_freetext,
+        ainvoke_structured_or_freetext,
     )
 
     structured_llm = bind_structured(llm, ResearchPlan, "Crypto Research Manager")
 
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read
         filtered = filter_state_for_read(state, "research_manager")
         crypto_interval = filtered.get("crypto_interval")
@@ -595,15 +676,9 @@ CRITICAL GUIDANCE FOR CRYPTO FUTURES:
 **Debate History:**
 {history}"""
 
-        investment_plan, _ = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_research_plan,
-            "Crypto Research Manager",
-            schema=ResearchPlan,
-        )
+        return investment_debate_state, prompt
 
+    def _apply(investment_debate_state, investment_plan):
         new_investment_debate_state = {
             "judge_decision": investment_plan,
             "history": investment_debate_state.get("history", ""),
@@ -619,13 +694,38 @@ CRITICAL GUIDANCE FOR CRYPTO FUTURES:
             "investment_plan": investment_plan,
         }, "research_manager")
 
-    return node
+    def node(state):
+        investment_debate_state, prompt = _prepare(state)
+        investment_plan, _ = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_research_plan,
+            "Crypto Research Manager",
+            schema=ResearchPlan,
+        )
+        return _apply(investment_debate_state, investment_plan)
+
+    async def anode(state):
+        investment_debate_state, prompt = _prepare(state)
+        investment_plan, _ = await ainvoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_research_plan,
+            "Crypto Research Manager",
+            schema=ResearchPlan,
+        )
+        return _apply(investment_debate_state, investment_plan)
+
+    return dual_node(node, anode)
 
 
 def create_crypto_trader(llm, max_leverage: int = 20):
     signal_schema_str = json.dumps(SIGNAL_SCHEMA, indent=2)
+    max_attempts = 2
 
-    def node(state):
+    def _prepare(state):
         from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
 
         filtered = filter_state_for_read(state, "trader")
@@ -654,7 +754,7 @@ def create_crypto_trader(llm, max_leverage: int = 20):
                 "trader_investment_plan": json.dumps(no_trade_signal, indent=2),
                 "_trader_signal_data": no_trade_signal,
                 "sender": "CryptoTrader",
-            }, "trader")
+            }, "trader"), None, None, None
 
         base_prompt = (
             f"You are a crypto futures execution trader for {company}. {instrument_context}\n\n"
@@ -698,47 +798,51 @@ def create_crypto_trader(llm, max_leverage: int = 20):
 
         messages = [{"role": "user", "content": base_prompt}]
         current_price = extract_current_price(price_context)
-        max_attempts = 2
+        return None, company, messages, current_price
 
-        for attempt in range(max_attempts):
-            result = llm.invoke(messages)
-            parsed = parse_signal_from_llm_output(result.content)
+    def _process(company, current_price, attempt, messages, result):
+        from tradingagents.agents.utils.state_filter import validate_state_write
+        parsed = parse_signal_from_llm_output(result.content)
 
-            if not parsed:
-                if attempt < max_attempts - 1:
-                    messages.append({"role": "assistant", "content": result.content})
-                    messages.append({"role": "user", "content": "Failed to parse JSON. Please output ONLY a JSON object in a ```json``` block."})
-                    continue
-                logger.warning(
-                    "CryptoTrader: could not parse signal for %s after %d attempts — defaulting to No Trade.",
-                    company, max_attempts,
-                )
-                no_trade = {
-                    "trade_type": "No Trade",
-                    "confidence": 1,
-                    "reasoning": "Signal parse failure after retries. Cannot produce a valid execution plan.",
-                }
-                return validate_state_write({
-                    "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
-                    "trader_investment_plan": json.dumps(no_trade, indent=2),
-                    "_trader_signal_data": no_trade,
-                    "sender": "CryptoTrader",
-                }, "trader")
-
-            ok, errors = validate_signal(parsed, max_leverage=max_leverage, current_price=current_price)
-            if ok:
-                return validate_state_write({
-                    "messages": [AIMessage(content=result.content)],
-                    "trader_investment_plan": json.dumps(parsed, indent=2),
-                    "_trader_signal_data": parsed,
-                    "sender": "CryptoTrader",
-                }, "trader")
-
+        if not parsed:
             if attempt < max_attempts - 1:
                 messages.append({"role": "assistant", "content": result.content})
-                messages.append({"role": "user", "content": f"Signal validation failed: {'; '.join(errors)}. Fix the issues and output the corrected JSON."})
-                continue
+                messages.append({"role": "user", "content": "Failed to parse JSON. Please output ONLY a JSON object in a ```json``` block."})
+                return None, None
+            logger.warning(
+                "CryptoTrader: could not parse signal for %s after %d attempts — defaulting to No Trade.",
+                company, max_attempts,
+            )
+            no_trade = {
+                "trade_type": "No Trade",
+                "confidence": 1,
+                "reasoning": "Signal parse failure after retries. Cannot produce a valid execution plan.",
+            }
+            return validate_state_write({
+                "messages": [AIMessage(content=json.dumps(no_trade, indent=2))],
+                "trader_investment_plan": json.dumps(no_trade, indent=2),
+                "_trader_signal_data": no_trade,
+                "sender": "CryptoTrader",
+            }, "trader"), None
 
+        ok, errors = validate_signal(parsed, max_leverage=max_leverage, current_price=current_price)
+        if ok:
+            return validate_state_write({
+                "messages": [AIMessage(content=result.content)],
+                "trader_investment_plan": json.dumps(parsed, indent=2),
+                "_trader_signal_data": parsed,
+                "sender": "CryptoTrader",
+            }, "trader"), errors
+
+        if attempt < max_attempts - 1:
+            messages.append({"role": "assistant", "content": result.content})
+            messages.append({"role": "user", "content": f"Signal validation failed: {'; '.join(errors)}. Fix the issues and output the corrected JSON."})
+            return None, errors
+
+        return None, errors
+
+    def _after_loop(company, errors):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         logger.warning(
             "CryptoTrader: signal validation failed for %s after %d attempts — defaulting to No Trade. Errors: %s",
             company, max_attempts, "; ".join(errors),
@@ -755,12 +859,34 @@ def create_crypto_trader(llm, max_leverage: int = 20):
             "sender": "CryptoTrader",
         }, "trader")
 
-    return node
+    def node(state):
+        early, company, messages, current_price = _prepare(state)
+        if early is not None:
+            return early
+        errors = None
+        for attempt in range(max_attempts):
+            final, errors = _process(company, current_price, attempt, messages, llm.invoke(messages))
+            if final is not None:
+                return final
+        return _after_loop(company, errors)
+
+    async def anode(state):
+        early, company, messages, current_price = _prepare(state)
+        if early is not None:
+            return early
+        errors = None
+        for attempt in range(max_attempts):
+            final, errors = _process(company, current_price, attempt, messages, await llm.ainvoke(messages))
+            if final is not None:
+                return final
+        return _after_loop(company, errors)
+
+    return dual_node(node, anode)
 
 
 def create_crypto_risk_bull_debater(llm):
-    def node(state):
-        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+    def _prepare(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read
 
         filtered = filter_state_for_read(state, "risk_bull_debater")
         risk_debate_state = filtered.get("risk_debate_state", {})
@@ -790,7 +916,10 @@ def create_crypto_risk_bull_debater(llm):
             f"Present the evidence-based bull case."
         )
 
-        response = llm.invoke(prompt)
+        return risk_debate_state, history, prompt
+
+    def _apply(risk_debate_state, history, response):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         argument = f"Bull Analyst: {response.content}"
 
         new_state = {
@@ -808,12 +937,20 @@ def create_crypto_risk_bull_debater(llm):
 
         return validate_state_write({"risk_debate_state": new_state}, "risk_bull_debater")
 
-    return node
+    def node(state):
+        risk_debate_state, history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, llm.invoke(prompt))
+
+    async def anode(state):
+        risk_debate_state, history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, await llm.ainvoke(prompt))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_risk_bear_debater(llm):
-    def node(state):
-        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+    def _prepare(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read
 
         filtered = filter_state_for_read(state, "risk_bear_debater")
         risk_debate_state = filtered.get("risk_debate_state", {})
@@ -849,7 +986,10 @@ def create_crypto_risk_bear_debater(llm):
             f"Present the evidence-based bear case."
         )
 
-        response = llm.invoke(prompt)
+        return risk_debate_state, history, prompt
+
+    def _apply(risk_debate_state, history, response):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         argument = f"Bear Analyst: {response.content}"
 
         new_state = {
@@ -867,17 +1007,25 @@ def create_crypto_risk_bear_debater(llm):
 
         return validate_state_write({"risk_debate_state": new_state}, "risk_bear_debater")
 
-    return node
+    def node(state):
+        risk_debate_state, history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, llm.invoke(prompt))
+
+    async def anode(state):
+        risk_debate_state, history, prompt = _prepare(state)
+        return _apply(risk_debate_state, history, await llm.ainvoke(prompt))
+
+    return dual_node(node, anode)
 
 
 def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
     from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
-    from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
+    from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext, ainvoke_structured_or_freetext
 
     structured_llm = bind_structured(llm, PortfolioDecision, "Crypto PM")
 
-    def node(state):
-        from tradingagents.agents.utils.state_filter import filter_state_for_read, validate_state_write
+    def _prepare(state):
+        from tradingagents.agents.utils.state_filter import filter_state_for_read
 
         filtered = filter_state_for_read(state, "portfolio_manager")
         company = filtered.get("company_of_interest", "")
@@ -932,15 +1080,10 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             f"{get_language_instruction()}"
         )
 
-        final_decision, decision_obj = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_pm_decision,
-            "Crypto PM",
-            schema=PortfolioDecision,
-        )
+        return risk_debate_state, prompt
 
+    def _apply(risk_debate_state, final_decision, decision_obj):
+        from tradingagents.agents.utils.state_filter import validate_state_write
         new_risk_debate_state = {
             "judge_decision": final_decision,
             "history": risk_debate_state.get("history", ""),
@@ -960,4 +1103,28 @@ def create_crypto_portfolio_manager(llm, max_leverage: int = 20):
             "_pm_signal_data": decision_obj,
         }, "portfolio_manager")
 
-    return node
+    def node(state):
+        risk_debate_state, prompt = _prepare(state)
+        final_decision, decision_obj = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_pm_decision,
+            "Crypto PM",
+            schema=PortfolioDecision,
+        )
+        return _apply(risk_debate_state, final_decision, decision_obj)
+
+    async def anode(state):
+        risk_debate_state, prompt = _prepare(state)
+        final_decision, decision_obj = await ainvoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_pm_decision,
+            "Crypto PM",
+            schema=PortfolioDecision,
+        )
+        return _apply(risk_debate_state, final_decision, decision_obj)
+
+    return dual_node(node, anode)

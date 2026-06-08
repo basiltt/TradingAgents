@@ -1,18 +1,17 @@
+from tradingagents.agents.utils.dual_node import dual_node
 
 
 def create_bear_researcher(llm):
-    def bear_node(state) -> dict:
+    def _build_prompt(state) -> str:
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
-        bear_history = investment_debate_state.get("bear_history", "")
-
         current_response = investment_debate_state.get("current_response", "")
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
 
-        prompt = f"""You are a Bear Analyst making the case against investing in the stock. Your goal is to present a well-reasoned argument emphasizing risks, challenges, and negative indicators. Leverage the provided research and data to highlight potential downsides and counter bullish arguments effectively.
+        return f"""You are a Bear Analyst making the case against investing in the stock. Your goal is to present a well-reasoned argument emphasizing risks, challenges, and negative indicators. Leverage the provided research and data to highlight potential downsides and counter bullish arguments effectively.
 
 Key points to focus on:
 
@@ -33,10 +32,11 @@ Last bull argument: {current_response}
 Use this information to deliver a compelling bear argument, refute the bull's claims, and engage in a dynamic debate that demonstrates the risks and weaknesses of investing in the stock.
 """
 
-        response = llm.invoke(prompt)
-
+    def _apply(state, response) -> dict:
+        investment_debate_state = state["investment_debate_state"]
+        history = investment_debate_state.get("history", "")
+        bear_history = investment_debate_state.get("bear_history", "")
         argument = f"Bear Analyst: {response.content}"
-
         new_investment_debate_state = {
             "history": history + "\n" + argument,
             "bear_history": bear_history + "\n" + argument,
@@ -44,7 +44,13 @@ Use this information to deliver a compelling bear argument, refute the bull's cl
             "current_response": argument,
             "count": investment_debate_state["count"] + 1,
         }
-
         return {"investment_debate_state": new_investment_debate_state}
 
-    return bear_node
+    def bear_node(state) -> dict:
+        return _apply(state, llm.invoke(_build_prompt(state)))
+
+    async def abear_node(state) -> dict:
+        return _apply(state, await llm.ainvoke(_build_prompt(state)))
+
+    return dual_node(bear_node, abear_node)
+

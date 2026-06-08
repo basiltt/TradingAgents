@@ -10,7 +10,6 @@ entry, stop-loss, take-profit, sizing, order type, and execution strategy.
 
 from __future__ import annotations
 
-import functools
 import logging
 
 from langchain_core.messages import AIMessage
@@ -29,7 +28,9 @@ from tradingagents.agents.utils.state_filter import (
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
+    ainvoke_structured_or_freetext,
 )
+from tradingagents.agents.utils.dual_node import dual_node
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,14 @@ def create_trader(llm):
     direction_llm = bind_structured(llm, TraderDirection, "Trader-Direction")
     levels_llm = bind_structured(llm, TraderProposal, "Trader-Levels")
 
-    def trader_node(state, name):
+    _DIRECTION_RENDER = lambda d: (
+        f"**Action**: {d.action.value}\n"
+        f"**Confidence**: {d.confidence}/10\n"
+        f"**Reasoning**: {d.reasoning}"
+    )
+
+    def _prep_direction(state):
+        """Shared Pass-1 setup: returns (filtered, instrument_context, company, direction_messages)."""
         filtered = filter_state_for_read(state, "trader")
         company_name = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
@@ -130,7 +138,6 @@ def create_trader(llm):
         investment_plan = wrap_external_data(filtered.get("investment_plan", ""), "research_manager")
         technical_levels = wrap_external_data(filtered.get("technical_levels_summary", "Not available"), "technical_analyst")
 
-        # ---- Pass 1: Directional Decision ----
         direction_messages = [
             {"role": "system", "content": _DIRECTION_SYSTEM},
             {
@@ -143,43 +150,27 @@ def create_trader(llm):
                 ),
             },
         ]
+        return filtered, instrument_context, company_name, direction_messages
 
-        direction_text, direction_obj = invoke_structured_or_freetext(
-            direction_llm,
-            llm,
-            direction_messages,
-            lambda d: (
-                f"**Action**: {d.action.value}\n"
-                f"**Confidence**: {d.confidence}/10\n"
-                f"**Reasoning**: {d.reasoning}"
-            ),
-            "Trader-Direction",
-            schema=TraderDirection,
-        )
-
+    def _resolve_direction(company_name, direction_text, direction_obj):
+        """Shared: turn the Pass-1 structured result into (action, confidence, reasoning)."""
         if direction_obj is not None:
-            action = direction_obj.action.value
-            confidence = direction_obj.confidence
-            reasoning = direction_obj.reasoning
-        else:
-            action = "Hold"
-            confidence = 1
-            reasoning = direction_text
-            logger.warning(
-                "Trader-Direction: structured output failed for %s; "
-                "defaulting to Hold with confidence 1. Freetext: %s",
-                company_name, direction_text[:200],
-            )
+            return direction_obj.action.value, direction_obj.confidence, direction_obj.reasoning
+        logger.warning(
+            "Trader-Direction: structured output failed for %s; "
+            "defaulting to Hold with confidence 1. Freetext: %s",
+            company_name, direction_text[:200],
+        )
+        return "Hold", 1, direction_text
 
-        # ---- Pass 2: Level Calculation ----
+    def _prep_levels(filtered, instrument_context, company_name, action, confidence, reasoning):
+        """Shared Pass-2 setup: returns levels_messages."""
         price_data_section = _build_price_data_section(filtered)
-
         market_session = filtered.get("market_session", "")
         market_session_section = ""
         if market_session and market_session.strip():
             market_session_section = "## Market Session\n" + market_session + "\n\n"
-
-        levels_messages = [
+        return [
             {"role": "system", "content": _LEVELS_SYSTEM},
             {
                 "role": "user",
@@ -195,15 +186,8 @@ def create_trader(llm):
             },
         ]
 
-        levels_text, proposal_obj = invoke_structured_or_freetext(
-            levels_llm,
-            llm,
-            levels_messages,
-            render_trader_proposal,
-            "Trader-Levels",
-            schema=TraderProposal,
-        )
-
+    def _finalize(filtered, company_name, action, confidence, reasoning, levels_text, proposal_obj, name):
+        """Shared: override/fallback + no-live-prices note + state write (Pass-2 post-processing)."""
         from tradingagents.agents.schemas import TraderAction
 
         if proposal_obj is None:
@@ -243,4 +227,28 @@ def create_trader(llm):
         }
         return validate_state_write(updates, "trader")
 
-    return functools.partial(trader_node, name="Trader")
+    def trader_node(state, name="Trader"):
+        filtered, instrument_context, company_name, direction_messages = _prep_direction(state)
+        direction_text, direction_obj = invoke_structured_or_freetext(
+            direction_llm, llm, direction_messages, _DIRECTION_RENDER, "Trader-Direction", schema=TraderDirection,
+        )
+        action, confidence, reasoning = _resolve_direction(company_name, direction_text, direction_obj)
+        levels_messages = _prep_levels(filtered, instrument_context, company_name, action, confidence, reasoning)
+        levels_text, proposal_obj = invoke_structured_or_freetext(
+            levels_llm, llm, levels_messages, render_trader_proposal, "Trader-Levels", schema=TraderProposal,
+        )
+        return _finalize(filtered, company_name, action, confidence, reasoning, levels_text, proposal_obj, name)
+
+    async def atrader_node(state, name="Trader"):
+        filtered, instrument_context, company_name, direction_messages = _prep_direction(state)
+        direction_text, direction_obj = await ainvoke_structured_or_freetext(
+            direction_llm, llm, direction_messages, _DIRECTION_RENDER, "Trader-Direction", schema=TraderDirection,
+        )
+        action, confidence, reasoning = _resolve_direction(company_name, direction_text, direction_obj)
+        levels_messages = _prep_levels(filtered, instrument_context, company_name, action, confidence, reasoning)
+        levels_text, proposal_obj = await ainvoke_structured_or_freetext(
+            levels_llm, llm, levels_messages, render_trader_proposal, "Trader-Levels", schema=TraderProposal,
+        )
+        return _finalize(filtered, company_name, action, confidence, reasoning, levels_text, proposal_obj, name)
+
+    return dual_node(trader_node, atrader_node)

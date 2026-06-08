@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from tradingagents.agents.schemas import ResearchPlan, render_research_plan
 from tradingagents.agents.utils.agent_utils import build_instrument_context
+from tradingagents.agents.utils.dual_node import dual_node
 from tradingagents.agents.utils.prompt_guard import wrap_external_data
 from tradingagents.agents.utils.state_filter import (
     filter_state_for_read,
     validate_state_write,
 )
 from tradingagents.agents.utils.structured import (
+    ainvoke_structured_or_freetext,
     bind_structured,
     invoke_structured_or_freetext,
 )
@@ -18,7 +20,7 @@ from tradingagents.agents.utils.structured import (
 def create_research_manager(llm):
     structured_llm = bind_structured(llm, ResearchPlan, "Research Manager")
 
-    def research_manager_node(state) -> dict:
+    def _prepare(state):
         filtered = filter_state_for_read(state, "research_manager")
         company = filtered.get("company_of_interest", "")
         crypto_interval = filtered.get("crypto_interval")
@@ -57,15 +59,9 @@ Commit to a clear stance based on the weight of evidence. Hold is a fully valid 
 **Debate History:**
 {history}"""
 
-        investment_plan, _ = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_research_plan,
-            "Research Manager",
-            schema=ResearchPlan,
-        )
+        return investment_debate_state, prompt
 
+    def _apply(investment_debate_state, investment_plan) -> dict:
         new_investment_debate_state = {
             "judge_decision": investment_plan,
             "history": investment_debate_state.get("history", ""),
@@ -80,4 +76,28 @@ Commit to a clear stance based on the weight of evidence. Hold is a fully valid 
             "investment_plan": investment_plan,
         }, "research_manager")
 
-    return research_manager_node
+    def research_manager_node(state) -> dict:
+        investment_debate_state, prompt = _prepare(state)
+        investment_plan, _ = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_research_plan,
+            "Research Manager",
+            schema=ResearchPlan,
+        )
+        return _apply(investment_debate_state, investment_plan)
+
+    async def aresearch_manager_node(state) -> dict:
+        investment_debate_state, prompt = _prepare(state)
+        investment_plan, _ = await ainvoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_research_plan,
+            "Research Manager",
+            schema=ResearchPlan,
+        )
+        return _apply(investment_debate_state, investment_plan)
+
+    return dual_node(research_manager_node, aresearch_manager_node)

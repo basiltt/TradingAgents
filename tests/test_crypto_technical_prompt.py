@@ -55,7 +55,7 @@ def _render_crypto_technical(date="2026-06-06", symbol="BTCUSDT",
          patch("tradingagents.agents.crypto_analysts.build_instrument_context",
                return_value=instrument):
         node = create_crypto_technical_analyst(mock_llm, _crypto_tools())
-        node(_state(date=date, symbol=symbol, price=price))
+        node.invoke(_state(date=date, symbol=symbol, price=price))
     return captured["messages"]
 
 

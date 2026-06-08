@@ -12,6 +12,7 @@ instead of 2-3.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import os
@@ -19,7 +20,25 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from typing import Any, Callable, Dict, List
 
+from tradingagents.agents.utils.dual_node import dual_node
+
 logger = logging.getLogger(__name__)
+
+
+def _invoke_node(fn: Callable, state: Dict[str, Any]) -> Any:
+    """Invoke a debater node SYNCHRONOUSLY, whether it's a plain callable or a
+    LangChain Runnable (dual_node nodes are RunnableLambda — NOT directly callable)."""
+    if hasattr(fn, "invoke"):
+        return fn.invoke(state)
+    return fn(state)
+
+
+async def _ainvoke_node(fn: Callable, state: Dict[str, Any]) -> Any:
+    """Invoke a debater node ASYNCHRONOUSLY. Uses the Runnable's native ainvoke when
+    available (the non-blocking path); falls back to a thread for a plain sync callable."""
+    if hasattr(fn, "ainvoke"):
+        return await fn.ainvoke(state)
+    return await asyncio.to_thread(fn, state)
 
 _MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_ANALYSES", "6"))
 _WORKERS_PER_ANALYSIS = int(os.environ.get("DEBATE_WORKERS_PER_ANALYSIS", "3"))
@@ -148,7 +167,7 @@ def _run_with_retry(
     cancel_event between stream chunks), not inside individual nodes.
     """
     executor = _get_debate_executor()
-    futures = [executor.submit(fn, copy.deepcopy(state)) for fn in callables]
+    futures = [executor.submit(_invoke_node, fn, copy.deepcopy(state)) for fn in callables]
     done, not_done = futures_wait(futures, timeout=_DEBATE_TIMEOUT)
 
     if not_done:
@@ -163,7 +182,7 @@ def _run_with_retry(
             label, len(not_done), len(callables), _DEBATE_TIMEOUT,
         )
         for i in timed_out_indices:
-            futures[i] = executor.submit(callables[i], copy.deepcopy(state))
+            futures[i] = executor.submit(_invoke_node, callables[i], copy.deepcopy(state))
         retry_futures = [futures[i] for i in timed_out_indices]
         _, retry_not_done = futures_wait(retry_futures, timeout=_DEBATE_TIMEOUT)
         if retry_not_done:
@@ -184,6 +203,61 @@ def _run_with_retry(
     return results
 
 
+async def _arun_with_retry(
+    callables: List[Callable],
+    state: Dict[str, Any],
+    label: str,
+) -> List[Any]:
+    """Async mirror of _run_with_retry. Runs the debaters CONCURRENTLY via asyncio tasks
+    and assembles results in ARGUMENT ORDER (so the downstream merge sees the same ordering
+    as the sync path). Mirrors the sync retry EXACTLY: on timeout, only the TIMED-OUT
+    positions are retried (successful results are kept), and the orphaned timed-out tasks
+    are cancelled before the retry so they neither make wasted paid LLM calls nor hold
+    concurrency slots. Same per-call deepcopy. Quality is identical; only wall-clock improves."""
+
+    async def _one(fn):
+        return await _ainvoke_node(fn, copy.deepcopy(state))
+
+    # Round 1: launch all, wait up to the timeout, keep what finished.
+    tasks = [asyncio.ensure_future(_one(fn)) for fn in callables]
+    done, pending = await asyncio.wait(tasks, timeout=_DEBATE_TIMEOUT)
+
+    if pending:
+        # Cancel the orphans (mirrors the sync path discarding timed-out futures) so they
+        # stop mid-call instead of finishing in the background and wasting an LLM call.
+        timed_out_indices = [i for i, t in enumerate(tasks) if t in pending]
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)  # let cancellation settle
+
+        logger.warning(
+            "%s: %d/%d debaters timed out after %ds, retrying once",
+            label, len(pending), len(callables), _DEBATE_TIMEOUT,
+        )
+        # Retry ONLY the timed-out positions, in place.
+        retry_tasks = {i: asyncio.ensure_future(_one(callables[i])) for i in timed_out_indices}
+        r_done, r_pending = await asyncio.wait(list(retry_tasks.values()), timeout=_DEBATE_TIMEOUT)
+        if r_pending:
+            for t in r_pending:
+                t.cancel()
+            await asyncio.gather(*r_pending, return_exceptions=True)
+            raise RuntimeError(
+                f"{label}: {len(r_pending)}/{len(callables)} debaters timed out after retry"
+            )
+        for i, t in retry_tasks.items():
+            tasks[i] = t
+
+    # Assemble in argument order; surface any task exception like the sync path.
+    results = []
+    for i, t in enumerate(tasks):
+        try:
+            results.append(t.result())
+        except Exception:
+            logger.exception("%s: debater %d failed", label, i)
+            raise
+    return results
+
+
 def create_parallel_risk_round1(
     debater_nodes: List[Callable],
 ) -> Callable:
@@ -197,7 +271,12 @@ def create_parallel_risk_round1(
         merged = _merge_risk_debate_states(state, results)
         return {"risk_debate_state": merged}
 
-    return node
+    async def anode(state: Dict[str, Any]) -> Dict[str, Any]:
+        results = await _arun_with_retry(debater_nodes, state, "Risk debate R1")
+        merged = _merge_risk_debate_states(state, results)
+        return {"risk_debate_state": merged}
+
+    return dual_node(node, anode)
 
 
 def create_parallel_researcher_round1(
@@ -212,4 +291,11 @@ def create_parallel_researcher_round1(
         merged = _merge_invest_debate_states(state, results)
         return {"investment_debate_state": merged}
 
-    return node
+    async def anode(state: Dict[str, Any]) -> Dict[str, Any]:
+        results = await _arun_with_retry(
+            [bull_researcher, bear_researcher], state, "Researcher debate R1"
+        )
+        merged = _merge_invest_debate_states(state, results)
+        return {"investment_debate_state": merged}
+
+    return dual_node(node, anode)
