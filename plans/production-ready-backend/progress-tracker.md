@@ -120,10 +120,28 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 
 ## State
 - current_round: 0
-- current_phase: 0
+- current_phase: 2
 - clean_streak: 0
 - total_findings: 0
 - findings_by_severity: {critical: 0, high: 0, medium: 0, low: 0, info: 0}
+
+## Phase 2 progress (Clean Code) — IN_PROGRESS
+Completed (R1, all verified ruff0/mypy0/tests-pass/0-regressions):
+- close_rule_evaluator: 7 inline trigger-type tuples → 5 documented frozensets (drift-proof)
+- ai_manager_task: _extract_upnl() helper, applied to 3 identical sites
+- accounts_service: _assemble_analytics_result() (kills ~150 dup lines across 3 methods)
+- accounts_service: _validate_pnl_range() shared by 2 PnL methods
+- NEW portfolio_stats.py: 6 pure stats fns moved out of AccountsService god-class (SRP)
+- routers/_validators: clamp_limit() applied at 5 pagination sites
+
+Remaining Phase 2 findings (from R1 review — for continuation):
+- DECIDED-skip: 5 auto_trade close-rule blocks (differ in 8 observable ways — riskier than dup).
+- ai_manager_task decision_data dict literal 3× → _build_decision_data() — MEDIUM, pending
+- auto_trade PAUSE_TRADING check 2× + force-close-profit 2× → helpers — MEDIUM, pending
+- scanner auto_trade_results.extend 3× → helper — MEDIUM, pending
+- GOD-METHODS (decompose carefully w/ tests): _execute_action(287), init_balances(308), post_scan_recheck(333), main.lifespan(440), _run_scan(227) — MEDIUM
+- routers Bybit-error handler 8× → helper — MEDIUM, pending
+- trading_cycle_engine: scan-age + fetch-validate dup (start_cycle/dry_run) — pending
 
 ## Decided Log (Debate Resolution Protocol)
 _(entries added as findings are resolved; check before applying any contradicting fix)_
