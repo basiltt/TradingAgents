@@ -18,6 +18,23 @@ MAX_RULE_FAILURES = 3
 _STARTUP_DELAY_S = 15
 _STUCK_RULE_RECOVERY_AGE_S = 90
 
+# AI-CONTEXT: Single source of truth for close-rule trigger-type groupings. These
+# were previously re-spelled as inline string tuples at ~7 sites; a typo or a new
+# trigger type added to one list but not another would silently mis-route rules.
+# Centralizing them here removes that drift risk. Semantics:
+#   _DRAWDOWN_TRIGGERS      — equity-drop rules; evaluated with ZERO debounce (urgent).
+#   _TIME_TRIGGERS          — duration/timeout rules; checked against elapsed wall time.
+#   _ZERO_EQUITY_TRIGGERS   — rules that fire immediately when equity hits/passes 0.
+#   _NON_EQUITY_TRIGGERS    — rules excluded from the equity-debounce evaluation path.
+_DRAWDOWN_TRIGGERS = frozenset({"EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"})
+_TIME_TRIGGERS = frozenset({"BREAKEVEN_TIMEOUT", "MAX_DURATION"})
+_ZERO_EQUITY_TRIGGERS = frozenset({"BALANCE_BELOW", "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"})
+# Trigger types that are NOT part of the equity-threshold debounce sweep.
+_NON_EQUITY_TRIGGERS = frozenset({"BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING_PROFIT", "PAUSE_TRADING"})
+# Poll-fallback path: TRAILING_PROFIT is handled by its own evaluator and
+# PAUSE_TRADING is not a closable rule, so both are excluded from the generic sweep.
+_POLL_EXCLUDED_TRIGGERS = frozenset({"TRAILING_PROFIT", "PAUSE_TRADING"})
+
 
 class CloseRuleEvaluator:
     """Evaluates active close rules against live prices and triggers closures.
@@ -193,13 +210,13 @@ class CloseRuleEvaluator:
         if not rules:
             return
 
-        equity_rules = [r for r in rules if r["trigger_type"] not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING_PROFIT", "PAUSE_TRADING")]
+        equity_rules = [r for r in rules if r["trigger_type"] not in _NON_EQUITY_TRIGGERS]
         if not equity_rules:
             return
 
         # Split: drawdown rules get zero debounce, others wait for debounce interval
-        drawdown_rules = [r for r in equity_rules if r["trigger_type"] in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART")]
-        other_rules = [r for r in equity_rules if r["trigger_type"] not in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART")]
+        drawdown_rules = [r for r in equity_rules if r["trigger_type"] in _DRAWDOWN_TRIGGERS]
+        other_rules = [r for r in equity_rules if r["trigger_type"] not in _DRAWDOWN_TRIGGERS]
 
         # Evaluate drawdown rules immediately (no debounce, skip if lock held)
         if drawdown_rules:
@@ -217,7 +234,7 @@ class CloseRuleEvaluator:
 
     async def _evaluate_account_rules(self, account_id: str, rules: list[dict]) -> None:
         trailing_rules = [r for r in rules if r["trigger_type"] == "TRAILING_PROFIT"]
-        other_rules = [r for r in rules if r["trigger_type"] not in ("TRAILING_PROFIT", "PAUSE_TRADING")]
+        other_rules = [r for r in rules if r["trigger_type"] not in _POLL_EXCLUDED_TRIGGERS]
 
         if trailing_rules:
             await self._evaluate_trailing_profit(account_id, trailing_rules)
@@ -372,7 +389,7 @@ class CloseRuleEvaluator:
         trigger_type = rule["trigger_type"]
 
         # Time-based rules: check elapsed time, don't parse reference as Decimal
-        if trigger_type in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
+        if trigger_type in _TIME_TRIGGERS:
             return self._check_time_elapsed(rule)
 
         # TRAILING_PROFIT handled separately in _evaluate_trailing_profit
@@ -385,7 +402,7 @@ class CloseRuleEvaluator:
         # Backstop: an equity-based rule must never fire on a non-positive equity
         # reading (a bad/partial wallet frame). Callers already skip equity<=0,
         # but guard here too so no equity rule can mass-close on a zero reading.
-        if trigger_type in ("BALANCE_BELOW", "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART") and equity <= 0:
+        if trigger_type in _ZERO_EQUITY_TRIGGERS and equity <= 0:
             return False
 
         if trigger_type == "BALANCE_BELOW":
@@ -396,7 +413,7 @@ class CloseRuleEvaluator:
             return pnl <= -threshold
         elif trigger_type == "PNL_ABOVE":
             return pnl >= threshold
-        elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"):
+        elif trigger_type in _DRAWDOWN_TRIGGERS:
             if not reference or reference == 0:
                 return False
             drop_pct = ((reference - equity) / reference) * Decimal("100")

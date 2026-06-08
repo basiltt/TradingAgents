@@ -45,6 +45,28 @@ _CHAIN_KEY_VERSION = 1
 _ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE", "ADJUST_TP_SL", "PAUSE_TRADING"})
 
 
+def _extract_upnl(pos: Dict[str, Any]) -> float:
+    """Read a position's unrealized PnL as a float, tolerant of both key spellings.
+
+    Bybit position frames may carry either ``unrealisedPnl`` (exchange spelling) or
+    ``unrealized_pnl`` (our normalized spelling); a missing/None/non-numeric value
+    coerces to ``0.0`` rather than raising. AI-CONTEXT: this is the safe, total
+    extraction used on non-bespoke paths — callers that need custom malformed-value
+    logging (e.g. the unrealized-loss tally) keep their own try/except.
+
+    Args:
+        pos: A position dict from the WS buffer or exchange.
+
+    Returns:
+        The unrealized PnL as a float, or 0.0 if absent/None/unparseable.
+    """
+    raw = pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0))
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class AIManagerTask:
     """FSM-driven decision loop for a single account's AI-managed positions.
 
@@ -930,7 +952,7 @@ class AIManagerTask:
 
         # Min profit-to-close ratio: don't close profitable positions too early
         if not _is_urgent and action_type in ("CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE"):
-            upnl = float(position.get("unrealisedPnl", position.get("unrealized_pnl", 0)) or 0)
+            upnl = _extract_upnl(position)
             if upnl > 0 and self._config.min_profit_to_close_ratio > 0:
                 tp_price = position.get("takeProfit")
                 entry_price_s = position.get("avgPrice")
@@ -1497,10 +1519,7 @@ class AIManagerTask:
                 symbol = pos.get("symbol", "")
                 if not symbol or symbol in excluded or symbol in locked:
                     continue
-                try:
-                    upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)))
-                except (ValueError, TypeError):
-                    upnl = 0.0
+                upnl = _extract_upnl(pos)
                 if upnl < 0:
                     close_symbols.append(symbol)
         else:
@@ -1553,10 +1572,7 @@ class AIManagerTask:
         estimated_upnl = 0.0
         for p in pre_close_positions:
             if p.get("symbol") in symbol_set:
-                try:
-                    estimated_upnl += float(p.get("unrealisedPnl", p.get("unrealized_pnl", 0)) or 0)
-                except (ValueError, TypeError):
-                    pass
+                estimated_upnl += _extract_upnl(p)
 
         try:
             close_result = await asyncio.wait_for(
