@@ -1642,7 +1642,9 @@ export const mcpApi = {
     request<MCPConfig>("/api/v1/mcp/config", undefined, signal),
 
   patchConfig: (
-    patch: Partial<Pick<MCPConfig, "enabled" | "capability_tier" | "enabled_groups" | "enabled_tools">>,
+    patch: Partial<
+      Pick<MCPConfig, "enabled" | "capability_tier" | "enabled_groups" | "enabled_tools">
+    > & { allow_debug?: boolean },
     expectedRowVersion: number,
     signal?: AbortSignal,
   ) =>

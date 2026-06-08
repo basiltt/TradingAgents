@@ -75,6 +75,11 @@ class ConfigPatch(BaseModel):
     capability_tier: Optional[str] = None
     enabled_groups: Optional[list[str]] = None
     enabled_tools: Optional[dict[str, bool]] = None
+    # The ONLY safe-mode flag the operator UI may flip from this endpoint. It
+    # gates whether DEBUG forensic tools are advertised and has NO money effect
+    # (preflight ignores it). Deliberately NOT a raw `safe_mode_flags` blob — the
+    # money flags (read_only / allow_real_trades) must never be writable here.
+    allow_debug: Optional[bool] = None
     expected_row_version: int
 
 
@@ -215,7 +220,16 @@ def _mcp_rpc_endpoint(request: Request, bind_host: Optional[str]) -> str:
 @router.patch("/mcp/config")
 async def patch_config(request: Request, body: ConfigPatch) -> dict[str, Any]:
     mgr = _manager(request)
-    patch = body.model_dump(exclude_none=True, exclude={"expected_row_version"})
+    patch = body.model_dump(
+        exclude_none=True, exclude={"expected_row_version", "allow_debug"}
+    )
+    # allow_debug is exposed as a flat field but persisted inside safe_mode_flags.
+    # config_repo.update REPLACES the safe_mode_flags column, so MERGE onto the
+    # live flags — flipping the debug gate must never clobber read_only /
+    # allow_real_trades (the money-path opt-ins).
+    if body.allow_debug is not None:
+        cfg = await mgr.config_repo.get()
+        patch["safe_mode_flags"] = {**cfg.safe_mode_flags, "allow_debug": body.allow_debug}
     from backend.mcp.core.errors import MCPConflictError
 
     try:
@@ -355,6 +369,45 @@ def _service_available(request: Request, group) -> bool:
     return True
 
 
+def _active_presets(cfg, specs) -> list[str]:
+    """Every preset whose exact tool selection matches the persisted override map,
+    in registry (PRESETS) order. Empty for a custom/hand-tuned selection.
+
+    apply_preset writes a COMPLETE enabled_tools map (every tool name -> bool) and
+    clears enabled_groups, so a clean preset application is detectable by comparing
+    the set of explicitly-enabled tool names against each preset's selected set.
+
+    Why a LIST, not a single name: several presets can resolve to the SAME tool set
+    for the current catalog (full == standard == backtest_only while no
+    ADVANCED/non-exchange-mutating tools exist to differentiate the predicates). The
+    persisted state genuinely cannot say which one the operator clicked — so we
+    report ALL matches and let the UI highlight every coincident preset. This is
+    truthful and STABLE: it never flips between equivalent presets across reloads or
+    unrelated toggles (the bug a single "broadest wins" guess would cause). As the
+    catalog grows and the predicates diverge, the match list collapses to one.
+
+    The match is over persisted INTENT, deliberately independent of runtime
+    gating/availability — so "full" still matches even when its DEBUG tools are
+    hidden by the allow_debug gate or a backing service is absent. That is exactly
+    what lets the UI highlight the applied preset AND explain the tools that stay
+    dark.
+    """
+    from backend.mcp.core.registry import PRESETS
+
+    # A group-level enable contributes tools not represented in the override map,
+    # so the set comparison below would be unreliable — not a clean preset apply.
+    if cfg.enabled_groups:
+        return []
+    on = {name for name, enabled in cfg.enabled_tools.items() if enabled}
+    if not on:
+        return []  # the empty selection is not a named preset
+    return [
+        name
+        for name, pred in PRESETS.items()
+        if on == {s.name for s in specs if pred(s)}
+    ]
+
+
 @router.get("/mcp/registry")
 async def registry(request: Request) -> dict[str, Any]:
     """Full tool catalog annotated with token cost + enabled/available state.
@@ -431,10 +484,22 @@ async def registry(request: Request) -> dict[str, Any]:
         for name, pred in PRESETS.items()
     }
 
+    active = _active_presets(cfg, iter_specs())
     return {
         "tools": tools,
         "groups": groups,
         "presets": preset_map,
+        # EVERY preset whose exact selection matches the current config. Usually one;
+        # may be several when presets coincide for the current catalog (full ==
+        # standard == backtest_only). The UI highlights all of them — truthful and
+        # stable (no flip-flopping between equivalent presets across reloads).
+        "active_presets": active,
+        # Back-compat scalar: the first matching preset (registry order) or null.
+        # Prefer active_presets; this exists so any older consumer keeps working.
+        "active_preset": active[0] if active else None,
+        # The debug-forensics gate (safe_mode_flags.allow_debug). DEBUG tools are
+        # only advertised when true; the UI surfaces a toggle + explains the gate.
+        "allow_debug": debug_allowed,
         "total_est_tokens": total,
         "selected_est_tokens": selected,
         "capability_tier": cfg.capability_tier,
@@ -487,6 +552,11 @@ async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
         )
     except MCPConflictError as exc:
         raise HTTPException(409, detail=str(exc))
+    # Return the fresh registry. We deliberately do NOT special-case body.preset
+    # here: when several presets share this exact tool set, active_presets reports
+    # ALL of them and the UI highlights each — identical to what a later cold GET
+    # returns. Consistency between apply and reload is what prevents the highlight
+    # from "jumping" to a different equivalent preset on the next fetch.
     return await registry(request)
 
 

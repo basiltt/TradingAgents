@@ -80,19 +80,28 @@ export function MCPPage({ onOpenProposal }: { onOpenProposal?: (id: string) => v
 
   function handleToggleTool(toolName: string, next: boolean) {
     if (!config) return;
-    // Build the new override map from the REGISTRY's current enabled state (the
-    // source of truth that already reflects a just-applied preset), NOT from a
-    // possibly-stale config.enabled_tools. Seeding from stale config could erase
-    // a preset's per-tool overrides if a toggle lands in the post-preset refetch
-    // window (the registry/config are separate queries).
+    // Seed the override map from the registry's effective enabled state (it
+    // enumerates EVERY tool and captures group-driven enables), then overlay the
+    // persisted per-tool intent (config.enabled_tools). The overlay matters for
+    // tools that are intended-on but held dark by a gate — e.g. Full's debug
+    // tools while allow_debug is off show registry.enabled=false, yet config
+    // records them true. Without the overlay, flipping any OTHER tool would
+    // rewrite the whole map from the gated view and silently drop that intent, so
+    // later enabling Forensics wouldn't bring them back.
     const base: Record<string, boolean> = {};
     if (registry) {
       for (const t of registry.tools) base[t.name] = t.enabled;
-    } else {
-      Object.assign(base, config.enabled_tools);
     }
-    const enabled_tools = { ...base, [toolName]: next };
+    const enabled_tools = { ...base, ...config.enabled_tools, [toolName]: next };
     patch.mutate({ patch: { enabled_tools }, rowVersion: config.row_version });
+  }
+
+  // Flip the allow_debug gate (safe_mode_flags.allow_debug). Server-side this is
+  // merged onto the existing flags and has no money effect — it only controls
+  // whether the DEBUG forensic tools are advertised to the model.
+  function handleToggleDebug(next: boolean) {
+    if (!config) return;
+    patch.mutate({ patch: { allow_debug: next }, rowVersion: config.row_version });
   }
 
   async function runProposalAction(id: string, fn: () => Promise<unknown>, okMsg: string) {
@@ -161,6 +170,7 @@ export function MCPPage({ onOpenProposal }: { onOpenProposal?: (id: string) => v
                   busy={patch.isPending || applyPreset.isPending}
                   onToggleTool={handleToggleTool}
                   onApplyPreset={(preset) => applyPreset.mutate({ preset, rowVersion: config.row_version })}
+                  onToggleDebug={handleToggleDebug}
                 />
               ) : registryQ.isError ? (
                 <ErrorState message={mcpErrorMessage(registryQ.error)} onRetry={() => registryQ.refetch()} />

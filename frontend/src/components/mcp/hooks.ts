@@ -112,7 +112,9 @@ export function usePatchMCPConfig() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: {
-      patch: Partial<Pick<MCPConfig, "enabled" | "capability_tier" | "enabled_groups" | "enabled_tools">>;
+      patch: Partial<Pick<MCPConfig, "enabled" | "capability_tier" | "enabled_groups" | "enabled_tools">> & {
+        allow_debug?: boolean;
+      };
       rowVersion: number;
     }) => mcpApi.patchConfig(vars.patch, vars.rowVersion),
     // Seed the returned config (with the bumped row_version) synchronously so a
@@ -140,8 +142,30 @@ export function useApplyPreset() {
       // synchronously so a follow-up tool toggle uses the fresh version and
       // does NOT self-inflict a 409 before the config refetch lands.
       qc.setQueryData(KEYS.registry, registry);
+      // Also seed config.enabled_tools with the EXACT intent the server just
+      // wrote — reconstructed losslessly from the preset's selected set
+      // ({tool: preset-includes-tool}, mirroring apply_preset's override map).
+      // This keeps config the single, lossless source of per-tool intent so a
+      // follow-up toggle (which seeds from config) can't clobber a gated-off
+      // tool's persisted "on" state (e.g. Full's debug tools while the
+      // allow_debug gate is closed). Without this, config.enabled_tools stays
+      // stale through the refetch window and the toggle would drop that intent.
+      // Any active preset's selected set works as the source of truth: when
+      // several coincide they share the identical set, so the first is exact.
+      const active = registry.active_presets?.[0] ?? registry.active_preset ?? null;
+      const intended = new Set(active ? registry.presets[active] ?? [] : []);
+      const enabledTools = active
+        ? Object.fromEntries(registry.tools.map((t) => [t.name, intended.has(t.name)]))
+        : undefined;
       qc.setQueryData(KEYS.config, (old: MCPConfig | undefined) =>
-        old ? { ...old, row_version: registry.row_version, capability_tier: registry.capability_tier } : old,
+        old
+          ? {
+              ...old,
+              row_version: registry.row_version,
+              capability_tier: registry.capability_tier,
+              ...(enabledTools ? { enabled_tools: enabledTools } : {}),
+            }
+          : old,
       );
       qc.invalidateQueries({ queryKey: KEYS.config });
       toast.success("Preset applied");

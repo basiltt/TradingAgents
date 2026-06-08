@@ -78,6 +78,16 @@ export interface MCPRegistry {
   groups: Record<string, MCPGroupRollup>;
   /** preset name → the tool names it selects. */
   presets: Record<string, string[]>;
+  /** Every preset whose exact selection matches the current config, in registry
+   *  order. Usually one; may be several when presets coincide for the current
+   *  catalog (full == standard == backtest_only). The UI highlights all of them.
+   *  Empty for a custom/hand-tuned selection. */
+  active_presets?: string[];
+  /** Back-compat scalar: the first active preset, or null. Prefer active_presets. */
+  active_preset?: string | null;
+  /** The debug-forensics gate (safe_mode_flags.allow_debug). DEBUG-group tools
+   *  are only advertised to the model when this is true. */
+  allow_debug?: boolean;
   total_est_tokens: number;
   selected_est_tokens: number;
   capability_tier: CapabilityTier;
