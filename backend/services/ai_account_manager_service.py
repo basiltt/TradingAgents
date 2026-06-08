@@ -152,7 +152,7 @@ class AIAccountManagerService:
             self._ws_manager.deregister_wallet_listener(self._on_ws_event)
 
         # Cancel all per-account tasks
-        for account_id, task in list(self._tasks.items()):
+        for _account_id, task in list(self._tasks.items()):
             task.cancel()
 
         # Wait with timeout

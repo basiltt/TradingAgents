@@ -246,7 +246,7 @@ class ScanSchedulerService:
                 pass
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        for schedule_id, exec_id in list(self._in_flight.items()):
+        for _schedule_id, exec_id in list(self._in_flight.items()):
             if not _is_sentinel(exec_id):
                 try:
                     await self._db.update_schedule_execution(

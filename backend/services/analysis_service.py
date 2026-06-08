@@ -173,7 +173,7 @@ class AnalysisService:
     async def shutdown(self) -> None:
         self._shutting_down = True
         async with self._lock:
-            for rid, run in list(self._active_runs.items()):
+            for _rid, run in list(self._active_runs.items()):
                 if run.get("cancel_event"):
                     run["cancel_event"].set()
 
@@ -188,7 +188,7 @@ class AnalysisService:
 
         tasks_to_await = []
         async with self._lock:
-            for rid, run in list(self._active_runs.items()):
+            for _rid, run in list(self._active_runs.items()):
                 task = run.get("task")
                 if task and not task.done():
                     task.cancel()

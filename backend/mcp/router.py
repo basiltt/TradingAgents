@@ -348,7 +348,7 @@ async def health(request: Request) -> dict[str, Any]:
 async def list_tools(request: Request) -> dict[str, Any]:
     """Minimal P0 stub: enabled tool names. Enriched (full registry + est_tokens
     + presets) in P2 via /mcp/registry."""
-    mgr = _manager(request)
+    _manager(request)
     server = getattr(request.app.state, "mcp_server", None)
     if server is None:
         return {"tools": []}

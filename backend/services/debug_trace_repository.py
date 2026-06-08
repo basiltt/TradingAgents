@@ -97,11 +97,17 @@ class DebugTraceRepository:
     ) -> dict[str, Any]:
         sets, args, i = [], [], 1
         if tracing_enabled is not None:
-            sets.append(f"tracing_enabled=${i}"); args.append(tracing_enabled); i += 1
+            sets.append(f"tracing_enabled=${i}")
+            args.append(tracing_enabled)
+            i += 1
         if retention_days is not None:
-            sets.append(f"retention_days=${i}"); args.append(retention_days); i += 1
+            sets.append(f"retention_days=${i}")
+            args.append(retention_days)
+            i += 1
         if symbol_decision_cap is not None:
-            sets.append(f"symbol_decision_cap=${i}"); args.append(symbol_decision_cap); i += 1
+            sets.append(f"symbol_decision_cap=${i}")
+            args.append(symbol_decision_cap)
+            i += 1
         if sets:
             sets.append("updated_at=now()")
             async with self._pool.acquire() as conn:
@@ -381,8 +387,10 @@ class DebugTraceRepository:
             total = await conn.fetchval(
                 f"SELECT count(DISTINCT r.id) FROM debug_runs r {join} {clause}", *args
             )
-            args.append(limit); limit_ph = len(args)
-            args.append(offset); offset_ph = len(args)
+            args.append(limit)
+            limit_ph = len(args)
+            args.append(offset)
+            offset_ph = len(args)
             rows = await conn.fetch(
                 f"SELECT DISTINCT r.* FROM debug_runs r {join} {clause} "
                 f"ORDER BY r.created_at DESC LIMIT ${limit_ph} OFFSET ${offset_ph}",
@@ -396,10 +404,13 @@ class DebugTraceRepository:
         args: list = [account_id]
         where = ["a.account_id=$1"]
         if from_ts:
-            args.append(from_ts); where.append(f"r.created_at >= ${len(args)}::timestamptz")
+            args.append(from_ts)
+            where.append(f"r.created_at >= ${len(args)}::timestamptz")
         if to_ts:
-            args.append(to_ts); where.append(f"r.created_at <= ${len(args)}::timestamptz")
-        args.append(limit); limit_ph = len(args)
+            args.append(to_ts)
+            where.append(f"r.created_at <= ${len(args)}::timestamptz")
+        args.append(limit)
+        limit_ph = len(args)
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""

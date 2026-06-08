@@ -115,8 +115,8 @@ def compute_indicators(candles: list[dict]) -> dict:
     # --- True Range series ---
     tr_series: list[float] = []
     for i in range(1, len(candles)):
-        h, l, pc = highs[i], lows[i], closes[i - 1]
-        tr = max(h - l, abs(h - pc), abs(l - pc))
+        high, low, pc = highs[i], lows[i], closes[i - 1]
+        tr = max(high - low, abs(high - pc), abs(low - pc))
         tr_series.append(tr)
 
     # --- ATR(14) — simple moving average of last 14 TRs ---

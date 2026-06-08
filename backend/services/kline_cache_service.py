@@ -354,7 +354,7 @@ class KlineCacheService:
         current_end = end_ms
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for page in range(_MAX_PAGES):
+            for _page in range(_MAX_PAGES):
                 if current_end <= start_ms:
                     break
 

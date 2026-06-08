@@ -1018,7 +1018,7 @@ class BacktestService:
         for t in trades:
             if t.get("close_reason") in _PORTFOLIO_REASONS and isinstance(t.get("exit_time"), datetime):
                 portfolio_exits.append((_bar_open_epoch(t["exit_time"]), t["exit_time"]))
-        for fire_epoch, fire_time in portfolio_exits:
+        for fire_epoch, _fire_time in portfolio_exits:
             fire_epochs = {fire_epoch - bar_s, fire_epoch, fire_epoch + bar_s}
             for t in trades:
                 sym = t.get("symbol")

@@ -308,8 +308,8 @@ def build_context_prompt(
         parts.append(f"\nMulti-TF: alignment={mtf.get('trend_alignment')}, dominant={mtf.get('dominant_trend')}, strength={mtf.get('trend_strength')}")
         if mtf.get("key_levels"):
             levels_str = ", ".join(
-                f"{l.get('type', '?')}@{l.get('price', '?')}({l.get('timeframe', '?')})"
-                for l in mtf["key_levels"][:5] if isinstance(l, dict)
+                f"{lvl.get('type', '?')}@{lvl.get('price', '?')}({lvl.get('timeframe', '?')})"
+                for lvl in mtf["key_levels"][:5] if isinstance(lvl, dict)
             )
             if levels_str:
                 parts.append(f"Key levels: {levels_str}")
