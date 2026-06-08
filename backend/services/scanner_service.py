@@ -797,9 +797,12 @@ class ScannerService:
         results = scan["results"]
         sorted_results = sorted(results, key=lambda r: abs(r.get("score", 0)), reverse=True)
         counts: Dict[str, int] = {}
+        skipped_count = 0
         for r in results:
             d = r.get("direction", "unknown")
             counts[d] = counts.get(d, 0) + 1
+            if r.get("signal_source") == "ta_prefilter":
+                skipped_count += 1
         config = scan.get("config", {})
         return {
             "scan_id": scan["scan_id"],
@@ -812,6 +815,7 @@ class ScannerService:
             "current_tickers": scan["current_tickers"],
             "results": sorted_results,
             "direction_counts": counts,
+            "skipped_count": skipped_count,
             "started_at": scan["started_at"],
             "completed_at": scan["completed_at"],
             "interval": config.get("interval"),
@@ -845,6 +849,7 @@ class ScannerService:
             "current_tickers": [],
             "results": scan.get("results", []),
             "direction_counts": scan.get("direction_counts", {}),
+            "skipped_count": scan.get("skipped_count", 0),
             "started_at": scan.get("started_at", ""),
             "completed_at": scan.get("completed_at"),
             "interval": config.get("interval"),

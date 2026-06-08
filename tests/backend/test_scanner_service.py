@@ -1210,3 +1210,49 @@ async def test_scanner_passes_recorder_to_executor(monkeypatch):
     rec.open_run = AsyncMock()
     svc = ScannerService(analysis_service=MagicMock(), db=None, debug_recorder=rec)
     assert svc._debug_recorder is rec
+
+
+class TestSerializeSkippedCount:
+    def test_serialize_counts_ta_prefilter_results(self):
+        svc, _ = _make_scanner()
+        scan = {
+            "scan_id": "s1", "status": "completed", "total": 3, "completed": 3,
+            "failed": 0, "current_batch": 0, "total_batches": 0, "current_tickers": [],
+            "started_at": "2026-06-08T00:00:00Z", "completed_at": "2026-06-08T00:01:00Z",
+            "config": {},
+            "results": [
+                {"ticker": "BTC", "direction": "buy", "score": 5, "signal_source": "structured"},
+                {"ticker": "ETH", "direction": "hold", "score": 0, "signal_source": "ta_prefilter"},
+                {"ticker": "SOL", "direction": "hold", "score": 0, "signal_source": "ta_prefilter"},
+            ],
+        }
+        out = svc._serialize(scan)
+        assert out["skipped_count"] == 2
+
+    def test_serialize_skipped_count_zero(self):
+        svc, _ = _make_scanner()
+        scan = {
+            "scan_id": "s2", "status": "completed", "total": 1, "completed": 1,
+            "failed": 0, "current_batch": 0, "total_batches": 0, "current_tickers": [],
+            "started_at": "2026-06-08T00:00:00Z", "completed_at": None, "config": {},
+            "results": [{"ticker": "BTC", "direction": "buy", "score": 5, "signal_source": "structured"}],
+        }
+        assert svc._serialize(scan)["skipped_count"] == 0
+
+    def test_serialize_db_passes_through_skipped_count(self):
+        svc, _ = _make_scanner()
+        db_scan = {
+            "scan_id": "s3", "status": "completed", "total": 2, "completed": 2,
+            "failed": 0, "started_at": "2026-06-08T00:00:00Z", "completed_at": None,
+            "config": {}, "results": [], "direction_counts": {"hold": 2}, "skipped_count": 2,
+        }
+        assert svc._serialize_db(db_scan)["skipped_count"] == 2
+
+    def test_serialize_db_defaults_skipped_count_to_zero(self):
+        svc, _ = _make_scanner()
+        db_scan = {
+            "scan_id": "s4", "status": "completed", "total": 0, "completed": 0,
+            "failed": 0, "started_at": "2026-06-08T00:00:00Z", "completed_at": None,
+            "config": {}, "results": [], "direction_counts": {},
+        }
+        assert svc._serialize_db(db_scan)["skipped_count"] == 0
