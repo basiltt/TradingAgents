@@ -25,7 +25,7 @@ const FILTER_NEU_CLASSES = {
   success: "bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]",
   danger: "bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]",
   warning: "bg-[color-mix(in_oklch,var(--neu-warning)_10%,var(--neu-surface-base))] text-[var(--neu-warning)] border-[color-mix(in_oklch,var(--neu-warning)_20%,var(--neu-stroke-soft))]",
-  neutral: "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]",
+  neutral: "bg-[var(--neu-surface-muted)] text-[var(--neu-text-strong)] border-[color:var(--neu-stroke-soft)] shadow-[var(--neu-shadow-inset)]",
 } as const;
 
 function FilterChip({
