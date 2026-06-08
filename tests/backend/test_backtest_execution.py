@@ -321,7 +321,7 @@ class TestExecution:
                 pass
             daemon = True
 
-        def _engine_run(config, signals, klines, cancel_event, on_progress, instrument_info=None, scan_contexts=None):
+        def _engine_run(config, signals, klines, cancel_event, on_progress, instrument_info=None, scan_contexts=None, fine_klines=None):
             raise BacktestCancelled()  # cancel_event already set by the instant timer
 
         with patch.object(service, "_load_signals", new=AsyncMock(return_value=[])):

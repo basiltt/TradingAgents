@@ -23,7 +23,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -738,11 +738,35 @@ class BacktestService:
             instrument_info = await self._resolve_instrument_info(signals)
 
             engine = BacktestEngine()
+
+            # ── 1-minute DRILL-DOWN (two-phase) ──
+            # The engine computes each trade's entry/exit + tp/sl internally, so the
+            # ambiguous 1m windows can only be known AFTER a run. The engine is pure
+            # and deterministic, so we run it twice cheaply:
+            #   Phase A — dry run (no fine data) → learn each trade's entry/exit bars.
+            #   fetch  — pull 1m ONLY for those bars (entry + exit ±1 neighbour).
+            #   Phase B — re-run WITH fine_klines; return Phase B.
+            # Disabled (flag off) or no kline cache → single run, byte-identical to
+            # before. fine_klines={} keeps the engine on its 5m path either way.
+            drilldown_on = config.get("drilldown_enabled", True) and self._kline_cache is not None
+            fine_klines: dict[str, dict[int, list[dict[str, Any]]]] = {}
+            if drilldown_on:
+                phase_a = await loop.run_in_executor(
+                    self._executor,
+                    lambda: engine.run(config, signals, klines, cancel_event, None, instrument_info, scan_contexts),
+                )
+                if not (cancel_event.is_set() or timed_out.is_set()):
+                    fine_klines = await self._build_fine_klines(config, phase_a.trades or [])
+
             result = await loop.run_in_executor(
                 self._executor,
-                lambda: engine.run(config, signals, klines, cancel_event, _on_progress, instrument_info, scan_contexts),
+                lambda: engine.run(config, signals, klines, cancel_event, _on_progress, instrument_info, scan_contexts, fine_klines or None),
             )
             engine_done = True
+            if fine_klines:
+                # Tell the consumer drill-down actually ran (and on how many trades).
+                if result.warnings is not None:
+                    result.warnings.append(f"drilldown_applied_{len(fine_klines)}_symbols")
 
             # Surface config knobs the engine cannot honor so results aren't
             # silently misleading. max_same_sector needs the IO-bound sector
@@ -868,6 +892,79 @@ class BacktestService:
     @staticmethod
     def _interval_minutes(interval: str) -> int:
         return {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 60)
+
+    async def _build_fine_klines(
+        self, config: dict[str, Any], trades: list[dict[str, Any]]
+    ) -> dict[str, dict[int, list[dict[str, Any]]]]:
+        """Fetch 1-minute candles for the entry + exit 5m bars of each Phase-A trade,
+        indexed for engine drill-down: {symbol: {bar_open_epoch: [1m candles asc]}}.
+
+        - Fetches ONLY the bars actual trades touched (entry bar + exit bar ±1 neighbour
+          — entry-drill can shift tp/sl so the real exit may land one bar over).
+        - Uses `_fetch_klines_from_bybit` DIRECTLY (not get_klines/ensure_coverage): the
+          coverage table marks a partial day "covered" and would skip refetching newer
+          1m candles; and we deliberately DO NOT `store_klines` (that would re-poison the
+          coverage table for later requests). 1m data stays in-memory for this run only.
+        - Any symbol/window that fails or returns no candles is simply omitted → the
+          engine falls back to its 5m logic for that bar (fail-soft, never wrong).
+        """
+        if self._kline_cache is None or not trades:
+            return {}
+
+        sim_min = self._interval_minutes(config.get("simulation_interval", "5m"))
+        bar_s = sim_min * 60  # seconds per simulation bar (5m → 300)
+
+        def _bar_open_epoch(dt: datetime) -> int:
+            # Floor a timestamp to its simulation-bar boundary (epoch-aligned, as the
+            # cached candles' open_times are).
+            return (int(dt.timestamp()) // bar_s) * bar_s
+
+        # Collect the distinct (symbol, bar_open_epoch) windows to fetch.
+        wanted: dict[str, set[int]] = {}
+        for t in trades:
+            sym = t.get("symbol")
+            if not sym:
+                continue
+            et, xt = t.get("entry_time"), t.get("exit_time")
+            epochs: set[int] = set()
+            if isinstance(et, datetime):
+                epochs.add(_bar_open_epoch(et))
+            if isinstance(xt, datetime):
+                xe = _bar_open_epoch(xt)
+                epochs.update({xe - bar_s, xe, xe + bar_s})  # exit ±1 neighbour
+            if epochs:
+                wanted.setdefault(sym, set()).update(epochs)
+
+        if not wanted:
+            return {}
+
+        out: dict[str, dict[int, list[dict[str, Any]]]] = {}
+        for sym, epochs in wanted.items():
+            lo = min(epochs)
+            hi = max(epochs) + bar_s  # cover the last bar fully
+            win_start = datetime.fromtimestamp(lo, tz=timezone.utc)
+            win_end = datetime.fromtimestamp(hi, tz=timezone.utc)
+            try:
+                ones = await self._kline_cache._fetch_klines_from_bybit(sym, "1m", win_start, win_end)
+            except Exception:
+                logger.warning("backtest_drilldown_fetch_failed", extra={"symbol": sym}, exc_info=False)
+                continue
+            if not ones:
+                continue
+            # Bucket each 1m candle into its simulation-bar window.
+            buckets: dict[int, list[dict[str, Any]]] = {}
+            for c in ones:
+                ot = c["open_time"]
+                if not isinstance(ot, datetime):
+                    continue
+                key = (int(ot.timestamp()) // bar_s) * bar_s
+                if key in epochs:
+                    buckets.setdefault(key, []).append(c)
+            for key in buckets:
+                buckets[key].sort(key=lambda c: c["open_time"])
+            if buckets:
+                out[sym] = buckets
+        return out
 
     async def _build_scan_contexts(
         self, config: dict[str, Any], signals: list[dict[str, Any]]

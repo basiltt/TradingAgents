@@ -407,3 +407,69 @@ class TestCompareBacktests:
         ])
         with pytest.raises(BacktestNotFoundError):
             await service.compare_backtests(["a", "b"])
+
+
+class TestBuildFineKlines:
+    """_build_fine_klines fetches 1m only for actual trades' entry+exit bars, via the
+    direct Bybit fetch (bypassing the coverage table), never persisting (no store)."""
+
+    def _svc_with_cache(self, mock_db, one_minute_candles):
+        from backend.services.backtest_service import BacktestService
+        cache = MagicMock()
+        cache._fetch_klines_from_bybit = AsyncMock(return_value=one_minute_candles)
+        cache.store_klines = AsyncMock()
+        cache.get_klines = AsyncMock()
+        return BacktestService(db=mock_db, kline_cache=cache), cache
+
+    @pytest.mark.asyncio
+    async def test_no_trades_returns_empty(self, mock_db):
+        svc, cache = self._svc_with_cache(mock_db, [])
+        out = await svc._build_fine_klines(_make_config(), [])
+        assert out == {}
+        cache._fetch_klines_from_bybit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fetches_and_buckets_by_bar_epoch(self, mock_db):
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        entry_bar = base + timedelta(minutes=5)   # 12:05
+        exit_bar = base + timedelta(minutes=20)    # 12:20
+        # 1m candles spanning both bars + neighbours
+        ones = []
+        for m in range(-5, 35):
+            ones.append({"open_time": base + timedelta(minutes=5 + m), "open": 1.0,
+                         "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0})
+        svc, cache = self._svc_with_cache(mock_db, ones)
+        trades = [{"symbol": "BTCUSDT", "entry_time": entry_bar + timedelta(seconds=30),
+                   "exit_time": exit_bar + timedelta(seconds=10)}]
+        out = await svc._build_fine_klines(_make_config(), trades)
+        assert "BTCUSDT" in out
+        # entry bar (12:05) bucket present, keyed by its epoch
+        assert int(entry_bar.timestamp()) in out["BTCUSDT"]
+        # exit bar (12:20) bucket present
+        assert int(exit_bar.timestamp()) in out["BTCUSDT"]
+        # each bucket holds 5 one-minute candles, sorted
+        eb = out["BTCUSDT"][int(entry_bar.timestamp())]
+        assert len(eb) == 5
+        assert eb == sorted(eb, key=lambda c: c["open_time"])
+        # NEVER persists 1m (would re-poison the coverage table)
+        cache.store_klines.assert_not_awaited()
+        # used the direct fetch path, not get_klines/ensure_coverage
+        cache._fetch_klines_from_bybit.assert_awaited()
+        cache.get_klines.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_omits_symbol(self, mock_db):
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        svc, cache = self._svc_with_cache(mock_db, [])
+        cache._fetch_klines_from_bybit = AsyncMock(side_effect=RuntimeError("net"))
+        trades = [{"symbol": "BTCUSDT", "entry_time": base, "exit_time": base + timedelta(minutes=20)}]
+        out = await svc._build_fine_klines(_make_config(), trades)
+        assert out == {}  # symbol omitted, fail-soft
+
+    @pytest.mark.asyncio
+    async def test_no_cache_returns_empty(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+        svc = BacktestService(db=mock_db, kline_cache=None)
+        out = await svc._build_fine_klines(_make_config(), [{"symbol": "X",
+            "entry_time": datetime(2026, 1, 1, tzinfo=timezone.utc), "exit_time": None}])
+        assert out == {}
