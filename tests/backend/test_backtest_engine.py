@@ -445,6 +445,36 @@ class TestDrilldownEntry:
             "fabricated an SL exit from the entry bar's PRE-fill low of 50 (look-ahead)"
         )
 
+    def test_entry_fills_in_signal_bar_not_next_bar(self):
+        """Production fills at the scan instant (mid-bar); the 5m engine defers to the
+        NEXT bar's open. With a 1m window on the SIGNAL's own bar, drill-down must fill
+        there (one 5m bar earlier) — matching production's actual fill timing."""
+        from backend.services.backtest_engine import BacktestEngine
+        # signal at 12:03:47 → its containing 5m bar is 12:00. Without drill the engine
+        # would fill at the 12:05 bar open. With a 1m window on the 12:00 bar, it fills
+        # at the 1m candle >= 12:03:47 there (12:04, open 97).
+        sig = [{"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                "score": 8, "signal_time": self.BASE + timedelta(minutes=3, seconds=47),
+                "scan_id": "s1", "signal_source": "structured", "analysis_price": 100.0}]
+        out = []
+        for i in range(20):
+            t = self.BASE + timedelta(minutes=i * 5)
+            # 12:00 bar opens 100; 12:05 bar opens 110 (distinct, so we can tell which won)
+            out.append({"open_time": t, "open": 100.0 if i == 0 else 110.0,
+                        "high": 110.0, "low": 100.0, "close": 110.0, "volume": 100.0})
+        signal_bar = self.BASE  # 12:00 contains 12:03:47
+        fine = {"BTCUSDT": {_fine_key(signal_bar): [
+            {"open_time": signal_bar + timedelta(minutes=m),
+             "open": 97.0 if m == 4 else 100.0, "high": 110.0, "low": 97.0, "close": 110.0, "volume": 10.0}
+            for m in range(5)
+        ]}}
+        r = BacktestEngine().run(self._cfg(), sig, {"BTCUSDT": out}, fine_klines=fine)
+        assert len(r.trades) == 1
+        # fills at the 12:04 1m open (97) in the SIGNAL bar — not the 12:05 5m open (110).
+        assert r.trades[0]["entry_price"] == pytest.approx(97.0), (
+            f"expected signal-bar 1m fill 97, got {r.trades[0]['entry_price']}"
+        )
+
 
 class TestDrilldownExit:
     """1-minute EXIT drill-down: when a 5m exit bar straddles BOTH TP and SL, the 5m
