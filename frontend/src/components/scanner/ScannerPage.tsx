@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/format";
-import { useScanFilters, ScanResultFiltersBar } from "@/components/scanner/ScanResultFilters";
+import { useScanFilters, ScanResultFiltersBar, signalBucket } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { useModels } from "@/hooks/useModels";
 import { useConnectivityCheck } from "@/hooks/useConnectivityCheck";
@@ -524,9 +524,10 @@ export function ScannerPage() {
   const allResults = scan?.results ?? [];
   const { filters: scanFilters, update: updateFilter, hasActive: hasActiveFilters, filtered: filteredResults, clearAll: clearFilters } = useScanFilters(allResults, "scanner");
 
-  const buyResults = filteredResults.filter((r) => r.direction === "buy").sort((a, b) => b.score - a.score);
-  const sellResults = filteredResults.filter((r) => r.direction === "sell").sort((a, b) => a.score - b.score);
-  const holdResults = filteredResults.filter((r) => r.direction === "hold" || r.direction === "unknown");
+  const buyResults = filteredResults.filter((r) => signalBucket(r) === "buy").sort((a, b) => b.score - a.score);
+  const sellResults = filteredResults.filter((r) => signalBucket(r) === "sell").sort((a, b) => a.score - b.score);
+  const holdResults = filteredResults.filter((r) => signalBucket(r) === "hold");
+  const skippedResults = filteredResults.filter((r) => signalBucket(r) === "skipped");
   const [tradeTarget, setTradeTarget] = useState<{ symbol: string; direction: "buy" | "sell" } | null>(null);
   const [tradedSymbols, setTradedSymbols] = useState<Set<string>>(new Set());
   const handleTradeSuccess = (symbol: string) => setTradedSymbols((prev) => new Set(prev).add(symbol));
@@ -1143,10 +1144,13 @@ export function ScannerPage() {
             </div>
 
             {/* Stats row */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className={cn("grid grid-cols-2 gap-3", skippedResults.length > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
               <ScannerMetricCard tone="success" value={buyResults.length} label="Buy signals" />
               <ScannerMetricCard tone="danger" value={sellResults.length} label="Sell signals" />
               <ScannerMetricCard tone="warning" value={holdResults.length} label="Hold / neutral" />
+              {skippedResults.length > 0 && (
+                <ScannerMetricCard tone="neutral" value={skippedResults.length} label="TA skipped" />
+              )}
             </div>
 
             {/* Auto-trade results */}
@@ -1317,6 +1321,35 @@ export function ScannerPage() {
               </CollapsibleResultCard>
             </>
           )}
+
+          {/* TA Skipped */}
+          {skippedResults.length > 0 && (
+            <>
+              <MobileCollapse
+                storageKey="scanner:collapse:skipped"
+                defaultOpen={false}
+                className="md:hidden"
+                title={
+                  <span className="flex items-center gap-2 text-sm font-semibold">
+                    <span className="size-2 rounded-full bg-slate-400 shrink-0" />
+                    <span className="text-slate-500 dark:text-slate-300">TA Skipped</span>
+                    <span className="text-xs font-normal text-muted-foreground">({skippedResults.length})</span>
+                  </span>
+                }
+              >
+                <ResultsTable results={skippedResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
+              </MobileCollapse>
+              <CollapsibleResultCard
+                className="hidden md:block"
+                storageKey="scanner:collapse:skipped:desktop"
+                defaultOpen={false}
+                color="slate"
+                title={`TA Skipped (${skippedResults.length})`}
+              >
+                <ResultsTable results={skippedResults} isCrypto={isCrypto} onTrade={handleTrade} tradedSymbols={tradedSymbols} />
+              </CollapsibleResultCard>
+            </>
+          )}
         </>
       )}
 
@@ -1337,6 +1370,7 @@ const COLOR_MAP: Record<string, { dot: string; tone: keyof typeof TONE_PILL_STYL
   emerald: { dot: "bg-[var(--neu-success)]", tone: "success" },
   red: { dot: "bg-[var(--neu-danger)]", tone: "danger" },
   amber: { dot: "bg-[var(--neu-warning)]", tone: "warning" },
+  slate: { dot: "bg-slate-400", tone: "neutral" },
 };
 
 function CollapsibleResultCard({
