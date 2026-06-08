@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from backend.mcp.core.netguard import is_loopback_host
 from backend.mcp.mount import MCP_RPC_PATH
+from backend.routers._validators import clamp_limit
 
 router = APIRouter(tags=["mcp"])
 
@@ -566,7 +567,7 @@ async def audit_feed(request: Request, limit: int = 50) -> dict[str, Any]:
     from backend.mcp.repositories.audit_repo import AuditRepository
 
     repo = AuditRepository(mgr.config_repo._pool)  # noqa: SLF001
-    rows = await repo.recent(limit=min(max(limit, 1), 200))
+    rows = await repo.recent(limit=clamp_limit(limit, 1, 200))
     return {"items": rows}
 
 
@@ -585,7 +586,7 @@ def _sweep_repo(request: Request):
 @router.get("/mcp/sweeps")
 async def list_sweeps(request: Request, limit: int = 50) -> dict[str, Any]:
     repo = _sweep_repo(request)
-    items = await repo.list_jobs(limit=min(max(limit, 1), 200))
+    items = await repo.list_jobs(limit=clamp_limit(limit, 1, 200))
     return {"items": items}
 
 
@@ -611,7 +612,7 @@ async def get_sweep_results(
 
         if objective not in OBJECTIVE_METRICS:
             raise HTTPException(422, detail={"unsupported_objective": objective})
-    rows = await repo.results(sweep_id, objective=objective, limit=min(max(limit, 1), 500))
+    rows = await repo.results(sweep_id, objective=objective, limit=clamp_limit(limit, 1, 500))
     return {"items": rows, "reranked_by": objective}
 
 
@@ -638,7 +639,7 @@ def _proposal_repo(request: Request):
 @router.get("/mcp/proposals")
 async def list_proposals(request: Request, status: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
     repo, _ = _proposal_repo(request)
-    items = await repo.list(status=status, limit=min(max(limit, 1), 200))
+    items = await repo.list(status=status, limit=clamp_limit(limit, 1, 200))
     return {"items": items}
 
 

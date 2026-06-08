@@ -14,3 +14,8 @@ def validate_account_id(account_id: str) -> str:
     except (ValueError, AttributeError):
         raise HTTPException(400, detail="Invalid account ID format") from None
     return account_id
+
+
+def clamp_limit(value: int, lo: int, hi: int) -> int:
+    """Clamp a pagination ``limit`` into ``[lo, hi]`` (equivalent to ``min(max(value, lo), hi)``)."""
+    return min(max(value, lo), hi)

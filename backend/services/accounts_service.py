@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -13,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.async_persistence import AsyncAnalysisDB
 from backend.crypto import decrypt_value, encrypt_value, mask_api_key
+from backend.services import portfolio_stats
 from backend.services.bybit_client import BybitAPIError, BybitClient
 
 logger = logging.getLogger(__name__)
@@ -659,11 +659,9 @@ class AccountsService:
         self._set_cached(cache_key, data, _ORDERS_CACHE_TTL_S)
         return data
 
-    async def get_closed_pnl(
-        self, account_id: str, start_date: str, end_date: str,
-        page: int = 1, limit: int = 100,
-    ) -> Dict[str, Any]:
-        """Fetch closed PnL records for a date range from the database."""
+    @staticmethod
+    def _validate_pnl_range(start_date: str, end_date: str) -> tuple[int, int]:
+        """Convert a date range to (start_ms, end_ms), validating ordering and max span."""
         start_ms = _date_to_ms(start_date)
         end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
 
@@ -673,6 +671,15 @@ class AccountsService:
         days_diff = (end_ms - start_ms) / _ONE_DAY_MS
         if days_diff > _MAX_RANGE_DAYS:
             raise ValueError(f"Date range exceeds maximum of {_MAX_RANGE_DAYS} days")
+
+        return start_ms, end_ms
+
+    async def get_closed_pnl(
+        self, account_id: str, start_date: str, end_date: str,
+        page: int = 1, limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Fetch closed PnL records for a date range from the database."""
+        start_ms, end_ms = self._validate_pnl_range(start_date, end_date)
 
         await self._fetch_and_store_closed_pnl(account_id, start_ms, end_ms)
         return await self._db.get_closed_pnl(account_id, start_ms, end_ms, page, limit)
@@ -681,15 +688,7 @@ class AccountsService:
         self, account_id: str, start_date: str, end_date: str,
     ) -> Dict[str, Any]:
         """Compute aggregated PnL summary (total, win rate, avg) for a date range."""
-        start_ms = _date_to_ms(start_date)
-        end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
-
-        if start_ms > end_ms:
-            raise ValueError("start_date must be before or equal to end_date")
-
-        days_diff = (end_ms - start_ms) / _ONE_DAY_MS
-        if days_diff > _MAX_RANGE_DAYS:
-            raise ValueError(f"Date range exceeds maximum of {_MAX_RANGE_DAYS} days")
+        start_ms, end_ms = self._validate_pnl_range(start_date, end_date)
 
         await self._fetch_and_store_closed_pnl(account_id, start_ms, end_ms)
         return await self._db.get_closed_pnl_summary(account_id, start_ms, end_ms)
@@ -1055,32 +1054,12 @@ class AccountsService:
         pnl_summary = await self._db.get_closed_pnl_summary(account_id, start_ms, end_ms)
 
         equities = [s["equity"] for s in snapshots]
-        daily_returns = []
-        for i in range(1, len(equities)):
-            if equities[i - 1] > 0:
-                daily_returns.append((equities[i] - equities[i - 1]) / equities[i - 1] * 100)
-            else:
-                daily_returns.append(0)
         running_peak = equities[0] if equities else 0.0
         drawdowns = []
         for eq in equities:
             running_peak = max(running_peak, eq)
             dd = round((running_peak - eq) / running_peak * 100, 4) if running_peak > 0 else 0
             drawdowns.append(dd)
-
-        total_return = ((equities[-1] - equities[0]) / equities[0] * 100) if equities[0] > 0 else 0
-        max_drawdown = max(drawdowns) if drawdowns else 0
-        avg_daily_return = sum(daily_returns) / len(daily_returns) if daily_returns else 0
-
-        sharpe = self._calc_sharpe(daily_returns)
-        sortino = self._calc_sortino(daily_returns)
-        calmar = self._calc_calmar(daily_returns, max_drawdown)
-
-        max_consecutive_losses = self._max_consecutive(daily_returns, negative=True)
-        max_consecutive_wins = self._max_consecutive(daily_returns, negative=False)
-
-        dd_snapshots = [{"drawdown_pct": d} for d in drawdowns]
-        dd_duration, recovery_time = self._calc_drawdown_duration(dd_snapshots)
 
         profit_factor = 0.0
         win_count = pnl_summary.get("win_count", 0)
@@ -1097,40 +1076,18 @@ class AccountsService:
         if total_trades > 0:
             expectancy = (avg_win * win_count - avg_loss * loss_count) / total_trades
 
-        best_day = max(daily_returns) if daily_returns else 0
-        worst_day = min(daily_returns) if daily_returns else 0
-
-        best_idx = daily_returns.index(best_day) if daily_returns else 0
-        worst_idx = daily_returns.index(worst_day) if daily_returns else 0
-        best_date = str(snapshots[best_idx + 1]["snapshot_date"]) if daily_returns and best_idx + 1 < len(snapshots) else ""
-        worst_date = str(snapshots[worst_idx + 1]["snapshot_date"]) if daily_returns and worst_idx + 1 < len(snapshots) else ""
-
-        return {
-            "total_return_pct": round(max(min(total_return, 99999.99), -99999.99), 2),
-            "max_drawdown_pct": round(max_drawdown, 2),
-            "sharpe_ratio": round(self._clamp(sharpe), 2),
-            "sortino_ratio": round(self._clamp(sortino), 2),
-            "calmar_ratio": round(self._clamp(calmar), 2),
-            "profit_factor": round(self._clamp(profit_factor, 0, 999.99), 2),
-            "win_rate": pnl_summary.get("win_rate", 0),
-            "win_count": win_count,
-            "loss_count": loss_count,
-            "avg_win": pnl_summary.get("avg_win", "0"),
-            "avg_loss": pnl_summary.get("avg_loss", "0"),
-            "expectancy": round(expectancy, 2),
-            "avg_daily_return_pct": round(avg_daily_return, 4),
-            "best_day_pct": round(best_day, 2),
-            "best_day_date": best_date,
-            "worst_day_pct": round(worst_day, 2),
-            "worst_day_date": worst_date,
-            "max_consecutive_wins": max_consecutive_wins,
-            "max_consecutive_losses": max_consecutive_losses,
-            "drawdown_duration_days": dd_duration,
-            "recovery_time_days": recovery_time,
-            "total_trades": total_trades,
-            "total_pnl": pnl_summary.get("total_pnl", "0"),
-            "snapshot_count": len(snapshots),
-        }
+        return self._assemble_analytics_result(
+            snapshots, drawdowns,
+            profit_factor=round(portfolio_stats.clamp(profit_factor, 0, 999.99), 2),
+            win_rate=pnl_summary.get("win_rate", 0),
+            win_count=win_count,
+            loss_count=loss_count,
+            avg_win=pnl_summary.get("avg_win", "0"),
+            avg_loss=pnl_summary.get("avg_loss", "0"),
+            expectancy=round(expectancy, 2),
+            total_trades=total_trades,
+            total_pnl=pnl_summary.get("total_pnl", "0"),
+        )
 
     async def compute_portfolio_analytics(
         self, start_date: str, end_date: str, account_type: Optional[str] = None,
@@ -1140,29 +1097,7 @@ class AccountsService:
         if not portfolio_snaps:
             return self._empty_analytics()
 
-        equities = [s["equity"] for s in portfolio_snaps]
-        daily_returns = []
-        for i in range(1, len(equities)):
-            if equities[i - 1] > 0:
-                daily_returns.append((equities[i] - equities[i - 1]) / equities[i - 1] * 100)
-            else:
-                daily_returns.append(0)
-
-        total_return = ((equities[-1] - equities[0]) / equities[0] * 100) if equities[0] > 0 else 0
         drawdowns = [s.get("drawdown_pct", 0) for s in portfolio_snaps]
-        max_drawdown = max(drawdowns) if drawdowns else 0
-        avg_daily_return = sum(daily_returns) / len(daily_returns) if daily_returns else 0
-
-        dd_duration, recovery_time = self._calc_drawdown_duration(portfolio_snaps)
-        max_consecutive_losses = self._max_consecutive(daily_returns, negative=True)
-        max_consecutive_wins = self._max_consecutive(daily_returns, negative=False)
-
-        best_day = max(daily_returns) if daily_returns else 0
-        worst_day = min(daily_returns) if daily_returns else 0
-        best_idx = daily_returns.index(best_day) if daily_returns else 0
-        worst_idx = daily_returns.index(worst_day) if daily_returns else 0
-        best_date = portfolio_snaps[best_idx + 1]["snapshot_date"] if daily_returns and best_idx + 1 < len(portfolio_snaps) else ""
-        worst_date = portfolio_snaps[worst_idx + 1]["snapshot_date"] if daily_returns and worst_idx + 1 < len(portfolio_snaps) else ""
 
         start_ms = _date_to_ms(start_date)
         end_ms = _date_to_ms(end_date) + (_ONE_DAY_MS - 1)
@@ -1180,32 +1115,18 @@ class AccountsService:
         total_trades = pnl_summary.get("total_count", win_count + loss_count)
         expectancy = (avg_win * win_count - avg_loss * loss_count) / total_trades if total_trades > 0 else 0.0
 
-        return {
-            "total_return_pct": round(max(min(total_return, 99999.99), -99999.99), 2),
-            "max_drawdown_pct": round(max_drawdown, 2),
-            "sharpe_ratio": round(self._clamp(self._calc_sharpe(daily_returns)), 2),
-            "sortino_ratio": round(self._clamp(self._calc_sortino(daily_returns)), 2),
-            "calmar_ratio": round(self._clamp(self._calc_calmar(daily_returns, max_drawdown)), 2),
-            "profit_factor": round(self._clamp(profit_factor, 0, 999.99), 2),
-            "win_rate": pnl_summary.get("win_rate", 0),
-            "win_count": win_count,
-            "loss_count": loss_count,
-            "avg_win": pnl_summary.get("avg_win", "0"),
-            "avg_loss": pnl_summary.get("avg_loss", "0"),
-            "expectancy": round(expectancy, 2),
-            "avg_daily_return_pct": round(avg_daily_return, 4),
-            "best_day_pct": round(best_day, 2),
-            "best_day_date": str(best_date),
-            "worst_day_pct": round(worst_day, 2),
-            "worst_day_date": str(worst_date),
-            "max_consecutive_wins": max_consecutive_wins,
-            "max_consecutive_losses": max_consecutive_losses,
-            "drawdown_duration_days": dd_duration,
-            "recovery_time_days": recovery_time,
-            "total_trades": total_trades,
-            "total_pnl": pnl_summary.get("total_pnl", "0"),
-            "snapshot_count": len(portfolio_snaps),
-        }
+        return self._assemble_analytics_result(
+            portfolio_snaps, drawdowns,
+            profit_factor=round(portfolio_stats.clamp(profit_factor, 0, 999.99), 2),
+            win_rate=pnl_summary.get("win_rate", 0),
+            win_count=win_count,
+            loss_count=loss_count,
+            avg_win=pnl_summary.get("avg_win", "0"),
+            avg_loss=pnl_summary.get("avg_loss", "0"),
+            expectancy=round(expectancy, 2),
+            total_trades=total_trades,
+            total_pnl=pnl_summary.get("total_pnl", "0"),
+        )
 
     def _compute_analytics_from_snapshots(
         self, snapshots: List[Dict[str, Any]], account_id: Optional[str],
@@ -1214,6 +1135,44 @@ class AccountsService:
         if not snapshots:
             return self._empty_analytics()
 
+        drawdowns = [s.get("drawdown_pct", 0) for s in snapshots]
+
+        return self._assemble_analytics_result(
+            snapshots, drawdowns,
+            profit_factor=0,
+            win_rate=0,
+            win_count=0,
+            loss_count=0,
+            avg_win="0",
+            avg_loss="0",
+            expectancy=0,
+            total_trades=0,
+            total_pnl="0",
+        )
+
+    def _assemble_analytics_result(
+        self,
+        snapshots: List[Dict[str, Any]],
+        drawdowns: List[Any],
+        *,
+        profit_factor: Any,
+        win_rate: Any,
+        win_count: Any,
+        loss_count: Any,
+        avg_win: Any,
+        avg_loss: Any,
+        expectancy: Any,
+        total_trades: Any,
+        total_pnl: Any,
+    ) -> Dict[str, Any]:
+        """Build the analytics result dict from an equity/drawdown series plus pre-computed PnL fields.
+
+        Computes the series-derived metrics (returns, total return, drawdown,
+        Sharpe/Sortino/Calmar, streaks, best/worst day) shared verbatim by
+        ``compute_analytics``, ``compute_portfolio_analytics`` and
+        ``_compute_analytics_from_snapshots``; the PnL-derived fields are passed
+        in by each caller so genuine per-caller differences are preserved.
+        """
         equities = [s["equity"] for s in snapshots]
         returns = []
         for i in range(1, len(equities)):
@@ -1222,14 +1181,14 @@ class AccountsService:
             else:
                 returns.append(0)
 
-        drawdowns = [s.get("drawdown_pct", 0) for s in snapshots]
         total_return = ((equities[-1] - equities[0]) / equities[0] * 100) if equities[0] > 0 else 0
         max_drawdown = max(drawdowns) if drawdowns else 0
         avg_return = sum(returns) / len(returns) if returns else 0
 
-        dd_duration, recovery_time = self._calc_drawdown_duration(snapshots)
-        max_consecutive_losses = self._max_consecutive(returns, negative=True)
-        max_consecutive_wins = self._max_consecutive(returns, negative=False)
+        dd_snapshots = [{"drawdown_pct": d} for d in drawdowns]
+        dd_duration, recovery_time = portfolio_stats.calc_drawdown_duration(dd_snapshots)
+        max_consecutive_losses = portfolio_stats.max_consecutive(returns, negative=True)
+        max_consecutive_wins = portfolio_stats.max_consecutive(returns, negative=False)
 
         best = max(returns) if returns else 0
         worst = min(returns) if returns else 0
@@ -1241,16 +1200,16 @@ class AccountsService:
         return {
             "total_return_pct": round(max(min(total_return, 99999.99), -99999.99), 2),
             "max_drawdown_pct": round(max_drawdown, 2),
-            "sharpe_ratio": round(self._clamp(self._calc_sharpe(returns)), 2),
-            "sortino_ratio": round(self._clamp(self._calc_sortino(returns)), 2),
-            "calmar_ratio": round(self._clamp(self._calc_calmar(returns, max_drawdown)), 2),
-            "profit_factor": 0,
-            "win_rate": 0,
-            "win_count": 0,
-            "loss_count": 0,
-            "avg_win": "0",
-            "avg_loss": "0",
-            "expectancy": 0,
+            "sharpe_ratio": round(portfolio_stats.clamp(portfolio_stats.calc_sharpe(returns)), 2),
+            "sortino_ratio": round(portfolio_stats.clamp(portfolio_stats.calc_sortino(returns)), 2),
+            "calmar_ratio": round(portfolio_stats.clamp(portfolio_stats.calc_calmar(returns, max_drawdown)), 2),
+            "profit_factor": profit_factor,
+            "win_rate": win_rate,
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "expectancy": expectancy,
             "avg_daily_return_pct": round(avg_return, 4),
             "best_day_pct": round(best, 2),
             "best_day_date": str(best_date),
@@ -1260,8 +1219,8 @@ class AccountsService:
             "max_consecutive_losses": max_consecutive_losses,
             "drawdown_duration_days": dd_duration,
             "recovery_time_days": recovery_time,
-            "total_trades": 0,
-            "total_pnl": "0",
+            "total_trades": total_trades,
+            "total_pnl": total_pnl,
             "snapshot_count": len(snapshots),
         }
 
@@ -1279,81 +1238,6 @@ class AccountsService:
             "recovery_time_days": 0, "total_trades": 0, "total_pnl": "0",
             "snapshot_count": 0,
         }
-
-    @staticmethod
-    def _clamp(value: float, lo: float = -999.99, hi: float = 999.99) -> float:
-        """Clamp a float to [lo, hi], returning 0.0 for NaN/Inf."""
-        if math.isnan(value) or math.isinf(value):
-            return 0.0
-        return max(lo, min(hi, value))
-
-    @staticmethod
-    def _calc_sharpe(daily_returns: List[float], risk_free_rate: float = 0.0) -> float:
-        """Annualized Sharpe ratio from daily return percentages."""
-        if len(daily_returns) < 2:
-            return 0.0
-        mean_r = sum(daily_returns) / len(daily_returns) - risk_free_rate / 365
-        std_r = math.sqrt(sum((r - mean_r) ** 2 for r in daily_returns) / (len(daily_returns) - 1))
-        if std_r == 0:
-            return 0.0
-        return (mean_r / std_r) * math.sqrt(365)
-
-    @staticmethod
-    def _calc_sortino(daily_returns: List[float], risk_free_rate: float = 0.0) -> float:
-        """Annualized Sortino ratio (downside deviation only) from daily return percentages."""
-        if len(daily_returns) < 2:
-            return 0.0
-        mean_r = sum(daily_returns) / len(daily_returns) - risk_free_rate / 365
-        downside_sq = [min(r, 0) ** 2 for r in daily_returns]
-        downside_dev = math.sqrt(sum(downside_sq) / (len(daily_returns) - 1))
-        if downside_dev == 0:
-            return 0.0
-        return (mean_r / downside_dev) * math.sqrt(365)
-
-    @staticmethod
-    def _calc_calmar(daily_returns: List[float], max_drawdown: float) -> float:
-        """Calmar ratio: annualized mean return divided by max drawdown percentage."""
-        if not daily_returns or max_drawdown == 0:
-            return 0.0
-        annual_return = sum(daily_returns) / len(daily_returns) * 365
-        return annual_return / max_drawdown
-
-    @staticmethod
-    def _max_consecutive(daily_returns: List[float], negative: bool) -> int:
-        """Count the longest consecutive streak of positive (or negative) returns."""
-        max_count = 0
-        count = 0
-        for r in daily_returns:
-            if (negative and r < 0) or (not negative and r > 0):
-                count += 1
-                max_count = max(max_count, count)
-            else:
-                count = 0
-        return max_count
-
-    @staticmethod
-    def _calc_drawdown_duration(snapshots: List[Dict[str, Any]]) -> tuple[int, int]:
-        """Return (max_drawdown_duration, max_recovery_time) in snapshot periods."""
-        if not snapshots:
-            return 0, 0
-        max_duration = 0
-        current_duration = 0
-        max_recovery = 0
-        recovery_start = -1
-        for i, s in enumerate(snapshots):
-            if s.get("drawdown_pct", 0) > 0:
-                current_duration += 1
-                max_duration = max(max_duration, current_duration)
-                if recovery_start < 0:
-                    recovery_start = i
-            else:
-                if recovery_start >= 0:
-                    max_recovery = max(max_recovery, i - recovery_start)
-                current_duration = 0
-                recovery_start = -1
-        if recovery_start >= 0:
-            max_recovery = max(max_recovery, len(snapshots) - recovery_start)
-        return max_duration, max_recovery
 
     # ── High-Frequency Snapshots & Scheduler ──────────────────────────
 

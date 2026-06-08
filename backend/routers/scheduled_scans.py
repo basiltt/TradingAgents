@@ -7,6 +7,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
+from backend.routers._validators import clamp_limit
 from backend.schemas import (
     CreateScheduledScanRequest,
     ScheduledScanResponse,
@@ -151,6 +152,6 @@ async def trigger_schedule(request: Request, schedule_id: str):
 async def list_executions(request: Request, schedule_id: str, limit: int = 20):
     _validate_uuid(schedule_id)
     svc = _get_service(request)
-    limit = min(max(limit, 1), 100)
+    limit = clamp_limit(limit, 1, 100)
     executions = await svc.list_executions(schedule_id, limit=limit)
     return {"executions": [ScheduleExecutionResponse(**e) for e in executions]}
