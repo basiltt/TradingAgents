@@ -6,6 +6,14 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { ScanResultItem } from "@/api/client";
 
+export type SignalBucket = "buy" | "sell" | "hold" | "skipped";
+
+export function signalBucket(r: ScanResultItem): SignalBucket {
+  if (r.signal_source === "ta_prefilter") return "skipped";
+  if (r.direction === "buy" || r.direction === "sell") return r.direction;
+  return "hold"; // hold, unknown, or missing
+}
+
 function toggleSet<T>(set: Set<T>, val: T): Set<T> {
   const next = new Set(set);
   if (next.has(val)) next.delete(val); else next.add(val);

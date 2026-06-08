@@ -360,6 +360,7 @@ export interface ScanResultItem {
   confidence: string;
   score: number;
   decision_summary: string;
+  signal_source?: string;
 }
 
 export interface AutoTradeResult {
@@ -392,6 +393,7 @@ export interface ScanStatus {
   current_tickers: string[];
   results: ScanResultItem[];
   direction_counts?: Record<string, number>;
+  skipped_count?: number;
   started_at: string;
   completed_at: string | null;
   interval?: string;
