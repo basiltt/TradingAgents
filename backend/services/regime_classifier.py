@@ -211,7 +211,7 @@ def _compute_adx(
     smooth_minus = _wilder_smooth(minus_dm_series, period)
 
     dx_series: list[float] = []
-    for s_tr, s_plus, s_minus in zip(smooth_tr, smooth_plus, smooth_minus):
+    for s_tr, s_plus, s_minus in zip(smooth_tr, smooth_plus, smooth_minus, strict=True):
         if s_tr == 0:
             continue
         plus_di = 100.0 * s_plus / s_tr
