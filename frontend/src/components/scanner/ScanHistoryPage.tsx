@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDurationBetween } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { Link } from "@tanstack/react-router";
 import { apiClient, type ScanStatus } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -245,6 +246,8 @@ export function ScanHistoryPage() {
             const buy = dc.buy ?? 0;
             const sell = dc.sell ?? 0;
             const total = Object.values(dc).reduce((a, b) => a + b, 0);
+            const skipped = scan.skipped_count ?? 0;
+            const hold = Math.max(0, total - buy - sell - skipped);
             const dur = formatDurationBetween(scan.started_at, scan.completed_at, "");
             const progress = scan.total > 0 ? Math.round(((scan.completed + scan.failed) / scan.total) * 100) : 0;
 
@@ -359,7 +362,7 @@ export function ScanHistoryPage() {
                 )}
 
                 {/* Signal metrics */}
-                <div className="relative grid grid-cols-3 gap-2 px-4 pb-3.5">
+                <div className={cn("relative grid gap-2 px-4 pb-3.5", skipped > 0 ? "grid-cols-4" : "grid-cols-3")}>
                   <div className="rounded-xl bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] border-none px-3 py-2.5 text-center">
                     <div className={`text-base font-extrabold tabular-nums ${buy > 0 ? "text-[var(--neu-success)]" : "text-[var(--neu-text-muted)]/30"}`}>{buy}</div>
                     <div className="text-[9px] text-[var(--neu-text-muted)] uppercase tracking-wider font-semibold mt-0.5">Buy</div>
@@ -369,9 +372,15 @@ export function ScanHistoryPage() {
                     <div className="text-[9px] text-[var(--neu-text-muted)] uppercase tracking-wider font-semibold mt-0.5">Sell</div>
                   </div>
                   <div className="rounded-xl bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] border-none px-3 py-2.5 text-center">
-                    <div className="text-base font-extrabold tabular-nums text-[var(--neu-text-muted)]/60">{total - buy - sell}</div>
+                    <div className="text-base font-extrabold tabular-nums text-[var(--neu-text-muted)]/60">{hold}</div>
                     <div className="text-[9px] text-[var(--neu-text-muted)] uppercase tracking-wider font-semibold mt-0.5">Hold</div>
                   </div>
+                  {skipped > 0 && (
+                    <div className="rounded-xl bg-[var(--neu-surface-muted)] shadow-[var(--neu-shadow-inset)] border-none px-3 py-2.5 text-center">
+                      <div className="text-base font-extrabold tabular-nums text-[var(--neu-text-muted)]/60">{skipped}</div>
+                      <div className="text-[9px] text-[var(--neu-text-muted)] uppercase tracking-wider font-semibold mt-0.5">Skipped</div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Footer */}
