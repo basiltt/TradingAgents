@@ -197,7 +197,7 @@ def _bind_host_from_argv(argv: list[str]) -> Optional[str]:
             return tok.split("=", 1)[1].strip()
         if tok in ("-b", "--bind") and i + 1 < n:
             return _host_of_bind(argv[i + 1])
-        if tok.startswith("--bind=") or tok.startswith("-b="):
+        if tok.startswith(("--bind=", "-b=")):
             return _host_of_bind(tok.split("=", 1)[1])
         i += 1
     return None

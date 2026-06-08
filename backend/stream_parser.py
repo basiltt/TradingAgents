@@ -247,12 +247,11 @@ def parse_stream_chunk(
 
     # Risk Manager result
     risk_mgr_val = chunk.get("risk_manager_result")
-    if isinstance(risk_mgr_val, str) and risk_mgr_val.strip():
-        if risk_mgr_val.strip() != state.prev_risk_manager:
-            state._ensure_in_progress(events, "Risk Manager")
-            events.append(AgentStatusEvent(agent="Risk Manager", status="completed"))
-            events.append(ReportChunkEvent(section="risk_manager", content=risk_mgr_val.strip(), append=False))
-            state.prev_risk_manager = risk_mgr_val.strip()
+    if isinstance(risk_mgr_val, str) and risk_mgr_val.strip() and risk_mgr_val.strip() != state.prev_risk_manager:
+        state._ensure_in_progress(events, "Risk Manager")
+        events.append(AgentStatusEvent(agent="Risk Manager", status="completed"))
+        events.append(ReportChunkEvent(section="risk_manager", content=risk_mgr_val.strip(), append=False))
+        state.prev_risk_manager = risk_mgr_val.strip()
 
     # Confluence summary
     confluence_val = chunk.get("confluence_summary")
@@ -313,11 +312,10 @@ def parse_stream_chunk(
 
     # Execution Monitor notes
     exec_notes = chunk.get("execution_notes")
-    if isinstance(exec_notes, str) and exec_notes.strip():
-        if exec_notes.strip() != state.prev_execution_notes:
-            state._ensure_in_progress(events, "Execution Monitor")
-            events.append(AgentStatusEvent(agent="Execution Monitor", status="completed"))
-            events.append(ReportChunkEvent(section="execution_monitor", content=exec_notes.strip(), append=False))
-            state.prev_execution_notes = exec_notes.strip()
+    if isinstance(exec_notes, str) and exec_notes.strip() and exec_notes.strip() != state.prev_execution_notes:
+        state._ensure_in_progress(events, "Execution Monitor")
+        events.append(AgentStatusEvent(agent="Execution Monitor", status="completed"))
+        events.append(ReportChunkEvent(section="execution_monitor", content=exec_notes.strip(), append=False))
+        state.prev_execution_notes = exec_notes.strip()
 
     return events

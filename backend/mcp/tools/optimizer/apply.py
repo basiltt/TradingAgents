@@ -112,9 +112,7 @@ def sanity_ceiling_ok(merged: dict[str, Any]) -> bool:
     if mr_lev is not None and _finite(mr_lev) > _MAX_LEVERAGE:
         return False
     mr_cap = merged.get("mr_capital_pct")
-    if mr_cap is not None and _finite(mr_cap) > _MAX_CAPITAL_PCT:
-        return False
-    return True
+    return not (mr_cap is not None and _finite(mr_cap) > _MAX_CAPITAL_PCT)
 
 
 def validate_merged_config(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

@@ -321,9 +321,8 @@ class ClosePositionsService:
             if not reference or Decimal(reference) <= 0:
                 raise ValueError("Cannot create percentage rule: current equity is zero or unavailable")
 
-        if trigger_type not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION"):
-            if Decimal(threshold) <= 0:
-                raise ValueError("threshold_value must be positive")
+        if trigger_type not in ("BREAKEVEN_TIMEOUT", "MAX_DURATION") and Decimal(threshold) <= 0:
+            raise ValueError("threshold_value must be positive")
 
         row = await self._db.insert_close_rule(
             {

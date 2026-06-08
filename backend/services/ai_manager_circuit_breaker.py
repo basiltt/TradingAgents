@@ -50,11 +50,10 @@ class AIManagerCircuitBreaker:
         count = self._counts.get(account_id, 0) + 1
         self._counts[account_id] = count
 
-        if count >= self._threshold:
-            if not self._active.get(account_id):
-                self._active[account_id] = True
-                self._tripped_at[account_id] = time.monotonic()
-                logger.warning("Circuit breaker OPEN: account=%s count=%d", account_id, count)
+        if count >= self._threshold and not self._active.get(account_id):
+            self._active[account_id] = True
+            self._tripped_at[account_id] = time.monotonic()
+            logger.warning("Circuit breaker OPEN: account=%s count=%d", account_id, count)
 
         if self._repo:
             fields = {

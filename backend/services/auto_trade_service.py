@@ -231,7 +231,7 @@ class AutoTradeExecutor:
 
         account_valid_cache: Dict[str, bool] = {}
 
-        for key, state in self._state.items():
+        for state in self._state.values():
             if state.stopped:
                 continue
             account_id = state.config["account_id"]
@@ -475,7 +475,7 @@ class AutoTradeExecutor:
         async with self._lock:
             executions: List[TradeExecution] = []
             traded_accounts: set = set()
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "immediate":
                     continue
                 if state.stopped:
@@ -501,14 +501,14 @@ class AutoTradeExecutor:
                 if ticker:
                     seen[ticker] = r
             unique_results = sorted(
-                list(seen.values()),
+                seen.values(),
                 key=lambda r: (abs(r.get("score", 0)), r.get("completed_at", "")),
                 reverse=True,
             )
 
             executions: List[TradeExecution] = []
             traded: set = set()  # (account_id, ticker) pairs already traded
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "batch":
                     continue
                 account_id = state.config.get("account_id", "")
@@ -528,7 +528,7 @@ class AutoTradeExecutor:
 
             # Fill pass: if fill_to_max_trades is enabled and max_trades not reached,
             # retry with relaxed filters using best remaining signals by score
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "batch":
                     continue
                 if not state.config.get("fill_to_max_trades"):
@@ -593,7 +593,7 @@ class AutoTradeExecutor:
                     if e.status == "success":
                         traded.add((aid, e.symbol))
 
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "immediate":
                     continue
                 if not state.config.get("fill_to_max_trades"):
@@ -639,7 +639,7 @@ class AutoTradeExecutor:
 
     def get_summaries(self) -> List[Dict[str, Any]]:
         summaries = []
-        for key, state in self._state.items():
+        for state in self._state.values():
             summaries.append({
                 "account_id": state.config["account_id"],
                 "trades_executed": state.trades_executed,
@@ -749,7 +749,7 @@ class AutoTradeExecutor:
             if ticker:
                 seen[ticker] = r
         unique_results = sorted(
-            list(seen.values()),
+            seen.values(),
             key=lambda r: abs(r.get("score", 0)),
             reverse=True,
         )
@@ -1326,12 +1326,11 @@ class AutoTradeExecutor:
         # Check target goal
         goal_type = cfg.get("target_goal_type")
         goal_value = cfg.get("target_goal_value")
-        if goal_type and goal_value:
-            if goal_type == "trade_count" and state.trades_executed >= goal_value:
-                self._emit_decision(account_id, phase, symbol, "skipped", "target_goal_reached", result)
-                state.stopped = True
-                state.stopped_reason = "target_goal_reached"
-                return None
+        if goal_type and goal_value and goal_type == "trade_count" and state.trades_executed >= goal_value:
+            self._emit_decision(account_id, phase, symbol, "skipped", "target_goal_reached", result)
+            state.stopped = True
+            state.stopped_reason = "target_goal_reached"
+            return None
 
         account_id = cfg["account_id"]
 

@@ -52,7 +52,7 @@ def _validate_url_ssrf(url: str) -> None:
         if addr.is_private or addr.is_loopback or addr.is_link_local:
             raise HTTPException(400, detail="URLs targeting private networks are not allowed")
     except ValueError:
-        if host.endswith(".internal") or host.endswith(".local"):
+        if host.endswith((".internal", ".local")):
             raise HTTPException(400, detail="URLs targeting internal domains are not allowed") from None
 
 

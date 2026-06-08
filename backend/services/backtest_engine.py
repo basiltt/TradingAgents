@@ -307,7 +307,7 @@ class BacktestEngine:
                 last_price = symbol_klines[-1]["close"] if symbol_klines else pos.entry_price
                 last_time = symbol_klines[-1]["open_time"] if symbol_klines else signals[-1]["signal_time"]
                 self._close_position(state, pos, "backtest_end", last_price, last_time, fee_rate)
-            if "backtest_end" not in [w for w in warnings]:
+            if "backtest_end" not in list(warnings):
                 warnings.append(f"force_closed_{len([t for t in state.closed_trades if t.get('close_reason') == 'backtest_end'])}_positions_at_end")
 
         if on_progress:
@@ -687,10 +687,9 @@ class BacktestEngine:
         # legitimately uses the LIFETIME entry count, not the per-scan one.
         target_type = config.get("target_goal_type")
         target_value = config.get("target_goal_value")
-        if target_type == "trade_count" and target_value:
-            if state.signals_entered >= target_value:
-                state.signals_filtered += 1
-                return False
+        if target_type == "trade_count" and target_value and state.signals_entered >= target_value:
+            state.signals_filtered += 1
+            return False
 
         # 16. Balance check
         if state.sizing_capital <= 0:
@@ -1812,9 +1811,8 @@ class BacktestEngine:
                 continue
 
             # Step 4: Check trigger — per_unit_pnl < peak × 0.5
-            if pos.trailing_active and pos.trailing_peak > 0:
-                if per_unit_pnl < pos.trailing_peak * 0.5:
-                    positions_to_close.append(pos)
+            if pos.trailing_active and pos.trailing_peak > 0 and per_unit_pnl < pos.trailing_peak * 0.5:
+                positions_to_close.append(pos)
 
         # Close triggered positions. Guard against a position already closed by an
         # earlier rule this candle (defensive parity with the TP/SL close loop —
