@@ -1071,6 +1071,9 @@ class AnalysisDB:
                 )
                 results = cur.fetchall()
                 scan["results"] = [dict(r) for r in results]
+                scan["skipped_count"] = sum(
+                    1 for r in scan["results"] if r.get("signal_source") == "ta_prefilter"
+                )
             except Exception:
                 conn.rollback()
                 raise

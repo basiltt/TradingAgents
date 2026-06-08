@@ -1224,6 +1224,7 @@ class TestSerializeSkippedCount:
                 {"ticker": "BTC", "direction": "buy", "score": 5, "signal_source": "structured"},
                 {"ticker": "ETH", "direction": "hold", "score": 0, "signal_source": "ta_prefilter"},
                 {"ticker": "SOL", "direction": "hold", "score": 0, "signal_source": "ta_prefilter"},
+                {"ticker": "ADA", "direction": "buy", "score": 2},
             ],
         }
         out = svc._serialize(scan)

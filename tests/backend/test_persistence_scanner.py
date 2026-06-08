@@ -332,3 +332,21 @@ def test_list_scans_skipped_count_zero_when_none(db):
     db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "buy", "signal_source": "structured"})
     scans = db.list_scans()
     assert scans[0].get("skipped_count") == 0
+
+
+def test_get_scan_hydrates_skipped_count(db):
+    s = _scan()
+    db.insert_scan(s)
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "buy", "signal_source": "structured"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 0, "status": "completed", "direction": "hold", "signal_source": "ta_prefilter"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "SOL", "score": 0, "status": "completed", "direction": "hold", "signal_source": "ta_prefilter"})
+    scan = db.get_scan(s["scan_id"])
+    assert scan["skipped_count"] == 2
+
+
+def test_get_scan_skipped_count_zero_when_none(db):
+    s = _scan()
+    db.insert_scan(s)
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "buy", "signal_source": "structured"})
+    scan = db.get_scan(s["scan_id"])
+    assert scan["skipped_count"] == 0

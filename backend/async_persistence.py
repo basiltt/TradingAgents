@@ -1929,6 +1929,9 @@ class AsyncAnalysisDB:
             scan_id,
         )
         scan["results"] = [dict(r) for r in results]
+        scan["skipped_count"] = sum(
+            1 for r in scan["results"] if r.get("signal_source") == "ta_prefilter"
+        )
         return scan
 
     async def list_scans(self) -> List[Dict[str, Any]]:
