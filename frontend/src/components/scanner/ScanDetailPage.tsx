@@ -121,9 +121,15 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                   </button>
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  <span className={cn("px-2.5 py-1 rounded-[var(--neu-radius-sm)] text-[10px] font-bold uppercase tracking-wider border border-transparent shadow-[var(--neu-shadow-pill)]", dir.label === "Buy" ? "bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]" : dir.label === "Sell" ? "bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]" : "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)]")}>
-                    {dir.label}
-                  </span>
+                  {signalBucket(r) === "skipped" ? (
+                    <span className="px-2.5 py-1 rounded-[var(--neu-radius-sm)] text-[10px] font-bold uppercase tracking-wider border border-transparent shadow-[var(--neu-shadow-pill)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)]">
+                      Skipped
+                    </span>
+                  ) : (
+                    <span className={cn("px-2.5 py-1 rounded-[var(--neu-radius-sm)] text-[10px] font-bold uppercase tracking-wider border border-transparent shadow-[var(--neu-shadow-pill)]", dir.label === "Buy" ? "bg-[color-mix(in_oklch,var(--neu-success)_10%,var(--neu-surface-base))] text-[var(--neu-success)] border-[color-mix(in_oklch,var(--neu-success)_20%,var(--neu-stroke-soft))]" : dir.label === "Sell" ? "bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] text-[var(--neu-danger)] border-[color-mix(in_oklch,var(--neu-danger)_20%,var(--neu-stroke-soft))]" : "bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)]")}>
+                      {dir.label}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-xs font-semibold capitalize hidden md:table-cell text-[var(--neu-text-muted)]">{r.confidence}</td>
                 <td className="px-4 py-3">
@@ -133,7 +139,23 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                   />
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  {r.status !== "completed" && r.decision_summary ? (
+                  {signalBucket(r) === "skipped" && r.decision_summary ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger className="cursor-help flex">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-[var(--neu-radius-pill)] text-[10px] font-bold uppercase tracking-wider border shadow-[var(--neu-shadow-pill)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]">
+                            skipped
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          className="max-w-sm bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-xs text-[var(--neu-text-muted)] font-semibold leading-relaxed rounded-[var(--neu-radius-md)] shadow-[var(--neu-shadow-float)] p-3 backdrop-blur-xl"
+                        >
+                          {r.decision_summary}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger className="cursor-help flex">
@@ -202,7 +224,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                         View
                       </Link>
                     )}
-                    {!r.run_id && r.status !== "completed" && r.decision_summary && (
+                    {!r.run_id && (signalBucket(r) === "skipped" || r.status !== "completed") && r.decision_summary && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>

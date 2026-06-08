@@ -1508,7 +1508,11 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                   </button>
                 </td>
                 <td className="hidden px-4 py-3 md:table-cell">
-                  <TonePill tone={dir.label === "Buy" ? "success" : dir.label === "Sell" ? "danger" : "warning"}>{dir.label}</TonePill>
+                  {signalBucket(r) === "skipped" ? (
+                    <TonePill tone="neutral">Skipped</TonePill>
+                  ) : (
+                    <TonePill tone={dir.label === "Buy" ? "success" : dir.label === "Sell" ? "danger" : "warning"}>{dir.label}</TonePill>
+                  )}
                 </td>
                 <td className="hidden px-4 py-3 text-xs font-semibold capitalize text-[var(--neu-text-muted)] md:table-cell">{r.confidence}</td>
                 <td className="px-4 py-3">
@@ -1518,7 +1522,18 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                   />
                 </td>
                 <td className="hidden px-4 py-3 md:table-cell">
-                  {r.status !== "completed" && r.decision_summary ? (
+                  {signalBucket(r) === "skipped" && r.decision_summary ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger>
+                          <TonePill tone="neutral">skipped</TonePill>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-sm text-xs leading-6">
+                          {r.decision_summary}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger>
@@ -1568,7 +1583,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                         View
                       </Link>
                     )}
-                    {!r.run_id && r.status !== "completed" && r.decision_summary && (
+                    {!r.run_id && (signalBucket(r) === "skipped" || r.status !== "completed") && r.decision_summary && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>
