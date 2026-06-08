@@ -1100,9 +1100,19 @@ class AnalysisDB:
                 counts_by_scan: Dict[str, Dict[str, int]] = {s["scan_id"]: {} for s in scans}
                 for row in counts:
                     counts_by_scan[row["scan_id"]][row["direction"]] = row["cnt"]
+                cur.execute(
+                    "SELECT scan_id, COUNT(*) as cnt "
+                    "FROM scan_results "
+                    "WHERE scan_id = ANY(%s) AND signal_source = 'ta_prefilter' "
+                    "GROUP BY scan_id",
+                    (scan_ids,),
+                )
+                skipped_rows = cur.fetchall()
+                skipped_by_scan: Dict[str, int] = {row["scan_id"]: row["cnt"] for row in skipped_rows}
                 for scan in scans:
                     scan["results"] = []
                     scan["direction_counts"] = counts_by_scan.get(scan["scan_id"], {})
+                    scan["skipped_count"] = skipped_by_scan.get(scan["scan_id"], 0)
             except Exception:
                 conn.rollback()
                 raise

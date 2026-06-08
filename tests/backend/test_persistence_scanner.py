@@ -310,3 +310,25 @@ def test_list_scans_hydrates_direction_counts(db):
     counts = scans[0].get("direction_counts", {})
     assert counts.get("buy") == 2
     assert counts.get("sell") == 1
+
+
+def test_list_scans_hydrates_skipped_count(db):
+    s = _scan()
+    db.insert_scan(s)
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "buy", "signal_source": "structured"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "ETH", "score": 0, "status": "completed", "direction": "hold", "signal_source": "ta_prefilter"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "SOL", "score": 0, "status": "completed", "direction": "hold", "signal_source": "ta_prefilter"})
+    db.insert_scan_result(s["scan_id"], {"ticker": "XRP", "score": 0, "status": "completed", "direction": "hold", "signal_source": "structured"})
+    scans = db.list_scans()
+    assert len(scans) == 1
+    assert scans[0].get("skipped_count") == 2
+    # Raw direction_counts is unchanged: all three holds still counted as hold.
+    assert scans[0]["direction_counts"].get("hold") == 3
+
+
+def test_list_scans_skipped_count_zero_when_none(db):
+    s = _scan()
+    db.insert_scan(s)
+    db.insert_scan_result(s["scan_id"], {"ticker": "BTC", "score": 5, "status": "completed", "direction": "buy", "signal_source": "structured"})
+    scans = db.list_scans()
+    assert scans[0].get("skipped_count") == 0
