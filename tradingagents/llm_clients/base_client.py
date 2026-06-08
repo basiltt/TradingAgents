@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 import asyncio
 import logging
+import random
 import threading
 import time
 import warnings
@@ -105,9 +106,16 @@ def llm_rate_limited_invoke(super_invoke, input, config=None, **kwargs):
 def configure_llm_concurrency_async(max_concurrent: int) -> None:
     """Async mirror of configure_llm_concurrency. Sets the LIMIT only; the actual
     asyncio.Semaphore is created lazily on the running loop in allm_rate_limited_invoke
-    (a semaphore can't be safely created before the loop exists / across loops)."""
+    (a semaphore can't be safely created before the loop exists / across loops).
+
+    Only resets the live semaphore when the limit actually CHANGES — a no-op reconfigure
+    (e.g. the same value re-applied) must not drop a semaphore that in-flight calls hold,
+    which would transiently over-admit (old permits + a fresh full quota) during a scan."""
     global _allm_limit, _allm_semaphore
-    _allm_limit = max(0, max_concurrent)
+    new_limit = max(0, max_concurrent)
+    if new_limit == _allm_limit and _allm_semaphore is not None:
+        return  # unchanged — keep the live semaphore, no over-admission window
+    _allm_limit = new_limit
     _allm_semaphore = None  # force lazy re-create against the active loop with the new limit
     if _allm_limit <= 0:
         logger.info("LLM concurrency (async): unlimited")
@@ -155,7 +163,12 @@ async def allm_rate_limited_invoke(super_ainvoke, input, config=None, **kwargs):
             last_exc = exc
             if not _is_retryable(exc) or attempt == _LLM_MAX_RETRIES - 1:
                 raise
-            delay = min(_LLM_BASE_DELAY * (2 ** attempt), _LLM_MAX_DELAY)
+            # FULL JITTER backoff (async only): under high async concurrency many coroutines
+            # can 429 simultaneously; a deterministic delay would wake them all at once
+            # (thundering herd) and re-storm the provider. Randomising the wait in
+            # [0, capped_backoff] de-synchronises retries. The sync path keeps its
+            # deterministic delay (it is thread-throttled, so no herd) to stay byte-identical.
+            delay = random.uniform(0.0, min(_LLM_BASE_DELAY * (2 ** attempt), _LLM_MAX_DELAY))
             logger.warning(
                 "LLM call failed (async, attempt %d/%d), retrying in %.1fs: %s",
                 attempt + 1, _LLM_MAX_RETRIES, delay, exc,

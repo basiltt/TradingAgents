@@ -127,6 +127,32 @@ async def test_async_retry_count_matches_sync(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_async_retry_backoff_is_jittered_and_bounded(monkeypatch):
+    # Capture the delays passed to asyncio.sleep on the async retry path.
+    delays = []
+
+    async def _capture_sleep(d):
+        delays.append(d)
+    monkeypatch.setattr(bc.asyncio, "sleep", _capture_sleep)
+
+    async def async_super(inp, cfg=None, **kw):
+        raise _Retryable()
+    with pytest.raises(_Retryable):
+        await bc.allm_rate_limited_invoke(async_super, "in")
+
+    # one delay per retry except the final (which re-raises): _LLM_MAX_RETRIES - 1
+    assert len(delays) == bc._LLM_MAX_RETRIES - 1
+    # FULL JITTER: each delay in [0, capped_backoff] for that attempt — never exceeds the cap,
+    # and is NOT the deterministic ceiling (so concurrent coroutines don't wake in lockstep).
+    for attempt, d in enumerate(delays):
+        cap = min(bc._LLM_BASE_DELAY * (2 ** attempt), bc._LLM_MAX_DELAY)
+        assert 0.0 <= d <= cap, f"delay {d} outside [0,{cap}] for attempt {attempt}"
+    # at least one delay should be strictly below its deterministic cap (jitter is active);
+    # astronomically unlikely to be exactly the cap on every attempt
+    assert any(d < min(bc._LLM_BASE_DELAY * (2 ** i), bc._LLM_MAX_DELAY) for i, d in enumerate(delays))
+
+
+@pytest.mark.asyncio
 async def test_async_non_retryable_raises_immediately(monkeypatch):
     async def _no_sleep(*_):
         return None
@@ -147,3 +173,19 @@ async def test_async_success_returns_value_unchanged():
         return f"echo:{inp}"
     out = await bc.allm_rate_limited_invoke(async_super, "hello")
     assert out == "echo:hello"
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_same_limit_keeps_live_semaphore(monkeypatch):
+    # Re-applying the SAME limit must NOT drop a live semaphore (would transiently
+    # over-admit: old in-flight permits + a fresh full quota). Different limit DOES reset.
+    bc.configure_llm_concurrency_async(5)
+    sem1 = bc._get_async_sem()          # create the live semaphore on this loop
+    assert sem1 is not None
+    bc.configure_llm_concurrency_async(5)  # no-op reconfigure
+    assert bc._get_async_sem() is sem1, "same-limit reconfigure must keep the live semaphore"
+    bc.configure_llm_concurrency_async(7)  # real change resets
+    sem2 = bc._get_async_sem()
+    assert sem2 is not sem1
+    # restore unlimited (default) so other tests are unaffected
+    bc.configure_llm_concurrency_async(0)

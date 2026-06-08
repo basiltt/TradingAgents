@@ -211,8 +211,10 @@ def create_app() -> FastAPI:
 
         llm_max = _validated_int("LLM_MAX_CONCURRENT", 0, 0, 1000)
         configure_llm_concurrency(llm_max)
-        # Mirror the SAME limit onto the async path so the async graph (flag ON) applies
-        # identical provider concurrency pressure as the sync path — no behavior change.
+        # Mirror the SAME limit onto the async path. LLM_MAX_CONCURRENT=0 means UNLIMITED by
+        # design (pay-as-you-go plans have no concurrency cap), so the async path is unlimited
+        # too when unset — identical provider pressure policy to the sync path. Operators who
+        # DO have a provider concurrency limit set LLM_MAX_CONCURRENT and it applies to both.
         configure_llm_concurrency_async(llm_max)
         llm_spacing = _validated_int("LLM_MIN_SPACING_MS", 0, 0, 60000)
         configure_llm_min_spacing(llm_spacing)
