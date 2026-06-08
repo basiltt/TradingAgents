@@ -65,6 +65,14 @@ class Position:
     # pre-fill price action can't fabricate an exit/drawdown (look-ahead guard).
     entry_bar_open: Optional[datetime] = None
     entry_fine_minute: Optional[datetime] = None
+    # Stable equity-reference entry price = the UN-drilled 5m next-bar-open fill. The
+    # equity close-rules (drawdown / rise / close_on_profit) value this position's uPnL
+    # off THIS price, NOT the drilled entry_price, so toggling drill-down never changes
+    # the equity cascade — i.e. never changes WHICH trades happen (selection +
+    # skip_if_positions_open stay identical to the pure 5m run). Drill-down refines
+    # entry_price for the trade's reported fill + realized PnL only. 0.0 ⇒ fall back to
+    # entry_price (no drill), so the two are equal and behaviour is unchanged.
+    equity_ref_entry: float = 0.0
 
 
 @dataclass
@@ -745,9 +753,11 @@ class BacktestEngine:
     @staticmethod
     def _sim_bar_seconds(symbol_klines: list[dict[str, Any]]) -> int:
         """Infer the simulation bar size (seconds) from the spacing of the first two
-        candles. Falls back to 300 (5m) when fewer than 2 are available."""
+        candles. open_time may be a datetime (the service path) or an int/float epoch
+        (the optimizer snapshot path) — handle both. Falls back to 300 (5m)."""
         if len(symbol_klines) >= 2:
-            s = int((symbol_klines[1]["open_time"] - symbol_klines[0]["open_time"]).total_seconds())
+            d = symbol_klines[1]["open_time"] - symbol_klines[0]["open_time"]
+            s = int(d.total_seconds()) if hasattr(d, "total_seconds") else int(d)
             if s > 0:
                 return s
         return 300
@@ -868,42 +878,35 @@ class BacktestEngine:
                 entry_bar_open = k["open_time"]
                 break
 
-        # ── 1-minute ENTRY DRILL-DOWN ──
-        # When a 1m window exists for this 5m entry bar, fill at the 1m open of the
-        # first 1m candle at/after current_time (the scan's completed_at) — far closer
-        # to production's actual fill instant than the 5m bar open. We also record the
-        # entry 1m timestamp + bar so the entry bar's SAME-BAR evaluation (TP/SL/liq AND
-        # this position's equity-drawdown contribution) restricts to its POST-ENTRY 1m
-        # sub-sequence — otherwise pre-fill 1m moves would fabricate an exit / drawdown
-        # on the entry bar (look-ahead). No window ⇒ unchanged 5m next-bar-open.
-        # ── 1-minute ENTRY DRILL-DOWN ──
-        # Production fills a market order at the scan's completed_at INSTANT (mid-5m-bar).
-        # The 5m engine can't do that safely — filling mid-bar would let the bar's
-        # pre-fill high/low fabricate exits (look-ahead) — so it defers to the NEXT 5m
-        # bar's open. At 1m resolution we DO know the exact minute, so we fill at the 1m
-        # candle at/after current_time *within the bar that CONTAINS current_time* (the
-        # signal's own 5m bar), and restrict that position's same-bar evaluation to its
-        # post-entry 1m minutes (no look-ahead). This lands the fill ~one 5m bar earlier
-        # — exactly where production filled. We look in the signal bar's window first;
-        # if it has a 1m candle >= current_time we use it, else fall back to the 5m
-        # next-bar-open (entry_bar_open) and, failing that, its 1m window.
-        entry_fine_minute: Optional[datetime] = None
-        sim_secs = self._sim_bar_seconds(symbol_klines)
-        signal_bar_epoch = (int(current_time.timestamp()) // sim_secs) * sim_secs if sim_secs else None
-        for cand_bar_epoch in (signal_bar_epoch,
-                               int(entry_bar_open.timestamp()) if entry_bar_open else None):
-            if cand_bar_epoch is None:
-                continue
-            cand_bar_open = datetime.fromtimestamp(cand_bar_epoch, tz=timezone.utc)
-            fine = self._fine_window(ticker, cand_bar_open)
-            if not fine:
-                continue
-            picked = next((fk for fk in fine if fk["open_time"] >= current_time), None)
-            if picked is not None:
-                entry_base_price = picked["open"]
-                entry_fine_minute = picked["open_time"]
-                entry_bar_open = cand_bar_open  # the bar the fill ACTUALLY lands in
-                break
+        # ── 1-minute ENTRY DRILL-DOWN (price-only) ──
+        # Production fills a market order at the scan's completed_at INSTANT (mid-5m-bar,
+        # e.g. 11:55:41). The 5m engine defers the fill to the NEXT bar's open to avoid
+        # look-ahead. We keep that LIFECYCLE (entry_bar_open / open+close timing) exactly
+        # — so the skip_if_positions_open cascade and trade COUNT are unchanged — but
+        # refine the fill PRICE to the 1m open at/after current_time. That 1m minute lies
+        # in the signal's own bar (at/before entry_bar_open), so the price is a real PAST
+        # price and the position's same-bar evaluation still starts at entry_bar_open
+        # (strictly after the fill minute) → no look-ahead, no perturbation of which bars
+        # the position is open for. This tightens the entry price toward production's
+        # mid-bar fill without moving the trade lifecycle. No window ⇒ unchanged 5m open.
+        # equity_ref_base = the UN-drilled 5m fill, preserved so the equity close-rules
+        # value uPnL off a price that is INVARIANT to drill-down → identical selection.
+        equity_ref_base = entry_base_price
+        if self._fine_klines and entry_bar_open is not None:
+            sim_secs = self._sim_bar_seconds(symbol_klines)
+            signal_bar_epoch = (int(current_time.timestamp()) // sim_secs) * sim_secs if sim_secs else None
+            for cand_bar_epoch in (signal_bar_epoch,
+                                   int(entry_bar_open.timestamp())):
+                if cand_bar_epoch is None:
+                    continue
+                fine = self._fine_window(ticker, datetime.fromtimestamp(cand_bar_epoch, tz=timezone.utc))
+                if not fine:
+                    continue
+                picked = next((fk for fk in fine if fk["open_time"] >= current_time), None)
+                if picked is not None:
+                    entry_base_price = picked["open"]
+                    break
+
 
         # Apply slippage to get the actual ENTRY FILL price (used for PnL, fee, and
         # margin — mirrors production filling a market order at the slipped avgPrice).
@@ -928,6 +931,10 @@ class BacktestEngine:
             side = "Buy" if mr_placement["signal_direction"] == "long" else "Sell"
 
         entry_price = apply_slippage(entry_base_price, side, config.get("slippage_bps", 2))
+        # Slipped equity-reference fill (the un-drilled 5m price + same slippage). Equals
+        # entry_price when no drill occurred. The equity close-rules use this so drill
+        # never shifts selection.
+        equity_ref_entry = apply_slippage(equity_ref_base, side, config.get("slippage_bps", 2))
 
         # Per-symbol instrument parameters (lot step, min qty, tick size, max
         # leverage). When the service didn't resolve real values for this symbol the
@@ -962,13 +969,14 @@ class BacktestEngine:
         locked = sum(p.locked_margin for p in state.open_positions)
         carried_upnl = 0.0
         for _p in state.open_positions:
-            _mark = _p.entry_price
+            _ref = _p.equity_ref_entry or _p.entry_price
+            _mark = _ref
             for _k in klines.get(_p.symbol, []):
                 if _k["open_time"] <= current_time:
                     _mark = _k["close"]
                 else:
                     break
-            carried_upnl += _cu_avail(_p.entry_price, _mark, _p.qty, _p.side)
+            carried_upnl += _cu_avail(_ref, _mark, _p.qty, _p.side)
         available = state.wallet_balance + carried_upnl - locked
 
         # Size off the UN-SLIPPED mark (entry_base_price), matching production, which
@@ -1044,9 +1052,11 @@ class BacktestEngine:
             # F2: tag MR positions + carry their fast time-stop (minutes).
             strategy_kind=("mean_reversion" if mr_placement else "trend"),
             time_stop_minutes=(float(config.get("mr_time_stop_minutes", 120)) if mr_placement else None),
-            # 1m drill-down: the bar/minute the entry filled in (None unless drilled).
+            # 1m drill-down: the 5m bar the entry filled in (used to locate the exit-bar
+            # window; entry is price-only so entry_fine_minute stays None and the
+            # entry-bar look-ahead guard is inert — exits start strictly after the fill).
             entry_bar_open=entry_bar_open,
-            entry_fine_minute=entry_fine_minute,
+            equity_ref_entry=equity_ref_entry,
         )
         state.open_positions.append(position)
         state.signals_entered += 1  # lifetime counter (stats + target_goal early-stop)
@@ -1125,13 +1135,14 @@ class BacktestEngine:
         carried_upnl = 0.0
         for _p in state.open_positions:
             _ks = klines.get(_p.symbol, [])
-            _mark = _p.entry_price
+            _ref = _p.equity_ref_entry or _p.entry_price
+            _mark = _ref
             for _k in _ks:
                 if _k["open_time"] <= current_time:
                     _mark = _k["close"]
                 else:
                     break
-            carried_upnl += _cu(_p.entry_price, _mark, _p.qty, _p.side)
+            carried_upnl += _cu(_ref, _mark, _p.qty, _p.side)
         locked_margin = sum(p.locked_margin for p in state.open_positions)
         available_balance = max(0.0, state.wallet_balance + carried_upnl - locked_margin)
         state.sizing_capital = available_balance
@@ -1488,7 +1499,11 @@ class BacktestEngine:
         losing_positions = []
         for pos in state.open_positions:
             current_price = latest_prices.get(pos.symbol, pos.entry_price)
-            upnl = compute_unrealized_pnl(pos.entry_price, current_price, pos.qty, pos.side)
+            # Equity rules value uPnL off the STABLE 5m reference entry (invariant to
+            # drill-down) so toggling drill-down never changes which threshold fires →
+            # identical trade selection. Falls back to entry_price when not drilled.
+            ref = pos.equity_ref_entry or pos.entry_price
+            upnl = compute_unrealized_pnl(ref, current_price, pos.qty, pos.side)
             total_upnl += upnl
             if upnl < 0:
                 losing_positions.append(pos)
@@ -1517,7 +1532,7 @@ class BacktestEngine:
                     extreme = latest_prices.get(pos.symbol, pos.entry_price)
                 adverse_price[pos.symbol] = extreme
                 drawdown_upnl += compute_unrealized_pnl(
-                    pos.entry_price, extreme, pos.qty, pos.side
+                    pos.equity_ref_entry or pos.entry_price, extreme, pos.qty, pos.side
                 )
             intrabar_equity = state.wallet_balance + drawdown_upnl
             # Fire on the worse of (close, intrabar) — the intrabar extreme is by
@@ -1550,7 +1565,8 @@ class BacktestEngine:
                     intrabar_losers = [
                         pos for pos in state.open_positions
                         if compute_unrealized_pnl(
-                            pos.entry_price, adverse_price.get(pos.symbol, pos.entry_price),
+                            pos.equity_ref_entry or pos.entry_price,
+                            adverse_price.get(pos.symbol, pos.equity_ref_entry or pos.entry_price),
                             pos.qty, pos.side,
                         ) < 0
                     ]
@@ -1641,8 +1657,12 @@ class BacktestEngine:
             if pos.symbol != symbol:
                 continue
 
+            # Trailing is a lifecycle (close-timing) rule → value it off the stable 5m
+            # reference entry so drill-down never changes whether/when it triggers.
+            ref_entry = pos.equity_ref_entry or pos.entry_price
+
             # Compute unrealized PnL at candle close
-            upnl = compute_unrealized_pnl(pos.entry_price, close_price, pos.qty, pos.side)
+            upnl = compute_unrealized_pnl(ref_entry, close_price, pos.qty, pos.side)
 
             # Step 1: If upnl <= 0, clear peak and skip
             if upnl <= 0:
@@ -1651,7 +1671,7 @@ class BacktestEngine:
                 continue
 
             # Step 2: Check activation (price move % >= threshold AND upnl > 0)
-            if not check_trailing_activation(close_price, pos.entry_price, trailing_pct, upnl):
+            if not check_trailing_activation(close_price, ref_entry, trailing_pct, upnl):
                 # Below activation: production (_evaluate_trailing_profit) `continue`s
                 # here WITHOUT checking the retracement trigger — a position whose
                 # current profit% has fallen below the activation threshold is NEVER
@@ -1668,10 +1688,10 @@ class BacktestEngine:
             # Use candle high/low for peak (more accurate)
             if pos.side == "Buy":
                 peak_price = candle["high"]
-                peak_upnl = compute_unrealized_pnl(pos.entry_price, peak_price, pos.qty, pos.side)
+                peak_upnl = compute_unrealized_pnl(ref_entry, peak_price, pos.qty, pos.side)
             else:
                 peak_price = candle["low"]
-                peak_upnl = compute_unrealized_pnl(pos.entry_price, peak_price, pos.qty, pos.side)
+                peak_upnl = compute_unrealized_pnl(ref_entry, peak_price, pos.qty, pos.side)
 
             peak_per_unit = peak_upnl / pos.qty if pos.qty > 0 and peak_upnl > 0 else per_unit_pnl
 

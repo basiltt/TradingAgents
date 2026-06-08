@@ -422,28 +422,28 @@ class TestDrilldownEntry:
         assert a.trades == b.trades == c.trades
         assert a.metrics.get("net_profit") == b.metrics.get("net_profit") == c.metrics.get("net_profit")
 
-    def test_entry_bar_pre_fill_spike_does_not_fire_exit(self):
-        """The entry 5m bar has a low of 50 (a huge pre-fill drop), but the 1m fill is
-        at 12:05 and the post-entry 1m candles never reach the SL. A close-only or
-        5m-high/low eval would fire SL from the pre-entry low; drill-down must not."""
+    def test_drilled_price_does_not_change_trade_lifecycle(self):
+        """Entry drill is PRICE-ONLY: it refines the fill price from the signal-bar 1m
+        open but keeps the 5m next-bar-open LIFECYCLE, so a position opens/closes on the
+        same bars as the 5m engine (preserving the skip_if_positions_open cascade and
+        trade count). Here: the drilled fill price differs, but the position is still
+        evaluated from the 12:05 bar onward — identical close timing to no-drill."""
         from backend.services.backtest_engine import BacktestEngine
         klines = self._klines()
-        # make the 12:05 5m bar dip to 50 intrabar (pre-fill), recover to 110 close
-        klines["BTCUSDT"][1] = {"open_time": self.BASE + timedelta(minutes=5),
-                                "open": 100.0, "high": 112.0, "low": 50.0, "close": 110.0, "volume": 100.0}
-        entry_bar = self.BASE + timedelta(minutes=5)
-        # post-entry 1m candles stay 103-110 (never near a stop)
-        fine = {"BTCUSDT": {_fine_key(entry_bar): [
-            {"open_time": entry_bar + timedelta(minutes=m), "open": 103.0,
-             "high": 110.0, "low": 103.0, "close": 110.0, "volume": 10.0}
+        signal_bar = self.BASE  # 12:00 contains the 12:03:47 signal
+        fine = {"BTCUSDT": {_fine_key(signal_bar): [
+            {"open_time": signal_bar + timedelta(minutes=m), "open": 97.0 if m == 4 else 100.0,
+             "high": 110.0, "low": 97.0, "close": 110.0, "volume": 10.0}
             for m in range(5)
         ]}}
-        cfg = self._cfg(stop_loss_pct=50.0)  # SL ~95 for a long at 103/10x → 50 would hit it
-        result = BacktestEngine().run(cfg, self._signal(), klines, fine_klines=fine)
-        assert len(result.trades) == 1
-        assert result.trades[0]["close_reason"] != "sl", (
-            "fabricated an SL exit from the entry bar's PRE-fill low of 50 (look-ahead)"
-        )
+        drilled = BacktestEngine().run(self._cfg(), self._signal(), klines, fine_klines=fine)
+        plain = BacktestEngine().run(self._cfg(), self._signal(), klines)
+        assert len(drilled.trades) == len(plain.trades) == 1
+        # price drilled to the 12:04 1m open (97), distinct from the 5m fill...
+        assert drilled.trades[0]["entry_price"] == pytest.approx(97.0)
+        # ...but the lifecycle (entry/exit TIMES) is unchanged vs no-drill.
+        assert drilled.trades[0]["entry_time"] == plain.trades[0]["entry_time"]
+        assert drilled.trades[0]["exit_time"] == plain.trades[0]["exit_time"]
 
     def test_entry_fills_in_signal_bar_not_next_bar(self):
         """Production fills at the scan instant (mid-bar); the 5m engine defers to the
@@ -474,6 +474,49 @@ class TestDrilldownEntry:
         assert r.trades[0]["entry_price"] == pytest.approx(97.0), (
             f"expected signal-bar 1m fill 97, got {r.trades[0]['entry_price']}"
         )
+
+    def test_equity_drop_close_is_invariant_to_drilled_price(self):
+        """Selection-invariance: the equity close-rules value uPnL off the STABLE 5m
+        reference entry, NOT the drilled fill — so a drilled entry price can NEVER
+        change WHETHER/WHEN an equity rule fires (and thus never changes the trade set /
+        skip_if_positions_open cascade). Here a short's drilled entry is much more
+        favorable, which WOULD delay an equity_drop if the rule used the drilled price;
+        it must fire at the same bar regardless."""
+        from backend.services.backtest_engine import BacktestEngine
+        # short, 10x, capital 100% → +5% adverse = 50% drawdown. drawdown threshold 50%.
+        cfg = _laconfig(capital_pct=100.0, leverage=10, take_profit_pct=900.0,
+                        stop_loss_pct=900.0, max_drawdown_pct=50.0, smart_drawdown_close=False,
+                        fee_rate_pct=0.0, slippage_bps=0)
+        sig = [{"id": 1, "ticker": "BTCUSDT", "direction": "sell", "confidence": "high",
+                "score": 8, "signal_time": self.BASE + timedelta(minutes=3, seconds=47),
+                "scan_id": "s1", "signal_source": "structured", "analysis_price": 100.0}]
+        out = []
+        for i in range(10):
+            t = self.BASE + timedelta(minutes=i * 5)
+            if i == 1:    # entry bar (12:05) opens 100
+                out.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            elif i == 3:  # price rises to 106 (a >50% drawdown for the short) and closes there
+                out.append({"open_time": t, "open": 100.0, "high": 106.0, "low": 100.0, "close": 106.0, "volume": 100.0})
+            else:
+                out.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+        # drilled entry in the SIGNAL bar (12:00) at a much HIGHER short fill (110 = more
+        # favorable for a short), which would shrink the measured drawdown if (wrongly)
+        # used by the equity rule.
+        signal_bar = self.BASE
+        fine = {"BTCUSDT": {_fine_key(signal_bar): [
+            {"open_time": signal_bar + timedelta(minutes=m), "open": 110.0,
+             "high": 110.0, "low": 110.0, "close": 110.0, "volume": 10.0}
+            for m in range(5)
+        ]}}
+        plain = BacktestEngine().run(cfg, sig, {"BTCUSDT": out})
+        drilled = BacktestEngine().run(cfg, sig, {"BTCUSDT": out}, fine_klines=fine)
+        assert len(plain.trades) == len(drilled.trades) == 1
+        # SAME close reason and SAME exit time — selection invariant to the drilled price.
+        assert plain.trades[0]["close_reason"] == drilled.trades[0]["close_reason"]
+        assert plain.trades[0]["exit_time"] == drilled.trades[0]["exit_time"]
+        # ...but the drilled trade's REPORTED entry price reflects the 1m fill.
+        assert drilled.trades[0]["entry_price"] == pytest.approx(110.0)
+        assert plain.trades[0]["entry_price"] == pytest.approx(100.0)
 
 
 class TestDrilldownExit:
