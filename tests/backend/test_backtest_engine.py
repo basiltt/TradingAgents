@@ -277,18 +277,62 @@ class TestEntryNoLookAhead:
         assert trade["exit_time"] == base + timedelta(minutes=5 * 5)
 
 
-class TestIntrabarEquityDrawdown:
-    """EQUITY_DROP must react to an intra-candle drawdown breach, mirroring live.
+class TestStaleEntryNotFabricated:
+    """An entry must NEVER be fabricated from a STALE candle. If a symbol's cached
+    candles all end BEFORE the signal time (partial/truncated coverage), there is no
+    real price at which the trade could have filled — production would have no fill
+    either. The engine must SKIP the signal (count it as no-kline) instead of filling
+    at the last stale candle's close.
 
-    Production's close-rule evaluator runs on WS wallet ticks with zero debounce
-    (close_rule_evaluator.py: drawdown split, immediate eval) — Bybit's live
-    `totalEquity` reflects the real-time mark, so a transient intra-minute breach
-    of the drawdown threshold FIRES. A candle-based backtest that only checks the
-    bar CLOSE misses a breach that happened on the bar's high/low and then
-    recovered by close — under-closing and holding positions production would have
-    flattened. The engine must therefore evaluate equity drawdown on the bar's
-    adverse extreme (high for shorts, low for longs), not just its close.
+    Regression: a backtest read partial cache (e.g. EIGEN had candles ending ~2h before
+    the scan), and `_open_position` fell back to `symbol_klines[-1]["close"]`, filling a
+    short at a 2h-stale price (0.161 vs the real 0.178). That wrong entry cascaded into
+    wrong PnL and a held-to-max_duration position that skipped later scans.
     """
+
+    BASE = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    def _signal_at(self, t):
+        return [{"id": 1, "ticker": "BTCUSDT", "direction": "sell", "confidence": "high",
+                 "score": 8, "signal_time": t, "scan_id": "s1",
+                 "signal_source": "structured", "analysis_price": 100.0}]
+
+    def test_no_candle_at_or_after_signal_is_skipped_not_fabricated(self):
+        """Candles cover 12:00–12:30 but the signal fires at 14:00 (cache truncated
+        before the signal). There is NO bar with open_time >= 14:00, so the engine must
+        skip the trade — not fill at the last (12:30) close."""
+        from backend.services.backtest_engine import BacktestEngine
+        candles = [
+            {"open_time": self.BASE + timedelta(minutes=i * 5), "open": 100.0,
+             "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0}
+            for i in range(7)  # 12:00 .. 12:30
+        ]
+        sig_t = self.BASE + timedelta(hours=2)  # 14:00 — after all candles
+        result = BacktestEngine().run(_laconfig(), self._signal_at(sig_t), {"BTCUSDT": candles})
+        assert result.trades == [], (
+            "engine fabricated a fill from a stale pre-signal candle instead of skipping; "
+            f"got {result.trades}"
+        )
+        assert result.filter_stats.get("signals_no_kline", 0) == 1, (
+            "a signal with no candle at/after its time must be counted as no-kline"
+        )
+
+    def test_forward_candle_present_still_fills_normally(self):
+        """Control: when a candle DOES exist at/after the signal time, the trade fills
+        as before (the new guard must not block legitimate entries)."""
+        from backend.services.backtest_engine import BacktestEngine
+        candles = [
+            {"open_time": self.BASE + timedelta(minutes=i * 5), "open": 100.0,
+             "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0}
+            for i in range(20)
+        ]
+        sig_t = self.BASE + timedelta(minutes=3, seconds=47)  # 12:03:47 → fills 12:05
+        result = BacktestEngine().run(_laconfig(), self._signal_at(sig_t), {"BTCUSDT": candles})
+        assert len(result.trades) == 1
+        assert result.trades[0]["entry_price"] == pytest.approx(100.0)
+
+
+class TestIntrabarEquityDrawdown:
 
     def _short_signal(self):
         sig_t = datetime(2026, 1, 1, 12, 3, 47, tzinfo=timezone.utc)
@@ -602,3 +646,217 @@ class TestDrilldownExit:
         assert r.trades[0]["close_reason"] == "sl"
 
 
+def _five_m(open_time, o, h, l, c, vol=100.0):
+    return {"open_time": open_time, "open": o, "high": h, "low": l, "close": c, "volume": vol}
+
+
+class TestPortfolioEquityOneMinuteWalk:
+    """1-minute PORTFOLIO-EQUITY walk: when a 5m bar's equity rule (drawdown / smart /
+    rise / close_on_profit) WOULD fire AND a full-book 1m window exists for that bar,
+    the engine walks the bar minute-by-minute and fires at the FIRST minute the *true
+    simultaneous* account equity crosses — stamping that minute's time + price — instead
+    of the 5m bar boundary using each symbol's own-bar adverse extreme.
+
+    Rationale (verified against production): the 5m drawdown values every open position
+    at ITS OWN bar adverse extreme and sums them — a synchronized-worst-case that (a)
+    stamps the close at the bar open using ~end-of-bar prices (look-ahead) and (b) can
+    fabricate a drawdown that never simultaneously happened. The 1m walk fixes both.
+
+    Gating preserves the golden guarantee: with NO fine windows the engine is
+    byte-identical to the 5m path. The walk only ever REFINES a breach the 5m gate
+    already flagged (it can never miss one: Σ own-bar-worst ≤ min-minute simultaneous).
+    """
+
+    BASE = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    def _two_short_signals(self):
+        # Two equal-score shorts in ONE scan → opened together, evaluated on a shared
+        # unified timeline so the portfolio-equity sum spans both.
+        t = self.BASE + timedelta(minutes=3, seconds=47)
+        return [
+            {"id": 1, "ticker": "AAA", "direction": "sell", "confidence": "high",
+             "score": 8, "signal_time": t, "scan_id": "s1",
+             "signal_source": "structured", "analysis_price": 100.0},
+            {"id": 2, "ticker": "BBB", "direction": "sell", "confidence": "high",
+             "score": 8, "signal_time": t, "scan_id": "s1",
+             "signal_source": "structured", "analysis_price": 100.0},
+        ]
+
+    def _cfg(self, **ov):
+        # 2 trades, each 50% capital @ 10x. A +5% adverse move on a short = +50% of that
+        # leg's margin loss. With both legs equal, a simultaneous +6% on BOTH = ~60%
+        # book drawdown. max_drawdown 50% (non-smart → closes ALL). Huge TP/SL so only
+        # the equity rule can close. fee/slip 0 for exact arithmetic.
+        base = dict(capital_pct=50.0, leverage=10, take_profit_pct=900.0,
+                    stop_loss_pct=900.0, max_drawdown_pct=50.0, smart_drawdown_close=False,
+                    max_trades=2, fee_rate_pct=0.0, slippage_bps=0, execution_mode="batch")
+        base.update(ov)
+        return _laconfig(**base)
+
+    def _klines(self, breach_bar_idx=4):
+        """Flat-100 5m series for AAA and BBB except the breach bar, whose 5m HIGH = 106
+        (a +6% adverse move for a short) but whose 5m CLOSE returns to 100. At 5m the
+        own-bar-high sum fires drawdown; the 1m detail (per test) decides the truth."""
+        aaa, bbb = [], []
+        for i in range(12):
+            t = self.BASE + timedelta(minutes=i * 5)
+            if i == 1:        # 12:05 entry bar — flat 100 (fills at open 100)
+                aaa.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+                bbb.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+            elif i == breach_bar_idx:
+                aaa.append(_five_m(t, 100.0, 106.0, 100.0, 100.0))
+                bbb.append(_five_m(t, 100.0, 106.0, 100.0, 100.0))
+            else:
+                aaa.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+                bbb.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+        return {"AAA": aaa, "BBB": bbb}, self.BASE + timedelta(minutes=breach_bar_idx * 5)
+
+    def _window(self, bar_open, aaa_minutes, bbb_minutes):
+        """Build a full-book 1m fine_klines dict for the breach bar. *_minutes are lists
+        of 5 (high, low) tuples for minutes 0..4. open=close=low so a short's adverse
+        extreme is the minute's HIGH and the simultaneous mark is the minute's close."""
+        def seq(mins):
+            out = []
+            for m, (hi, lo) in enumerate(mins):
+                out.append(_five_m(bar_open + timedelta(minutes=m), lo, hi, lo, lo, 10.0))
+            return out
+        return {
+            "AAA": {int(bar_open.timestamp()): seq(aaa_minutes)},
+            "BBB": {int(bar_open.timestamp()): seq(bbb_minutes)},
+        }
+
+    def test_drawdown_fires_at_true_one_minute_crossing_not_bar_open(self):
+        """Both shorts spike to 106 on the SAME minute (minute 3) → true simultaneous
+        equity DOES breach 50%, but only at minute 3. The 5m path would stamp the close
+        at the bar OPEN (minute 0); the 1m walk must stamp it at minute 3 and at price
+        106 (the adverse extreme of the crossing minute)."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        flat = (100.0, 100.0)
+        spike = (106.0, 100.0)
+        mins = [flat, flat, flat, spike, flat]  # both spike together at minute 3
+        fine = self._window(bar, mins, mins)
+        r = BacktestEngine().run(self._cfg(), self._two_short_signals(), klines, fine_klines=fine)
+        drops = [t for t in r.trades if t["close_reason"] == "equity_drop"]
+        assert len(drops) == 2, (
+            f"expected both legs closed by equity_drop, got {[t['close_reason'] for t in r.trades]}"
+        )
+        # Stamped at minute 3 (12:23), not the bar open (12:20).
+        assert all(t["exit_time"] == bar + timedelta(minutes=3) for t in drops), (
+            f"equity_drop should stamp the true 1m crossing minute (12:23), got "
+            f"{[t['exit_time'] for t in drops]}"
+        )
+        # Closed at the crossing minute's adverse extreme (106), not the 5m close (100).
+        assert all(t["exit_price"] == pytest.approx(106.0) for t in drops)
+
+    def test_phantom_synchronized_wick_does_not_fire(self):
+        """AAA spikes to 106 ONLY at minute 1; BBB spikes to 106 ONLY at minute 3. They
+        never spike together, so the true simultaneous book drawdown peaks at ~30% (one
+        leg at +6%, the other flat) — under the 50% threshold. But the 5m own-bar-high
+        sum sees BOTH at 106 → ~60% → the 5m path fires a PHANTOM drawdown. The 1m walk
+        must NOT close either position."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        flat = (100.0, 100.0)
+        spike = (106.0, 100.0)
+        aaa_mins = [flat, spike, flat, flat, flat]   # AAA worst at minute 1
+        bbb_mins = [flat, flat, flat, spike, flat]   # BBB worst at minute 3
+        fine = self._window(bar, aaa_mins, bbb_mins)
+        r = BacktestEngine().run(self._cfg(), self._two_short_signals(), klines, fine_klines=fine)
+        drop_or_smart = [t for t in r.trades if t["close_reason"] in ("equity_drop", "equity_drop_smart")]
+        assert not drop_or_smart, (
+            "5m synchronized-wick fired a phantom drawdown the 1m simultaneous path never "
+            f"reached; got closes {[(t['symbol'], t['close_reason']) for t in r.trades]}"
+        )
+
+    def test_no_fine_data_fires_5m_synchronized_drawdown_unchanged(self):
+        """Golden control: the SAME phantom setup WITHOUT fine data keeps the legacy 5m
+        behaviour (fires on the own-bar-high sum). Proves the walk is the only thing that
+        changes the phantom outcome — the 5m path is untouched when no 1m is injected."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        r = BacktestEngine().run(self._cfg(), self._two_short_signals(), klines)
+        drops = [t for t in r.trades if t["close_reason"] == "equity_drop"]
+        assert len(drops) == 2, (
+            "without 1m data the 5m own-bar-high drawdown must still fire (legacy behaviour)"
+        )
+        assert all(t["exit_time"] == bar for t in drops), "5m path stamps at the bar open"
+
+    def test_partial_book_coverage_falls_back_to_5m(self):
+        """The walk needs EVERY open symbol's 1m window (equity is a book-wide sum). If
+        only ONE symbol has a 1m window for the breach bar, the engine must fall back to
+        the 5m evaluation for that bar (fail-soft) — here that means the 5m synchronized
+        drawdown still fires at the bar open, exactly as the no-fine path."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._klines()
+        flat = (100.0, 100.0)
+        spike = (106.0, 100.0)
+        full = self._window(bar, [flat, flat, flat, spike, flat], [flat, flat, flat, spike, flat])
+        partial = {"AAA": full["AAA"]}  # BBB window missing → not full-book
+        r = BacktestEngine().run(self._cfg(), self._two_short_signals(), klines, fine_klines=partial)
+        drops = [t for t in r.trades if t["close_reason"] == "equity_drop"]
+        assert len(drops) == 2, "partial-book coverage must fall back to the 5m drawdown"
+        assert all(t["exit_time"] == bar for t in drops), (
+            "fallback must use the 5m bar-open stamp, not a partial 1m walk"
+        )
+
+    def _rise_cfg(self, **ov):
+        # profit_pct target goal → EQUITY_RISE_PCT. Two shorts, +goal% book gain closes
+        # all. Large drawdown so only the rise rule can fire.
+        base = dict(capital_pct=50.0, leverage=10, take_profit_pct=900.0,
+                    stop_loss_pct=900.0, max_drawdown_pct=100.0, smart_drawdown_close=False,
+                    max_trades=2, fee_rate_pct=0.0, slippage_bps=0, execution_mode="batch",
+                    target_goal_type="profit_pct", target_goal_value=50.0)
+        base.update(ov)
+        return _laconfig(**base)
+
+    def _rise_klines(self, gain_bar_idx=4):
+        """Both shorts profit: the gain bar's 5m LOW = 95 (a −5% move = +50% margin gain
+        per leg → ~+50% book at 50%/10x). 5m CLOSE returns to 100 (gain only intrabar)."""
+        aaa, bbb = [], []
+        for i in range(12):
+            t = self.BASE + timedelta(minutes=i * 5)
+            if i == 1:
+                aaa.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+                bbb.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+            elif i == gain_bar_idx:
+                aaa.append(_five_m(t, 100.0, 100.0, 95.0, 100.0))
+                bbb.append(_five_m(t, 100.0, 100.0, 95.0, 100.0))
+            else:
+                aaa.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+                bbb.append(_five_m(t, 100.0, 100.0, 100.0, 100.0))
+        return {"AAA": aaa, "BBB": bbb}, self.BASE + timedelta(minutes=gain_bar_idx * 5)
+
+    def test_equity_rise_fires_at_true_one_minute_crossing(self):
+        """The rise rule is evaluated on the 5m CLOSE today, so an intrabar +50% spike
+        that recovers by close is missed at this bar (caught only later/at force-close).
+        With a full-book 1m window the walk must fire the rise at the first minute the
+        true simultaneous equity crosses +50%, stamped at that minute and its price."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, bar = self._rise_klines()
+        flat = (100.0, 100.0)
+        gain = (100.0, 95.0)  # (high, low): short gains at low=95
+        mins = [flat, flat, gain, flat, flat]  # both reach +50% together at minute 2
+        fine = self._window(bar, mins, mins)
+        r = BacktestEngine().run(self._rise_cfg(), self._two_short_signals(), klines, fine_klines=fine)
+        rises = [t for t in r.trades if t["close_reason"] == "equity_rise"]
+        assert len(rises) == 2, (
+            f"expected both legs closed by equity_rise at the 1m crossing, got "
+            f"{[(t['symbol'], t['close_reason'], t['exit_time']) for t in r.trades]}"
+        )
+        assert all(t["exit_time"] == bar + timedelta(minutes=2) for t in rises), (
+            f"rise should stamp the 1m crossing minute (12:22), got {[t['exit_time'] for t in rises]}"
+        )
+        assert all(t["exit_price"] == pytest.approx(95.0) for t in rises)
+
+    def test_walk_is_byte_identical_without_fine_data(self):
+        """Golden: a full multi-symbol equity-rule run with fine_klines=None / {} must
+        equal the run that never passes the param — the walk is fully inert without 1m."""
+        from backend.services.backtest_engine import BacktestEngine
+        klines, _ = self._klines()
+        sigs = self._two_short_signals()
+        a = BacktestEngine().run(self._cfg(), sigs, klines)
+        b = BacktestEngine().run(self._cfg(), sigs, klines, fine_klines=None)
+        c = BacktestEngine().run(self._cfg(), sigs, klines, fine_klines={})
+        assert a.trades == b.trades == c.trades
+        assert a.metrics.get("net_profit") == b.metrics.get("net_profit") == c.metrics.get("net_profit")

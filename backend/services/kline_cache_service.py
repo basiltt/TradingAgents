@@ -145,13 +145,35 @@ class KlineCacheService:
 
         rows = await self._db.pool.fetch(query, symbols, interval, start_date, end_date)
 
-        # Build set of covered dates per symbol
-        covered: dict[str, set[date]] = {}
+        # Map (symbol, date) → cached candle_count. A date absent from the table has 0.
+        counts: dict[str, dict[date, int]] = {}
         for row in rows:
-            sym = row["symbol"]
-            if sym not in covered:
-                covered[sym] = set()
-            covered[sym].add(row["date"])
+            counts.setdefault(row["symbol"], {})[row["date"]] = int(row["candle_count"] or 0)
+
+        # Candles per full day for this interval (1440 minutes / interval). Unknown
+        # intervals fall back to 5m's 288 so a typo can't make every day look "complete".
+        interval_min = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 5)
+        per_day_full = max(1, 1440 // interval_min)
+
+        def _expected_for(d: date) -> int:
+            """Candles expected for day `d` within the requested [start, end] window.
+
+            Interior days expect a full day. The FIRST and LAST day are clipped to the
+            requested time-of-day, so a window ending mid-day (or starting mid-day) does
+            not mark its boundary day as a perpetual gap. Clipping uses bar-count between
+            the day's effective [lo, hi) span; a day fully inside the window expects the
+            full per-day count.
+            """
+            day_start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+            day_end = day_start + timedelta(days=1)
+            lo = max(day_start, start if isinstance(start, datetime) else day_start)
+            hi = min(day_end, end if isinstance(end, datetime) else day_end)
+            if hi <= lo:
+                return 0
+            span_min = (hi - lo).total_seconds() / 60.0
+            # Number of bar OPENs in [lo, hi): floor(span / interval). A full day yields
+            # per_day_full; a 6h tail yields 72 for 5m. Never exceed the full-day count.
+            return min(per_day_full, max(0, int(span_min // interval_min)))
 
         # Generate expected dates
         expected_dates: list[date] = []
@@ -160,11 +182,14 @@ class KlineCacheService:
             expected_dates.append(current)
             current += timedelta(days=1)
 
-        # Find gaps per symbol
+        # A date is a GAP when its cached candle_count is below the expected count for
+        # that day (clipped to the requested window). This replaces the old "covered if
+        # the date appears at all" check, which let a partially-warmed day (e.g. 73/288)
+        # masquerade as complete and never refetch — the root of the stale-fill bug.
         gaps: dict[str, list[date]] = {}
         for sym in symbols:
-            sym_covered = covered.get(sym, set())
-            sym_gaps = [d for d in expected_dates if d not in sym_covered]
+            sym_counts = counts.get(sym, {})
+            sym_gaps = [d for d in expected_dates if sym_counts.get(d, 0) < _expected_for(d)]
             if sym_gaps:
                 gaps[sym] = sym_gaps
 

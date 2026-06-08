@@ -67,12 +67,17 @@ def _marked_status(mock_db, status: str) -> bool:
 class TestMemoryLimit:
     @pytest.mark.asyncio
     async def test_memory_reject_large_range(self, mock_db):
-        from backend.services.backtest_service import BacktestService, BacktestValidationError
+        from backend.services.backtest_service import (
+            BacktestService, BacktestValidationError, _MAX_CANDLES,
+        )
         service = BacktestService(db=mock_db)
-        # 400 days at 5m → ~115k candles > 105,120 cap
+        # A range whose 5m candle estimate exceeds _MAX_CANDLES → reject.
+        # Derived from the cap (288 candles/day) so it tracks future changes.
+        over_days = _MAX_CANDLES // 288 + 5
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
         cfg = _make_config(
-            date_range_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            date_range_end=datetime(2026, 2, 5, tzinfo=timezone.utc),
+            date_range_start=start,
+            date_range_end=start + timedelta(days=over_days),
         )
         with pytest.raises(BacktestValidationError):
             await service.create_backtest(cfg)
@@ -104,14 +109,17 @@ class TestMemoryLimit:
             {"date_range_start": start, "date_range_end": end, "simulation_interval": "4h"}) == 60
 
     @pytest.mark.asyncio
-    async def test_memory_boundary_exactly_365_days_accepted(self, mock_db):
-        """Exactly _MAX_CANDLES (365d × 288 = 105,120) must be ACCEPTED (> not >=)."""
+    async def test_memory_boundary_exactly_max_candles_accepted(self, mock_db):
+        """Exactly _MAX_CANDLES must be ACCEPTED (boundary is strict >, not >=)."""
         from backend.services.backtest_service import BacktestService, _MAX_CANDLES
         service = BacktestService(db=mock_db)
         mock_db.pool.fetchrow = AsyncMock(return_value={"id": "ok"})
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        cfg = _make_config(date_range_start=start, date_range_end=start + timedelta(days=365))
-        # 365 days × 288 = 105,120 = _MAX_CANDLES exactly → must NOT reject (strict >)
+        # Derive the exact range that yields _MAX_CANDLES at the 5m interval
+        # (288 candles/day) so the boundary stays correct if the cap changes.
+        days = _MAX_CANDLES // 288
+        cfg = _make_config(date_range_start=start, date_range_end=start + timedelta(days=days))
+        # days × 288 == _MAX_CANDLES exactly → must NOT reject (strict >)
         assert service._estimate_candles(cfg) == _MAX_CANDLES
         with patch.object(service, "_launch_background", new=AsyncMock()):
             run_id = await service.create_backtest(cfg)
@@ -378,6 +386,145 @@ class TestExecution:
         assert "failed" in calls
         assert "persistence" in calls
 
+    def test_scale_progress_maps_engine_pct_onto_phase_band(self):
+        """The per-phase band mapping that fixes the 'stuck at 0%' bug: each engine
+        pass reports 0-100 internally, but the service must scale that onto a slice
+        of the overall bar so two-phase (drill-down) runs advance monotonically
+        instead of pinning the UI at 0% through the entire first (silent) pass."""
+        from backend.services.backtest_service import BacktestService
+        f = BacktestService._scale_progress
+        # Single-pass run (drill-down off): engine pct passes straight through.
+        assert f(0, 0, 100) == 0
+        assert f(100, 0, 100) == 100
+        # Phase A occupies the FIRST half: engine 0→100 maps to overall 0→49.
+        assert f(0, 0, 49) == 0
+        assert f(100, 0, 49) == 49
+        # Phase B occupies the SECOND half: engine 0→100 maps to overall 50→100.
+        assert f(0, 50, 100) == 50
+        assert f(50, 50, 100) == 75
+        assert f(100, 50, 100) == 100
+        # Out-of-range engine input is clamped, never escaping the band.
+        assert f(-10, 0, 49) == 0
+        assert f(150, 50, 100) == 100
+
+    @pytest.mark.asyncio
+    async def test_drilldown_phase_a_reports_progress_not_stuck_at_zero(self, mock_db):
+        """Regression: with drill-down ON (the default), Phase A ran with
+        on_progress=None — the engine's entire first simulation pass emitted nothing,
+        so the polled progress_pct sat at 0% for the front half of every run. BOTH
+        engine passes must now receive a real progress callback."""
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+        # kline_cache non-None → drilldown_on True → the two-phase path runs.
+        service = BacktestService(db=mock_db, kline_cache=MagicMock())
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+
+        captured: list = []  # the on_progress callback each engine.run pass receives
+
+        def _fake_run(config, signals, klines, cancel_event=None, on_progress=None,
+                      instrument_info=None, scan_contexts=None, fine_klines=None):
+            captured.append(on_progress)
+            return SimulationResult(trades=[], equity_curve=[],
+                                    metrics={"total_trades": 0}, warnings=[],
+                                    filter_stats={})
+
+        sig = [{"ticker": "BTCUSDT",
+                "signal_time": datetime(2026, 1, 1, tzinfo=timezone.utc)}]
+        with patch.object(service, "_load_signals", new=AsyncMock(return_value=sig)), \
+             patch.object(service, "_load_klines",
+                          new=AsyncMock(return_value={"BTCUSDT": [{"open_time": 0, "close": 1.0}]})), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_check_kline_coverage", new=MagicMock()), \
+             patch.object(service, "_check_total_kline_budget", new=MagicMock()), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=AsyncMock()), \
+             patch("backend.services.backtest_engine.BacktestEngine.run", side_effect=_fake_run):
+            await service._execute_backtest("run-dd", _make_config())
+
+        # Two passes ran (Phase A + Phase B), and NEITHER got a None callback.
+        assert len(captured) == 2
+        assert captured[0] is not None, "Phase A must report progress (was None → 0% freeze)"
+        assert captured[1] is not None
+
+    @pytest.mark.asyncio
+    async def test_ensures_coverage_before_loading_klines(self, mock_db):
+        """Regression (stale-fill root cause): the run must WARM the cache (fetch any
+        missing/partial-day candles) BEFORE reading it. Previously _execute_backtest read
+        whatever happened to be cached — a partially-warmed symbol yielded a truncated
+        series and the engine fabricated fills on stale candles. ensure_coverage must be
+        awaited, and before _load_klines, whenever a kline_cache is present."""
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+        kc = MagicMock()
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+
+        order: list = []
+
+        async def _load_klines_spy(config, signals):
+            order.append("load")
+            return {"BTCUSDT": [{"open_time": 0, "close": 1.0}]}
+
+        async def _ensure_spy(symbols, interval, start, end):
+            order.append("ensure")
+            return {"cached": 1, "fetched": 1, "failed": 0}
+
+        kc.ensure_coverage = AsyncMock(side_effect=_ensure_spy)
+        sig = [{"ticker": "BTCUSDT", "signal_time": datetime(2026, 1, 1, tzinfo=timezone.utc)}]
+        with patch.object(service, "_load_signals", new=AsyncMock(return_value=sig)), \
+             patch.object(service, "_load_klines", new=AsyncMock(side_effect=_load_klines_spy)), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_check_kline_coverage", new=MagicMock()), \
+             patch.object(service, "_check_total_kline_budget", new=MagicMock()), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=AsyncMock()), \
+             patch("backend.services.backtest_engine.BacktestEngine.run",
+                   return_value=SimulationResult(trades=[], equity_curve=[],
+                                                 metrics={"total_trades": 0}, warnings=[],
+                                                 filter_stats={})):
+            await service._execute_backtest("run-cov", _make_config())
+
+        kc.ensure_coverage.assert_awaited()
+        assert order[:2] == ["ensure", "load"], (
+            f"ensure_coverage must run BEFORE _load_klines; call order was {order}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_coverage_fetch_failure_does_not_abort_run(self, mock_db):
+        """ensure_coverage is best-effort: a network/exchange failure while warming must
+        NOT crash the run. The post-load _check_kline_coverage still guards the result,
+        so a warming failure degrades to the existing coverage behaviour, not a 500."""
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+        kc = MagicMock()
+        kc.ensure_coverage = AsyncMock(side_effect=RuntimeError("bybit down"))
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+        sig = [{"ticker": "BTCUSDT", "signal_time": datetime(2026, 1, 1, tzinfo=timezone.utc)}]
+        with patch.object(service, "_load_signals", new=AsyncMock(return_value=sig)), \
+             patch.object(service, "_load_klines",
+                          new=AsyncMock(return_value={"BTCUSDT": [{"open_time": 0, "close": 1.0}]})), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_check_kline_coverage", new=MagicMock()), \
+             patch.object(service, "_check_total_kline_budget", new=MagicMock()), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=AsyncMock()), \
+             patch("backend.services.backtest_engine.BacktestEngine.run",
+                   return_value=SimulationResult(trades=[], equity_curve=[],
+                                                 metrics={"total_trades": 0}, warnings=[],
+                                                 filter_stats={})):
+            await service._execute_backtest("run-cov-fail", _make_config())
+        kc.ensure_coverage.assert_awaited()
+
     @pytest.mark.asyncio
     async def test_late_cancel_after_engine_done_completes_not_cancelled(self, mock_db):
         """A cancel that lands after the engine finished must NOT leave a
@@ -502,7 +649,7 @@ class TestBuyHoldAndCoverage:
 
     def test_total_kline_budget_rejects_many_symbols_long_range(self):
         from backend.services.backtest_service import BacktestService, BacktestValidationError
-        # 200 symbols × 365 days × 288 candles/day ≈ 21M candles > 3M budget
+        # 200 symbols × 365 days × 288 candles/day ≈ 21M candles > 9M budget
         config = {
             "date_range_start": datetime(2025, 1, 1, tzinfo=timezone.utc),
             "date_range_end": datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -514,7 +661,7 @@ class TestBuyHoldAndCoverage:
 
     def test_total_kline_budget_passes_reasonable(self):
         from backend.services.backtest_service import BacktestService
-        # 5 symbols × 30 days × 288 = ~43k candles, well under 3M
+        # 5 symbols × 30 days × 288 = ~43k candles, well under 9M
         config = {
             "date_range_start": datetime(2026, 1, 1, tzinfo=timezone.utc),
             "date_range_end": datetime(2026, 1, 31, tzinfo=timezone.utc),

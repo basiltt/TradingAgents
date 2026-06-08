@@ -855,6 +855,17 @@ class BacktestEngine:
                 entry_bar_open = k["open_time"]
                 break
 
+        # No candle exists at/after the signal instant → the symbol's cached series is
+        # truncated BEFORE this signal (partial/stale coverage). There is no real price
+        # at which this trade could have filled (production would have no fill either),
+        # so we must NOT fabricate one from the last stale candle's close — that would
+        # enter at an arbitrarily old price (regression: a short filled 2h stale at 0.161
+        # vs the real 0.178), cascading into wrong PnL and a held-to-max_duration
+        # position. Count it like a no-kline drop (surfaced as a warning) and skip.
+        if entry_bar_open is None:
+            state.signals_no_kline += 1
+            return False
+
         # ── 1-minute ENTRY DRILL-DOWN (price-only) ──
         # Production fills a market order at the scan's completed_at INSTANT (mid-5m-bar,
         # e.g. 11:55:41). The 5m engine defers the fill to the NEXT bar's open to avoid
@@ -1437,7 +1448,114 @@ class BacktestEngine:
             "drawdown_pct": 0.0,
         })
 
+    def _full_book_fine_window(
+        self, state: SimulationState, candle_time: datetime
+    ) -> Optional[dict[str, list[dict[str, Any]]]]:
+        """Return {symbol: [1m candles asc]} for THIS 5m bar IFF every open position's
+        symbol has an injected 1m window for it — else None.
+
+        The portfolio-equity walk sums uPnL across the WHOLE open book, so it is only
+        valid when every open symbol has 1-minute coverage for the bar. If any symbol is
+        missing (partial coverage), the caller falls back to the 5m evaluation for this
+        bar (fail-soft). None when no drill-down data at all (golden path).
+        """
+        if not self._fine_klines or not state.open_positions:
+            return None
+        book: dict[str, list[dict[str, Any]]] = {}
+        for pos in state.open_positions:
+            if pos.symbol in book:
+                continue
+            window = self._fine_window(pos.symbol, candle_time)
+            if not window:
+                return None  # partial coverage → not full-book → fall back to 5m
+            book[pos.symbol] = window
+        return book
+
     def _evaluate_equity_rules(
+        self,
+        config: dict[str, Any],
+        state: SimulationState,
+        latest_prices: dict[str, float],
+        candle_time: datetime,
+        fee_rate: float,
+        candles_at_time: Optional[dict[str, dict]] = None,
+    ) -> None:
+        """Dispatch the portfolio-equity close rules at the right time resolution.
+
+        When a FULL-BOOK 1-minute window exists for this 5m bar, walk the bar
+        minute-by-minute (`_evaluate_equity_rules_fine`) so a drawdown / smart / rise /
+        close_on_profit fires at the true 1-minute crossing — at that minute's timestamp
+        and price — instead of the 5m bar boundary using each symbol's own-bar adverse
+        extreme (which look-aheads to ~end-of-bar prices and can fabricate a
+        synchronized-wick drawdown that never simultaneously happened).
+
+        Otherwise (no drill-down, or partial book coverage) evaluate once on the 5m bar
+        exactly as before — preserving the byte-identical golden guarantee and keeping
+        the sweep/optimizer (which injects no fine data) structurally unchanged.
+        """
+        if not state.open_positions:
+            return
+        book = self._full_book_fine_window(state, candle_time)
+        if book is None:
+            self._eval_equity_core(config, state, latest_prices, candle_time, fee_rate, candles_at_time)
+            return
+        self._evaluate_equity_rules_fine(config, state, latest_prices, candle_time, fee_rate, book)
+
+    def _evaluate_equity_rules_fine(
+        self,
+        config: dict[str, Any],
+        state: SimulationState,
+        latest_prices: dict[str, float],
+        candle_time: datetime,
+        fee_rate: float,
+        book: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        """1-minute portfolio-equity walk over a single 5m bar.
+
+        Runs the SAME 5m evaluation kernel (`_eval_equity_core`) once per 1-minute
+        candle, with that minute's per-symbol price as the close mark and its own 1m
+        high/low as the adverse extreme. The first minute a rule truly crosses, the
+        kernel closes the book / terminates the cycle (stamped at that minute) and the
+        remaining minutes naturally no-op. If no minute crosses, nothing fires (a 5m
+        synchronized-wick phantom is correctly rejected).
+
+        Marks are carried forward minute-to-minute: a symbol with no 1m candle at a
+        given minute keeps its last-known price (the incoming 5m mark until its first 1m
+        candle), so the simultaneous-equity sum is always defined across the full book.
+        """
+        # Union of all 1-minute timestamps across the open book, in order. Each symbol's
+        # window is ascending; merge-dedupe their open_times.
+        minute_set: set[datetime] = set()
+        per_symbol_at: dict[str, dict[datetime, dict[str, Any]]] = {}
+        for sym, window in book.items():
+            idx: dict[datetime, dict[str, Any]] = {}
+            for c in window:
+                ot = c["open_time"]
+                if isinstance(ot, datetime):
+                    idx[ot] = c
+                    minute_set.add(ot)
+            per_symbol_at[sym] = idx
+        if not minute_set:
+            # Degenerate (windows held no datetime-keyed candles) → 5m fallback.
+            self._eval_equity_core(config, state, latest_prices, candle_time, fee_rate, None)
+            return
+
+        # Local carry-forward marks seeded from the incoming 5m marks (never mutate the
+        # caller's dict — a non-firing walk must leave outer state untouched).
+        marks = dict(latest_prices)
+        for minute in sorted(minute_set):
+            if not state.open_positions:
+                break
+            candles_at_minute: dict[str, dict[str, Any]] = {}
+            for sym in list({p.symbol for p in state.open_positions}):
+                c = per_symbol_at.get(sym, {}).get(minute)
+                if c is not None:
+                    marks[sym] = c["close"]
+                    candles_at_minute[sym] = c
+            # Evaluate the full equity-rule kernel at this minute, stamped at the minute.
+            self._eval_equity_core(config, state, marks, minute, fee_rate, candles_at_minute)
+
+    def _eval_equity_core(
         self,
         config: dict[str, Any],
         state: SimulationState,
@@ -1458,6 +1576,11 @@ class BacktestEngine:
         close-only backtest would miss it and hold positions production flattened.
         candles_at_time supplies this bar's OHLC per symbol; when absent (callers
         that don't pass it) the evaluator degrades to close-only (prior behaviour).
+
+        At 5m resolution this kernel values every open position at ITS OWN bar adverse
+        extreme — a synchronized-worst-case. The 1-minute walk
+        (`_evaluate_equity_rules_fine`) calls this same kernel per minute so the adverse
+        window shrinks to one minute and the firing time/price match the true crossing.
         """
         from backend.services.trading_rules import (
             compute_unrealized_pnl, check_equity_drop, check_close_on_profit, check_equity_rise,

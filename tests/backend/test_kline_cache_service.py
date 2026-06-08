@@ -111,6 +111,57 @@ class TestGetCoverageGaps:
         gaps = await svc.get_coverage_gaps(["BTCUSDT"], "5m", start, end)
         assert gaps.get("BTCUSDT", []) == []
 
+    @pytest.mark.asyncio
+    async def test_partial_interior_day_is_a_gap(self, mock_db):
+        """A fully-elapsed interior day with FEWER than the full candle count (e.g. 73 of
+        288 for 5m) must be reported as a GAP, so ensure_coverage refetches the rest.
+
+        Regression: get_coverage_gaps treated a date as covered if it appeared in the
+        coverage table AT ALL, ignoring candle_count — so a partially-warmed day (73/288)
+        was 'covered' and never refilled, and the backtest read a truncated series and
+        fabricated fills on stale candles."""
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+
+        mock_db.pool.fetch.return_value = [
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, 1).date(), "candle_count": 288},
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, 2).date(), "candle_count": 73},   # PARTIAL
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, 3).date(), "candle_count": 288},
+        ]
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 3, 23, 59, tzinfo=timezone.utc)
+
+        gaps = await svc.get_coverage_gaps(["BTCUSDT"], "5m", start, end)
+        assert datetime(2026, 1, 2).date() in gaps.get("BTCUSDT", []), (
+            "a 73/288 interior day must count as a gap, not 'covered'"
+        )
+        # The full days must NOT be flagged.
+        assert datetime(2026, 1, 1).date() not in gaps.get("BTCUSDT", [])
+        assert datetime(2026, 1, 3).date() not in gaps.get("BTCUSDT", [])
+
+    @pytest.mark.asyncio
+    async def test_partial_end_day_clipped_to_requested_time_is_not_a_gap(self, mock_db):
+        """The END day is legitimately partial when the window ends mid-day: a backtest
+        to 06:00 only needs that day's candles up to 06:00 (72 for 5m). A day with >= the
+        clipped expected count must NOT be a perpetual gap (else every run refetches its
+        last day forever)."""
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+
+        # End at 06:00 → expected for the end day = 6h * 12 = 72 candles (5m). We have 72.
+        mock_db.pool.fetch.return_value = [
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, 1).date(), "candle_count": 288},
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, 2).date(), "candle_count": 72},
+        ]
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 2, 6, 0, tzinfo=timezone.utc)
+
+        gaps = await svc.get_coverage_gaps(["BTCUSDT"], "5m", start, end)
+        assert gaps.get("BTCUSDT", []) == [], (
+            "the end day clipped to the requested time was fully covered (72/72) but was "
+            f"flagged as a gap: {gaps}"
+        )
+
 
 class TestEnsureCoverage:
     """Test the ensure_coverage orchestration method."""

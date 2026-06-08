@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 
 # Hard limit on signals loaded — prevents OOM on large date ranges
 _MAX_SIGNALS = 50_000
-# Max candles a single backtest may span (≈ 365 days × 288 5-min candles)
-_MAX_CANDLES = 105_120
+# Max candles a single backtest may span (≈ 1095 days / 3y × 288 5-min candles)
+_MAX_CANDLES = 315_360
 # Max TOTAL candle-rows held in memory at once (symbols × candles-per-symbol).
 # Guards against OOM when a backtest touches many distinct symbols over a long
 # range (the per-symbol _MAX_CANDLES cap alone doesn't bound the product).
-_MAX_TOTAL_KLINES = 3_000_000
+_MAX_TOTAL_KLINES = 9_000_000
 # Candles per day by simulation interval (24h)
 _CANDLES_PER_DAY = {"1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6}
 # Concurrency / timeout
@@ -44,7 +44,7 @@ _TIMEOUT_SECONDS = 120
 # Target points for the equity curve served to the frontend (LTTB downsample)
 _EQUITY_TARGET_POINTS = 2000
 # Per-client create rate limit: max creates in a sliding window
-_RATE_LIMIT_MAX = 10
+_RATE_LIMIT_MAX = 1000
 _RATE_LIMIT_WINDOW_SECONDS = 3600
 
 
@@ -691,6 +691,29 @@ class BacktestService:
             # Bound total kline memory BEFORE loading (symbols × candles-per-symbol)
             # so a many-symbol long-range backtest can't OOM the process.
             self._check_total_kline_budget(config, signals)
+
+            # WARM the cache before reading it. Without this, a run reads whatever
+            # candles happen to be cached — and a partially-warmed symbol (e.g. 73 of
+            # 288 candles for a day, with the fill bar missing) yields a TRUNCATED series
+            # that makes the engine fabricate fills on stale candles (root cause of the
+            # Dad-Demo PnL gap: a short filled 2h-stale at 0.161 vs the real 0.178).
+            # ensure_coverage fetches+stores any missing/partial-day candles (the
+            # partial-day coverage fix makes it actually complete them). Best-effort: a
+            # warming failure must not abort the run — the post-load _check_kline_coverage
+            # still guards the result, and the engine now SKIPS (not fabricates) any
+            # signal still lacking a candle at its fill time.
+            if self._kline_cache is not None:
+                try:
+                    symbols = sorted({s["ticker"] for s in signals})
+                    interval = config.get("simulation_interval", "5m")
+                    cov = await self._kline_cache.ensure_coverage(
+                        symbols, interval,
+                        config["date_range_start"], config["date_range_end"],
+                    )
+                    logger.info("backtest_cache_warmed", extra={"run_id": run_id, **(cov or {})})
+                except Exception:  # noqa: BLE001 — warming is best-effort, never fatal
+                    logger.warning("backtest_cache_warm_failed", extra={"run_id": run_id}, exc_info=False)
+
             klines = await self._load_klines(config, signals)
             logger.info("backtest_started", extra={
                 "run_id": run_id, "n_signals": len(signals), "n_symbols": len(klines),
@@ -718,18 +741,27 @@ class BacktestService:
             loop = asyncio.get_running_loop()
             progress_state = {"last": 0}
 
-            def _on_progress(pct: int) -> None:
-                # Runs in the POOL WORKER THREAD — hop to the event loop to schedule
-                # the async DB write. Best-effort: if the loop is closing during
-                # shutdown, call_soon_threadsafe raises; swallow it so progress
-                # reporting can never abort an otherwise-healthy simulation.
-                if pct - progress_state["last"] < 5 and pct < 100:
-                    return
-                progress_state["last"] = pct
-                try:
-                    loop.call_soon_threadsafe(self._schedule_progress, run_id, pct)
-                except RuntimeError:
-                    pass  # loop closed — drop this progress update
+            def _make_progress_cb(band_lo: int, band_hi: int):
+                """Build an engine progress callback scoped to the [band_lo, band_hi]
+                slice of the overall bar.
+
+                Runs in the POOL WORKER THREAD — hops to the event loop to schedule
+                the async DB write. Best-effort: if the loop is closing during
+                shutdown, call_soon_threadsafe raises; swallow it so progress
+                reporting can never abort an otherwise-healthy simulation. Throttled
+                on the OVERALL scaled value (≥5% steps, terminal 100 always allowed)
+                and kept monotonic across phases via the shared progress_state.
+                """
+                def _cb(engine_pct: int) -> None:
+                    scaled = self._scale_progress(engine_pct, band_lo, band_hi)
+                    if scaled - progress_state["last"] < 5 and scaled < 100:
+                        return
+                    progress_state["last"] = scaled
+                    try:
+                        loop.call_soon_threadsafe(self._schedule_progress, run_id, scaled)
+                    except RuntimeError:
+                        pass  # loop closed — drop this progress update
+                return _cb
 
             # Resolve per-symbol instrument parameters (qty step, min qty, tick size,
             # max leverage) so the engine sizes, caps leverage, and rounds TP/SL the
@@ -750,17 +782,26 @@ class BacktestService:
             # before. fine_klines={} keeps the engine on its 5m path either way.
             drilldown_on = config.get("drilldown_enabled", True) and self._kline_cache is not None
             fine_klines: dict[str, dict[int, list[dict[str, Any]]]] = {}
+            # Progress banding: when drill-down runs the engine TWICE, Phase A owns the
+            # first half of the bar (0-49%) and Phase B the second (50-100%), so the
+            # polled progress_pct climbs across BOTH passes instead of freezing at 0%
+            # through the (previously silent) Phase A. Single-pass runs use the full
+            # 0-100% band. The post-A fine-kline fetch sits at the 49/50 seam.
             if drilldown_on:
+                phase_a_cb = _make_progress_cb(0, 49)
                 phase_a = await loop.run_in_executor(
                     self._executor,
-                    lambda: engine.run(config, signals, klines, cancel_event, None, instrument_info, scan_contexts),
+                    lambda: engine.run(config, signals, klines, cancel_event, phase_a_cb, instrument_info, scan_contexts),
                 )
                 if not (cancel_event.is_set() or timed_out.is_set()):
                     fine_klines = await self._build_fine_klines(config, phase_a.trades or [])
+                phase_b_cb = _make_progress_cb(50, 100)
+            else:
+                phase_b_cb = _make_progress_cb(0, 100)
 
             result = await loop.run_in_executor(
                 self._executor,
-                lambda: engine.run(config, signals, klines, cancel_event, _on_progress, instrument_info, scan_contexts, fine_klines or None),
+                lambda: engine.run(config, signals, klines, cancel_event, phase_b_cb, instrument_info, scan_contexts, fine_klines or None),
             )
             engine_done = True
             if fine_klines:
@@ -863,6 +904,21 @@ class BacktestService:
             self._cancel_events.pop(run_id, None)
             self._active_slots = max(0, self._active_slots - 1)
 
+    @staticmethod
+    def _scale_progress(engine_pct: int, band_lo: int, band_hi: int) -> int:
+        """Map one engine pass's own 0-100 progress onto the [band_lo, band_hi] slice
+        of the OVERALL progress bar.
+
+        The drill-down path runs the engine twice; each pass reports 0-100 about
+        ITSELF. Without banding, the first (silent) pass left progress at 0% for the
+        front half of the run and the second pass then swept 0→100 again. Scaling each
+        pass into its own band makes the polled progress_pct advance monotonically
+        across the whole lifecycle. Engine input is clamped to [0, 100] so a
+        misbehaving pass can never drive progress outside its band.
+        """
+        clamped = min(100, max(0, engine_pct))
+        return int(round(band_lo + (clamped / 100.0) * (band_hi - band_lo)))
+
     def _schedule_progress(self, run_id: str, pct: int) -> None:
         """Schedule a progress DB write on the loop, keeping a strong task ref.
 
@@ -939,6 +995,34 @@ class BacktestService:
                 epochs.update({xe - bar_s, xe, xe + bar_s})  # exit ±1 neighbour
             if epochs:
                 wanted.setdefault(sym, set()).update(epochs)
+
+        # ── FULL-BOOK coverage for PORTFOLIO-equity closes ──
+        # The engine's 1-minute portfolio-equity walk (drawdown / smart / rise /
+        # close_on_profit) only engages on a bar when EVERY open position has a 1m
+        # window for it — equity is a book-wide sum. The per-trade loop above covers
+        # each trade's OWN exit bar, but a portfolio mass-close fires on the equity of
+        # the WHOLE book, so every position open at that instant needs the firing bar
+        # too. For each Phase-A trade closed by a portfolio rule, add its exit bar (±1
+        # neighbour) to every OTHER trade that was open at that time. Bounded by the
+        # number of portfolio closes; still only the bars that can actually fire.
+        _PORTFOLIO_REASONS = {"equity_drop", "equity_drop_smart", "equity_rise", "close_on_profit"}
+        portfolio_exits: list[tuple[int, datetime]] = []
+        for t in trades:
+            if t.get("close_reason") in _PORTFOLIO_REASONS and isinstance(t.get("exit_time"), datetime):
+                portfolio_exits.append((_bar_open_epoch(t["exit_time"]), t["exit_time"]))
+        for fire_epoch, fire_time in portfolio_exits:
+            fire_epochs = {fire_epoch - bar_s, fire_epoch, fire_epoch + bar_s}
+            for t in trades:
+                sym = t.get("symbol")
+                et, xt = t.get("entry_time"), t.get("exit_time")
+                if not sym or not isinstance(et, datetime):
+                    continue
+                # Was this trade open across the firing instant? Open at/just-after its
+                # entry bar through its exit bar (inclusive of the firing bar itself).
+                open_from = _bar_open_epoch(et)
+                open_until = _bar_open_epoch(xt) if isinstance(xt, datetime) else fire_epoch
+                if open_from <= fire_epoch <= open_until:
+                    wanted.setdefault(sym, set()).update(fire_epochs)
 
         if not wanted:
             return {}

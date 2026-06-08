@@ -49,12 +49,17 @@ class TestCreateBacktest:
 
     @pytest.mark.asyncio
     async def test_create_rejects_oversized_candle_estimate(self, mock_db):
-        from backend.services.backtest_service import BacktestService, BacktestValidationError
+        from backend.services.backtest_service import (
+            BacktestService, BacktestValidationError, _MAX_CANDLES,
+        )
         service = BacktestService(db=mock_db)
-        # 400 days × 288 candles/day at 5m > 105,120 cap → reject
+        # A range whose 5m candle estimate exceeds _MAX_CANDLES → reject.
+        # Derived from the cap (288 candles/day) so it tracks future changes.
+        over_days = _MAX_CANDLES // 288 + 5
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
         cfg = _make_config(
-            date_range_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            date_range_end=datetime(2026, 1, 5, tzinfo=timezone.utc),  # ~369 days
+            date_range_start=start,
+            date_range_end=start + timedelta(days=over_days),
         )
         with pytest.raises(BacktestValidationError):
             await service.create_backtest(cfg)
@@ -476,3 +481,35 @@ class TestBuildFineKlines:
         out = await svc._build_fine_klines(_make_config(), [{"symbol": "X",
             "entry_time": datetime(2026, 1, 1, tzinfo=timezone.utc), "exit_time": None}])
         assert out == {}
+
+    @pytest.mark.asyncio
+    async def test_portfolio_close_pulls_firing_bar_into_concurrent_symbol(self, mock_db):
+        """A portfolio mass-close fires on the WHOLE book's equity, so the 1m walk needs
+        the firing bar for EVERY symbol open at that instant — not just the symbol whose
+        trade record carries the close_reason. Here BBB is closed by equity_drop at 12:40
+        while AAA is still open (entry 12:05, exit 13:00). _build_fine_klines must request
+        a 1m window for AAA that COVERS the 12:40 firing bar, so the engine has full-book
+        coverage to walk."""
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        fire_bar = base + timedelta(minutes=40)   # 12:40 portfolio close
+        # 1m candles broad enough to satisfy any requested window
+        ones = [{"open_time": base + timedelta(minutes=m), "open": 1.0, "high": 1.0,
+                 "low": 1.0, "close": 1.0, "volume": 1.0} for m in range(-5, 130)]
+        svc, cache = self._svc_with_cache(mock_db, ones)
+        trades = [
+            # AAA: open across the firing instant, closes later via TP (not portfolio)
+            {"symbol": "AAA", "entry_time": base + timedelta(minutes=5, seconds=30),
+             "exit_time": base + timedelta(minutes=60), "close_reason": "tp"},
+            # BBB: the portfolio mass-close at 12:40
+            {"symbol": "BBB", "entry_time": base + timedelta(minutes=5, seconds=30),
+             "exit_time": fire_bar + timedelta(seconds=5), "close_reason": "equity_drop"},
+        ]
+        await svc._build_fine_klines(_make_config(), trades)
+        # Find the fetch call for AAA and assert its [win_start, win_end] spans 12:40.
+        aaa_calls = [c for c in cache._fetch_klines_from_bybit.await_args_list if c.args[0] == "AAA"]
+        assert aaa_calls, "expected a 1m fetch for the concurrently-open symbol AAA"
+        win_start, win_end = aaa_calls[0].args[2], aaa_calls[0].args[3]
+        assert win_start <= fire_bar and fire_bar + timedelta(minutes=5) <= win_end, (
+            f"AAA fetch window [{win_start}, {win_end}] must cover the 12:40 firing bar so "
+            "the engine has full-book 1m coverage to walk the portfolio close"
+        )
