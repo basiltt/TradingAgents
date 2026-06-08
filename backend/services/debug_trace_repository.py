@@ -95,7 +95,9 @@ class DebugTraceRepository:
         self, *, tracing_enabled: Optional[bool] = None,
         retention_days: Optional[int] = None, symbol_decision_cap: Optional[int] = None,
     ) -> dict[str, Any]:
-        sets, args, i = [], [], 1
+        sets: list[str] = []
+        args: list[Any] = []
+        i = 1
         if tracing_enabled is not None:
             sets.append(f"tracing_enabled=${i}")
             args.append(tracing_enabled)

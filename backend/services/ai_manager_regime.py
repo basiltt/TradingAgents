@@ -73,7 +73,9 @@ def _get_dominant_tf(mtf_data: Dict[str, Any]) -> str:
     per_tf = mtf_data.get("per_tf", {})
     if not per_tf:
         return "unknown"
-    best_tf = max(per_tf.items(), key=lambda x: abs(x[1].get("ema_alignment", 0)), default=("unknown", {}))
+    best_tf: tuple[str, Any] = max(
+        per_tf.items(), key=lambda x: abs(x[1].get("ema_alignment", 0)), default=("unknown", {})
+    )
     return best_tf[0]
 
 

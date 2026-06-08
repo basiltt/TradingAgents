@@ -58,7 +58,8 @@ class SnapshotScheduler:
             return
         while self._running:
             try:
-                await self._snapshot_fn()
+                if self._snapshot_fn is not None:
+                    await self._snapshot_fn()
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -78,7 +79,8 @@ class SnapshotScheduler:
             wait_seconds = min((target - now).total_seconds(), 25 * 3600)
             try:
                 await asyncio.sleep(wait_seconds)
-                await self._cleanup_fn()
+                if self._cleanup_fn is not None:
+                    await self._cleanup_fn()
             except asyncio.CancelledError:
                 break
             except Exception:

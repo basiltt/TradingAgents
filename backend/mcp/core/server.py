@@ -163,7 +163,7 @@ class MCPServer:
             principal=principal,
             session_id=session_id,
             tier=self._config_view.capability_tier,
-            correlation_id=uuid.uuid4(),
+            correlation_id=str(uuid.uuid4()),
             services=self._services,
             clock=self._clock,
         )

@@ -42,16 +42,19 @@ _COLD_START_CONFIDENCE_THRESHOLD = 0.85
 
 def build_decision_graph() -> StateGraph:
     """Build the LangGraph decision graph. Compile once at startup."""
-    graph = StateGraph(dict)
+    # langgraph's StateT/NodeInputT are bound to StateLike (TypedDict/dataclass/BaseModel),
+    # which excludes a plain dict — but dict-state is langgraph's documented runtime pattern
+    # and this graph is built+run in production. The ignores below are scoped to that bound.
+    graph = StateGraph(dict)  # type: ignore[type-var]  # dict-state is valid at runtime
 
-    graph.add_node("preflight", preflight_node)
-    graph.add_node("data_aggregation", data_aggregation_node)
-    graph.add_node("signal_detection", signal_detection_node)
-    graph.add_node("context_enrichment", context_enrichment_node)
-    graph.add_node("action_generation", action_generation_node)
-    graph.add_node("risk_validation", risk_validation_node)
-    graph.add_node("output", output_node)
-    graph.add_node("error_fallback", error_fallback_node)
+    graph.add_node("preflight", preflight_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("data_aggregation", data_aggregation_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("signal_detection", signal_detection_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("context_enrichment", context_enrichment_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("action_generation", action_generation_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("risk_validation", risk_validation_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("output", output_node)  # type: ignore[type-var]  # dict-state node
+    graph.add_node("error_fallback", error_fallback_node)  # type: ignore[type-var]  # dict-state node
 
     graph.set_entry_point("preflight")
 

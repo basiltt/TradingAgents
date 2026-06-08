@@ -48,6 +48,10 @@ class AutoTradeExecutor:
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
         self._state: Dict[str, _AccountState] = {}
+        # Per-scan MR caches; created lazily (annotation-only here, so getattr-based
+        # lazy init still sees the attribute as absent until first use).
+        self._mr_mean_cache: Dict[tuple[str, int, str], Optional[float]]
+        self._mr_price_cache: Dict[str, Optional[float]]
         self._lock = asyncio.Lock()
         # Shared per-(account,symbol) lock registry — guards placement against the
         # AI manager / close loop acting on the same position concurrently.

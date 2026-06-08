@@ -15,7 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backend.async_persistence import AsyncAnalysisDB
 from backend.event_bus import EventBus
@@ -148,7 +148,7 @@ class ContentSizeLimitMiddleware:
             # Guard against chunked encoding bypass (no Content-Length header)
             accumulated = 0
 
-            async def size_limited_receive() -> dict:
+            async def size_limited_receive() -> Message:
                 nonlocal accumulated
                 msg = await receive()
                 if msg.get("type") == "http.request":

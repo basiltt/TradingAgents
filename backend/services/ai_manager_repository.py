@@ -736,7 +736,7 @@ class AIManagerRepository:
 
     async def insert_orderbook_snapshot(
         self, account_id: str, symbol: str, imbalance_ratio: float, spread_bps: float,
-        depth_ratio: float, bid_clusters: list, ask_clusters: list, spoofing_flags: list = None,
+        depth_ratio: float, bid_clusters: list, ask_clusters: list, spoofing_flags: Optional[list] = None,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(

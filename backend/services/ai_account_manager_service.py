@@ -11,7 +11,7 @@ import json as _json
 import logging
 import time as _time
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig, AIManagerStatus
 from backend.services.ai_manager_circuit_breaker import AIManagerCircuitBreaker
@@ -61,18 +61,20 @@ class AIAccountManagerService:
         self._tasks: Dict[str, "AIManagerTask"] = {}
         self._account_locks: Dict[str, asyncio.Lock] = {}
         self._reconcile_lock = asyncio.Lock()
-        self._compiled_graph = None
+        self._compiled_graph: Optional[Any] = None
         self._health_task: Optional[asyncio.Task] = None
         self._dead_letter_task: Optional[asyncio.Task] = None
         self._pattern_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
-        self._singleton_conn = None
+        self._singleton_conn: Optional[Any] = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
-        self._llm_callable = None  # Set externally: async (system_prompt, context_prompt) -> str
-        self._pattern_llm_callable = None  # Set externally when LLM provider is configured
-        self._memory = None
-        self._llm_logger = None  # Initialized in start()
+        # Set externally (main.py) when an LLM provider is configured.
+        self._llm_callable: Optional[Callable] = None  # async (system_prompt, context_prompt) -> str
+        self._pattern_llm_callable: Optional[Callable] = None
+        self._model_name: Optional[str] = None  # resolved model name for the configured LLM
+        self._memory: Optional[Any] = None
+        self._llm_logger: Optional[Any] = None  # LLMCallBatchLogger, initialized in start()
         try:
             from backend.services.ai_manager_memory import AIManagerMemory
             self._memory = AIManagerMemory(repo=ai_manager_repo)

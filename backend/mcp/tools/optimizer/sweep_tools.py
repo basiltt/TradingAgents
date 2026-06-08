@@ -186,7 +186,11 @@ async def sweep_run(args: SweepRunIn, ctx: Any) -> SweepRunOut:
             registry = {}
             state.mcp_sweep_tasks = registry
         registry[sweep_id] = task
-        task.add_done_callback(lambda _t, sid=sweep_id: registry.pop(sid, None))
+
+        def _discard_done(_t: Any, sid: str = sweep_id) -> None:
+            registry.pop(sid, None)
+
+        task.add_done_callback(_discard_done)
 
     return SweepRunOut(sweep_id=sweep_id, total_combos=len(combos), status="running")
 

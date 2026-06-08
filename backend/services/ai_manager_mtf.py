@@ -94,7 +94,7 @@ class MultiTimeframeAnalyzer:
         return min(1.0, sum(alignments) / len(alignments))
 
     def _find_key_levels(self, klines: Dict[str, List]) -> List[Dict[str, Any]]:
-        levels = []
+        levels: List[Dict[str, Any]] = []
         for tf, data in klines.items():
             if not data or len(data) < 20:
                 continue

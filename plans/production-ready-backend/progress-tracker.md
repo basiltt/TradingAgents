@@ -134,6 +134,16 @@ _(entries added as findings are resolved; check before applying any contradictin
 - DECIDED-5 (R1): `accounts.close_trade` body uses `Body(default_factory=TradeCloseRequest)` not a shared mutable `TradeCloseRequest()` default. Status: FINAL.
 - DECIDED-6 (R1): `accounts_service.create_account` raises RuntimeError if post-insert `get_account` returns None (removed bare `# type: ignore` that hid the Optional mismatch). Status: FINAL.
 - DECIDED-7 (R1): B904 exception chaining — convention: `except ... as <var>:` → `raise ... from <var>`; `except SomeError:` (no var, user-facing replacement msg) → `raise ... from None`. Applied to all 76 sites. Status: FINAL.
+- DECIDED-8 (R3): mypy run non-strict (`--ignore-missing-imports --follow-imports=silent`). 94 errors → 0. 5 REAL null-safety bugs fixed with guards (see below). Scoped `# type: ignore[code] # reason` only (never bare). Status: FINAL.
+- DECIDED-9 (R3): `ai_manager_orderbook` connect path captures `_ensure_session()` return into a local `session` (typed non-None) instead of touching `self._session`/`self._ws` (Optional) — fixes union-attr crash if session not yet created. Status: FINAL.
+- DECIDED-10 (R3): `mcp/mount.MCPManager` attrs given `Optional[...]` types (TYPE_CHECKING imports); `enable()`/`disable()` raise RuntimeError if `config_repo is None` (not-booted) instead of cryptic AttributeError. Status: FINAL.
+- DECIDED-11 (R3): `ai_manager_llm_provider` `x or os.getenv("K","")` → `x or os.getenv("K") or ""` for mypy str-narrowing; behavior identical except an explicitly-empty env var now falls back to the default (more correct, empty model/provider was invalid anyway). Status: FINAL.
+
+## Phase 1 REAL BUGS fixed (total 9 + 76 B904)
+F821 (5): 4× undefined `logger` in ai_manager_task.py; ScanContext forward-ref.
+Correctness (4): trade_service 0.0-PnL-as-null; close_rule_evaluator None.replace AttributeError; accounts mutable Body default; accounts_service type:ignore-masked Optional.
+mypy null-safety (5): orderbook None-session ws crash; scanner None-scan .get; mcp/mount None-config_repo enable/disable; trades/read None-rows iteration; trailing None mini_llm_fn.
+Plus 76 B904 exception-chain losses.
 
 ## Test-quality findings (for Phase 4)
 - TQ-1: `tests/backend/test_validators.py` + `test_security.py` leak global env state (`ALLOW_LOCAL_LLM_BACKEND`) without cleanup → order-dependent failures (validators 25/25 alone, 14 fail when co-run after security). Fix in Phase 4: monkeypatch.delenv or autouse cleanup fixture. This is THE cause of the "14 validator failures" seen under xdist and batched runs — NOT a code bug.

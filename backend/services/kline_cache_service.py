@@ -217,7 +217,7 @@ class KlineCacheService:
         """
         gaps = await self.get_coverage_gaps(symbols, interval, start, end)
 
-        stats = {
+        stats: dict[str, Any] = {
             "cached": len(symbols) - len(gaps),
             "fetched": 0,
             "failed": 0,

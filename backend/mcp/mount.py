@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from backend.mcp.core.audit import AuditWriter
+    from backend.mcp.core.breaker import LiveSLIBreaker
+    from backend.mcp.core.dbfloor import DbFloor
+    from backend.mcp.core.server import MCPServer
+    from backend.mcp.leader import MCPLeader
+    from backend.mcp.repositories.config_repo import MCPConfigRepository
 
 logger = logging.getLogger(__name__)
 
@@ -87,17 +95,17 @@ class MCPManager:
 
     def __init__(self, app: Any) -> None:
         self._app = app
-        self.config_repo = None
-        self.audit_writer = None
-        self.server = None  # the live MCPServer when enabled, else None
-        self._transport_cm = None
+        self.config_repo: Optional[MCPConfigRepository] = None
+        self.audit_writer: Optional[AuditWriter] = None
+        self.server: Optional[MCPServer] = None  # the live MCPServer when enabled, else None
+        self._transport_cm: Optional[Any] = None
         self.last_error: Optional[str] = None  # last transport-start failure (for status)
         # Live-trading protection (RK-1): wired at _start_transport, enforced by
         # the sweep tools via the manager handle on app.state.mcp_manager.
-        self.leader = None        # MCPLeader — held while this worker is the MCP leader
-        self.db_floor = None      # DbFloor — caps MCP/sweep DB acquisitions
-        self.breaker = None       # LiveSLIBreaker — suspends sweep work on SLI degradation
-        self._sli_task = None     # background SLI poll feeding the breaker
+        self.leader: Optional[MCPLeader] = None        # held while this worker is the MCP leader
+        self.db_floor: Optional[DbFloor] = None        # caps MCP/sweep DB acquisitions
+        self.breaker: Optional[LiveSLIBreaker] = None  # suspends sweep work on SLI degradation
+        self._sli_task: Optional[asyncio.Task] = None  # background SLI poll feeding the breaker
 
     def mcp_permitted(self) -> bool:
         """Runtime gate the sweep tools check before admitting CPU/DB work — the
@@ -301,6 +309,8 @@ class MCPManager:
         return True
 
     async def enable(self) -> None:
+        if self.config_repo is None:
+            raise RuntimeError("mcp not booted (no config repo); cannot enable")
         cfg = await self.config_repo.get()
         # Start the transport FIRST; only persist enabled=True if it actually
         # comes up. This prevents a "running-but-dead" half-state where the DB
@@ -320,6 +330,8 @@ class MCPManager:
         await self.config_repo.update({"enabled": True}, expected_row_version=cfg.row_version)
 
     async def disable(self, *, kill: bool = False) -> None:
+        if self.config_repo is None:
+            raise RuntimeError("mcp not booted (no config repo); cannot disable")
         if kill:
             await self.config_repo.bump_kill_epoch()
         else:

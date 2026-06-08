@@ -923,7 +923,7 @@ class ScannerService:
             logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
 
         # Pre-classify symbols for sector concentration limit (only if auto-trade is active)
-        if self._sector_service and scan.get("auto_trade_executor"):
+        if self._sector_service and scan and scan.get("auto_trade_executor"):
             try:
                 await self._sector_service.ensure_classified(symbols)
             except Exception:

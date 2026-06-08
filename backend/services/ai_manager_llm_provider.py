@@ -200,7 +200,7 @@ def create_llm_callable(
 
     Returns (callable_or_None, resolved_model_name).
     """
-    provider = (provider or os.getenv("TRADINGAGENTS_LLM_PROVIDER", "")).lower()
+    provider = (provider or os.getenv("TRADINGAGENTS_LLM_PROVIDER") or "").lower()
     if not provider:
         logger.warning("AI Manager: No LLM provider configured (set TRADINGAGENTS_LLM_PROVIDER)")
         return None, "unknown"
@@ -215,7 +215,7 @@ def create_llm_callable(
             logger.warning("AI Manager: %s not set — LLM disabled", env_key)
             return None, "unknown"
 
-    model = model or os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-4o-mini")
+    model = model or os.getenv("TRADINGAGENTS_QUICK_THINK_LLM") or "gpt-4o-mini"
     backend_url = backend_url or os.getenv("TRADINGAGENTS_BACKEND_URL")
 
     if provider in ("openai", "azure", "deepseek", "xai", "google", "openrouter", "qwen", "glm"):
@@ -241,7 +241,7 @@ def create_llm_callable_with_cleanup(
     """
     import httpx
 
-    provider = (provider or os.getenv("TRADINGAGENTS_LLM_PROVIDER", "")).lower()
+    provider = (provider or os.getenv("TRADINGAGENTS_LLM_PROVIDER") or "").lower()
     if not provider:
         return None, "unknown", None
 
@@ -253,7 +253,7 @@ def create_llm_callable_with_cleanup(
         if not api_key:
             return None, "unknown", None
 
-    model = model or os.getenv("TRADINGAGENTS_QUICK_THINK_LLM", "gpt-4o-mini")
+    model = model or os.getenv("TRADINGAGENTS_QUICK_THINK_LLM") or "gpt-4o-mini"
     backend_url = backend_url or os.getenv("TRADINGAGENTS_BACKEND_URL")
 
     if provider in ("openai", "azure", "deepseek", "xai", "google", "openrouter", "qwen", "glm"):

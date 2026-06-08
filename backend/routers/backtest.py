@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -72,7 +72,7 @@ async def list_backtests(
 ):
     """List backtest runs (newest first), optionally filtered by status."""
     svc = _get_service(request)
-    filters = {"limit": limit}
+    filters: dict[str, Any] = {"limit": limit}
     if status:
         filters["status"] = status
     runs = await svc.list_backtests(filters)

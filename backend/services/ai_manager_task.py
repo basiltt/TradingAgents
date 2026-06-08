@@ -126,7 +126,7 @@ class AIManagerTask:
         self._last_trigger_reason: Optional[str] = None
         self._trigger_queue: list = []  # [(priority, symbol, reason)]
         self._trigger_symbol: Optional[str] = None
-        self._rapid_cycle_handle = None  # asyncio.TimerHandle for queue drain debounce
+        self._rapid_cycle_handle: Optional[asyncio.TimerHandle] = None  # queue drain debounce
         self._drain_count: int = 0  # Track consecutive rapid evals in one drain cycle
         # Dashboard enhancement attributes
         self._commentary_task: Optional[asyncio.Task] = None
@@ -136,6 +136,9 @@ class AIManagerTask:
         self._urgency_history_1h: list = []
         self._emitted_attention_ids: set = set()
         self._last_eval_completed_at: Optional[datetime] = None
+        # LLM provider identity (provider/model/key fingerprint) — set by the service
+        # so a config change can rebuild the task's callable. Absent until first set.
+        self._llm_identity: Optional[str] = None
 
     @property
     def state(self) -> str:
@@ -1071,6 +1074,8 @@ class AIManagerTask:
             self._log.exception("Execution failed for %s", symbol)
             if decision_id is not None:
                 try:
+                    # decision_id and decision_ts are assigned together from insert_decision()
+                    assert decision_ts is not None
                     await self._service._repo.insert_failed_outcome(
                         decision_id, decision_ts, {}, "execution_error"
                     )
@@ -1087,6 +1092,8 @@ class AIManagerTask:
         # Post-execution bookkeeping (outside position lock)
         if exec_result is not None and decision_id is not None:
             try:
+                # decision_id and decision_ts are assigned together from insert_decision()
+                assert decision_ts is not None
                 await self._service._repo.update_decision_outcome(
                     decision_id, decision_ts, exec_result
                 )
@@ -1167,8 +1174,8 @@ class AIManagerTask:
             self._mr_symbols_primed = True
         except Exception:
             self._log.debug("get_open_mr_symbols failed; retaining last-known MR set")
-        episodic = []
-        patterns = []
+        episodic: list[Dict[str, Any]] = []
+        patterns: list[Dict[str, Any]] = []
         decision_count = 100
         try:
             if hasattr(self._service, '_memory') and self._service._memory:
@@ -1329,6 +1336,8 @@ class AIManagerTask:
 
         self._active_trailing[symbol] = ts
         ts.start()
+        # ts.start() assigns ts._task via create_task, so it is non-None here
+        assert ts._task is not None
         self._track_task(ts._task)
         self._log.info("Started trailing for %s: SL=%.6f TP=%.6f ATR=%.6f", symbol, initial_sl, initial_tp, atr)
 
@@ -2165,7 +2174,7 @@ class AIManagerTask:
 
     async def _check_attention_triggers(self, eval_result: dict, prev_urgency: str, curr_urgency: str) -> None:
         if not hasattr(self, '_emitted_attention_ids'):
-            self._emitted_attention_ids: set = set()
+            self._emitted_attention_ids = set()
 
         items_to_emit: list[dict] = []
         now = datetime.now(timezone.utc).isoformat()

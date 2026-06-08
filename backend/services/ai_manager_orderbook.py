@@ -245,16 +245,17 @@ class OrderBookMonitor:
             logger.debug("REST fallback failed for %s", self._symbol)
 
     async def _connect_and_listen(self) -> None:
-        self._ensure_session()
-        self._ws = await asyncio.wait_for(
-            self._session.ws_connect(_WS_PUBLIC_LINEAR, heartbeat=20),
+        session = self._ensure_session()
+        ws = await asyncio.wait_for(
+            session.ws_connect(_WS_PUBLIC_LINEAR, heartbeat=20),
             timeout=15,
         )
-        await self._ws.send_json({
+        self._ws = ws
+        await ws.send_json({
             "op": "subscribe",
             "args": [f"orderbook.50.{self._symbol}", f"publicTrade.{self._symbol}"],
         })
-        async for msg in self._ws:
+        async for msg in ws:
             if not self._running:
                 break
             if msg.type == aiohttp.WSMsgType.TEXT:

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-CAPABILITY_REGISTRY = [
+CAPABILITY_REGISTRY: list[dict[str, Any]] = [
     {"key": "mtf_analysis", "display_name": "Multi-Timeframe Analysis", "config_flag": "mtf_enabled"},
     {"key": "correlation", "display_name": "Correlation & Clustering", "config_flag": "correlation_enabled"},
     {"key": "orderbook", "display_name": "Order Book Monitoring", "config_flag": "orderbook_enabled"},

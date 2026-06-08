@@ -1564,10 +1564,10 @@ class BacktestEngine:
                 break
             candles_at_minute: dict[str, dict[str, Any]] = {}
             for sym in list({p.symbol for p in state.open_positions}):
-                c = per_symbol_at.get(sym, {}).get(minute)
-                if c is not None:
-                    marks[sym] = c["close"]
-                    candles_at_minute[sym] = c
+                candle = per_symbol_at.get(sym, {}).get(minute)
+                if candle is not None:
+                    marks[sym] = candle["close"]
+                    candles_at_minute[sym] = candle
             # Evaluate the full equity-rule kernel at this minute, stamped at the minute.
             self._eval_equity_core(config, state, marks, minute, fee_rate, candles_at_minute)
 

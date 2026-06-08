@@ -74,10 +74,10 @@ class DebugTraceRecorder:
         self._enabled = True
         self._symbol_decision_cap = 200
         self._retention_days = 60
-        self._drainer_task = None
-        self._cleanup_task = None
+        self._drainer_task: Optional[asyncio.Task] = None
+        self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
-        self._drain_lock = None          # lazily created asyncio.Lock (no loop at __init__)
+        self._drain_lock: Optional[asyncio.Lock] = None  # lazily created (no loop at __init__)
         self._drain_count = 0            # drains since last config refresh (cadence control)
 
     @property

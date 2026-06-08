@@ -75,6 +75,6 @@ class DegradationTierManager:
     def get_tier(self) -> int:
         return self._tier
 
-    def should_use_llm(self, tier: int = None) -> bool:
+    def should_use_llm(self, tier: int | None = None) -> bool:
         t = tier if tier is not None else self._tier
         return t < self._LLM_DISABLED_TIER

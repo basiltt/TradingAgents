@@ -213,6 +213,8 @@ class TrailingState:
             await self._run_mini_llm(price, atr, adx)
 
     async def _run_mini_llm(self, price: float, atr: float, adx: Optional[float]) -> None:
+        if self._mini_llm_fn is None:
+            return
         try:
             decision = await asyncio.wait_for(
                 self._mini_llm_fn(
