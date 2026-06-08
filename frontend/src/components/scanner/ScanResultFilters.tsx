@@ -14,6 +14,18 @@ export function signalBucket(r: ScanResultItem): SignalBucket {
   return "hold"; // hold, unknown, or missing
 }
 
+/**
+ * Whether a result row has a `decision_summary` reason worth surfacing in a
+ * tooltip / "Why?" affordance. True for non-completed runs (failed/cancelled
+ * carry an error reason) AND for TA-skipped rows (which are `status:"completed"`
+ * but whose `decision_summary` holds the skip rationale). Always requires a
+ * non-empty summary so callers never render an empty tooltip.
+ */
+export function shouldShowReason(r: ScanResultItem): boolean {
+  if (!r.decision_summary) return false;
+  return signalBucket(r) === "skipped" || r.status !== "completed";
+}
+
 function toggleSet<T>(set: Set<T>, val: T): Set<T> {
   const next = new Set(set);
   if (next.has(val)) next.delete(val); else next.add(val);

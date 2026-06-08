@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/format";
-import { useScanFilters, ScanResultFiltersBar, signalBucket } from "@/components/scanner/ScanResultFilters";
+import { useScanFilters, ScanResultFiltersBar, signalBucket, shouldShowReason } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { useModels } from "@/hooks/useModels";
 import { useConnectivityCheck } from "@/hooks/useConnectivityCheck";
@@ -1522,17 +1522,21 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                   />
                 </td>
                 <td className="hidden px-4 py-3 md:table-cell">
-                  {signalBucket(r) === "skipped" && r.decision_summary ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger>
-                          <TonePill tone="neutral">skipped</TonePill>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-sm text-xs leading-6">
-                          {r.decision_summary}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                  {signalBucket(r) === "skipped" ? (
+                    r.decision_summary ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <TonePill tone="neutral">skipped</TonePill>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-sm text-xs leading-6">
+                            {r.decision_summary}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <TonePill tone="neutral">skipped</TonePill>
+                    )
                   ) : r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
@@ -1583,7 +1587,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                         View
                       </Link>
                     )}
-                    {!r.run_id && (signalBucket(r) === "skipped" || r.status !== "completed") && r.decision_summary && (
+                    {!r.run_id && shouldShowReason(r) && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>

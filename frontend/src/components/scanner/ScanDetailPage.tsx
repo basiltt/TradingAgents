@@ -6,7 +6,7 @@ import { apiClient, type ScanResultItem } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useScanFilters, ScanResultFiltersBar, signalBucket } from "@/components/scanner/ScanResultFilters";
+import { useScanFilters, ScanResultFiltersBar, signalBucket, shouldShowReason } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { NeuScoreBar } from "@/design-system/neumorphism";
@@ -139,22 +139,28 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                   />
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
-                  {signalBucket(r) === "skipped" && r.decision_summary ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger className="cursor-help flex">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-[var(--neu-radius-pill)] text-[10px] font-bold uppercase tracking-wider border shadow-[var(--neu-shadow-pill)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]">
-                            skipped
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="top"
-                          className="max-w-sm bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-xs text-[var(--neu-text-muted)] font-semibold leading-relaxed rounded-[var(--neu-radius-md)] shadow-[var(--neu-shadow-float)] p-3 backdrop-blur-xl"
-                        >
-                          {r.decision_summary}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                  {signalBucket(r) === "skipped" ? (
+                    r.decision_summary ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger className="cursor-help flex">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-[var(--neu-radius-pill)] text-[10px] font-bold uppercase tracking-wider border shadow-[var(--neu-shadow-pill)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]">
+                              skipped
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent
+                            side="top"
+                            className="max-w-sm bg-[var(--neu-surface-raised)] border border-[color:var(--neu-stroke-soft)] text-xs text-[var(--neu-text-muted)] font-semibold leading-relaxed rounded-[var(--neu-radius-md)] shadow-[var(--neu-shadow-float)] p-3 backdrop-blur-xl"
+                          >
+                            {r.decision_summary}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-[var(--neu-radius-pill)] text-[10px] font-bold uppercase tracking-wider border shadow-[var(--neu-shadow-pill)] bg-[var(--neu-surface-muted)] text-[var(--neu-text-muted)] border-[color:var(--neu-stroke-soft)]">
+                        skipped
+                      </span>
+                    )
                   ) : r.status !== "completed" && r.decision_summary ? (
                     <TooltipProvider>
                       <Tooltip>
@@ -224,7 +230,7 @@ function ResultsTable({ results, isCrypto, onTrade, tradedSymbols }: { results: 
                         View
                       </Link>
                     )}
-                    {!r.run_id && (signalBucket(r) === "skipped" || r.status !== "completed") && r.decision_summary && (
+                    {!r.run_id && shouldShowReason(r) && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { signalBucket } from "../ScanResultFilters";
+import { signalBucket, shouldShowReason } from "../ScanResultFilters";
 import type { ScanResultItem } from "@/api/client";
 
 function row(partial: Partial<ScanResultItem>): ScanResultItem {
@@ -31,5 +31,27 @@ describe("signalBucket", () => {
 
   it("never returns buy/sell for a ta_prefilter row", () => {
     expect(signalBucket(row({ direction: "buy", signal_source: "ta_prefilter" }))).toBe("skipped");
+  });
+});
+
+describe("shouldShowReason", () => {
+  it("shows the reason for a TA-skipped row (status completed) when it has a summary", () => {
+    expect(
+      shouldShowReason(row({ signal_source: "ta_prefilter", status: "completed", decision_summary: "TA score 22/40 < 40" })),
+    ).toBe(true);
+  });
+
+  it("shows the reason for a failed or cancelled run with a summary", () => {
+    expect(shouldShowReason(row({ status: "failed", decision_summary: "boom" }))).toBe(true);
+    expect(shouldShowReason(row({ status: "cancelled", decision_summary: "user cancelled" }))).toBe(true);
+  });
+
+  it("hides the reason for a normal completed (non-skipped) row", () => {
+    expect(shouldShowReason(row({ signal_source: "structured", status: "completed", decision_summary: "Buy thesis" }))).toBe(false);
+  });
+
+  it("hides the reason when decision_summary is empty, even for skipped rows", () => {
+    expect(shouldShowReason(row({ signal_source: "ta_prefilter", status: "completed", decision_summary: "" }))).toBe(false);
+    expect(shouldShowReason(row({ status: "failed", decision_summary: "" }))).toBe(false);
   });
 });
