@@ -59,12 +59,9 @@ class Position:
     # sum(trade.pnl) reconciles with the wallet/final_equity.
     funding_paid: float = 0.0
     # 1-minute drill-down state. entry_bar_open = the 5m bar (open_time) the entry
-    # filled in; entry_fine_minute = the exact 1m candle open the fill happened at
-    # (None ⇒ no entry drill-down). On that one 5m bar, the position's same-bar
-    # evaluation is restricted to 1m candles with open_time >= entry_fine_minute so
-    # pre-fill price action can't fabricate an exit/drawdown (look-ahead guard).
+    # filled in (used by the service to locate the exit-bar window). Entry drill-down
+    # is price-only, so it never restricts a bar's evaluation.
     entry_bar_open: Optional[datetime] = None
-    entry_fine_minute: Optional[datetime] = None
     # Stable equity-reference entry price = the UN-drilled 5m next-bar-open fill. The
     # equity close-rules (drawdown / rise / close_on_profit) value this position's uPnL
     # off THIS price, NOT the drilled entry_price, so toggling drill-down never changes
@@ -765,31 +762,15 @@ class BacktestEngine:
     def _bar_extremes_for(
         self, pos: "Position", candle: dict[str, Any], candle_time: datetime
     ) -> tuple[float, float]:
-        """Return the (high, low) of `candle` to use when evaluating `pos` on this bar.
+        """Return the (high, low) of `candle` to evaluate `pos` on this bar.
 
-        Normally the 5m candle's own high/low. BUT on the position's ENTRY bar, when
-        the entry was 1m-drilled, the pre-fill minutes of that 5m bar are not post-entry
-        — using the full 5m high/low would let price action BEFORE the fill fabricate a
-        TP/SL/liq exit or an adverse-drawdown excursion (look-ahead). In that case we
-        return the high/low of only the POST-ENTRY 1m candles (open_time >=
-        entry_fine_minute). If for any reason the 1m window is unavailable, fall back to
-        the 5m extremes (fail-soft, same as no drill-down).
+        Entry drill-down is PRICE-ONLY (it never moves the trade lifecycle: a position
+        opens at the 5m next-bar-open bar and is only ever evaluated on bars STRICTLY
+        AFTER its fill), so there is no entry-bar look-ahead to guard against — the 5m
+        candle's own high/low are always correct. Kept as a single seam in case a future
+        timing-shifting drill mode needs to restrict a bar's extremes again.
         """
-        if (
-            pos.entry_fine_minute is None
-            or pos.entry_bar_open is None
-            or candle_time != pos.entry_bar_open
-        ):
-            return candle["high"], candle["low"]
-        window = self._fine_window(pos.symbol, pos.entry_bar_open)
-        if not window:
-            return candle["high"], candle["low"]
-        post = [fk for fk in window if fk["open_time"] >= pos.entry_fine_minute]
-        if not post:
-            # Filled on the last 1m of the bar → no post-entry action this bar; use the
-            # fill price itself so nothing triggers from pre-entry movement.
-            return pos.entry_price, pos.entry_price
-        return max(fk["high"] for fk in post), min(fk["low"] for fk in post)
+        return candle["high"], candle["low"]
 
     def _resolve_exit_fine(
         self, pos: "Position", window: list[dict[str, Any]]
@@ -802,13 +783,9 @@ class BacktestEngine:
         Within a single 1m candle the order STILL can't be known (its own high & low
         could both cross), so per-candle we keep the same pessimistic precedence the 5m
         path uses: liquidation, then SL, then TP. 1m shrinks the ambiguity window but
-        cannot fully remove it. On a 1m-drilled entry bar, only post-entry 1m candles
-        are considered. Returns None if no level is touched in the window.
+        cannot fully remove it. Returns None if no level is touched in the window.
         """
-        candles = window
-        if pos.entry_fine_minute is not None and pos.entry_bar_open is not None:
-            candles = [c for c in window if c["open_time"] >= pos.entry_fine_minute]
-        for c in candles:
+        for c in window:
             hi, lo = c["high"], c["low"]
             if pos.side == "Buy":
                 # liquidation first (lowest price), then SL-if-closer, then TP.
@@ -1052,9 +1029,9 @@ class BacktestEngine:
             # F2: tag MR positions + carry their fast time-stop (minutes).
             strategy_kind=("mean_reversion" if mr_placement else "trend"),
             time_stop_minutes=(float(config.get("mr_time_stop_minutes", 120)) if mr_placement else None),
-            # 1m drill-down: the 5m bar the entry filled in (used to locate the exit-bar
-            # window; entry is price-only so entry_fine_minute stays None and the
-            # entry-bar look-ahead guard is inert — exits start strictly after the fill).
+            # 1m drill-down: the 5m bar the entry filled in (the service uses it to
+            # locate the exit-bar window). Entry drill is price-only — the lifecycle is
+            # unchanged, so exits are always strictly after the fill (no look-ahead).
             entry_bar_open=entry_bar_open,
             equity_ref_entry=equity_ref_entry,
         )
