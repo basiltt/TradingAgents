@@ -590,3 +590,39 @@ class TestGoldenScenarios:
         # Near-breakeven: the result is a small fraction of starting capital.
         assert abs(result.metrics["net_profit"]) < 0.005 * cfg["starting_capital"]
         _assert_reconciles(result, cfg)
+
+
+class TestDrilldownByteIdentical:
+    """The 1m drill-down feature must NEVER change engine output unless 1m data is
+    actually injected. In particular the engine must branch ONLY on the presence of
+    fine_klines — NEVER on config['drilldown_enabled'] — so a golden config can carry
+    the flag without shifting any result. This is the guarantee that keeps every
+    golden scenario above stable now that the engine accepts fine_klines.
+    """
+
+    def _scenarios(self):
+        # A representative spread: TP win, SL loss, reverse, multi-trade.
+        return [
+            (_config(), [_signal()], _rising_klines()),
+            (_config(), [_signal()], _falling_klines()),
+            (_config(direction="reverse"), [_signal()], _rising_klines()),
+        ]
+
+    def test_flag_true_vs_false_identical_without_fine_data(self):
+        for cfg, sigs, klines in self._scenarios():
+            cfg_on = dict(cfg); cfg_on["drilldown_enabled"] = True
+            cfg_off = dict(cfg); cfg_off["drilldown_enabled"] = False
+            on = BacktestEngine().run(cfg_on, sigs, klines)
+            off = BacktestEngine().run(cfg_off, sigs, klines)
+            assert on.trades == off.trades
+            assert on.metrics.get("net_profit") == off.metrics.get("net_profit")
+            assert on.metrics.get("final_equity") == off.metrics.get("final_equity")
+
+    def test_none_and_empty_fine_klines_identical_to_omitted(self):
+        for cfg, sigs, klines in self._scenarios():
+            omitted = BacktestEngine().run(cfg, sigs, klines)
+            none = BacktestEngine().run(cfg, sigs, klines, fine_klines=None)
+            empty = BacktestEngine().run(cfg, sigs, klines, fine_klines={})
+            assert omitted.trades == none.trades == empty.trades
+            for m in ("net_profit", "final_equity", "win_rate", "total_trades"):
+                assert omitted.metrics.get(m) == none.metrics.get(m) == empty.metrics.get(m)
