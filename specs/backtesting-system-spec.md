@@ -148,9 +148,9 @@ The engine processes scan results chronologically, applying the full auto-trade 
 - `on_progress` callback is thread-safe (posts to asyncio Queue consumed by service layer)
 - Concurrency gate: `asyncio.Semaphore(3)` in BacktestService. 4th request gets 503 immediately.
 - Single-worker uvicorn deployment (in-process semaphore sufficient)
-- 429 = per-user rate limit (max 10 creates/hour). 503 = global capacity full (3 slots taken).
+- 429 = per-user rate limit (max 1000 creates/hour). 503 = global capacity full (3 slots taken).
 - **Timeout enforcement:** `threading.Timer(120, cancel_event.set)` started before executor call. Engine raises `BacktestTimeout` (distinct from `BacktestCancelled`). Status → `failed` with `error_message='Execution timeout (120s)'`.
-- **Memory budget:** Pre-compute max candle count (`date_range_days × 288` for 5m). Reject configs with >105,120 candles (365d). Equity curve pre-allocated as fixed-size array. Open positions capped at `max_trades`.
+- **Memory budget:** Pre-compute max candle count (`date_range_days × 288` for 5m). Reject configs with >315,360 candles (~3y) per symbol, or >9,000,000 candles total (symbols × candles). Equity curve pre-allocated as fixed-size array. Open positions capped at `max_trades`.
 
 **Startup recovery:**
 - On app startup: `UPDATE backtest_runs SET status='failed', error_message='Server restarted' WHERE status IN ('running', 'pending')`
