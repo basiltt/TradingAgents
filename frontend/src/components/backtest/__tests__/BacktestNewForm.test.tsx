@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
@@ -7,6 +7,10 @@ import { BacktestNewForm } from "../BacktestNewForm";
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeEach(() => {
+  // The form persists a draft to localStorage; isolate per-test.
+  localStorage.clear();
+});
 afterEach(() => {
   server.resetHandlers();
   vi.restoreAllMocks();

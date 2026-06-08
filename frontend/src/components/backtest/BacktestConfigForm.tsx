@@ -13,6 +13,7 @@ import {
   toCreateRequest,
   type BacktestConfigFormValues,
 } from "./configSchema";
+import { loadDraft, saveDraft, type BacktestDraft } from "./backtestDraft";
 
 /* ----------------------------- small field helpers ----------------------------- */
 
@@ -305,6 +306,19 @@ export function BacktestConfigForm({
   isSubmitting = false,
   className,
 }: BacktestConfigFormProps) {
+  // Restore a saved draft so a user's entries survive navigating away from the
+  // form and back (or a reload). An explicit `seed` (Retry / "Backtest these
+  // settings") is an intentional, complete config and takes precedence over any
+  // draft, so the draft is consulted ONLY when there is no seed. `base` backfills
+  // any field a stale draft predates. Computed once on mount; RHF owns the values
+  // thereafter.
+  const initialValues = React.useMemo<BacktestConfigFormValues>(() => {
+    const base = buildDefaults(seed);
+    const draft = seed ? undefined : loadDraft();
+    return draft ? { ...base, ...draft } : base;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time inputs only
+  }, []);
+
   const {
     control,
     handleSubmit,
@@ -313,9 +327,19 @@ export function BacktestConfigForm({
   } = useForm<BacktestConfigFormValues>({
     // zod v4 resolver: cast to keep RHF's generic happy across input/output types.
     resolver: zodResolver(backtestConfigSchema) as never,
-    defaultValues: buildDefaults(seed),
+    defaultValues: initialValues,
     mode: "onBlur",
   });
+
+  // Persist every change as a draft. RHF's watch(callback) fires on subsequent
+  // changes only (not on subscribe), so this saves what the user edits without
+  // clobbering the restored draft on mount.
+  React.useEffect(() => {
+    const sub = watch((values) => {
+      saveDraft(values as BacktestDraft);
+    });
+    return () => sub.unsubscribe();
+  }, [watch]);
 
   const scanMode = watch("scan_source.mode");
   const mrLongEnabled = watch("mr_long_enabled");

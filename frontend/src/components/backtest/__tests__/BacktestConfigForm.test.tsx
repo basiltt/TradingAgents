@@ -1,8 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { BacktestConfigForm } from "../BacktestConfigForm";
 
 describe("BacktestConfigForm", () => {
+  // The form persists a draft to localStorage; isolate it so a draft from one
+  // test cannot leak default-overriding values into the next (the env does not
+  // reset storage between tests).
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("renders the major sections", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
     expect(screen.getByText("Capital & Time Range")).toBeInTheDocument();
@@ -173,5 +180,45 @@ describe("BacktestConfigForm", () => {
     expect(screen.queryByTestId("mr-long-danger")).toBeNull();
     fireEvent.click(screen.getByText("MR long side (neg. expectancy)"));
     expect(screen.getByTestId("mr-long-danger")).toBeInTheDocument();
+  });
+
+  it("restores entered values after the form is remounted (draft persistence)", async () => {
+    // Reproduces the bug: navigating away and back lost everything the user typed.
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    const capital = screen.getByLabelText("Starting Capital ($)") as HTMLInputElement;
+    fireEvent.change(capital, { target: { value: "73210" } });
+    const leverage = screen.getByLabelText("Leverage") as HTMLInputElement;
+    fireEvent.change(leverage, { target: { value: "11" } });
+
+    // Simulate leaving the page and coming back (route unmounts the lazy form).
+    unmount();
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Starting Capital ($)") as HTMLInputElement).value).toBe("73210"),
+    );
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("11");
+  });
+
+  it("persists a select-field change across a remount", async () => {
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Simulation Interval"), { target: { value: "1h" } });
+    unmount();
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Simulation Interval") as HTMLSelectElement).value).toBe("1h"),
+    );
+  });
+
+  it("an explicit seed wins over a saved draft", async () => {
+    // A user types a draft...
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Starting Capital ($)"), { target: { value: "500" } });
+    unmount();
+    // ...but a "Backtest these settings"/Retry seed must take precedence over it.
+    render(<BacktestConfigForm onSubmit={vi.fn()} seed={{ starting_capital: 25000 }} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Starting Capital ($)") as HTMLInputElement).value).toBe("25000"),
+    );
   });
 });

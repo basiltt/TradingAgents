@@ -68,6 +68,16 @@ _CSP_HEADER_BYTES = _CSP_HEADER.encode()
 
 _CSRF_BODY = b'{"detail":"Missing X-Requested-With header","code":"CSRF_REQUIRED"}'
 
+# The MCP data-plane mount (/mcp/rpc and its sub-paths) is intentionally exempt
+# from the X-Requested-With CSRF check: it is a non-browser bridge endpoint with
+# its own defenses — a bearer-token authenticator plus a loopback Host/Origin
+# allowlist (DNS-rebinding defense) in backend/mcp/core/transport.py. Any genuine
+# cross-site browser request would carry a non-loopback Origin and be rejected by
+# that guard, so the app-level CSRF header would only block legitimate MCP clients
+# (Claude Code, mcp-remote) that cannot set arbitrary headers. This matches the
+# "CSRF-exempt" data-plane contract in plans/mcp-server/00-plan-summary.md.
+_CSRF_EXEMPT_PREFIX = "/mcp/rpc"
+
 
 class CSPCSRFMiddleware:
     """Pure ASGI middleware combining CSP header injection and CSRF check."""
@@ -80,8 +90,10 @@ class CSPCSRFMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # CSRF check for mutating methods
-        if scope["method"] in {"POST", "PATCH", "PUT", "DELETE"}:
+        # CSRF check for mutating methods (the MCP data-plane is exempt — see above)
+        if scope["method"] in {"POST", "PATCH", "PUT", "DELETE"} and not scope.get(
+            "path", ""
+        ).startswith(_CSRF_EXEMPT_PREFIX):
             headers = dict(scope.get("headers", []))
             if headers.get(b"x-requested-with") != b"XMLHttpRequest":
                 await send({
@@ -479,6 +491,32 @@ def create_app() -> FastAPI:
                 " WHERE status IN ('open', 'partially_filled', 'closing', 'partially_closed')"
             )
             all_symbols = [r["symbol"] for r in pos_rows if r.get("symbol")]
+            if not all_symbols:
+                return
+
+            # Drop symbols Bybit no longer lists on linear perpetuals (e.g. a coin we still
+            # hold an open position in that has since been delisted). Public klines don't
+            # exist for them, so a regime fetch would raise InvalidSymbolError and log a full
+            # traceback every cycle. The held POSITION is unaffected — close-rule evaluation,
+            # reconciliation, and closing all use the private account API and never touch this
+            # public catalog. Regime classification simply can't run for a delisted symbol, so
+            # skip it quietly. If the catalog is unavailable (empty set), keep all symbols
+            # (normalize_bybit_symbol degrades gracefully in that case).
+            from tradingagents.dataflows.bybit_data import get_valid_symbols
+            try:
+                _valid = get_valid_symbols()
+            except Exception:
+                _valid = set()
+            if _valid:
+                _listed = [s for s in all_symbols if s in _valid or f"1000{s}" in _valid]
+                _delisted = [s for s in all_symbols if s not in _listed]
+                if _delisted:
+                    logger.info(
+                        "regime_skip_delisted_symbols: %s no longer on Bybit linear perps "
+                        "(open positions remain managed via the account API)",
+                        ", ".join(sorted(_delisted)),
+                    )
+                all_symbols = _listed
             if not all_symbols:
                 return
 

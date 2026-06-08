@@ -11,9 +11,10 @@ Starlette's normal lifespan.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from backend.mcp.core.auth import BearerAuthenticator
 from backend.mcp.core.netguard import host_origin_allowed
@@ -50,18 +51,63 @@ def _register_delegate(fast: Any, server: Any, spec: Any) -> None:
 
     async def _delegate(**kwargs: Any) -> dict[str, Any]:
         # principal/session are bound at the guard layer; use a stable id here.
+        # kwargs is already the flat field map (the synthesized signature below
+        # makes FastMCP pass each real field as a keyword); dispatch re-validates
+        # it via spec.input_schema(**raw_args).
         result = await server.call_tool(
             spec.name, kwargs, principal=server.principal_hint(), session_id="http"
         )
         return result
 
+    # FastMCP derives the advertised inputSchema by introspecting this delegate's
+    # signature. A bare `**kwargs` would collapse to a single `kwargs` property,
+    # making every parameterized tool uncallable over HTTP. Synthesize a real
+    # signature from the tool's Pydantic input model so the wire schema mirrors
+    # spec.input_schema (field names, required set, and per-field constraints).
+    # We keep `**kwargs` as the actual runtime container — the synthesized
+    # KEYWORD_ONLY params are introspection-only — so the body still forwards a
+    # flat dict unchanged.
     _delegate.__name__ = spec.name
+    _delegate.__signature__ = _model_signature(input_model)
+    _delegate.__annotations__ = {
+        name: param.annotation
+        for name, param in _delegate.__signature__.parameters.items()
+    }
+    _delegate.__annotations__["return"] = dict
     fast.add_tool(
         _delegate,
         name=spec.name,
         description=spec.description,
-        structured_output=True,
+        # Our dispatch pipeline already returns a complete MCP result envelope
+        # (isError / structuredContent / content). structured_output=False tells
+        # FastMCP to pass that envelope through instead of re-wrapping the return
+        # value as structured output (which would also demand a model return
+        # annotation the delegate doesn't have).
+        structured_output=False,
     )
+
+
+def _model_signature(model: Any) -> "inspect.Signature":
+    """Build an inspect.Signature whose KEYWORD_ONLY parameters mirror `model`'s
+    Pydantic fields (annotation + required/default), carrying each FieldInfo via
+    Annotated so FastMCP advertises the field's constraints/description."""
+    params: list[inspect.Parameter] = []
+    for field_name, field_info in model.model_fields.items():
+        annotated = Annotated[field_info.annotation, field_info]
+        default = (
+            inspect.Parameter.empty
+            if field_info.is_required()
+            else field_info.default
+        )
+        params.append(
+            inspect.Parameter(
+                field_name,
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=annotated,
+                default=default,
+            )
+        )
+    return inspect.Signature(params, return_annotation=dict)
 
 
 class _AuthHostGuard:
