@@ -239,3 +239,19 @@ TQ-1 (env-leak order-dependence), TQ-2 (callable-migration fixture). TQ-3 (execu
 
 ### Phases: 0,1,2,2.5,2.75,3,4,5,5.5,5.75,6 DONE. 7 = this final review.
 40 commits on worktree-production-ready-backend-hardening (from 7ca17c9). 108 files (+3017/-1243).
+
+## E2E review findings (post-pipeline, user-requested)
+FIXED:
+- HIGH integrity: close_rules.status VARCHAR(15) vs 'pending_activation' (18ch) → 22001 truncation broke trading cycles. Migration v56 widens to VARCHAR(20). Verified vs real DB.
+- E2E conflict: filled_qty (cumulative-closed) vs frontend live-size → added remaining_qty to serialize_trade (REST+WS) + schema + 4 frontend files.
+
+NEEDS USER DECISION (do not fix unilaterally — changes backtest golden contract):
+- HIGH parity: live place_trade CLAMPS sl_price_move to 0.9×liquidation (clamp_sl_move_to_liquidation, accounts_service.py:40/348) but backtest_engine._open_position uses RAW sl_pct via compute_tp_sl (no clamp). On default-ish configs (lev=20 sl=100 → 5% move clamps to 4.05%; lev=10 sl=100 → 8.55%) backtest hits LIQUIDATION where live stops out smaller → overstates losses, breaks <1% parity. FIX = move clamp into trading_rules.compute_tp_sl (SSOT, both engines). BUT this CHANGES backtest golden snapshots (many golden tests use sl_pct=500 / lev=100 which clamp). Base golden (lev=10 sl=50 → 5% same) unaffected, but several others change. → requires regenerating goldens + user sign-off on the fidelity-improving behavior change.
+
+REMAINING E2E (lower severity, fixing):
+- MEDIUM contract: place_trade returns trade_id not orderId + no symbol → PlaceTradeDialog shows "Order ID: undefined".
+- MEDIUM contract: trade-event error_message read at top level but stored in payload JSONB → failure reason never displays.
+- LOW: trades.py:189 unrealisedPnl without `or 0` guard → ValueError on empty-string frame.
+- MEDIUM future: reconciler closed-pnl match only 2 pages (200 rec) vs codebase-wide full pagination → busy account never reconciles. + matches[0] mis-attribution.
+- MEDIUM consistency: trailing-trigger 0.5 ratio reimplemented 3x (close_rule_evaluator, backtest_engine) vs unused trading_rules.check_trailing_trigger SSOT.
+- MEDIUM future: trailing_peaks in-memory only → lost on restart, trailing stop re-arms from lower baseline.
