@@ -598,6 +598,10 @@ class TestGoldenScenarios:
         # once total open uPnL clears the fee buffer after the breakeven window, the
         # position force-closes with reason "breakeven".
         assert trade["close_reason"] == "breakeven"
+        # Breakeven exits at the candle MARK (the close that lifts uPnL past the fee
+        # buffer), not a lowered TP price. The watch first clears the buffer on the
+        # 50100 candle, so the exit is pinned to that mark.
+        assert trade["exit_price"] == pytest.approx(50100.0, rel=1e-3)
         assert abs(result.metrics["net_profit"]) < 0.01 * cfg["starting_capital"]
         _assert_reconciles(result, cfg)
 

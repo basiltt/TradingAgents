@@ -182,28 +182,62 @@ class TestTimeBasedRules:
         assert len(result.trades) == 1
         assert result.trades[0]["close_reason"] == "breakeven", result.trades[0]["close_reason"]
 
-    def test_breakeven_never_recovers_force_closes_at_max_duration(self):
-        """If uPnL never recovers, force-closed at max_duration, not breakeven."""
+    def test_breakeven_excludes_max_duration_queued_position_from_upnl_sum(self):
+        """A position queued by MAX_DURATION must be EXCLUDED from the account-level
+        breakeven uPnL sum (via the id() set), so its PnL can't pollute the recovery
+        check for the OTHER still-open positions.
+
+        Two staggered positions:
+          - BTC enters at t=0, stays flat, then at t=120 (elapsed 2h = max_duration)
+            SPIKES to a big winner (uPnL ≈ +2000). MAX_DURATION queues it first.
+          - ETH enters at t=30, is past its breakeven window at t=120 but only mildly
+            underwater (uPnL ≈ −33), so on its OWN it can NEVER clear the fee buffer.
+
+        With the exclusion, the breakeven sum sees only ETH (−33 < buffer) → ETH does
+        NOT close 'breakeven' (it later force-closes 'backtest_end'). If someone drops
+        the id() exclusion, BTC's +2000 pollutes the sum (≫ buffer) and ETH wrongly
+        closes 'breakeven' — so this test fails, guarding the exclusion. BTC itself
+        still closes 'max_duration' (the literal MAX_DURATION-priority guarantee)."""
         from backend.services.backtest_engine import BacktestEngine
 
         engine = BacktestEngine()
         config = _make_config(
             breakeven_timeout_hours=1.0,
             take_profit_pct=500.0, stop_loss_pct=500.0,
-            max_trade_duration_hours=2.0,
+            max_trade_duration_hours=2.0, max_trades=5,
             leverage=20, capital_pct=5.0, fee_rate_pct=0.055, slippage_bps=0,
         )
-        signals = [_make_signal()]
         base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        klines = {"BTCUSDT": [
-            {"open_time": base_time, "open": 50000.0, "high": 50000.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
-            {"open_time": base_time + timedelta(minutes=60), "open": 50000.0, "high": 49800.0, "low": 49000.0, "close": 49200.0, "volume": 100.0},
-            {"open_time": base_time + timedelta(minutes=120), "open": 49200.0, "high": 49300.0, "low": 49000.0, "close": 49100.0, "volume": 100.0},
-            {"open_time": base_time + timedelta(minutes=180), "open": 49100.0, "high": 49200.0, "low": 49000.0, "close": 49100.0, "volume": 100.0},
-        ]}
-        result = engine.run(config, signals, klines)
-        assert len(result.trades) == 1
-        assert result.trades[0]["close_reason"] == "max_duration", result.trades[0]["close_reason"]
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, scan_id="s1", signal_time=base_time,
+                         analysis_price=50000.0),
+            _make_signal(ticker="ETHUSDT", id=2, score=7, scan_id="s2",
+                         signal_time=base_time + timedelta(minutes=30), analysis_price=3000.0),
+        ]
+        # BTC: flat at 50000 for 2h (so breakeven never fires early), then a +20% spike
+        # at t=120 → elapsed 2h hits MAX_DURATION while it is a large winner.
+        btc = [
+            {"open_time": base_time + timedelta(minutes=5 * i),
+             "open": 50000.0, "high": 50050.0, "low": 49950.0, "close": 50000.0, "volume": 100.0}
+            for i in range(24)
+        ]
+        btc.append({"open_time": base_time + timedelta(minutes=120),
+                    "open": 50000.0, "high": 60000.0, "low": 50000.0, "close": 60000.0, "volume": 100.0})
+        # ETH: enters t=30, mildly underwater (2990) the whole time — alone its uPnL
+        # (≈ −33) can never clear its ~8.2 fee buffer, so breakeven must not fire for it.
+        eth = [
+            {"open_time": base_time + timedelta(minutes=30 + 5 * i),
+             "open": 3000.0, "high": 2998.0, "low": 2985.0, "close": 2990.0, "volume": 100.0}
+            for i in range(19)  # 30min .. 120min
+        ]
+        result = engine.run(config, signals, {"BTCUSDT": btc, "ETHUSDT": eth})
+        by_symbol = {t["symbol"]: t for t in result.trades}
+        assert set(by_symbol) == {"BTCUSDT", "ETHUSDT"}, by_symbol
+        # The maxed winner closes via MAX_DURATION (queued first, excluded from the sum).
+        assert by_symbol["BTCUSDT"]["close_reason"] == "max_duration", by_symbol["BTCUSDT"]["close_reason"]
+        # The discriminator: ETH must NOT ride BTC's excluded uPnL into a breakeven close.
+        assert by_symbol["ETHUSDT"]["close_reason"] != "breakeven", by_symbol["ETHUSDT"]["close_reason"]
+        assert by_symbol["ETHUSDT"]["close_reason"] == "backtest_end", by_symbol["ETHUSDT"]["close_reason"]
 
     def test_breakeven_not_applied_without_timeout(self):
         """Without breakeven_timeout, the same klines do NOT close via tp (control case)."""

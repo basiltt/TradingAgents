@@ -1913,6 +1913,7 @@ class BacktestEngine:
             already = {id(p) for p, _ in positions_to_close}
             remaining = [p for p in state.open_positions if id(p) not in already]
             if remaining:
+                # All positions in a cycle share ~one entry_time (no mid-cycle entries), so the oldest position's age is the cycle's age past the breakeven window.
                 oldest_elapsed = max(
                     (candle_time - p.entry_time).total_seconds() / 3600.0 for p in remaining
                 )
