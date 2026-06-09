@@ -165,7 +165,31 @@ class PositionReconciler:
             except Exception:
                 return False
 
+        # AI-CONTEXT: untrusted-empty guard. client.get_positions() can return an
+        # OK-but-EMPTY/partial list on a transient Bybit blip (throttle, replication
+        # lag, retCode 0 with [] ) WITHOUT raising. If we trusted that, every
+        # eligible DB trade would see exchange_count==0 and be force-closed below —
+        # mass-orphaning LIVE exchange positions (their DB rows flipped to
+        # closed/external, never un-closed by the PnL backfill). So: if the exchange
+        # reports ZERO open positions while the DB has eligible (non-young) open
+        # trades, treat the reading as untrustworthy and SKIP stale-detection this
+        # cycle. A genuinely-flat account simply has no eligible trades to reconcile,
+        # so this never blocks a real close — only a real position confirmed gone on
+        # a later cycle (with a non-empty list) will be reconciled. Backfill (PnL on
+        # already-closed trades) still proceeds; it does not force-close anything.
+        _has_eligible_open = any(
+            not _is_young(t) for t in all_reconcile_candidates
+        )
+        _trust_positions = bool(position_counts) or not _has_eligible_open
+        if not _trust_positions:
+            logger.warning(
+                "reconcile_skip_untrusted_empty_positions account=%s db_open=%d",
+                account_id, len(all_reconcile_candidates),
+            )
+
         for key, trades in trade_groups.items():
+            if not _trust_positions:
+                break
             exchange_count = position_counts.get(key, 0)
             # exclude young trades from the "stale" candidate set for this key
             eligible = [t for t in trades if not _is_young(t)]
