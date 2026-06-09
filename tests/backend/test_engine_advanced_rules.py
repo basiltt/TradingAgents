@@ -157,39 +157,53 @@ class TestTimeBasedRules:
         assert len(result.trades) == 1
         assert result.trades[0]["close_reason"] == "max_duration"
 
-    def test_breakeven_timeout_modifies_tp(self):
-        """BREAKEVEN_TIMEOUT modifies TP to breakeven after timeout (doesn't force-close)."""
+    def test_breakeven_closes_all_when_recovered(self):
+        """After breakeven time, once total open uPnL >= fee buffer the position is
+        force-closed with reason 'breakeven' (not 'tp', not 'max_duration')."""
         from backend.services.backtest_engine import BacktestEngine
 
         engine = BacktestEngine()
-        # Breakeven at 1h. After that, TP moves to ~breakeven (entry × 1.0005).
         config = _make_config(
             breakeven_timeout_hours=1.0,
-            take_profit_pct=500.0,  # original wide TP
-            stop_loss_pct=500.0,
-            max_trade_duration_hours=5.0,  # backstop
+            take_profit_pct=500.0, stop_loss_pct=500.0,
+            max_trade_duration_hours=5.0,
+            leverage=20, capital_pct=5.0, fee_rate_pct=0.055, slippage_bps=0,
         )
         signals = [_make_signal()]
-
         base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
-        # Price rises slightly above breakeven after 1h → new TP catches it
+        # Underwater through breakeven time (1h), then recovers above entry at 120min.
         klines = {"BTCUSDT": [
-            {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
-            {"open_time": base_time + timedelta(minutes=30), "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
-            # After 1h → breakeven TP set (~50025) on this candle (time rules run after TP/SL)
-            {"open_time": base_time + timedelta(minutes=90), "open": 50000.0, "high": 50010.0, "low": 50000.0, "close": 50005.0, "volume": 100.0},
-            # Next candle: price rises to 50100 → new breakeven TP (50025) is hit
-            {"open_time": base_time + timedelta(minutes=120), "open": 50005.0, "high": 50100.0, "low": 50000.0, "close": 50050.0, "volume": 100.0},
+            {"open_time": base_time, "open": 50000.0, "high": 50000.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=30), "open": 50000.0, "high": 50000.0, "low": 49500.0, "close": 49600.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=90), "open": 49600.0, "high": 49900.0, "low": 49500.0, "close": 49800.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=120), "open": 49800.0, "high": 50200.0, "low": 49800.0, "close": 50100.0, "volume": 100.0},
         ]}
-
         result = engine.run(config, signals, klines)
-        # Position should close via TP at the BREAKEVEN level (~50025), NOT max_duration
-        # This proves the breakeven TP modification fired (original TP was 500% = ~75000)
         assert len(result.trades) == 1
-        assert result.trades[0]["close_reason"] == "tp"
-        # Exit price should be near breakeven (50025), far below original wide TP
-        assert result.trades[0]["exit_price"] < 50100, \
-            f"Exit {result.trades[0]['exit_price']} should be near breakeven, proving TP was modified"
+        assert result.trades[0]["close_reason"] == "breakeven", result.trades[0]["close_reason"]
+
+    def test_breakeven_never_recovers_force_closes_at_max_duration(self):
+        """If uPnL never recovers, force-closed at max_duration, not breakeven."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            breakeven_timeout_hours=1.0,
+            take_profit_pct=500.0, stop_loss_pct=500.0,
+            max_trade_duration_hours=2.0,
+            leverage=20, capital_pct=5.0, fee_rate_pct=0.055, slippage_bps=0,
+        )
+        signals = [_make_signal()]
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        klines = {"BTCUSDT": [
+            {"open_time": base_time, "open": 50000.0, "high": 50000.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=60), "open": 50000.0, "high": 49800.0, "low": 49000.0, "close": 49200.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=120), "open": 49200.0, "high": 49300.0, "low": 49000.0, "close": 49100.0, "volume": 100.0},
+            {"open_time": base_time + timedelta(minutes=180), "open": 49100.0, "high": 49200.0, "low": 49000.0, "close": 49100.0, "volume": 100.0},
+        ]}
+        result = engine.run(config, signals, klines)
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "max_duration", result.trades[0]["close_reason"]
 
     def test_breakeven_not_applied_without_timeout(self):
         """Without breakeven_timeout, the same klines do NOT close via tp (control case)."""

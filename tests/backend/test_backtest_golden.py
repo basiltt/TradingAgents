@@ -573,13 +573,15 @@ class TestGoldenScenarios:
         _assert_reconciles(result, cfg)
 
     def test_golden_breakeven_timeout_close(self):
-        """BREAKEVEN_TIMEOUT does NOT force-close; it lowers TP to the breakeven
-        price after the timeout. A subsequent small uptick then closes the position
-        via that breakeven TP for a roughly flat result. Covers the breakeven path
-        with the golden exact-reconciliation guard."""
-        # Wide TP/SL (500% → needs a 50% move) so only the breakeven-lowered TP can
-        # fire. breakeven_timeout_hours=1.0 → after 12 flat 5m candles TP drops to
-        # ~entry*(1+1/(lev*100)) = 50050; a later 50100 candle then hits it.
+        """BREAKEVEN_TIMEOUT is an account-level watch-and-close-all: after the
+        breakeven window elapses, the engine closes EVERY remaining open position the
+        moment total open uPnL clears the fee buffer (Σ notional × fee × 1.5), so the
+        mass close nets ~flat. Covers the breakeven path with the golden exact-
+        reconciliation guard."""
+        # Wide TP/SL (500% → needs a 50% move) so only the account-level breakeven
+        # watch can fire. breakeven_timeout_hours=1.0 → after 12 flat 5m candles the
+        # window is open; the later 50100 candle then lifts uPnL above the fee buffer
+        # and force-closes the position at the mark for a near-breakeven result.
         cfg = _config(
             take_profit_pct=500.0, stop_loss_pct=500.0, breakeven_timeout_hours=1.0
         )
@@ -592,12 +594,11 @@ class TestGoldenScenarios:
         result = BacktestEngine().run(cfg, [_signal()], klines)
         assert len(result.trades) == 1
         trade = result.trades[0]
-        # The engine realises breakeven by moving the TP, so the close_reason is "tp"
-        # (at the breakeven price), and the net result is approximately flat.
-        assert trade["close_reason"] == "tp"
-        assert trade["exit_price"] == pytest.approx(50050.0, rel=1e-3)
-        # Near-breakeven: the result is a small fraction of starting capital.
-        assert abs(result.metrics["net_profit"]) < 0.005 * cfg["starting_capital"]
+        # The engine now closes the whole account at breakeven (not via a lowered TP):
+        # once total open uPnL clears the fee buffer after the breakeven window, the
+        # position force-closes with reason "breakeven".
+        assert trade["close_reason"] == "breakeven"
+        assert abs(result.metrics["net_profit"]) < 0.01 * cfg["starting_capital"]
         _assert_reconciles(result, cfg)
 
 

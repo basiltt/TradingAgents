@@ -1869,14 +1869,14 @@ class BacktestEngine:
         """Evaluate time-based close rules: BREAKEVEN_TIMEOUT, MAX_DURATION, and the
         per-position MR fast time-stop (F2).
 
-        BREAKEVEN_TIMEOUT: modifies TP to breakeven (does NOT close).
-            If position is actively trailing → SKIP (trailing takes priority).
+        BREAKEVEN_TIMEOUT: account-level — closes ALL remaining positions once total
+            open uPnL >= fee buffer, after the breakeven window.
         MAX_DURATION: force-closes after elapsed hours at the symbol's latest price.
         MR time-stop: force-closes a mean_reversion position after its own
             time_stop_minutes (F2's strategy-critical fast exit), independent of the
             account-level MAX_DURATION.
         """
-        from backend.services.trading_rules import compute_breakeven_price
+        from backend.services.trading_rules import compute_unrealized_pnl
 
         breakeven_hours = config.get("breakeven_timeout_hours")
         max_duration_hours = config.get("max_trade_duration_hours")
@@ -1903,14 +1903,30 @@ class BacktestEngine:
                 positions_to_close.append((pos, "max_duration"))
                 continue
 
-            # BREAKEVEN_TIMEOUT: modify TP to breakeven price
-            if breakeven_hours and elapsed_hours >= breakeven_hours:
-                # If position is in active trailing → SKIP (trailing takes priority)
-                if pos.trailing_active:
-                    continue
-                # Modify TP to breakeven price
-                new_tp = compute_breakeven_price(pos.entry_price, pos.side, pos.leverage)
-                pos.tp_price = new_tp
+        # BREAKEVEN_TIMEOUT (account-level, mirrors live close_rule_evaluator): once the
+        # cycle has aged past the breakeven window, close ALL remaining open positions
+        # the moment total open unrealised PnL clears the fee buffer (Σ notional × fee
+        # × 1.5), so the mass close nets ~flat. Positions already queued for MR/
+        # MAX_DURATION close above are excluded. Empty remaining → do nothing (no
+        # positions = cannot be at breakeven).
+        if breakeven_hours:
+            already = {id(p) for p, _ in positions_to_close}
+            remaining = [p for p in state.open_positions if id(p) not in already]
+            if remaining:
+                oldest_elapsed = max(
+                    (candle_time - p.entry_time).total_seconds() / 3600.0 for p in remaining
+                )
+                if oldest_elapsed >= breakeven_hours:
+                    total_upnl = 0.0
+                    total_buffer = 0.0
+                    for p in remaining:
+                        mark = latest_prices.get(p.symbol, p.entry_price)
+                        ref = p.equity_ref_entry or p.entry_price
+                        total_upnl += compute_unrealized_pnl(ref, mark, p.qty, p.side)
+                        total_buffer += p.qty * mark * (fee_rate / 100.0) * 1.5
+                    if total_upnl >= total_buffer:
+                        for p in remaining:
+                            positions_to_close.append((p, "breakeven"))
 
         # Close time-stopped positions at the symbol's latest price. Guard against a
         # position already closed by an earlier rule this candle (defensive parity
