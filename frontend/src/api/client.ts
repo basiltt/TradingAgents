@@ -179,9 +179,9 @@ type QueryValue = string | number | boolean | undefined | null | Array<string | 
  * Centralizes the repeated `new URLSearchParams()` → conditionally-`set` →
  * `?${qs}` boilerplate that every list/filter endpoint hand-rolled. Scalars are
  * set once; arrays are appended as repeated keys (`?symbols=A&symbols=B`);
- * `undefined`, `null`, and empty-string values are skipped so optional filters
- * don't emit blank params. When no params survive, `path` is returned unchanged
- * (no trailing `?`).
+ * `undefined`, `null`, empty-string, and non-finite numbers (`NaN`/`Infinity`) are
+ * skipped so optional filters don't emit blank or garbage params. When no params
+ * survive, `path` is returned unchanged (no trailing `?`).
  *
  * @param path - The base path (without a query string).
  * @param params - A record of parameter name → {@link QueryValue}.

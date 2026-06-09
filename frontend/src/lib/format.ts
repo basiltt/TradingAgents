@@ -1,4 +1,17 @@
 /**
+ * @module format
+ *
+ * Display-formatting helpers for durations and date-times.
+ *
+ * Architectural role: pure presentation utilities shared across the app for turning
+ * numbers/timestamps into human-readable strings. All functions are defensive
+ * against non-finite numbers and unparseable dates (returning a fallback rather than
+ * "NaNs" / "Invalid Date"), so a single bad value never corrupts the UI.
+ *
+ * Boundary: pure functions — no DOM, no I/O, no state.
+ */
+
+/**
  * Convert milliseconds to a human-readable duration string (e.g. "1h 23m 45s").
  *
  * @param ms - Duration in milliseconds. Non-finite (NaN/Infinity) or negative

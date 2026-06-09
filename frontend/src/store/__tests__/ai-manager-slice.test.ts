@@ -5,6 +5,7 @@ import reducer, {
   clearError,
   fetchDecisions,
   fetchLogs,
+  fetchLLMCalls,
   globalKill,
 } from "@/store/ai-manager-slice";
 
@@ -97,6 +98,36 @@ describe("aiManagerSlice truncation", () => {
     const next = reducer(state, fetchLogs.fulfilled({ accountId: "acc-1", logs: newLogs, nextCursor: null, append: true }, "", { accountId: "acc-1", cursor: null }));
     expect(next.logsByAccount["acc-1"]).toHaveLength(1000);
     expect(next.logsByAccount["acc-1"][999].id).toBe(1019);
+  });
+
+  it("fetchLLMCalls.fulfilled append KEEPS older paginated entries (regression: was capped away at 200)", () => {
+    // BUG GUARD: the feed is newest-first; "Load more" appends OLDER entries to the
+    // tail. Previously the buffer was capped at 200, so appending the next page onto
+    // an already-200 buffer kept only the existing newest 200 and silently discarded
+    // every older page — "Load more" was a no-op. With the 1000 cap, the older page
+    // must survive.
+    const llmCall = (id: number) => ({
+      id, call_id: `c${id}`, evaluation_cycle_id: "e1", node_name: "trader",
+      timestamp: "", model: "x", input_tokens: 1, output_tokens: 1, latency_ms: 1,
+      success: true, urgency_tier: "low", action_returned: null, confidence: null,
+      reasoning_preview: null, attempt_number: 1,
+    });
+    const existing = Array.from({ length: 200 }, (_, i) => llmCall(i)); // newest 200
+    const olderPage = Array.from({ length: 50 }, (_, i) => llmCall(1000 + i)); // older page
+    const state = { ...initialState, llmCallsByAccount: { "acc-1": existing } };
+
+    const next = reducer(
+      state,
+      fetchLLMCalls.fulfilled(
+        { accountId: "acc-1", calls: olderPage, nextCursor: null, append: true },
+        "",
+        { accountId: "acc-1" },
+      ),
+    );
+    // All 250 survive (200 existing + 50 older), not capped back to 200.
+    expect(next.llmCallsByAccount["acc-1"]).toHaveLength(250);
+    // The older page is appended at the tail (after the existing newest entries).
+    expect(next.llmCallsByAccount["acc-1"][200].id).toBe(1000);
   });
 
   it("globalKill.fulfilled sets kill_switch on all accounts", () => {

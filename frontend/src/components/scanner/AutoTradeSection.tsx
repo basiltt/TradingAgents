@@ -515,7 +515,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 max={10}
                 step={0.5}
                 value={config.min_score}
-                onChange={(e) => onChange({ min_score: clampNumber(e.target.value, -10, 10, 0) })}
+                onChange={(e) => onChange({ min_score: clampNumber(e.target.value, 0, 10, 0) })}
                 className="mt-2"
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">0 to 10 conviction threshold</p>

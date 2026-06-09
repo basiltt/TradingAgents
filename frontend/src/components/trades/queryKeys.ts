@@ -4,9 +4,9 @@
  * Centralized React Query cache keys for the trades domain.
  *
  * Architectural role: a single source of truth for the `["trades", ...]` key
- * arrays that were previously hand-written as string literals across four files
- * (useTradeActions, useTradeHistory, useTradeStats, useTradeEvents, and the account
- * WebSocket hook). A typo in any of those literals silently breaks cache
+ * arrays that were previously hand-written as string literals across five call
+ * sites (useTradeActions, useTradeHistory, useTradeStats, useTradeEvents, and the
+ * account WebSocket hook). A typo in any of those literals silently breaks cache
  * invalidation with no error — exactly the failure this module prevents.
  *
  * Boundary: pure key factories, no React/Query imports. TanStack Query matches by
