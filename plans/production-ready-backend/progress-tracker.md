@@ -270,3 +270,18 @@ Final gates after E2E: backend ruff 0, mypy 0; frontend tsc 0; 256 money-path te
 - MEDIUM future (reconciler): closed-pnl match only 2 pages (200 rec) + matches[0] mis-attribution. Fix: full pagination + time/qty match.
 - MEDIUM future (trailing_peaks): in-memory only, lost on restart → trailing stop re-arms from lower baseline. Fix: persist + rehydrate.
 - Phase-5 mediums (documented earlier): scheduler trigger() cross-instance double-fire; cycle close-rule non-atomicity; place_trade orphan-on-DB-fail; recon PnL double-count.
+
+## E2E round 2 — SL-clamp + deferred mediums (per user)
+FIXED:
+- HIGH parity: SL-to-liquidation clamp now in trading_rules SSOT, applied in backtest compute_tp_sl (matches live). Liquidation-with-SL now unreachable by design (live-accurate). Updated 4 affected tests (golden/advanced_rules/subcent/smart_drawdown). 633 backtest/engine tests pass.
+- MEDIUM: reconciler closed-PnL pagination — now walks cursor to exhaustion (_MAX_CLOSED_PNL_PAGES=50) not 2 pages. +regression test.
+- MEDIUM race: manual scan trigger() now uses claim_manual_trigger DB CAS (cross-instance no-double-fire). +2 regression tests.
+VERIFIED ALREADY-HANDLED (not a bug — agent overstated):
+- cycle close-rule non-atomicity: _execute_cycle already catches any failure → _finalize_cycle("failed") → _expire_cycle_rules cleans up + closes positions. Partial-write failure is caught and recovered; not silently stuck.
+DOCUMENTED AS SCOPED FOLLOW-UP (feature-sized, deferred deliberately):
+- trailing_peaks in-memory lost on restart. Proper fix needs: (1) schema migration (close_rules has NO metadata/JSONB column — add one or a trailing_peaks table), (2) persist peak on the WS-update hot path (perf: throttle writes), (3) rehydrate in CloseRuleEvaluator.start(). Real but feature-sized; not safe to rush at session end. close_rule_evaluator.py:63 _trailing_peaks; update/read at ~472-488.
+- recon F-recon-2 (matches[0] PnL mis-attribution across same symbol+side): lower-confidence; needs exec-id/qty/time matching rather than newest-of-symbol. Documented.
+
+## FINAL STATE
+All gates: backend ruff 0, mypy 0; frontend tsc 0. ~54 commits. Pipeline + E2E review complete.
+Total real bugs fixed across pipeline + E2E: ~28 (1 CRITICAL, several HIGH incl. trading-cycle-breaking truncation, manual-close-broken, SSRF env-leak, fill-confirmation, reconciler-orphan, leak, SL-parity).
