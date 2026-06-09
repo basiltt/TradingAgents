@@ -24,6 +24,13 @@ ALLOWED_STOP_REASONS = frozenset({
     "rule_triggered",
 })
 
+# Max conditional close-rules a single account may hold at once. Bybit caps the
+# number of active conditional/stop orders per symbol; this app-level ceiling keeps
+# a cycle from exhausting it. Must agree with the auto-trade path's own limit.
+MAX_ACTIVE_CLOSE_RULES_PER_ACCOUNT = 9
+# Bybit return code for an order rejected due to insufficient available balance.
+_BYBIT_RETCODE_INSUFFICIENT_BALANCE = 110043
+
 
 class CycleError(Exception):
     """Base exception for trading cycle operations. Subclasses set code and safe_message."""
@@ -243,7 +250,7 @@ class TradingCycleEngine:
 
         rule_counts = await self._db.count_active_rules_by_account()
         current_count = rule_counts.get(account_id, 0)
-        if current_count >= 9:
+        if current_count >= MAX_ACTIVE_CLOSE_RULES_PER_ACCOUNT:
             raise CloseRuleLimitError()
 
         try:
@@ -460,7 +467,7 @@ class TradingCycleEngine:
             except Exception as e:
                 err_msg = str(e)[:500]
                 retcode = getattr(e, "ret_code", None)
-                if retcode == 110043:
+                if retcode == _BYBIT_RETCODE_INSUFFICIENT_BALANCE:
                     await self._repo.update_trade(trade_id, status="failed", error_msg="insufficient_balance")
                     trades_failed += 1
                     await self._repo.increment_counters(cycle_id, failed=1)

@@ -1518,7 +1518,10 @@ class AIManagerTask:
         # negative UPnL would be force-closed, violating "F2 owns MR exits". _mr_symbols
         # is refreshed on each eval; prime it here if a WS-driven emergency fires before
         # the first eval (cold start) so the exclusion holds from the very first tick.
-        if self._mr_symbols is None or (not self._mr_symbols and not self._mr_symbols_primed):
+        # AI-CONTEXT: _mr_symbols is typed `set` and always assigned a set (never None),
+        # so the real guard is "empty AND not yet primed" — a removed `is None` clause
+        # here would only have misled readers into thinking it is nullable.
+        if not self._mr_symbols and not self._mr_symbols_primed:
             try:
                 self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
             except Exception:
