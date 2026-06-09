@@ -114,3 +114,34 @@ async def test_genuinely_absent_position_with_other_live_positions_reconciles():
     trade_service.reconcile_close = AsyncMock(return_value={"status": "closed"})
     await reconciler._reconcile_account("acc-1")
     trade_service.reconcile_close.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_closed_pnl_match_pages_past_first_page():
+    """REGRESSION: _fetch_closed_pnl_match must walk the cursor past the first page.
+    Previously it read only 2 pages (200 records) — a busy account whose target
+    close sat on page 3+ never reconciled. Here the symbol's record only appears on
+    the 3rd page; the matcher must still find it."""
+    from backend.services.position_reconciler import PositionReconciler
+
+    pages = [
+        {"list": [{"symbol": "OTHER1USDT", "side": "Sell", "updatedTime": "1"}], "nextPageCursor": "c1"},
+        {"list": [{"symbol": "OTHER2USDT", "side": "Sell", "updatedTime": "2"}], "nextPageCursor": "c2"},
+        {"list": [{"symbol": "BTCUSDT", "side": "Sell", "updatedTime": "3",
+                   "closedPnl": "12.5", "avgExitPrice": "51000", "execType": "Trade"}], "nextPageCursor": ""},
+    ]
+    call = {"n": 0}
+
+    async def get_closed_pnl(**kwargs):
+        i = call["n"]
+        call["n"] += 1
+        return pages[min(i, len(pages) - 1)]
+
+    client = AsyncMock()
+    client.get_closed_pnl = get_closed_pnl
+    reconciler = PositionReconciler(db=MagicMock(), accounts_service=AsyncMock(), trade_service=AsyncMock())
+
+    match = await reconciler._fetch_closed_pnl_match(client, "BTCUSDT", "Buy", 0, 9999)
+    assert match is not None, "must find the BTCUSDT record on page 3 (cursor walk)"
+    assert match["closedPnl"] == "12.5"
+    assert call["n"] == 3  # walked all three pages

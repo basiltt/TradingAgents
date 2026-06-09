@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 _INITIAL_DELAY_S = 30
 _DEFAULT_INTERVAL_S = 60
 _API_CALL_DELAY_S = 0.25
+# Max closed-PnL pages to scan when matching a stale trade to its exchange close.
+# Bounds the cursor walk so a huge history can't stall reconciliation, while being
+# deep enough (50 × 100 = 5000 records) that a busy account's older closes still
+# surface — mirrors accounts_service._fetch_and_store_closed_pnl's max_pages.
+_MAX_CLOSED_PNL_PAGES = 50
 
 
 class PositionReconciler:
@@ -357,42 +362,38 @@ class PositionReconciler:
     async def _fetch_closed_pnl_match(
         self, client: Any, symbol: str, side: str, start_ms: int, end_ms: int,
     ) -> dict | None:
-        """Fetch closed PnL records and find the matching one for this trade."""
-        try:
-            result = await client.get_closed_pnl(
-                start_time=start_ms, end_time=end_ms, limit=100
-            )
-        except Exception:
-            logger.warning("get_closed_pnl failed for %s", symbol)
-            return None
+        """Fetch closed-PnL records and find the matching one for this trade.
 
+        Pages the exchange's closed-PnL feed cursor-to-cursor (bounded by
+        _MAX_CLOSED_PNL_PAGES) until the symbol's record is found or the feed is
+        exhausted. AI-CONTEXT: previously this read only 2 pages (200 records); a busy
+        account that closed >200 positions of OTHER symbols inside the trade's window
+        would never surface this trade's record, leaving it unreconciled (zero
+        exit_price/PnL) forever. Returns the newest matching record, or None.
+        """
         close_side = "Sell" if side == "Buy" else "Buy"
-
-        matches = [
-            r for r in result.get("list", [])
-            if r.get("symbol") == symbol and r.get("side") == close_side
-        ]
-
-        if not matches:
-            # Try pagination if first page didn't contain our symbol
+        cursor = ""
+        for _page in range(_MAX_CLOSED_PNL_PAGES):
+            try:
+                result = await client.get_closed_pnl(
+                    start_time=start_ms, end_time=end_ms, limit=100, cursor=cursor,
+                ) if cursor else await client.get_closed_pnl(
+                    start_time=start_ms, end_time=end_ms, limit=100,
+                )
+            except Exception:
+                logger.warning("get_closed_pnl failed for %s", symbol)
+                return None
+            matches = [
+                r for r in result.get("list", [])
+                if r.get("symbol") == symbol and r.get("side") == close_side
+            ]
+            if matches:
+                matches.sort(key=lambda r: int(r.get("updatedTime", 0)), reverse=True)
+                return matches[0]
             cursor = result.get("nextPageCursor", "")
-            if cursor:
-                try:
-                    result2 = await client.get_closed_pnl(
-                        start_time=start_ms, end_time=end_ms, limit=100, cursor=cursor
-                    )
-                    matches = [
-                        r for r in result2.get("list", [])
-                        if r.get("symbol") == symbol and r.get("side") == close_side
-                    ]
-                except Exception:
-                    pass
-
-        if not matches:
-            return None
-
-        matches.sort(key=lambda r: int(r.get("updatedTime", 0)), reverse=True)
-        return matches[0]
+            if not cursor:
+                break
+        return None
 
     @staticmethod
     def _infer_close_reason(order_type: str, record: dict, trade: dict | None = None, exit_price: float = 0.0) -> str:
