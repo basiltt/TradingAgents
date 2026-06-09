@@ -582,7 +582,7 @@ class AutoTradeExecutor:
             )
 
             executions: List[TradeExecution] = []
-            traded: set = set()  # (account_id, ticker) pairs already traded
+            traded: set = set()  # (account_id, symbol) pairs already traded
             for state in self._state.values():
                 if state.config.get("execution_mode") != "batch":
                     continue
@@ -591,7 +591,7 @@ class AutoTradeExecutor:
                     if state.stopped:
                         break
                     ticker = result.get("ticker", "")
-                    trade_key = (account_id, ticker)
+                    trade_key = (account_id, _to_symbol(ticker))
                     if trade_key in traded:
                         state.trades_skipped += 1
                         continue
@@ -601,48 +601,11 @@ class AutoTradeExecutor:
                     if execution:
                         executions.append(execution)
 
-            # Fill pass: if fill_to_max_trades is enabled and max_trades not reached,
-            # retry with relaxed filters using best remaining signals by score
-            for state in self._state.values():
-                if state.config.get("execution_mode") != "batch":
-                    continue
-                if not state.config.get("fill_to_max_trades"):
-                    continue
-                if state.stopped and state.stopped_reason != "max_trades_reached":
-                    continue
-                max_trades = state.config.get("max_trades", 999)
-                remaining_slots = max_trades - state.trades_executed
-                if remaining_slots <= 0:
-                    continue
-
-                account_id = state.config.get("account_id", "")
-                # Sort remaining signals by abs(score) descending
-                fill_candidates = sorted(
-                    [r for r in unique_results
-                     if r.get("ticker") and (account_id, r["ticker"]) not in traded
-                     and r.get("direction", "hold") != "hold"
-                     and r.get("status") == "completed"],
-                    key=lambda r: abs(r.get("score", 0)),
-                    reverse=True,
-                )
-
-                # Reset stopped flag if it was set due to max_trades during strict pass
-                if state.stopped and state.stopped_reason == "max_trades_reached":
-                    state.stopped = False
-                    state.stopped_reason = None
-
-                for result in fill_candidates[:remaining_slots]:
-                    if state.stopped:
-                        break
-                    ticker = result.get("ticker", "")
-                    trade_key = (account_id, ticker)
-                    if trade_key in traded:
-                        continue
-                    execution = await self._try_trade(state, result, relaxed=True, phase="fill")
-                    if execution and execution.status == "success":
-                        traded.add(trade_key)
-                    if execution:
-                        executions.append(execution)
+            # Fill pass: backfill remaining max_trades slots from the next-best signals
+            # with relaxed filters (see _fill_to_max). Shared helper keeps batch /
+            # immediate / post_scan_recheck fill behavior identical.
+            batch_states = [s for s in self._state.values() if s.config.get("execution_mode") == "batch"]
+            await self._fill_to_max(batch_states, unique_results, traded, executions, phase="fill")
 
             return executions
 
@@ -668,47 +631,8 @@ class AutoTradeExecutor:
                     if e.status == "success":
                         traded.add((aid, e.symbol))
 
-            for state in self._state.values():
-                if state.config.get("execution_mode") != "immediate":
-                    continue
-                if not state.config.get("fill_to_max_trades"):
-                    continue
-                max_trades = state.config.get("max_trades", 999)
-                remaining_slots = max_trades - state.trades_executed
-                if remaining_slots <= 0:
-                    continue
-
-                # Reset stopped flag if it was set during strict evaluation
-                if state.stopped and state.stopped_reason == "max_trades_reached":
-                    state.stopped = False
-                    state.stopped_reason = None
-                elif state.stopped:
-                    continue
-
-                account_id = state.config.get("account_id", "")
-
-                fill_candidates = sorted(
-                    [r for r in unique_results
-                     if r.get("direction", "hold") != "hold"
-                     and r.get("status") == "completed"
-                     and r.get("ticker")
-                     and (account_id, _to_symbol(r["ticker"])) not in traded],
-                    key=lambda r: abs(r.get("score", 0)),
-                    reverse=True,
-                )
-
-                for result in fill_candidates[:remaining_slots]:
-                    if state.stopped:
-                        break
-                    ticker = result.get("ticker", "")
-                    symbol = _to_symbol(ticker)
-                    if (account_id, symbol) in traded:
-                        continue
-                    execution = await self._try_trade(state, result, relaxed=True, phase="fill")
-                    if execution and execution.status == "success":
-                        traded.add((account_id, symbol))
-                    if execution:
-                        executions.append(execution)
+            immediate_states = [s for s in self._state.values() if s.config.get("execution_mode") == "immediate"]
+            await self._fill_to_max(immediate_states, unique_results, traded, executions, phase="fill")
 
             return executions
 
@@ -1094,6 +1018,15 @@ class AutoTradeExecutor:
                             if execution:
                                 executions.append(execution)
 
+                    # Fill pass (parity with execute_batch / fill_immediate_remaining):
+                    # if fill_to_max_trades is enabled and the strict pass above did not
+                    # reach max_trades, backfill the remaining slots from the next-best
+                    # signals via the shared helper. Without this a rescued account
+                    # silently ignores the user's fill_to_max_trades toggle and stalls at
+                    # the count of strictly-qualifying signals (prod run #28 "Dad - Demo":
+                    # 1 of 3). Runs inside the same lock as the strict pass.
+                    await self._fill_to_max(states, unique_results, traded, executions, phase="post_scan_recheck_fill")
+
                 # Clean up if 0 trades were successfully executed
                 total_executed = sum(state.trades_executed for state in states)
                 if total_executed > 0:
@@ -1118,6 +1051,69 @@ class AutoTradeExecutor:
                 })
 
         return executions
+
+    async def _fill_to_max(self, states, unique_results, traded, executions, *, phase):
+        """Relaxed backfill pass shared by execute_batch, fill_immediate_remaining and
+        post_scan_recheck. For each state with fill_to_max_trades enabled and remaining
+        max_trades capacity, place the next-best remaining signals (by |score|) with
+        relaxed=True (bypasses min_score/confidence only — every other gate, including
+        max_signal_age, max_same_direction/sector and the hard max_trades backstop in
+        _try_trade, still applies).
+
+        Mutates ``traded`` (set of (account_id, symbol)) and appends to ``executions``.
+        Dedup is keyed on the USDT symbol (via _to_symbol) consistently across passes —
+        the strict passes that seed ``traded`` must use the same key space.
+
+        ``states`` is the list of _AccountState to fill (one per scan for execute_batch /
+        fill_immediate_remaining; the per-account config list for post_scan_recheck). The
+        caller is responsible for holding self._lock.
+        """
+        # Precondition: the caller must already hold the executor lock — the shared
+        # ``traded`` set and per-state counters mutated below are only safe under it.
+        # Cheap assert to catch a future call site that forgets (would corrupt dedup).
+        assert self._lock.locked(), "_fill_to_max must be called while holding self._lock"
+        for state in states:
+            if not state.config.get("fill_to_max_trades"):
+                continue
+            # Any stop reason OTHER than max_trades_reached (no_balance, target_goal,
+            # ai_paused_trading, ...) must still halt the account — never backfill it.
+            if state.stopped and state.stopped_reason != "max_trades_reached":
+                continue
+            max_trades = state.config.get("max_trades", 999)
+            remaining_slots = max_trades - state.trades_executed
+            if remaining_slots <= 0:
+                # Genuinely full: leave stopped_reason as-is. Crucially this PRESERVES
+                # "max_trades_reached" on a fully-filled account so the debug trace
+                # (final_stopped_reason / gate_that_stopped) still records why it
+                # stopped — don't reset the flag before this check.
+                continue
+            # Has capacity: clear a max_trades_reached stop from the strict pass so the
+            # fill can run. (A different stop reason was already `continue`d above.)
+            if state.stopped and state.stopped_reason == "max_trades_reached":
+                state.stopped = False
+                state.stopped_reason = None
+            account_id = state.config.get("account_id", "")
+            fill_candidates = sorted(
+                [r for r in unique_results
+                 if r.get("ticker")
+                 and (account_id, _to_symbol(r["ticker"])) not in traded
+                 and r.get("direction", "hold") != "hold"
+                 and r.get("status") == "completed"],
+                key=lambda r: abs(r.get("score", 0)),
+                reverse=True,
+            )
+            for result in fill_candidates[:remaining_slots]:
+                if state.stopped:
+                    break
+                symbol = _to_symbol(result.get("ticker", ""))
+                trade_key = (account_id, symbol)
+                if trade_key in traded:
+                    continue
+                execution = await self._try_trade(state, result, relaxed=True, phase=phase)
+                if execution and execution.status == "success":
+                    traded.add(trade_key)
+                if execution:
+                    executions.append(execution)
 
     async def _compute_mr_params(self, state, cfg, result, symbol, direction, ctx, phase):
         """Compute mean-reversion placement params or emit a skip and return None.
@@ -1291,8 +1287,15 @@ class AutoTradeExecutor:
             state.trades_skipped += 1
             return None
 
+        # Signal-age gate is enforced in BOTH strict and relaxed/fill mode: a stale
+        # signal is stale regardless of which pass admits it. This matters most on the
+        # post_scan_recheck fill, which runs at the END of a 20-45 min scan — without
+        # this, the relaxed fill would re-admit exactly the aged-out signals the strict
+        # pass just rejected, trading a thesis the user's max_signal_age_minutes
+        # explicitly bounds. (relaxed still bypasses min_score/confidence — only the
+        # freshness bound is unconditional.)
         max_age = cfg.get("max_signal_age_minutes")
-        if max_age and not relaxed and result.get("completed_at"):
+        if max_age and result.get("completed_at"):
             try:
                 completed = datetime.fromisoformat(result["completed_at"].replace("Z", "+00:00"))
                 age_minutes = (datetime.now(timezone.utc) - completed).total_seconds() / 60
