@@ -1114,7 +1114,7 @@ CREATE TABLE IF NOT EXISTS close_rules (
     trigger_type VARCHAR(30) NOT NULL CHECK(trigger_type IN ('BALANCE_BELOW','BALANCE_ABOVE','EQUITY_DROP_PCT','EQUITY_RISE_PCT','PNL_BELOW','PNL_ABOVE')),
     threshold_value NUMERIC(20,8) NOT NULL,
     reference_value NUMERIC(20,8),
-    status VARCHAR(15) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1463,6 +1463,12 @@ ALTER TABLE high_freq_snapshots ALTER COLUMN unrealised_pnl TYPE NUMERIC(30,12) 
 ALTER TABLE high_freq_snapshots ALTER COLUMN realised_pnl TYPE NUMERIC(30,12) USING realised_pnl::NUMERIC;
 ALTER TABLE high_freq_snapshots ALTER COLUMN balance TYPE NUMERIC(30,12) USING balance::NUMERIC
 """),
+    # AI-CONTEXT: migration 22 added 'pending_activation' (18 chars) to the
+    # close_rules.status CHECK but never widened the column from VARCHAR(15), so the
+    # trading-cycle engine's INSERT of that status raised Postgres 22001
+    # string_data_right_truncation — the cycle's protective rules failed to persist.
+    # Widen to VARCHAR(20) (matching trades.status) to honour the CHECK's contract.
+    (56, "ALTER TABLE close_rules ALTER COLUMN status TYPE VARCHAR(20)"),
 ]
 
 

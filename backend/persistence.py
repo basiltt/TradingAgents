@@ -378,7 +378,7 @@ CREATE TABLE IF NOT EXISTS close_rules (
     trigger_type VARCHAR(30) NOT NULL CHECK(trigger_type IN ('BALANCE_BELOW','BALANCE_ABOVE','EQUITY_DROP_PCT','EQUITY_RISE_PCT','PNL_BELOW','PNL_ABOVE')),
     threshold_value NUMERIC(20,8) NOT NULL,
     reference_value NUMERIC(20,8),
-    status VARCHAR(15) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
