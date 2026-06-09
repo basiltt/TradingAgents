@@ -68,6 +68,16 @@ describe("formatPnl", () => {
   it("no prefix for zero", () => {
     expect(formatPnl(0)).toBe("0.00");
   });
+
+  it("renders negative-zero as '0.00' (not '-0.00')", () => {
+    expect(formatPnl(-0)).toBe("0.00");
+  });
+
+  it("renders '--' for non-finite input instead of 'NaN'", () => {
+    expect(formatPnl(NaN)).toBe("--");
+    expect(formatPnl(Infinity)).toBe("--");
+    expect(formatPnl(-Infinity)).toBe("--");
+  });
 });
 
 describe("formatAbsoluteTime", () => {

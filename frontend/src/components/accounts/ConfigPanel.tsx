@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { patchAIManagerConfig, fetchConfig } from "@/store/ai-manager-slice";
 import type { RootState } from "@/store";
@@ -118,46 +119,83 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
 
   const handleSave = () => {
     const updates: Record<string, unknown> = {};
+    const errors: string[] = [];
 
-    const c = parseFloat(form.confidence);
-    if (!isNaN(c) && c >= 0.3 && c <= 0.95) updates.confidence_threshold = c;
-    const l = parseFloat(form.maxLoss);
-    if (!isNaN(l) && l >= 1.0 && l <= 25) updates.max_daily_loss_pct = l;
-    const i = parseFloat(form.interval);
-    if (!isNaN(i) && i >= 30 && i <= 300) updates.evaluation_interval_s = i;
+    // AI-CONTEXT: Validate-and-collect rather than silently drop. Previously each
+    // out-of-range field was simply omitted from `updates`, the save "succeeded",
+    // and the follow-up fetchConfig snapped the field back to its old value — so the
+    // user believed an invalid entry saved when it was discarded with no feedback.
+    // Now we accumulate human-readable errors and BLOCK the save (toast) if any
+    // field is invalid, so the user can correct it.
+    const num = (
+      raw: string,
+      label: string,
+      min: number,
+      max: number,
+      parse: (s: string) => number,
+      assign: (v: number) => void,
+    ) => {
+      const v = parse(raw);
+      if (isNaN(v) || v < min || v > max) {
+        errors.push(`${label} must be between ${min} and ${max}`);
+      } else {
+        assign(v);
+      }
+    };
+
+    num(form.confidence, "Confidence threshold", 0.3, 0.95, parseFloat, (v) => (updates.confidence_threshold = v));
+    num(form.maxLoss, "Max daily loss %", 1.0, 25, parseFloat, (v) => (updates.max_daily_loss_pct = v));
+    num(form.interval, "Eval interval", 30, 300, parseFloat, (v) => (updates.evaluation_interval_s = v));
     if (form.risk && VALID_RISK_LEVELS.includes(form.risk as typeof VALID_RISK_LEVELS[number])) {
       updates.risk_tolerance = form.risk;
+    } else {
+      errors.push("Risk tolerance must be conservative, moderate, or aggressive");
     }
     updates.dry_run = form.dryRun;
 
-    const da = parseInt(form.maxDailyActions);
-    if (!isNaN(da) && da >= 5 && da <= 100) updates.max_daily_actions = da;
-    const ha = parseInt(form.maxHourlyActions);
-    if (!isNaN(ha) && ha >= 2 && ha <= 30) updates.max_hourly_actions = ha;
-    const mpa = parseInt(form.minPositionAge);
-    if (!isNaN(mpa) && mpa >= 60 && mpa <= 3600) updates.min_position_age_s = mpa;
-    const gp = parseInt(form.gracePeriod);
-    if (!isNaN(gp) && gp >= 0 && gp <= 30) updates.grace_period_s = gp;
-    const msl = parseFloat(form.maxSingleLoss);
-    if (!isNaN(msl) && msl >= 0.5 && msl <= 10) updates.max_single_decision_loss_pct = msl;
+    num(form.maxDailyActions, "Max daily actions", 5, 100, parseInt, (v) => (updates.max_daily_actions = v));
+    num(form.maxHourlyActions, "Max hourly actions", 2, 30, parseInt, (v) => (updates.max_hourly_actions = v));
+    num(form.minPositionAge, "Min position age (s)", 60, 3600, parseInt, (v) => (updates.min_position_age_s = v));
+    num(form.gracePeriod, "Grace period (s)", 0, 30, parseInt, (v) => (updates.grace_period_s = v));
+    num(form.maxSingleLoss, "Max single-decision loss %", 0.5, 10, parseFloat, (v) => (updates.max_single_decision_loss_pct = v));
 
     if (form.profitTarget.trim()) {
       const pt = parseFloat(form.profitTarget);
-      if (!isNaN(pt) && pt > 0 && pt <= 100) updates.daily_profit_target_pct = pt;
+      if (isNaN(pt) || pt <= 0 || pt > 100) {
+        errors.push("Daily profit target % must be between 0 (exclusive) and 100");
+      } else {
+        updates.daily_profit_target_pct = pt;
+      }
     } else {
       updates.daily_profit_target_pct = null;
     }
 
-    const excluded = form.excludedSymbols.split(",").map(s => s.trim().toUpperCase()).filter(s => SYMBOL_PATTERN.test(s));
+    // Surface symbols that were rejected by the format pattern instead of dropping
+    // them silently (a dropped symbol means the AI manager may trade it unexpectedly).
+    const splitSymbols = (raw: string) =>
+      raw.split(",").map((s) => s.trim().toUpperCase()).filter((s) => s.length > 0);
+    const excludedRaw = splitSymbols(form.excludedSymbols);
+    const excluded = excludedRaw.filter((s) => SYMBOL_PATTERN.test(s));
+    const excludedRejected = excludedRaw.filter((s) => !SYMBOL_PATTERN.test(s));
+    if (excludedRejected.length > 0) errors.push(`Invalid excluded symbols: ${excludedRejected.join(", ")}`);
     updates.excluded_symbols = excluded;
-    const locked = form.lockedPositions.split(",").map(s => s.trim().toUpperCase()).filter(s => SYMBOL_PATTERN.test(s));
+
+    const lockedRaw = splitSymbols(form.lockedPositions);
+    const locked = lockedRaw.filter((s) => SYMBOL_PATTERN.test(s));
+    const lockedRejected = lockedRaw.filter((s) => !SYMBOL_PATTERN.test(s));
+    if (lockedRejected.length > 0) errors.push(`Invalid locked positions: ${lockedRejected.join(", ")}`);
     updates.locked_positions = locked;
 
-    if (Object.keys(updates).length > 0) {
-      dispatch(patchAIManagerConfig({ accountId, updates })).then(() => {
-        dispatch(fetchConfig(accountId));
+    if (errors.length > 0) {
+      toast.error(`Cannot save — fix ${errors.length} field${errors.length === 1 ? "" : "s"}`, {
+        description: errors.join("; "),
       });
+      return;
     }
+
+    dispatch(patchAIManagerConfig({ accountId, updates })).then(() => {
+      dispatch(fetchConfig(accountId));
+    });
   };
 
   return (

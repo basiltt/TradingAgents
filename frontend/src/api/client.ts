@@ -182,9 +182,15 @@ function buildQuery(path: string, params: Record<string, QueryValue>): string {
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null) continue;
     if (Array.isArray(value)) {
-      for (const item of value) sp.append(key, String(item));
+      for (const item of value) {
+        // Skip empty/non-finite array items too (the doc promises empty values are
+        // skipped) so a stray "" doesn't emit a blank `?key=` repeated param.
+        if (item === "" || (typeof item === "number" && !Number.isFinite(item))) continue;
+        sp.append(key, String(item));
+      }
     } else {
       if (value === "") continue;
+      if (typeof value === "number" && !Number.isFinite(value)) continue;
       sp.set(key, String(value));
     }
   }

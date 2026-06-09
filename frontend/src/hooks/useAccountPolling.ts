@@ -61,10 +61,22 @@ export function useAccountPolling() {
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
       controllerRef.current?.abort();
+      // AI-CONTEXT: Do NOT clear cooldownTimerRef here. This effect re-runs whenever
+      // pollingIntervalMs changes; clearing the manual-refresh cooldown timer on that
+      // re-run would leave refreshCooldown stuck `true` forever (the reset timer is
+      // gone, so the button never re-enables). The cooldown timer is owned by
+      // manualRefresh and torn down only on unmount — see the effect below.
     };
   }, [dispatch, poll, pollingIntervalMs]);
+
+  // AI-CONTEXT: Unmount-only cleanup for the manual-refresh cooldown timer, kept
+  // separate from the interval effect so an interval change can't strand it.
+  useEffect(() => {
+    return () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    };
+  }, []);
 
   return { refresh: manualRefresh, isRefreshDisabled: refreshCooldown };
 }

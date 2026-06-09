@@ -256,17 +256,25 @@ const tradesSlice = createSlice({
       const { account_id, symbol, side, unrealized_pnl } = action.payload;
       const matchIds: string[] = [];
       let totalQty = 0;
+      // AI-CONTEXT: A non-numeric qty (blank/garbage) would make parseFloat NaN and
+      // poison totalQty (NaN), forcing the `totalQty > 0` branch false so EVERY match
+      // falls back to an equal split — wrong for unequal positions. Coerce each qty to
+      // a finite number (bad → 0) so the pro-rata stays correct for the valid trades.
+      const qtyOf = (id: string): number => {
+        const q = parseFloat(String(state.activeTrades[id]?.qty ?? 0));
+        return Number.isFinite(q) ? q : 0;
+      };
       for (const [id, trade] of Object.entries(state.activeTrades)) {
         if (trade.account_id === account_id && trade.symbol === symbol && trade.side === side) {
           matchIds.push(id);
-          totalQty += parseFloat(String(trade.qty ?? 0));
+          totalQty += qtyOf(id);
         }
       }
       if (matchIds.length === 0) return;
       for (const id of matchIds) {
         const trade = state.activeTrades[id];
         const newPnl = totalQty > 0
-          ? unrealized_pnl * (parseFloat(String(trade.qty ?? 0)) / totalQty)
+          ? unrealized_pnl * (qtyOf(id) / totalQty)
           : unrealized_pnl / matchIds.length;
         if (Math.abs((trade.unrealized_pnl ?? 0) - newPnl) > UNREALIZED_PNL_EPSILON) {
           trade.unrealized_pnl = newPnl;

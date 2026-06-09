@@ -23,6 +23,12 @@ describe("formatDuration", () => {
     expect(formatDuration(1500)).toBe("1s");
     expect(formatDuration(999)).toBe("0s");
   });
+
+  it("returns 0s for negative / non-finite input (no 'NaNm' or '-1s' garbage)", () => {
+    expect(formatDuration(-3661000)).toBe("0s");
+    expect(formatDuration(NaN)).toBe("0s");
+    expect(formatDuration(Infinity)).toBe("0s");
+  });
 });
 
 describe("formatDurationBetween", () => {
@@ -45,6 +51,12 @@ describe("formatDurationBetween", () => {
   it("clamps negative durations to 0", () => {
     const result = formatDurationBetween("2025-01-02T00:00:00Z", "2025-01-01T00:00:00Z");
     expect(result).toBe("0s");
+  });
+
+  it("returns the fallback for a malformed (non-empty) timestamp instead of 'NaNs'", () => {
+    expect(formatDurationBetween("2025-01-01T00:00:00Z", "not-a-date")).toBe("—");
+    expect(formatDurationBetween("garbage", null)).toBe("—");
+    expect(formatDurationBetween("garbage", null, "N/A")).toBe("N/A");
   });
 });
 
@@ -80,5 +92,11 @@ describe("formatDateTimeLabel", () => {
     // engines (caught) or returns "Invalid Date". Either way it must not throw.
     const out = formatDateTimeLabel("not-a-date");
     expect(typeof out).toBe("string");
+  });
+
+  it("returns the raw iso (not 'Invalid Date') for an unparseable timestamp", () => {
+    // new Date("nonsense").toLocaleString() returns the literal "Invalid Date"
+    // without throwing; the explicit NaN guard must return the raw input instead.
+    expect(formatDateTimeLabel("nonsense-xyz")).toBe("nonsense-xyz");
   });
 });

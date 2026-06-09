@@ -88,8 +88,15 @@ function round2(value: number): number {
  */
 export function prepareEquitySeries(points: EquityPoint[]): EquityChartDatum[] {
   let peak = -Infinity;
+  // AI-CONTEXT: Carry forward the last finite equity for a non-finite sample rather
+  // than substituting 0. Substituting 0 forged a phantom plunge to $0 and a fake
+  // -100% drawdown spike for a single bad point; carrying forward keeps the curve
+  // flat across the gap (the true "no new data" behavior). The first point, with no
+  // prior value, still falls back to 0.
+  let lastFinite = 0;
   return points.map((p) => {
-    const equity = Number.isFinite(p.equity) ? p.equity : 0;
+    const equity = Number.isFinite(p.equity) ? p.equity : lastFinite;
+    if (Number.isFinite(p.equity)) lastFinite = equity;
     if (equity > peak) peak = equity;
     const dd =
       p.drawdown_pct != null && Number.isFinite(p.drawdown_pct)
