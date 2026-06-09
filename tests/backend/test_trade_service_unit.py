@@ -218,7 +218,7 @@ class TestCloseSingleTrade:
         mock_repo.get_trade.return_value = trade
         mock_repo.update_trade_status.return_value = trade
         mock_repo.close_trade.return_value = {**trade, "status": "closed", "realized_pnl": "10", "net_pnl": "9"}
-        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "5"}
+        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "5", "cumExecQty": "1.0"}
 
         result = await service.close_single_trade("acc-1", str(trade["id"]))
         assert result["status"] == "closed"
@@ -239,7 +239,7 @@ class TestCloseSingleTrade:
         mock_repo.update_trade_status.return_value = trade
         closed_trade = {**trade, "status": "closed", "realized_pnl": "100", "net_pnl": "95"}
         mock_repo.close_trade.return_value = closed_trade
-        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "5"}
+        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "5", "cumExecQty": "1.0"}
 
         result = await service.close_single_trade("acc-1", str(trade["id"]))
         assert result["status"] == "closed"
@@ -255,7 +255,7 @@ class TestCloseSingleTrade:
         mock_repo.update_trade_status.return_value = {**trade, "version": 2}
         child = {**trade, "id": uuid.uuid4(), "qty": "0.5", "status": "closed", "net_pnl": "50"}
         mock_repo.create_child_trade.return_value = child
-        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "2"}
+        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "2", "cumExecQty": "0.5"}
 
         result = await service.close_single_trade("acc-1", str(trade["id"]), qty=0.5)
         assert result["id"] == child["id"]

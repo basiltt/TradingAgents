@@ -259,6 +259,23 @@ class TradeService:
             await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
             raise
 
+        # AI-CONTEXT: fill confirmation. A submitted market-close whose fill poll
+        # exhausted returns cumExecQty None/0 — the order may NOT have actually
+        # filled, so the position can still be LIVE on the exchange. Do NOT fabricate
+        # a mark-price exit and record `closed` in that case (that diverges the DB
+        # from the exchange and stops lifecycle management of a real position).
+        # Instead route to _handle_close_failure, which checks the live position and
+        # either records closed (if the position is genuinely gone) or reverts to
+        # open for the reconciler. Mirrors close_positions_service._close_single_position.
+        cum_qty = float(result.get("cumExecQty") or 0)
+        if cum_qty <= 0:
+            logger.warning("close_full_unconfirmed_fill", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
+                "order_id": result.get("orderId", ""),
+            })
+            await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
+            raise InvalidStatusTransition("Close order submitted but fill not confirmed")
+
         if not result.get("avgPrice"):
             try:
                 mark = await client.get_mark_price(trade["symbol"])
@@ -320,6 +337,19 @@ class TradeService:
             })
             await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
             raise
+
+        # AI-CONTEXT: fill confirmation (see _close_full). An unconfirmed partial
+        # close (cumExecQty None/0 — poll exhausted) must NOT be recorded as a
+        # partial fill against a possibly-still-live position. Route to
+        # _handle_close_failure for live-position resolution instead.
+        cum_qty = float(result.get("cumExecQty") or 0)
+        if cum_qty <= 0:
+            logger.warning("close_partial_unconfirmed_fill", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
+                "qty": qty, "order_id": result.get("orderId", ""),
+            })
+            await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
+            raise InvalidStatusTransition("Partial close order submitted but fill not confirmed")
 
         if not result.get("avgPrice"):
             try:
