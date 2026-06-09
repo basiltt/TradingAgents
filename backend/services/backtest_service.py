@@ -560,6 +560,7 @@ class BacktestService:
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
                        COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+                       ar.completed_at::timestamptz AS analysis_completed_at,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
@@ -579,6 +580,7 @@ class BacktestService:
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
                        COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+                       ar.completed_at::timestamptz AS analysis_completed_at,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
@@ -595,6 +597,7 @@ class BacktestService:
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
                        COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+                       ar.completed_at::timestamptz AS analysis_completed_at,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
                 JOIN scans s ON sr.scan_id = s.scan_id
@@ -617,6 +620,7 @@ class BacktestService:
                 "confidence": row["confidence"],
                 "score": row["score"],
                 "signal_time": row["signal_time"],
+                "analysis_completed_at": row.get("analysis_completed_at"),
                 "scan_id": row["scan_id"],
                 "signal_source": row.get("signal_source", "unknown"),
                 "analysis_price": float(row["analysis_price"]) if row.get("analysis_price") else None,

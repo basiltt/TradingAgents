@@ -621,16 +621,28 @@ class BacktestEngine:
                     state.signals_filtered += 1
                     return False
 
-        # 6. Signal age (strict only)
-        if not relaxed:
-            max_age = config.get("max_signal_age_minutes")
-            if max_age is not None:
-                signal_time = signal.get("signal_time")
-                if signal_time and current_time:
-                    age_minutes = (current_time - signal_time).total_seconds() / 60
-                    if age_minutes > max_age:
-                        state.signals_filtered += 1
-                        return False
+        # 6. Signal age — enforced in BOTH strict and relaxed/fill mode, mirroring live
+        # _try_trade (auto_trade_service): a stale signal is stale regardless of which
+        # pass admits it. The relaxed fill bypasses min_score/confidence only, NOT the
+        # freshness bound — without this the backtest over-fills any config that pairs
+        # fill_to_max_trades with max_signal_age_minutes, diverging from real trading.
+        #
+        # Age is measured from the PER-TICKER analysis completion (analysis_completed_at),
+        # NOT the scan-level signal_time: every signal in one scan shares the same
+        # signal_time (the loader anchors it to the scan's completed_at), so measuring age
+        # from signal_time would always yield 0 and make this gate a no-op on real data.
+        # analysis_completed_at is the backtest analog of live's per-ticker
+        # result.completed_at (set when each symbol's analysis finishes). Fall back to
+        # signal_time when per-ticker completion is absent (legacy/synthetic data) so the
+        # gate still enforces rather than silently bypassing.
+        max_age = config.get("max_signal_age_minutes")
+        if max_age is not None:
+            age_anchor = signal.get("analysis_completed_at") or signal.get("signal_time")
+            if age_anchor and current_time:
+                age_minutes = (current_time - age_anchor).total_seconds() / 60
+                if age_minutes > max_age:
+                    state.signals_filtered += 1
+                    return False
 
         # 7. Hold skip
         if direction == "hold":

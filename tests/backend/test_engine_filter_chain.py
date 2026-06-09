@@ -492,6 +492,90 @@ class TestImmediateModeFillToMaxTrades:
         assert result.filter_stats["signals_entered"] == 2
         assert sorted(t["symbol"] for t in result.trades) == ["BTCUSDT", "ETHUSDT"]
 
+    def test_fill_pass_enforces_max_signal_age(self):
+        """Production-parity: the relaxed fill pass must STILL reject stale signals
+        (max_signal_age_minutes is enforced in both strict and relaxed mode in live
+        _try_trade). A backfill candidate older than max_signal_age_minutes must NOT
+        enter, or the backtest over-fills vs live (violating the <1% deviation goal).
+
+        IMPORTANT (realistic data): every signal in one scan shares the SAME scan-level
+        signal_time (the loader anchors signal_time to the scan's completed_at). Per-
+        ticker freshness comes from analysis_completed_at (the per-symbol analysis_runs
+        completion, the backtest analog of live's per-ticker result.completed_at). Age
+        is measured from THAT, not the shared signal_time — otherwise the gate is a
+        structural no-op on real data (age would always be 0)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        config = _make_config(
+            execution_mode="immediate", min_score=7.0, max_trades=3,
+            fill_to_max_trades=True, max_signal_age_minutes=10,
+            leverage=10, capital_pct=5.0,
+            take_profit_pct=500.0, stop_loss_pct=500.0, slippage_bps=0,
+        )
+        # current_time anchors to the scan's signal_time (engine ~line 238). ALL signals
+        # share it — exactly what the real loader produces (COALESCE(s.completed_at,...)).
+        anchor = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        stale_completion = anchor - timedelta(minutes=45)  # ETH analyzed 45 min before scan close
+        signals = [
+            # BTC strict-qualifies (score 8 >= 7), analyzed fresh (near scan close).
+            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0,
+                         signal_time=anchor, analysis_completed_at=anchor),
+            # ETH would backfill (sub-min score 3) but its ANALYSIS is stale → excluded,
+            # even though its scan-level signal_time equals the others.
+            _make_signal(ticker="ETHUSDT", id=2, score=3, analysis_price=3000.0,
+                         signal_time=anchor, analysis_completed_at=stale_completion),
+            # SOL is a fresh sub-min candidate → fills the second slot.
+            _make_signal(ticker="SOLUSDT", id=3, score=2, analysis_price=150.0,
+                         signal_time=anchor, analysis_completed_at=anchor),
+        ]
+
+        def flat(start):
+            base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+            return [{"open_time": base + timedelta(minutes=i * 5),
+                     "open": start, "high": start * 1.001, "low": start * 0.999,
+                     "close": start, "volume": 100.0} for i in range(50)]
+        klines = {"BTCUSDT": flat(50000.0), "ETHUSDT": flat(3000.0), "SOLUSDT": flat(150.0)}
+
+        result = BacktestEngine().run(config, signals, klines)
+        symbols = [t["symbol"] for t in result.trades]
+        # Stale-analysis ETH excluded even from the relaxed fill; BTC (strict) + SOL (fresh fill).
+        assert "ETHUSDT" not in symbols, f"stale signal entered the fill: {symbols}"
+        assert sorted(symbols) == ["BTCUSDT", "SOLUSDT"]
+
+    def test_fill_age_uses_signal_time_when_no_analysis_completion(self):
+        """Backward-compat: when a signal lacks analysis_completed_at, the age gate
+        falls back to signal_time (older callers / legacy data without per-ticker
+        completion still get age enforcement, not a silent bypass)."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        config = _make_config(
+            execution_mode="immediate", min_score=7.0, max_trades=3,
+            fill_to_max_trades=True, max_signal_age_minutes=10,
+            leverage=10, capital_pct=5.0,
+            take_profit_pct=500.0, stop_loss_pct=500.0, slippage_bps=0,
+        )
+        anchor = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        stale = anchor - timedelta(minutes=45)
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0, signal_time=anchor),
+            # No analysis_completed_at → falls back to signal_time, which is stale here.
+            _make_signal(ticker="ETHUSDT", id=2, score=3, analysis_price=3000.0, signal_time=stale),
+            _make_signal(ticker="SOLUSDT", id=3, score=2, analysis_price=150.0, signal_time=anchor),
+        ]
+
+        def flat(start):
+            base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+            return [{"open_time": base + timedelta(minutes=i * 5),
+                     "open": start, "high": start * 1.001, "low": start * 0.999,
+                     "close": start, "volume": 100.0} for i in range(50)]
+        klines = {"BTCUSDT": flat(50000.0), "ETHUSDT": flat(3000.0), "SOLUSDT": flat(150.0)}
+
+        result = BacktestEngine().run(config, signals, klines)
+        symbols = [t["symbol"] for t in result.trades]
+        assert "ETHUSDT" not in symbols, f"stale (by signal_time fallback) entered: {symbols}"
+        assert sorted(symbols) == ["BTCUSDT", "SOLUSDT"]
+
+
 
 
 
