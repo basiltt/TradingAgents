@@ -107,7 +107,8 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 |---|---|---|---|---|---|
 | 0 | Discovery & Baseline | — | DONE | — | 5 baseline bugs |
 | 1 | Type Safety & Linting | 24 | DONE (gate met) | 3 | 14 real bugs + 76 B904; ruff 325→0, mypy 94→0 |
-| 2 | Clean Code & Patterns | 28 | IN_PROGRESS | 0 | — |
+| 2 | Clean Code & Patterns | 28 | DONE | R1 | 8 DRY/SRP refactors; god-methods deferred (risk>gain) |
+| 2.5 | Documentation | 22 | IN_PROGRESS | 0 | — |
 | 2.5 | Documentation | 22 | PENDING | 0 | — |
 | 2.75 | Maintainability | 20 | PENDING | 0 | — |
 | 3 | Logging | 20 | PENDING | 0 | — |
@@ -138,10 +139,10 @@ Remaining Phase 2 findings (from R1 review — for continuation):
 - DECIDED-skip: 5 auto_trade close-rule blocks (differ in 8 observable ways — riskier than dup).
 - DONE: ai_manager_task decision_data dict 3× → _build_standard_decision_data (2 sites; emergency stays bespoke)
 - DONE: scanner auto_trade_results.extend 3× → _append_auto_trade_results
-- auto_trade PAUSE_TRADING check 2× + force-close-profit 2× → helpers — MEDIUM, pending
-- GOD-METHODS (decompose carefully w/ tests): _execute_action(287), init_balances(308), post_scan_recheck(333), main.lifespan(440), _run_scan(227) — MEDIUM, HIGHER RISK
-- routers Bybit-error handler 8× → helper — MEDIUM, pending
-- trading_cycle_engine: scan-age + fetch-validate dup (start_cycle/dry_run) — pending
+- DONE: accounts router Bybit-error 8× → _bybit_error_response helper
+- DONE: auto_trade PAUSE_TRADING check 2× → _is_account_paused helper
+- DECIDED-defer: GOD-METHOD body decompositions (_execute_action 287L, init_balances 308L, post_scan_recheck 333L, main.lifespan 440L, _run_scan 227L). These are early-return-laden trading-critical paths; a delegated agent + my own analysis judged extraction risk > maintainability gain (KISS/YAGNI). Behavior-risk on a live money path not justified. Revisit only if a specific method becomes a change-hotspot.
+- DEFERRED (low value): force-close-profit dup 2× (computations have subtle term differences); trading_cycle scan-age dup.
 
 ## RESUME POINT (read this first after compaction)
 Phase 1 COMPLETE (ruff 0, mypy 0, 14 real bugs fixed). Phase 2 IN_PROGRESS — 6 clean DRY/SRP
