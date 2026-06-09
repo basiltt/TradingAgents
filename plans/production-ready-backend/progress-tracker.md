@@ -255,3 +255,18 @@ REMAINING E2E (lower severity, fixing):
 - MEDIUM future: reconciler closed-pnl match only 2 pages (200 rec) vs codebase-wide full pagination → busy account never reconciles. + matches[0] mis-attribution.
 - MEDIUM consistency: trailing-trigger 0.5 ratio reimplemented 3x (close_rule_evaluator, backtest_engine) vs unused trading_rules.check_trailing_trigger SSOT.
 - MEDIUM future: trailing_peaks in-memory only → lost on restart, trailing stop re-arms from lower baseline.
+
+## E2E review — FIXED summary (9 issues)
+1. HIGH: close_rules.status VARCHAR(15)→(20) migration v56 (broke trading cycles via 22001 truncation)
+2. CONFLICT: filled_qty/remaining_qty (backend serialize_trade + schema + 4 frontend files)
+3. MEDIUM contract: place_trade now returns orderId + symbol (was "undefined" in UI)
+4. MEDIUM contract: trade-event error_message hoisted from payload (failure reason now displays)
+5. LOW: trades.py unrealisedPnl `or 0` guard (ValueError on "" frame)
+6. MEDIUM consistency: trailing-trigger 0.5 ratio → SSOT check_trailing_trigger (live+backtest); golden byte-identical
+Final gates after E2E: backend ruff 0, mypy 0; frontend tsc 0; 256 money-path tests pass.
+
+## OPEN — needs user decision / future work
+- HIGH parity (SL-clamp): live clamps SL to 0.9×liquidation, backtest doesn't → overstates losses, breaks <1% parity. Fix changes backtest GOLDEN snapshots (configs w/ sl_pct=500, lev=100). NEEDS USER SIGN-OFF + golden regen.
+- MEDIUM future (reconciler): closed-pnl match only 2 pages (200 rec) + matches[0] mis-attribution. Fix: full pagination + time/qty match.
+- MEDIUM future (trailing_peaks): in-memory only, lost on restart → trailing stop re-arms from lower baseline. Fix: persist + rehydrate.
+- Phase-5 mediums (documented earlier): scheduler trigger() cross-instance double-fire; cycle close-rule non-atomicity; place_trade orphan-on-DB-fail; recon PnL double-count.
