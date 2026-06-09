@@ -74,10 +74,22 @@ const MODEL_OPTIONS: Record<string, Record<ModelMode, ModelOption[]>> = {
   },
 };
 
+/**
+ * Look up the curated model dropdown options for a provider + reasoning mode.
+ * @param provider - Provider id (e.g. `"openai"`, `"anthropic"`); matched case-insensitively.
+ * @param mode - `"quick"` for fast/cheap models or `"deep"` for high-capability models.
+ * @returns The ordered options for that provider/mode, or an empty array if the provider is unknown.
+ */
 export function getModelOptions(provider: string, mode: ModelMode): ModelOption[] {
   return MODEL_OPTIONS[provider.toLowerCase()]?.[mode] ?? [];
 }
 
+/**
+ * Flatten a provider's `deep` and `quick` models into a single de-duplicated
+ * list (deep first), for UIs that show every model regardless of mode.
+ * @param provider - Provider id; matched case-insensitively.
+ * @returns Unique options ordered deep-then-quick, or an empty array if the provider is unknown.
+ */
 export function getAllProviderModels(provider: string): ModelOption[] {
   const p = MODEL_OPTIONS[provider.toLowerCase()];
   if (!p) return [];

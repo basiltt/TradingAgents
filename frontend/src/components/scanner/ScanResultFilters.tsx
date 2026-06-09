@@ -8,6 +8,11 @@ import type { ScanResultItem } from "@/api/client";
 
 export type SignalBucket = "buy" | "sell" | "hold" | "skipped";
 
+/**
+ * Classify a scan result into a filter bucket. TA-prefiltered rows are
+ * `"skipped"`; an explicit buy/sell direction passes through; everything else
+ * (hold, unknown, missing) collapses to `"hold"`.
+ */
 export function signalBucket(r: ScanResultItem): SignalBucket {
   if (r.signal_source === "ta_prefilter") return "skipped";
   if (r.direction === "buy" || r.direction === "sell") return r.direction;
@@ -67,6 +72,7 @@ function FilterChip({
   );
 }
 
+/** Active filter selections for the scan results table. `Set` fields are multi-select; `minStrength` is an absolute-score floor; `showFilters` toggles the panel. */
 export interface ScanFiltersState {
   symbol: string;
   signal: Set<string>;
@@ -76,6 +82,7 @@ export interface ScanFiltersState {
   showFilters: boolean;
 }
 
+/** The empty/“nothing selected” filter state — used as the initial value and by `clearAll`. */
 export const DEFAULT_FILTERS: ScanFiltersState = {
   symbol: "",
   signal: new Set(),
@@ -118,6 +125,14 @@ function loadFilters(key: string): ScanFiltersState {
   }
 }
 
+/**
+ * Hook managing scan-result filter state, persistence, and derived results.
+ * State is loaded from / saved to localStorage under `storageKey`, so each table
+ * instance can keep independent, durable filters.
+ * @param results - The full result set to filter.
+ * @param storageKey - Namespace suffix for persistence; pass a stable per-view key to isolate filter state.
+ * @returns `{ filters, update, hasActive, filtered, clearAll }` — current state, a typed field setter, whether any filter is active, the memoized filtered rows, and a reset.
+ */
 export function useScanFilters(results: ScanResultItem[], storageKey = "default") {
   const [filters, setFilters] = useState<ScanFiltersState>(() => loadFilters(storageKey));
 
@@ -180,6 +195,18 @@ function FilterSection({
   );
 }
 
+/**
+ * Filter toolbar for the scan results table: a symbol search box, a results
+ * counter, a clear-all action, and a collapsible panel with signal/confidence/
+ * status chips plus a minimum-strength slider. Controlled — all state and
+ * mutations come in via props (typically from {@link useScanFilters}).
+ * @param filters - Current filter selections to render.
+ * @param update - Typed setter for a single filter field.
+ * @param hasActive - Whether any filter is active (drives the active dot and Clear button).
+ * @param totalCount - Total result count, shown as the denominator.
+ * @param filteredCount - Count after filtering, shown as the numerator.
+ * @param clearAll - Resets all filters to {@link DEFAULT_FILTERS}.
+ */
 export function ScanResultFiltersBar({
   filters,
   update,

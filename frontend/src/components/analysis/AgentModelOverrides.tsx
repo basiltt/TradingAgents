@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
+/** localStorage key under which per-agent model overrides are persisted (re-exported as AGENT_OVERRIDES_STORAGE_KEY). */
 const STORAGE_KEY = "tradingagents_agent_model_overrides";
 
 interface AgentDef {
@@ -51,6 +52,10 @@ const CRYPTO_AGENTS: AgentDef[] = [
   { key: "ai_account_manager", label: "AI Account Manager", tier: "deep" },
 ];
 
+/**
+ * Reads the persisted agent→model override map from localStorage.
+ * @returns The stored map, or an empty object when missing or corrupt.
+ */
 function loadOverrides(): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
@@ -59,6 +64,10 @@ function loadOverrides(): Record<string, string> {
   }
 }
 
+/**
+ * Persists the agent→model override map to localStorage.
+ * @param o - Map of agent key to model value to serialize and store.
+ */
 function saveOverrides(o: Record<string, string>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(o));
 }
@@ -70,6 +79,15 @@ interface Props {
   onChange: (overrides: Record<string, string>) => void;
 }
 
+/**
+ * Collapsible panel for overriding the LLM model used by individual research agents,
+ * with a per-asset-type roster (stock vs. crypto). Changes are lifted via `onChange`
+ * and mirrored to localStorage so selections survive reloads.
+ * @param assetType - Selects which agent roster is shown ("crypto" or "stock").
+ * @param modelOptions - Available model choices for each per-agent selector.
+ * @param overrides - Current agent→model override map (controlled value).
+ * @param onChange - Called with the next override map whenever a selection changes or resets.
+ */
 export function AgentModelOverrides({ assetType, modelOptions, overrides, onChange }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -189,6 +207,13 @@ export function AgentModelOverrides({ assetType, modelOptions, overrides, onChan
 
 export { STORAGE_KEY as AGENT_OVERRIDES_STORAGE_KEY, loadOverrides, saveOverrides };
 
+/**
+ * Drops override entries that don't apply to the given asset type — strips empty
+ * values and keys not present in that type's agent roster (e.g. when switching modes).
+ * @param overrides - The full override map to filter.
+ * @param assetType - Roster to validate against ("crypto" or "stock").
+ * @returns A new map containing only valid, non-empty overrides for that asset type.
+ */
 export function filterOverridesForAssetType(
   overrides: Record<string, string>,
   assetType: "stock" | "crypto",

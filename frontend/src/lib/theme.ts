@@ -2,6 +2,11 @@ export type ThemeMode = "light" | "dark" | "system";
 export type ThemePalette = "aurora" | "lagoon" | "ember" | "verdant";
 export type ThemeContrast = "standard" | "high";
 
+/**
+ * Full description of a selectable accent palette. Each color is expressed as an
+ * OKLCH hue (degrees, 0–360) + chroma pair so `applyPalette` can write them
+ * straight to CSS custom properties; lightness is supplied by the stylesheet.
+ */
 export interface ThemePaletteDefinition {
   key: ThemePalette;
   label: string;
@@ -22,17 +27,21 @@ export interface ThemePaletteDefinition {
   dangerChroma: number;
 }
 
+/** Fallback appearance settings used before any user preference is stored, or when running without a DOM. */
 export const DEFAULT_THEME_MODE: ThemeMode = "system";
 export const DEFAULT_THEME_PALETTE: ThemePalette = "lagoon";
 export const DEFAULT_THEME_CONTRAST: ThemeContrast = "standard";
 
+/** localStorage keys under which the user's appearance preferences are persisted across sessions. */
 export const THEME_STORAGE_KEY = "tradingagents-ui-theme";
 export const PALETTE_STORAGE_KEY = "tradingagents-ui-palette";
 export const CONTRAST_STORAGE_KEY = "tradingagents-ui-contrast";
 
+/** Cycle order for the mode/contrast toggles — drives the "next value" when the control is clicked. */
 export const themeModeOrder = ["light", "dark", "system"] as const;
 export const themeContrastOrder = ["standard", "high"] as const;
 
+/** Registry of all built-in accent palettes, keyed by {@link ThemePalette}. Source of truth for the theme picker and `applyPalette`. */
 export const themePalettes = {
   aurora: {
     key: "aurora",
@@ -112,42 +121,64 @@ export const themePalettes = {
   },
 } satisfies Record<ThemePalette, ThemePaletteDefinition>;
 
+/** Palette keys in declaration order, for rendering the picker as a stable list. */
 export const themePaletteOrder = Object.keys(themePalettes) as ThemePalette[];
 
 function canUseDom() {
   return typeof window !== "undefined";
 }
 
+/** Type guard: true when `value` is one of the valid {@link ThemeMode} strings. */
 export function isThemeMode(value: unknown): value is ThemeMode {
   return typeof value === "string" && themeModeOrder.includes(value as ThemeMode);
 }
 
+/** Type guard: true when `value` is a known palette key in {@link themePalettes}. */
 export function isThemePalette(value: unknown): value is ThemePalette {
   return typeof value === "string" && value in themePalettes;
 }
 
+/** Type guard: true when `value` is one of the valid {@link ThemeContrast} strings. */
 export function isThemeContrast(value: unknown): value is ThemeContrast {
   return typeof value === "string" && themeContrastOrder.includes(value as ThemeContrast);
 }
 
+/**
+ * Read the persisted theme mode from localStorage, falling back to
+ * {@link DEFAULT_THEME_MODE} when absent, invalid, or running without a DOM.
+ */
 export function getStoredThemeMode(): ThemeMode {
   if (!canUseDom()) return DEFAULT_THEME_MODE;
   const value = window.localStorage.getItem(THEME_STORAGE_KEY);
   return isThemeMode(value) ? value : DEFAULT_THEME_MODE;
 }
 
+/**
+ * Read the persisted palette key from localStorage, falling back to
+ * {@link DEFAULT_THEME_PALETTE} when absent, invalid, or running without a DOM.
+ */
 export function getStoredThemePalette(): ThemePalette {
   if (!canUseDom()) return DEFAULT_THEME_PALETTE;
   const value = window.localStorage.getItem(PALETTE_STORAGE_KEY);
   return isThemePalette(value) ? value : DEFAULT_THEME_PALETTE;
 }
 
+/**
+ * Read the persisted contrast setting from localStorage, falling back to
+ * {@link DEFAULT_THEME_CONTRAST} when absent, invalid, or running without a DOM.
+ */
 export function getStoredThemeContrast(): ThemeContrast {
   if (!canUseDom()) return DEFAULT_THEME_CONTRAST;
   const value = window.localStorage.getItem(CONTRAST_STORAGE_KEY);
   return isThemeContrast(value) ? value : DEFAULT_THEME_CONTRAST;
 }
 
+/**
+ * Collapse a possibly-`"system"` mode into the concrete mode to render.
+ * @param theme - The user's selected mode; `"system"` defers to the OS preference.
+ * @param systemPrefersDark - Result of the `prefers-color-scheme: dark` media query.
+ * @returns `"dark"` or `"light"` — never `"system"`.
+ */
 export function resolveThemeMode(
   theme: ThemeMode,
   systemPrefersDark: boolean,
@@ -158,6 +189,13 @@ export function resolveThemeMode(
   return theme;
 }
 
+/**
+ * Write a palette's OKLCH hue/chroma values onto an element as CSS custom
+ * properties and tag `data-palette` so stylesheet rules can react.
+ * @param root - Target element (typically `document.documentElement`).
+ * @param paletteKey - Which palette in {@link themePalettes} to apply.
+ * @returns The applied {@link ThemePaletteDefinition}, for callers that need its metadata.
+ */
 export function applyPalette(
   root: HTMLElement,
   paletteKey: ThemePalette,
@@ -187,10 +225,12 @@ export function applyPalette(
   return palette;
 }
 
+/** Set the `data-contrast` attribute on `root` so stylesheet rules can switch between standard/high contrast. */
 export function applyContrast(root: HTMLElement, contrast: ThemeContrast) {
   root.dataset.contrast = contrast;
 }
 
+/** Persist all three appearance preferences to localStorage in one call; no-op without a DOM. */
 export function persistAppearance(
   theme: ThemeMode,
   palette: ThemePalette,
@@ -202,6 +242,12 @@ export function persistAppearance(
   window.localStorage.setItem(CONTRAST_STORAGE_KEY, contrast);
 }
 
+/**
+ * Build a CSS `linear-gradient(...)` string previewing a palette's three accent
+ * colors — used as a swatch background in the theme picker.
+ * @param paletteKey - Which palette to preview.
+ * @returns A ready-to-assign CSS gradient value.
+ */
 export function getPalettePreview(paletteKey: ThemePalette): string {
   const palette = themePalettes[paletteKey];
   return `linear-gradient(135deg,

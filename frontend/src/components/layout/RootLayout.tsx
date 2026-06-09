@@ -25,6 +25,12 @@ import { getActiveNavigation, navSections } from "@/components/layout/navigation
 import { useAppDispatch, useAppSelector } from "@/store";
 import { motion, AnimatePresence } from "framer-motion";
 
+/**
+ * Top-level application shell rendered around every route's `<Outlet />`. Wires the
+ * neumorphic sidebar/topbar/dock, opens the account WebSocket, and owns global
+ * keyboard shortcuts (Esc to close overlays, Ctrl/Cmd+K to toggle the command palette).
+ * Closes the mobile nav on navigation and animates route transitions.
+ */
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const navigate = useNavigate();
@@ -168,6 +174,7 @@ export function RootLayout() {
   );
 }
 
+/** Fallback view for unmatched routes; shows a "page not found" surface with a link back to the dashboard. */
 export function NotFound() {
   return (
     <div className="flex min-h-[60vh] items-center justify-center py-6">

@@ -18,6 +18,11 @@ const STORAGE_KEY = "tradingagents_backtest_draft";
  * anything missing, so a partial is always safe to restore. */
 export type BacktestDraft = Partial<BacktestConfigFormValues>;
 
+/**
+ * Restore the persisted backtest form draft from localStorage.
+ * @returns The saved {@link BacktestDraft}, or `undefined` when none exists or the
+ * stored value is missing/corrupt/not a plain object — so callers can spread it safely.
+ */
 export function loadDraft(): BacktestDraft | undefined {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -34,6 +39,7 @@ export function loadDraft(): BacktestDraft | undefined {
   }
 }
 
+/** Persist the in-progress form draft to localStorage; silently no-ops if storage is unavailable (best-effort). */
 export function saveDraft(draft: BacktestDraft): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
@@ -42,6 +48,7 @@ export function saveDraft(draft: BacktestDraft): void {
   }
 }
 
+/** Remove any saved draft (e.g. after a successful submit); silently no-ops on storage failure. */
 export function clearDraft(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);

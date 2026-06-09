@@ -1,5 +1,6 @@
 import type { ScheduledScan, CreateScheduledScanRequest } from "@/api/client";
 
+/** Versioned envelope written to (and read from) exported scheduled-scan JSON files. `version` gates forward/backward compatibility on import. */
 export interface ExportedScanFile {
   version: 1;
   exported_at: string;
@@ -28,6 +29,12 @@ function stripToExportable(s: ScheduledScan): ExportedScan {
   };
 }
 
+/**
+ * Wrap one or more scheduled scans in the versioned {@link ExportedScanFile}
+ * envelope, stripping non-portable secrets (e.g. `llm_api_key`) from each.
+ * @param scans - The scheduled scans to export.
+ * @returns A serializable payload stamped with `version: 1` and the current ISO timestamp.
+ */
 export function buildExportPayload(scans: ScheduledScan[]): ExportedScanFile {
   return {
     version: 1,
@@ -36,6 +43,12 @@ export function buildExportPayload(scans: ScheduledScan[]): ExportedScanFile {
   };
 }
 
+/**
+ * Trigger a client-side download of `data` as a pretty-printed JSON file via a
+ * transient object URL (revoked shortly after the click).
+ * @param data - The export payload to serialize.
+ * @param filename - Suggested download filename (including `.json`).
+ */
 export function downloadJson(data: ExportedScanFile, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -51,24 +64,37 @@ function slugify(name: string): string {
   return slug || "untitled";
 }
 
+/** Export a single scheduled scan to a slugified `scheduled-scan-<name>.json` download. */
 export function exportSingle(scan: ScheduledScan) {
   const payload = buildExportPayload([scan]);
   downloadJson(payload, `scheduled-scan-${slugify(scan.name)}.json`);
 }
 
+/** Export all provided scheduled scans to a single `scheduled-scans-export.json` download. */
 export function exportAll(scans: ScheduledScan[]) {
   const payload = buildExportPayload(scans);
   downloadJson(payload, "scheduled-scans-export.json");
 }
 
+/** A scan parsed from an import file, ready to recreate; `_originalStatus` preserves the source status for optional re-activation. */
 export type ImportableScan = CreateScheduledScanRequest & { _originalStatus?: string };
 
+/** Outcome of parsing an import file: the source count, the scans that validated, and per-scan/file error messages. */
 export interface ImportResult {
   total: number;
   toImport: ImportableScan[];
   errors: string[];
 }
 
+/**
+ * Parse and validate raw import-file text into importable scans, collecting
+ * (rather than throwing) errors so a partial import can still proceed.
+ * Rejects invalid JSON, missing `version`/`scans`, unsupported versions, and a
+ * non-array `scans`; per-scan it skips entries missing required fields. Each
+ * importable scan defaults its timezone to the browser's when none is provided.
+ * @param text - Raw file contents (expected to be a serialized {@link ExportedScanFile}).
+ * @returns An {@link ImportResult} with the total seen, the valid scans, and any errors.
+ */
 export function parseImportFile(text: string): ImportResult {
   let parsed: unknown;
   try {

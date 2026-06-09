@@ -13,6 +13,12 @@ export const CONTEXT_BUDGETS: Record<string, number> = {
 
 export type BudgetTone = "safe" | "caution" | "over";
 
+/**
+ * Classifies a selected token count against a budget into a traffic-light tone.
+ * @param selected - Tokens currently selected.
+ * @param budget - Budget ceiling; treated as 0 ratio when not positive.
+ * @returns "over" above the budget, "caution" above 75%, otherwise "safe".
+ */
 export function tokenTone(selected: number, budget: number): BudgetTone {
   const ratio = budget > 0 ? selected / budget : 0;
   if (ratio > 1) return "over";
@@ -20,6 +26,11 @@ export function tokenTone(selected: number, budget: number): BudgetTone {
   return "safe";
 }
 
+/**
+ * Compactly formats a token count, using a "k" suffix at/above 1000.
+ * @param n - Token count to format.
+ * @returns Raw number under 1000; otherwise "Nk" (no decimal at/above 10k, one decimal below).
+ */
 export function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
   return String(n);

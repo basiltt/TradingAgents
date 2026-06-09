@@ -5,6 +5,12 @@ import type { Trade } from "@/components/trades/types";
 import { store, useAppDispatch } from "@/store";
 import { setActiveTrades, setIsFetchingActiveTrades } from "@/store/trades-slice";
 
+/**
+ * Fetches every active trade by paginating the trades API (up to 20 pages of 100)
+ * and writes the full list into the Redux store, toggling the fetching flag around it.
+ * @param dispatch - The app dispatch used to update the trades slice.
+ * @returns A promise that resolves once all pages are loaded and dispatched.
+ */
 export async function fetchAllActiveTrades(
   dispatch: ReturnType<typeof useAppDispatch>,
 ) {
@@ -41,6 +47,13 @@ function detectChanges(remote: Trade[], local: Trade[]): boolean {
   return false;
 }
 
+/**
+ * Keeps the active-trades store fresh while mounted. Polls the first page every
+ * 60s and triggers a full refetch only when a cheap diff detects changes, and
+ * refetches immediately when the tab becomes visible again.
+ * @param enabled - When false, the polling interval is skipped (visibility refetch still runs).
+ * @returns Nothing; manages two effects and clears the interval/listener on cleanup.
+ */
 export function useTradePolling(enabled: boolean) {
   const dispatch = useAppDispatch();
 
