@@ -148,6 +148,51 @@ function mutate<T>(method: string, path: string, body?: unknown, signal?: AbortS
   }, signal);
 }
 
+/**
+ * A query-parameter value: a scalar, an array (serialized as repeated keys), or
+ * `undefined`/`null` (skipped entirely).
+ */
+type QueryValue = string | number | boolean | undefined | null | Array<string | number>;
+
+/**
+ * Append a query string to `path`, omitting empty/undefined parameters.
+ *
+ * Centralizes the repeated `new URLSearchParams()` → conditionally-`set` →
+ * `?${qs}` boilerplate that every list/filter endpoint hand-rolled. Scalars are
+ * set once; arrays are appended as repeated keys (`?symbols=A&symbols=B`);
+ * `undefined`, `null`, and empty-string values are skipped so optional filters
+ * don't emit blank params. When no params survive, `path` is returned unchanged
+ * (no trailing `?`).
+ *
+ * @param path - The base path (without a query string).
+ * @param params - A record of parameter name → {@link QueryValue}.
+ * @returns `path`, with `?<encoded params>` appended only when at least one
+ *   parameter is present.
+ *
+ * @example
+ * buildQuery("/api/v1/x", { period: "7d", limit: 50, cursor: undefined });
+ * // "/api/v1/x?period=7d&limit=50"
+ * buildQuery("/api/v1/x", { symbols: ["BTC", "ETH"] });
+ * // "/api/v1/x?symbols=BTC&symbols=ETH"
+ * buildQuery("/api/v1/x", { q: "" });
+ * // "/api/v1/x"  (empty value skipped — no trailing ?)
+ */
+function buildQuery(path: string, params: Record<string, QueryValue>): string {
+  const sp = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) sp.append(key, String(item));
+    } else {
+      if (value === "") continue;
+      sp.set(key, String(value));
+    }
+  }
+  const qs = sp.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+
 export interface HealthResponse {
   status: string;
   db: string;
@@ -525,15 +570,14 @@ export const apiClient = {
     },
     signal?: AbortSignal,
   ) => {
-    const sp = new URLSearchParams();
-    if (params?.page != null) sp.set("page", String(params.page));
-    if (params?.limit != null) sp.set("limit", String(params.limit));
-    if (params?.ticker) sp.set("ticker", params.ticker);
-    if (params?.status) sp.set("status", params.status);
-    if (params?.asset_type) sp.set("asset_type", params.asset_type);
-    const qs = sp.toString();
     return request<AnalysisListResponse>(
-      `/api/v1/analysis${qs ? `?${qs}` : ""}`,
+      buildQuery("/api/v1/analysis", {
+        page: params?.page,
+        limit: params?.limit,
+        ticker: params?.ticker,
+        status: params?.status,
+        asset_type: params?.asset_type,
+      }),
       undefined,
       signal,
     );
@@ -587,11 +631,11 @@ export const apiClient = {
     mutate<ConfigResponse>("PATCH", "/api/v1/config", { overrides }),
 
   getMemory: (params?: { page?: number; limit?: number }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.page != null) sp.set("page", String(params.page));
-    if (params?.limit != null) sp.set("limit", String(params.limit));
-    const qs = sp.toString();
-    return request<MemoryListResponse>(`/api/v1/memory${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<MemoryListResponse>(
+      buildQuery("/api/v1/memory", { page: params?.page, limit: params?.limit }),
+      undefined,
+      signal,
+    );
   },
 
   getCheckpoint: (ticker: string, date: string, signal?: AbortSignal) =>
@@ -650,11 +694,11 @@ export const apiClient = {
   // ── Strategies ──────────────────────────────────────────────────
 
   listStrategies: (params?: { status?: string; category?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.status) sp.set("status", params.status);
-    if (params?.category) sp.set("category", params.category);
-    const qs = sp.toString();
-    return request<Strategy[]>(`/api/v1/strategies${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<Strategy[]>(
+      buildQuery("/api/v1/strategies", { status: params?.status, category: params?.category }),
+      undefined,
+      signal,
+    );
   },
 
   getStrategy: (id: string, signal?: AbortSignal) =>
@@ -841,10 +885,11 @@ export interface PlaceTradeResponse {
 export const accountsApi = {
   /** GET /api/v1/accounts — list accounts with optional type filter. */
   list: (params?: { account_type?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.account_type) sp.set("account_type", params.account_type);
-    const qs = sp.toString();
-    return request<TradingAccount[]>(`/api/v1/accounts${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<TradingAccount[]>(
+      buildQuery("/api/v1/accounts", { account_type: params?.account_type }),
+      undefined,
+      signal,
+    );
   },
 
   /** POST /api/v1/accounts — create a new trading account. */
@@ -899,10 +944,11 @@ export const accountsApi = {
 
   /** GET /api/v1/portfolio/dashboard — fetch dashboard cards for all accounts. */
   getDashboard: (params?: { account_type?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.account_type) sp.set("account_type", params.account_type);
-    const qs = sp.toString();
-    return request<DashboardCard[]>(`/api/v1/portfolio/dashboard${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<DashboardCard[]>(
+      buildQuery("/api/v1/portfolio/dashboard", { account_type: params?.account_type }),
+      undefined,
+      signal,
+    );
   },
 
   /** GET /api/v1/portfolio/summary — fetch aggregate portfolio summary. */
@@ -922,54 +968,50 @@ export const accountsApi = {
 
   /** GET /api/v1/accounts/:id/snapshots — fetch daily snapshots with date range. */
   getSnapshots: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.start_date) sp.set("start_date", params.start_date);
-    if (params?.end_date) sp.set("end_date", params.end_date);
-    if (params?.period) sp.set("period", params.period);
-    const qs = sp.toString();
     return request<DailySnapshot[]>(
-      `/api/v1/accounts/${encodeURIComponent(id)}/snapshots${qs ? `?${qs}` : ""}`,
+      buildQuery(`/api/v1/accounts/${encodeURIComponent(id)}/snapshots`, {
+        start_date: params?.start_date,
+        end_date: params?.end_date,
+        period: params?.period,
+      }),
       undefined, signal,
     );
   },
 
   /** GET /api/v1/accounts/:id/analytics — fetch performance analytics. */
   getAnalytics: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.start_date) sp.set("start_date", params.start_date);
-    if (params?.end_date) sp.set("end_date", params.end_date);
-    if (params?.period) sp.set("period", params.period);
-    const qs = sp.toString();
     return request<PerformanceAnalytics>(
-      `/api/v1/accounts/${encodeURIComponent(id)}/analytics${qs ? `?${qs}` : ""}`,
+      buildQuery(`/api/v1/accounts/${encodeURIComponent(id)}/analytics`, {
+        start_date: params?.start_date,
+        end_date: params?.end_date,
+        period: params?.period,
+      }),
       undefined, signal,
     );
   },
 
   /** GET /api/v1/portfolio/snapshots — fetch portfolio-wide snapshots. */
   getPortfolioSnapshots: (params?: { start_date?: string; end_date?: string; period?: string; account_type?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.start_date) sp.set("start_date", params.start_date);
-    if (params?.end_date) sp.set("end_date", params.end_date);
-    if (params?.period) sp.set("period", params.period);
-    if (params?.account_type) sp.set("account_type", params.account_type);
-    const qs = sp.toString();
     return request<DailySnapshot[]>(
-      `/api/v1/portfolio/snapshots${qs ? `?${qs}` : ""}`,
+      buildQuery("/api/v1/portfolio/snapshots", {
+        start_date: params?.start_date,
+        end_date: params?.end_date,
+        period: params?.period,
+        account_type: params?.account_type,
+      }),
       undefined, signal,
     );
   },
 
   /** GET /api/v1/portfolio/analytics — fetch portfolio-wide analytics. */
   getPortfolioAnalytics: (params?: { start_date?: string; end_date?: string; period?: string; account_type?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.start_date) sp.set("start_date", params.start_date);
-    if (params?.end_date) sp.set("end_date", params.end_date);
-    if (params?.period) sp.set("period", params.period);
-    if (params?.account_type) sp.set("account_type", params.account_type);
-    const qs = sp.toString();
     return request<PerformanceAnalytics>(
-      `/api/v1/portfolio/analytics${qs ? `?${qs}` : ""}`,
+      buildQuery("/api/v1/portfolio/analytics", {
+        start_date: params?.start_date,
+        end_date: params?.end_date,
+        period: params?.period,
+        account_type: params?.account_type,
+      }),
       undefined, signal,
     );
   },
@@ -980,31 +1022,32 @@ export const accountsApi = {
 
   /** GET /api/v1/accounts/:id/snapshots/count — count snapshots matching filters. */
   countSnapshots: (id: string | null, params?: { preset?: string; before?: string; after?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.preset) sp.set("preset", params.preset);
-    if (params?.before) sp.set("before", params.before);
-    if (params?.after) sp.set("after", params.after);
-    const qs = sp.toString();
     const path = id
       ? `/api/v1/accounts/${encodeURIComponent(id)}/snapshots/count`
       : `/api/v1/portfolio/snapshots/count`;
     return request<{ counts: Record<string, number>; total: number }>(
-      `${path}${qs ? `?${qs}` : ""}`, undefined, signal,
+      buildQuery(path, {
+        preset: params?.preset,
+        before: params?.before,
+        after: params?.after,
+      }),
+      undefined, signal,
     );
   },
 
   /** DELETE /api/v1/accounts/:id/snapshots/cleanup — delete snapshots matching filters. */
   cleanupSnapshots: (id: string | null, params?: { preset?: string; before?: string; after?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.preset) sp.set("preset", params.preset);
-    if (params?.before) sp.set("before", params.before);
-    if (params?.after) sp.set("after", params.after);
-    const qs = sp.toString();
     const path = id
       ? `/api/v1/accounts/${encodeURIComponent(id)}/snapshots/cleanup`
       : `/api/v1/portfolio/snapshots/cleanup`;
     return mutate<{ deleted: Record<string, number>; total: number }>(
-      "DELETE", `${path}${qs ? `?${qs}` : ""}`, undefined, signal,
+      "DELETE",
+      buildQuery(path, {
+        preset: params?.preset,
+        before: params?.before,
+        after: params?.after,
+      }),
+      undefined, signal,
     );
   },
 
@@ -1327,12 +1370,15 @@ export const cyclesApi = {
 
   /** GET /api/v1/trading-cycles — list cycles with pagination and status filter. */
   list: (params?: { offset?: number; limit?: number; status?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.offset != null) sp.set("offset", String(params.offset));
-    if (params?.limit != null) sp.set("limit", String(params.limit));
-    if (params?.status) sp.set("status", params.status);
-    const qs = sp.toString();
-    return request<PaginatedCycleList>(`/api/v1/trading-cycles${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<PaginatedCycleList>(
+      buildQuery("/api/v1/trading-cycles", {
+        offset: params?.offset,
+        limit: params?.limit,
+        status: params?.status,
+      }),
+      undefined,
+      signal,
+    );
   },
 
   /** GET /api/v1/trading-cycles/:id — fetch cycle details. */
@@ -1349,12 +1395,15 @@ export const cyclesApi = {
 
   /** GET /api/v1/scans/:scanId/filter-preview — preview cycle filter results. */
   filterPreview: (scanId: string, params?: { min_score?: number; min_confidence?: string; signal_filter?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.min_score != null) sp.set("min_score", String(params.min_score));
-    if (params?.min_confidence) sp.set("min_confidence", params.min_confidence);
-    if (params?.signal_filter) sp.set("signal_filter", params.signal_filter);
-    const qs = sp.toString();
-    return request<FilterPreviewResponse>(`/api/v1/scans/${encodeURIComponent(scanId)}/filter-preview${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<FilterPreviewResponse>(
+      buildQuery(`/api/v1/scans/${encodeURIComponent(scanId)}/filter-preview`, {
+        min_score: params?.min_score,
+        min_confidence: params?.min_confidence,
+        signal_filter: params?.signal_filter,
+      }),
+      undefined,
+      signal,
+    );
   },
 };
 
@@ -1376,28 +1425,37 @@ export const tradesApi = {
     },
     signal?: AbortSignal,
   ) => {
-    const sp = new URLSearchParams();
-    if (params?.account_id?.length) sp.set("account_id", params.account_id.join(","));
-    if (params?.status?.length) sp.set("status", params.status.join(","));
-    if (params?.symbol) sp.set("symbol", params.symbol);
-    if (params?.side) sp.set("side", params.side);
-    if (params?.from_date) sp.set("from_date", params.from_date);
-    if (params?.to_date) sp.set("to_date", params.to_date);
-    if (params?.sort_by) sp.set("sort_by", params.sort_by);
-    if (params?.sort_dir) sp.set("sort_dir", params.sort_dir);
-    if (params?.cursor) sp.set("cursor", params.cursor);
-    if (params?.limit) sp.set("limit", String(params.limit));
-    const qs = sp.toString();
-    return request<TradeListResponse>(`/api/v1/trades${qs ? `?${qs}` : ""}`, undefined, signal);
+    // AI-CONTEXT: account_id/status are sent as a SINGLE comma-joined param
+    // (account_id=a,b), not repeated keys — so they are pre-joined to strings here
+    // rather than passed as arrays to buildQuery (which would emit repeated keys).
+    return request<TradeListResponse>(
+      buildQuery("/api/v1/trades", {
+        account_id: params?.account_id?.length ? params.account_id.join(",") : undefined,
+        status: params?.status?.length ? params.status.join(",") : undefined,
+        symbol: params?.symbol,
+        side: params?.side,
+        from_date: params?.from_date,
+        to_date: params?.to_date,
+        sort_by: params?.sort_by,
+        sort_dir: params?.sort_dir,
+        cursor: params?.cursor,
+        limit: params?.limit || undefined,
+      }),
+      undefined,
+      signal,
+    );
   },
 
   /** GET /api/v1/trades/stats — aggregate trade statistics across accounts. */
   getStats: (accountIds?: string[], byStrategy?: boolean, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (accountIds?.length) sp.set("account_id", accountIds.join(","));
-    if (byStrategy) sp.set("by_strategy", "true");
-    const qs = sp.toString();
-    return request<TradeStatsResponse>(`/api/v1/trades/stats${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<TradeStatsResponse>(
+      buildQuery("/api/v1/trades/stats", {
+        account_id: accountIds?.length ? accountIds.join(",") : undefined,
+        by_strategy: byStrategy ? "true" : undefined,
+      }),
+      undefined,
+      signal,
+    );
   },
 
   /** GET /api/v1/accounts/:id/trades/:tradeId/events — fetch trade audit events. */
@@ -1467,12 +1525,11 @@ export const aiManagerApi = {
 
   /** Fetches paginated trading decisions with cursor-based pagination. */
   getDecisions: (accountId: string, params?: { limit?: number; cursor?: string }) => {
-    const sp = new URLSearchParams();
-    if (params?.limit) sp.set("limit", String(params.limit));
-    if (params?.cursor) sp.set("cursor", params.cursor);
-    const qs = sp.toString();
     return request<{ decisions: unknown[]; next_cursor: string | null }>(
-      `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/decisions${qs ? `?${qs}` : ""}`,
+      buildQuery(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/decisions`, {
+        limit: params?.limit,
+        cursor: params?.cursor,
+      }),
     );
   },
 
@@ -1482,14 +1539,13 @@ export const aiManagerApi = {
 
   /** Fetches paginated structured logs with optional level/category filters. */
   getLogs: (accountId: string, params?: { limit?: number; level?: string; category?: string; cursor?: number }) => {
-    const sp = new URLSearchParams();
-    if (params?.limit) sp.set("limit", String(params.limit));
-    if (params?.level) sp.set("level", params.level);
-    if (params?.category) sp.set("category", params.category);
-    if (params?.cursor) sp.set("cursor", String(params.cursor));
-    const qs = sp.toString();
     return request<{ logs: Array<{ id: number; timestamp: string; level: string; category: string; message: string; details: Record<string, unknown> | null }>; next_cursor: number | null }>(
-      `/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/logs${qs ? `?${qs}` : ""}`,
+      buildQuery(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/logs`, {
+        limit: params?.limit,
+        level: params?.level,
+        category: params?.category,
+        cursor: params?.cursor,
+      }),
     );
   },
 
@@ -1500,11 +1556,12 @@ export const aiManagerApi = {
   // --- Dashboard Enhancement ---
 
   getLLMCalls: (accountId: string, params?: { limit?: number; cursor?: string }): Promise<{ calls: unknown[]; next_cursor: string | null }> => {
-    const searchParams = new URLSearchParams();
-    if (params?.limit) searchParams.set("limit", String(params.limit));
-    if (params?.cursor) searchParams.set("cursor", params.cursor);
-    const qs = searchParams.toString();
-    return request(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/llm-calls${qs ? `?${qs}` : ""}`);
+    return request(
+      buildQuery(`/api/v1/accounts/${encodeURIComponent(accountId)}/ai-manager/llm-calls`, {
+        limit: params?.limit,
+        cursor: params?.cursor,
+      }),
+    );
   },
 
   getCapabilities: (accountId: string): Promise<Record<string, unknown>> =>
@@ -1525,11 +1582,11 @@ export const backtestApi = {
 
   /** GET /api/v1/backtest — list runs (newest first), optional status filter. */
   list: (params?: { status?: string; limit?: number }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    if (params?.status) sp.set("status", params.status);
-    if (params?.limit) sp.set("limit", String(params.limit));
-    const qs = sp.toString();
-    return request<BacktestRun[]>(`/api/v1/backtest${qs ? `?${qs}` : ""}`, undefined, signal);
+    return request<BacktestRun[]>(
+      buildQuery("/api/v1/backtest", { status: params?.status, limit: params?.limit }),
+      undefined,
+      signal,
+    );
   },
 
   /** GET /api/v1/backtest/:id — a single run with results (equity curve downsampled). */
@@ -1548,15 +1605,14 @@ export const backtestApi = {
     },
     signal?: AbortSignal,
   ) => {
-    const sp = new URLSearchParams();
-    if (params?.page) sp.set("page", String(params.page));
-    if (params?.limit) sp.set("limit", String(params.limit));
-    if (params?.sort_by) sp.set("sort_by", params.sort_by);
-    if (params?.side) sp.set("side", params.side);
-    if (params?.close_reason) sp.set("close_reason", params.close_reason);
-    const qs = sp.toString();
     return request<BacktestTradesResponse>(
-      `/api/v1/backtest/${encodeURIComponent(runId)}/trades${qs ? `?${qs}` : ""}`,
+      buildQuery(`/api/v1/backtest/${encodeURIComponent(runId)}/trades`, {
+        page: params?.page,
+        limit: params?.limit,
+        sort_by: params?.sort_by,
+        side: params?.side,
+        close_reason: params?.close_reason,
+      }),
       undefined,
       signal,
     );
@@ -1577,10 +1633,8 @@ export const backtestApi = {
 
   /** GET /api/v1/backtest/compare?run_ids=… — compare 2-4 completed runs. */
   compare: (runIds: string[], signal?: AbortSignal) => {
-    const sp = new URLSearchParams();
-    for (const id of runIds) sp.append("run_ids", id);
     return request<BacktestCompareResponse>(
-      `/api/v1/backtest/compare?${sp.toString()}`,
+      buildQuery("/api/v1/backtest/compare", { run_ids: runIds }),
       undefined,
       signal,
     );
@@ -1594,13 +1648,8 @@ export const backtestApi = {
     end: string,
     signal?: AbortSignal,
   ) => {
-    const sp = new URLSearchParams();
-    for (const s of symbols) sp.append("symbols", s);
-    sp.set("interval", interval);
-    sp.set("start", start);
-    sp.set("end", end);
     return request<CacheStatusResponse>(
-      `/api/v1/backtest-cache/status?${sp.toString()}`,
+      buildQuery("/api/v1/backtest-cache/status", { symbols, interval, start, end }),
       undefined,
       signal,
     );
@@ -1614,14 +1663,9 @@ export const backtestApi = {
     end: string,
     signal?: AbortSignal,
   ) => {
-    const sp = new URLSearchParams();
-    for (const s of symbols) sp.append("symbols", s);
-    sp.set("interval", interval);
-    sp.set("start", start);
-    sp.set("end", end);
     return mutate<{ cached: number; fetched: number; failed: number }>(
       "POST",
-      `/api/v1/backtest-cache/warmup?${sp.toString()}`,
+      buildQuery("/api/v1/backtest-cache/warmup", { symbols, interval, start, end }),
       {},
       signal,
     );

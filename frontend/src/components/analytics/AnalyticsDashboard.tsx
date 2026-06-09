@@ -20,6 +20,7 @@ import { AccountSelector } from "@/components/ui/AccountSelector";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CleanupDialog } from "./CleanupDialog";
 import { NeuSelect } from "@/design-system/neumorphism";
+import { readJson, writeJson } from "@/lib/storage";
 
 const PERIODS = ["1m", "5m", "15m", "30m", "1H", "2H", "6H", "12H", "1D", "3D", "1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 type Period = (typeof PERIODS)[number];
@@ -29,22 +30,16 @@ const SUB_DAY_PERIODS = new Set(["1m", "5m", "15m", "30m", "1H", "2H", "6H", "12
 const STORAGE_KEY = "analytics-filters";
 
 function loadFilters(): { accountType: AccountType; period: Period; selectedAccount: string } {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        accountType: (["live", "demo"] as const).includes(parsed.accountType) ? parsed.accountType : "live",
-        period: PERIODS.includes(parsed.period) ? parsed.period : "1M",
-        selectedAccount: parsed.selectedAccount || "portfolio",
-      };
-    }
-  } catch { /* empty */ }
-  return { accountType: "live", period: "1M", selectedAccount: "portfolio" };
+  const parsed = readJson<Partial<{ accountType: AccountType; period: Period; selectedAccount: string }>>(STORAGE_KEY, {});
+  return {
+    accountType: (["live", "demo"] as const).includes(parsed.accountType as AccountType) ? (parsed.accountType as AccountType) : "live",
+    period: PERIODS.includes(parsed.period as Period) ? (parsed.period as Period) : "1M",
+    selectedAccount: parsed.selectedAccount || "portfolio",
+  };
 }
 
 function saveFilters(filters: { accountType: AccountType; period: Period; selectedAccount: string }) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  writeJson(STORAGE_KEY, filters);
 }
 
 /** Props for {@link AnalyticsDashboard}. */
@@ -132,6 +127,20 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
     fetchDataRef.current = fetchData;
   });
 
+  // AI-CONTEXT: Single source of truth for "abort any in-flight manual fetch, start
+  // a fresh one, and show the loading state." Replaces the 4 hand-inlined copies of
+  // the abort→new-controller→setLoading→fetch dance (snapshot, toggle-inclusion,
+  // cleanup-complete, retry button). Reads fetchData via the ref so this callback is
+  // stable and always invokes the latest closure. Errors are surfaced unless the
+  // fetch was aborted (a superseding refetch), matching the prior per-handler logic.
+  const refetch = useCallback(() => {
+    manualAbortRef.current?.abort();
+    const controller = new AbortController();
+    manualAbortRef.current = controller;
+    setLoading(true);
+    return fetchDataRef.current(controller.signal);
+  }, []);
+
   useEffect(() => {
     return () => manualAbortRef.current?.abort();
   }, []);
@@ -181,11 +190,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
       } else {
         await accountsApi.takeAllSnapshots();
       }
-      manualAbortRef.current?.abort();
-      const controller = new AbortController();
-      manualAbortRef.current = controller;
-      setLoading(true);
-      await fetchDataRef.current(controller.signal);
+      await refetch();
     } catch (e: unknown) {
       setError((e as { detail?: string; message?: string }).detail || (e as { message?: string }).message || "Failed to take snapshot");
     } finally {
@@ -200,21 +205,13 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
         prev.map((a) => a.id === id ? { ...a, include_in_analytics: include } : a),
       );
       if (selectedAccount === "portfolio") {
-        manualAbortRef.current?.abort();
-        const controller = new AbortController();
-        manualAbortRef.current = controller;
-        setLoading(true);
-        await fetchDataRef.current(controller.signal);
+        await refetch();
       }
     } catch { /* ignore */ }
   };
 
   const handleCleanupComplete = () => {
-    manualAbortRef.current?.abort();
-    const controller = new AbortController();
-    manualAbortRef.current = controller;
-    setLoading(true);
-    fetchDataRef.current(controller.signal).catch((e) => {
+    refetch().catch((e) => {
       if (e?.name !== "AbortError") setError("Failed to refresh data");
     });
   };
@@ -434,11 +431,7 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
               id="analytics-retry-button"
               onClick={() => {
                 setError(null);
-                setLoading(true);
-                manualAbortRef.current?.abort();
-                const controller = new AbortController();
-                manualAbortRef.current = controller;
-                fetchDataRef.current(controller.signal).catch((e) => {
+                refetch().catch((e) => {
                   if (e?.name !== "AbortError") setError("Failed to refresh data");
                 });
               }}

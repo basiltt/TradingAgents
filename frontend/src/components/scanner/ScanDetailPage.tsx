@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { formatDurationBetween } from "@/lib/format";
+import { formatDurationBetween, formatDateTimeLabel } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, type ScanResultItem } from "@/api/client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,13 +19,7 @@ function copyToClipboard(text: string): Promise<void> {
 }
 
 function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short", day: "numeric", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  } catch { return iso; }
+  return formatDateTimeLabel(iso);
 }
 
 

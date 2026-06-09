@@ -28,3 +28,42 @@ export function formatDurationBetween(
   );
   return formatDuration(diff);
 }
+
+/**
+ * Format an ISO timestamp as a localized date-time string.
+ *
+ * Centralizes the `new Date(iso).toLocaleString(...)` pattern (with null/empty
+ * guard and parse-failure fallback) that scanner pages hand-rolled. Defaults to a
+ * "MMM D, YYYY, HH:MM" style; pass `opts` to override (e.g. drop the year).
+ *
+ * @param iso - The ISO-8601 timestamp, or null/undefined.
+ * @param opts - Optional `Intl.DateTimeFormat` options to override the default
+ *   `{ month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }`.
+ * @param fallback - String returned when `iso` is null/empty. Defaults to `"—"`.
+ * @returns The formatted local date-time, the `fallback` for empty input, or the
+ *   raw `iso` when it cannot be parsed/formatted.
+ *
+ * @example
+ * formatDateTimeLabel("2026-01-05T14:30:00Z");
+ * // "Jan 5, 2026, 02:30 PM" (locale-dependent)
+ * formatDateTimeLabel(null);            // "—"
+ * formatDateTimeLabel("", undefined, "never"); // "never"
+ */
+export function formatDateTimeLabel(
+  iso: string | null | undefined,
+  opts?: Intl.DateTimeFormatOptions,
+  fallback = "—",
+): string {
+  if (!iso) return fallback;
+  try {
+    return new Date(iso).toLocaleString(undefined, opts ?? {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}

@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { type AutoTradeConfig } from "@/api/client";
+import { clampNumber } from "@/lib/number";
 import { NeuSwitch } from "@/design-system/neumorphism";
 import { RECOMMENDED_PRESET, RECOMMENDED_BLOCKED_HOURS } from "./regimeStrategyPreset";
 
@@ -165,17 +166,17 @@ export function RegimeStrategyFields({ config, onChange }: Props) {
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">Leverage</Label>
               <Input type="number" min={1} max={125} value={config.mr_leverage ?? 10}
-                onChange={(e) => onChange({ mr_leverage: Math.min(125, Math.max(1, +e.target.value || 1)) })} />
+                onChange={(e) => onChange({ mr_leverage: clampNumber(e.target.value, 1, 125, 1) })} />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">Capital %</Label>
               <Input type="number" min={0.1} max={100} step={0.1} value={config.mr_capital_pct ?? 2}
-                onChange={(e) => onChange({ mr_capital_pct: Math.min(100, Math.max(0.1, +e.target.value || 1)) })} />
+                onChange={(e) => onChange({ mr_capital_pct: clampNumber(e.target.value, 0.1, 100, 1) })} />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">Time-stop (min)</Label>
               <Input type="number" min={5} max={1440} value={config.mr_time_stop_minutes ?? 120}
-                onChange={(e) => onChange({ mr_time_stop_minutes: Math.min(1440, Math.max(5, +e.target.value || 5)) })} />
+                onChange={(e) => onChange({ mr_time_stop_minutes: clampNumber(e.target.value, 5, 1440, 5) })} />
             </div>
           </div>
           <div className="flex items-center gap-2">

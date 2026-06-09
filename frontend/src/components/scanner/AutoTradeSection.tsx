@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { clampNumber, clampNumberOrNull } from "@/lib/number";
 import { NeuSwitch } from "@/design-system/neumorphism";
 import { RegimeStrategyFields } from "./RegimeStrategyFields";
 
@@ -437,7 +438,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                   min={1}
                   max={125}
                   value={config.leverage}
-                  onChange={(e) => onChange({ leverage: Math.min(125, Math.max(1, +e.target.value || 1)) })}
+                  onChange={(e) => onChange({ leverage: clampNumber(e.target.value, 1, 125, 1) })}
                 />
                 <span className="text-sm text-muted-foreground">x</span>
               </div>
@@ -451,7 +452,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                   max={100}
                   step={0.1}
                   value={config.capital_pct}
-                  onChange={(e) => onChange({ capital_pct: Math.min(100, Math.max(0.1, +e.target.value || 1)) })}
+                  onChange={(e) => onChange({ capital_pct: clampNumber(e.target.value, 0.1, 100, 1) })}
                 />
                 <span className="text-sm text-muted-foreground">%</span>
               </div>
@@ -463,7 +464,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 min={1}
                 max={999}
                 value={config.max_trades}
-                onChange={(e) => onChange({ max_trades: Math.min(999, Math.max(1, +e.target.value || 1)) })}
+                onChange={(e) => onChange({ max_trades: clampNumber(e.target.value, 1, 999, 1) })}
                 className="mt-2"
               />
             </div>
@@ -478,7 +479,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 max={1000}
                 step={0.1}
                 value={config.take_profit_pct}
-                onChange={(e) => onChange({ take_profit_pct: Math.min(1000, Math.max(0.1, +e.target.value || 1)) })}
+                onChange={(e) => onChange({ take_profit_pct: clampNumber(e.target.value, 0.1, 1000, 1) })}
                 className="mt-2"
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">≈ {tpPriceMove}% price move</p>
@@ -491,7 +492,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 max={1000}
                 step={0.1}
                 value={config.stop_loss_pct}
-                onChange={(e) => onChange({ stop_loss_pct: Math.min(1000, Math.max(0.1, +e.target.value || 1)) })}
+                onChange={(e) => onChange({ stop_loss_pct: clampNumber(e.target.value, 0.1, 1000, 1) })}
                 className="mt-2"
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">≈ {slPriceMove}% price move</p>
@@ -514,7 +515,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 max={10}
                 step={0.5}
                 value={config.min_score}
-                onChange={(e) => onChange({ min_score: Math.min(10, Math.max(0, +e.target.value || 0)) })}
+                onChange={(e) => onChange({ min_score: clampNumber(e.target.value, 0, 10, 0) })}
                 className="mt-2"
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">0 to 10 conviction threshold</p>
@@ -553,7 +554,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 min={1}
                 max={1440}
                 value={config.max_signal_age_minutes ?? ""}
-                onChange={(e) => onChange({ max_signal_age_minutes: e.target.value ? Math.min(1440, Math.max(1, parseInt(e.target.value))) : null })}
+                onChange={(e) => onChange({ max_signal_age_minutes: clampNumberOrNull(e.target.value, 1, 1440) })}
                 className="mt-2"
                 placeholder="e.g. 90"
               />
@@ -604,7 +605,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 min={1}
                 max={100}
                 value={config.max_drawdown_pct}
-                onChange={(e) => onChange({ max_drawdown_pct: Math.min(100, Math.max(1, +e.target.value || 1)) })}
+                onChange={(e) => onChange({ max_drawdown_pct: clampNumber(e.target.value, 1, 100, 1) })}
                 className="mt-2"
               />
               <p className="mt-2 text-[11px] text-[var(--neu-text-muted)]">Close all positions if equity falls by this percentage.</p>
@@ -759,7 +760,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                 min={1}
                 max={20}
                 value={config.max_same_direction ?? ""}
-                onChange={(e) => onChange({ max_same_direction: e.target.value ? Math.min(20, Math.max(1, parseInt(e.target.value))) : null })}
+                onChange={(e) => onChange({ max_same_direction: clampNumberOrNull(e.target.value, 1, 20) })}
                 placeholder="e.g. 3"
                 className="mt-2"
               />
@@ -773,7 +774,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
                   min={1}
                   max={10}
                   value={config.ai_pause_cycles ?? ""}
-                  onChange={(e) => onChange({ ai_pause_cycles: e.target.value ? Math.min(10, Math.max(1, parseInt(e.target.value))) : null })}
+                  onChange={(e) => onChange({ ai_pause_cycles: clampNumberOrNull(e.target.value, 1, 10) })}
                   placeholder="e.g. 1"
                   className="mt-2"
                 />

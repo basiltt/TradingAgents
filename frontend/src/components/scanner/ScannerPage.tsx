@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/format";
+import { clampNumber } from "@/lib/number";
 import { useScanFilters, ScanResultFiltersBar, signalBucket, shouldShowReason } from "@/components/scanner/ScanResultFilters";
 import { PlaceTradeDialog } from "@/components/scanner/PlaceTradeDialog";
 import { useModels } from "@/hooks/useModels";
@@ -841,7 +842,7 @@ export function ScannerPage() {
                         </div>
                         <div className="space-y-2">
                           <Label className={SCANNER_LABEL_CLASS}>Max parallel analyses</Label>
-                          <Input type="number" min={1} max={15} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(15, Math.max(1, Number(e.target.value))))} className="h-10" />
+                          <Input type="number" min={1} max={15} value={maxParallel} onChange={(e) => setMaxParallel(clampNumber(e.target.value, 1, 15, 1))} className="h-10" />
                         </div>
                       </div>
                     </div>

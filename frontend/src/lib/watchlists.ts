@@ -1,3 +1,5 @@
+import { readJson, writeJson } from "./storage";
+
 const STORAGE_KEY = "tradingagents_watchlists";
 const MAX_TICKERS = 10;
 
@@ -8,16 +10,11 @@ export interface Watchlist {
 }
 
 export function loadWatchlists(): Watchlist[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return readJson<Watchlist[]>(STORAGE_KEY, []);
 }
 
 function save(lists: Watchlist[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(lists));
+  writeJson(STORAGE_KEY, lists);
 }
 
 export function createWatchlist(name: string): Watchlist[] {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatDuration, formatDurationBetween } from "../format";
+import { formatDuration, formatDurationBetween, formatDateTimeLabel } from "../format";
 
 describe("formatDuration", () => {
   it("formats seconds only", () => {
@@ -45,5 +45,40 @@ describe("formatDurationBetween", () => {
   it("clamps negative durations to 0", () => {
     const result = formatDurationBetween("2025-01-02T00:00:00Z", "2025-01-01T00:00:00Z");
     expect(result).toBe("0s");
+  });
+});
+
+describe("formatDateTimeLabel", () => {
+  it("returns the fallback for null/undefined/empty input", () => {
+    expect(formatDateTimeLabel(null)).toBe("—");
+    expect(formatDateTimeLabel(undefined)).toBe("—");
+    expect(formatDateTimeLabel("")).toBe("—");
+  });
+
+  it("uses a custom fallback when provided", () => {
+    expect(formatDateTimeLabel(null, undefined, "never")).toBe("never");
+  });
+
+  it("formats a valid ISO timestamp (contains the year by default)", () => {
+    const out = formatDateTimeLabel("2026-01-05T14:30:00Z");
+    expect(out).toContain("2026");
+    expect(out).not.toBe("—");
+  });
+
+  it("omits the year when given options without a year field", () => {
+    const out = formatDateTimeLabel("2026-01-05T14:30:00Z", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    expect(out).not.toContain("2026");
+  });
+
+  it("returns the raw input when the date cannot be formatted", () => {
+    // An unparseable string yields an Invalid Date; toLocaleString throws on some
+    // engines (caught) or returns "Invalid Date". Either way it must not throw.
+    const out = formatDateTimeLabel("not-a-date");
+    expect(typeof out).toBe("string");
   });
 });
