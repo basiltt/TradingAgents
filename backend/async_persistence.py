@@ -209,6 +209,51 @@ async def _fix_close_rules_constraints(conn) -> None:
     await conn.execute("ALTER TABLE close_rules ALTER COLUMN reference_value TYPE VARCHAR(100)")
 
 
+async def _backfill_open_trade_filled_qty(conn) -> None:
+    """Migration 57: repair legacy live trades whose filled_qty carries the OLD
+    "entry fill" meaning, so they become closeable again.
+
+    AI-CONTEXT — the semantic flip this repairs:
+      The close path computes remaining = qty - filled_qty and rejects a trade
+      with remaining <= 0 ("No remaining quantity to close"). The OPEN path used
+      to write filled_qty = cumExecQty (≈ qty, the entry fill), which made
+      remaining == 0 for every fully-filled position — manual close was broken
+      for ALL of them. The code fix redefined filled_qty as the CUMULATIVE-CLOSED
+      qty (0 at open; the entry fill now lives in entry_price/avg_fill_price).
+      New trades open with filled_qty = 0, but rows ALREADY open in the live DB
+      were written under the old meaning and would stay un-closeable after deploy.
+      This one-time backfill resets them to 0.
+
+    Scope (deliberately conservative):
+      - Only LIVE, not-yet-closed statuses: open / partially_filled / closing.
+      - Only rows that actually carry a stale positive filled_qty (> 0) — so this
+        is a no-op on a fresh DB and idempotent if it ever re-runs.
+      - partially_closed is EXCLUDED on purpose: under the new semantic its
+        filled_qty legitimately records the already-closed amount, so a blind
+        reset there would INFLATE remaining_qty and let a user close more than
+        they hold. Those rows (rare) are left for manual review.
+      - Terminal rows (closed/cancelled/failed) and child close-slices are never
+        touched — their filled_qty is historical.
+    """
+    repaired = await conn.fetchval(
+        """
+        WITH updated AS (
+            UPDATE trades
+               SET filled_qty = 0
+             WHERE status IN ('open', 'partially_filled', 'closing')
+               AND filled_qty IS NOT NULL
+               AND filled_qty > 0
+            RETURNING 1
+        )
+        SELECT count(*) FROM updated
+        """
+    )
+    logger.info(
+        "migration_57_backfilled_open_trade_filled_qty",
+        extra={"rows_repaired": int(repaired or 0)},
+    )
+
+
 async def _add_ai_manager_tables(conn) -> None:
     """Migration 33: AI Account Manager tables."""
     await conn.execute("""
@@ -1469,6 +1514,12 @@ ALTER TABLE high_freq_snapshots ALTER COLUMN balance TYPE NUMERIC(30,12) USING b
     # string_data_right_truncation — the cycle's protective rules failed to persist.
     # Widen to VARCHAR(20) (matching trades.status) to honour the CHECK's contract.
     (56, "ALTER TABLE close_rules ALTER COLUMN status TYPE VARCHAR(20)"),
+    # v57 — one-time data backfill: reset filled_qty to 0 for live trades opened
+    # under the OLD entry-fill semantic, which otherwise compute remaining_qty = 0
+    # and become un-closeable after the filled_qty/remaining_qty fix deploys. See
+    # _backfill_open_trade_filled_qty for the full rationale and the deliberate
+    # exclusion of partially_closed rows. Idempotent (guarded on filled_qty > 0).
+    (57, _backfill_open_trade_filled_qty),
 ]
 
 
