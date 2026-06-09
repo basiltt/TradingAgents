@@ -222,6 +222,13 @@ function ScanDurationBadge({ startedAt, completedAt, isRunning }: { startedAt?: 
 
 const SCAN_ID_KEY = "tradingagents_active_scan";
 
+// AI-CONTEXT: Scan-ID restoration is INTENTIONALLY disabled. loadActiveScanId always
+// returns null so a page reload does NOT resurrect a previously-active scan (which
+// would re-attach polling to a scan that may have finished or been cancelled while
+// away, showing a stale/confusing state). saveActiveScanId is retained — it keeps the
+// key in sync — so restoration can be re-enabled later by reading SCAN_ID_KEY here,
+// without re-plumbing the save path. DANGER: if you make this read the key, also
+// handle the "persisted scan no longer exists / already terminal" case before polling.
 function loadActiveScanId(): string | null {
   return null;
 }

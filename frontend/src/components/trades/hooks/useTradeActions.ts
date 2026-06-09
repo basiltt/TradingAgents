@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch } from "@/store";
 import { tradesApi, accountsApi } from "@/api/client";
+import { tradeQueryKeys } from "@/components/trades/queryKeys";
 import {
   startPendingAction,
   removeActiveTrade,
@@ -22,10 +23,10 @@ export function useTradeActions() {
       if (!qty) {
         dispatch(removeActiveTrade(tradeId));
       }
-      queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
-      queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.history() });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.stats() });
       if (qty) {
-        queryClient.invalidateQueries({ queryKey: ["trades", "active"] });
+        queryClient.invalidateQueries({ queryKey: tradeQueryKeys.active() });
       }
     } catch (error) {
       dispatch(revertOptimisticUpdate(tradeId));
@@ -39,8 +40,8 @@ export function useTradeActions() {
       await tradesApi.cancel(accountId, tradeId);
       dispatch(clearPendingAction(tradeId));
       dispatch(removeActiveTrade(tradeId));
-      queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
-      queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.history() });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.stats() });
     } catch (error) {
       dispatch(revertOptimisticUpdate(tradeId));
       throw error;
@@ -52,11 +53,11 @@ export function useTradeActions() {
     try {
       const result = await accountsApi.closeAllPositions(accountId);
       dispatch(removeActiveTradesByAccount(accountId));
-      queryClient.invalidateQueries({ queryKey: ["trades", "history"] });
-      queryClient.invalidateQueries({ queryKey: ["trades", "stats"] });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.history() });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.stats() });
       return result;
     } catch (error) {
-      queryClient.invalidateQueries({ queryKey: ["trades", "active"] });
+      queryClient.invalidateQueries({ queryKey: tradeQueryKeys.active() });
       throw error;
     } finally {
       dispatch(setPendingCloseAll({ account_id: accountId, pending: false }));

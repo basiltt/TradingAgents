@@ -140,6 +140,8 @@ const AI_MGR_STATE = { SLEEPING: "sleeping", PAUSED: "paused", MONITORING: "moni
 // Decisions arrive via polling; logs via polling with cursor. Both append-only.
 const MAX_DECISIONS = 500;
 const MAX_LOGS = 1000;
+/** Ring-buffer cap for the per-account LLM-call feed (newest-first, unlike decisions/logs). */
+const MAX_LLM_CALLS = 200;
 
 function isHttpError(e: unknown, status: number): boolean {
   return !!e && typeof e === "object" && "status" in e && (e as { status: number }).status === status;
@@ -569,9 +571,9 @@ const aiManagerSlice = createSlice({
         const { accountId, calls, nextCursor, append } = action.payload;
         if (append) {
           const combined = [...(state.llmCallsByAccount[accountId] || []), ...calls];
-          state.llmCallsByAccount[accountId] = combined.slice(0, 200);
+          state.llmCallsByAccount[accountId] = combined.slice(0, MAX_LLM_CALLS);
         } else {
-          state.llmCallsByAccount[accountId] = calls.slice(0, 200);
+          state.llmCallsByAccount[accountId] = calls.slice(0, MAX_LLM_CALLS);
         }
         state.llmCallCursors[accountId] = nextCursor;
       })

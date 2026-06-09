@@ -20,6 +20,13 @@ interface PendingAction {
 /** Auto-expire stale pending actions after 60s. */
 const PENDING_ACTION_TTL_MS = 60_000;
 
+/**
+ * Minimum unrealized-PnL delta (in quote currency) required to write a new value.
+ * Sub-cent churn is ignored so a stream of near-identical position updates doesn't
+ * trigger needless re-renders of every trade row.
+ */
+const UNREALIZED_PNL_EPSILON = 0.0001;
+
 interface TradesState {
   activeTrades: Record<string, Trade>;
   activeTab: "active" | "history";
@@ -261,7 +268,7 @@ const tradesSlice = createSlice({
         const newPnl = totalQty > 0
           ? unrealized_pnl * (parseFloat(String(trade.qty ?? 0)) / totalQty)
           : unrealized_pnl / matchIds.length;
-        if (Math.abs((trade.unrealized_pnl ?? 0) - newPnl) > 0.0001) {
+        if (Math.abs((trade.unrealized_pnl ?? 0) - newPnl) > UNREALIZED_PNL_EPSILON) {
           trade.unrealized_pnl = newPnl;
         }
       }

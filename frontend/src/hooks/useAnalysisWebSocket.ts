@@ -19,6 +19,16 @@ const MAX_DELAY = 30000;
 // AI-CONTEXT: Ring-buffer cap — prevents memory growth on long-running analyses.
 const MAX_MESSAGES = 500;
 
+/**
+ * WebSocket close codes that must NOT trigger a reconnect (the failure is permanent
+ * or client-caused). Hoisted to module scope so it is allocated once, named, and the
+ * meaning of each code is self-documenting:
+ * - 1000 NORMAL: clean server-initiated close
+ * - 1008 POLICY_VIOLATION / 1009 MESSAGE_TOO_BIG: protocol-level rejections
+ * - 4400 BAD_REQUEST / 4403 FORBIDDEN / 4404 RUN_NOT_FOUND: app-level rejections
+ */
+const NON_RETRIABLE_CLOSE_CODES = [1000, 4400, 4403, 4404, 1008, 1009] as const;
+
 /** Accumulated real-time state from the WebSocket stream, stored in React Query cache. */
 export interface WsState {
   /** Map of agent name → status string ("in_progress", "completed", "failed"). */
@@ -301,10 +311,8 @@ export function useAnalysisWebSocket(runId: string) {
       if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
-      // AI-CONTEXT: Non-retriable close codes — 1000=normal, 4400=bad request,
-      // 4403=forbidden, 4404=run not found, 1008=policy violation, 1009=too large.
-      const NON_RETRIABLE = [1000, 4400, 4403, 4404, 1008, 1009];
-      if (NON_RETRIABLE.includes(ev.code)) {
+      // AI-CONTEXT: see NON_RETRIABLE_CLOSE_CODES (module scope) for code meanings.
+      if (NON_RETRIABLE_CLOSE_CODES.includes(ev.code as (typeof NON_RETRIABLE_CLOSE_CODES)[number])) {
         setStatus("disconnected");
         return;
       }

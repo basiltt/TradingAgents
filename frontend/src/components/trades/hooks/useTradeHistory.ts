@@ -1,5 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { tradesApi } from "@/api/client";
+import { tradeQueryKeys } from "@/components/trades/queryKeys";
 import { TERMINAL_STATUSES } from "@/components/trades/types";
 import type { TradeFilters } from "@/components/trades/types";
 
@@ -15,7 +16,7 @@ function filtersToParams(filters: TradeFilters) {
 
 export function useTradeHistory(filters: TradeFilters, enabled: boolean) {
   return useInfiniteQuery({
-    queryKey: ["trades", "history", filters],
+    queryKey: tradeQueryKeys.historyList(filters),
     queryFn: ({ pageParam }) =>
       tradesApi.list({
         ...filtersToParams(filters),
