@@ -1024,6 +1024,7 @@ class AIAccountManagerService:
 
     @classmethod
     def create(cls, app_state) -> "AIAccountManagerService":
+        """Build the service from app_state, wiring its dependencies (repos, schedulers, locks)."""
         import os
 
         return cls(

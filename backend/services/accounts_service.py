@@ -365,6 +365,10 @@ class AccountsService:
         from decimal import ROUND_UP
 
         def round_price(p: Decimal, *, round_up: bool) -> str:
+            """Align a price to tick_size, rounding directionally away from the mark.
+
+            Raises ValueError if the result is non-positive after alignment.
+            """
             rounding = ROUND_UP if round_up else ROUND_DOWN
             rounded = (p / tick_size).quantize(Decimal("1"), rounding=rounding) * tick_size
             if rounded <= 0:

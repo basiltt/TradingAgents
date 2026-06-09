@@ -47,6 +47,7 @@ class LLMCallBatchLogger:
         self._running = False
 
     async def start(self) -> None:
+        """Start the periodic background flush task (idempotent)."""
         if self._running:
             return
         self._running = True
@@ -54,6 +55,7 @@ class LLMCallBatchLogger:
         logger.info("LLMCallBatchLogger started")
 
     async def stop(self) -> None:
+        """Stop the flush task and flush any remaining buffered log entries."""
         self._running = False
         if self._flush_task:
             self._flush_task.cancel()
@@ -82,6 +84,10 @@ class LLMCallBatchLogger:
         reasoning: str | None = None,
         attempt_number: int = 1,
     ) -> None:
+        """Buffer one LLM-call record for batched persistence; flushes when the batch fills.
+
+        No-op if the logger is stopped. Drops the oldest entry when the buffer is full.
+        """
         if not self._running:
             return
         entry = {

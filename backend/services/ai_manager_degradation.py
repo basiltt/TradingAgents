@@ -23,6 +23,7 @@ class DegradationTierManager:
         self._last_failure_at: float = 0.0
 
     async def load_from_db(self) -> None:
+        """Load the persisted degradation tier on startup, if a repo is configured."""
         if self._repo:
             self._tier = await self._repo.get_degradation_tier()
 
@@ -73,8 +74,10 @@ class DegradationTierManager:
     _LLM_DISABLED_TIER = 2
 
     def get_tier(self) -> int:
+        """Return the current degradation tier (0=nominal … 3=safe)."""
         return self._tier
 
     def should_use_llm(self, tier: int | None = None) -> bool:
+        """Return True if LLM calls are allowed at the given (or current) tier."""
         t = tier if tier is not None else self._tier
         return t < self._LLM_DISABLED_TIER

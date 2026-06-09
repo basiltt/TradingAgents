@@ -164,6 +164,7 @@ class AIManagerTask:
 
     @property
     def state(self) -> str:
+        """The task's current lifecycle state."""
         return self._state
 
     def start(self) -> None:
@@ -187,6 +188,10 @@ class AIManagerTask:
             pass
 
     def transition_to(self, new_state: str) -> None:
+        """Move the task to a new lifecycle state, logging and persisting the transition.
+
+        No-op if already in that state.
+        """
         if self._state == new_state:
             return
         old_state = self._state

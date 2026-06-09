@@ -30,11 +30,18 @@ _ENV_MAP = {
 
 
 class ConfigService:
+    """Resolves runtime config from DEFAULT_CONFIG, env vars, and validated overrides."""
+
     def __init__(self, db: Any = None):
         self._db = db
         self._overrides: Dict[str, Any] = {}
 
     def get_config(self) -> Dict[str, Any]:
+        """Return masked {"defaults", "overrides", "resolved"} config maps.
+
+        `resolved` layers env-var values then runtime overrides over the defaults;
+        secrets are masked in all three.
+        """
         defaults = dict(DEFAULT_CONFIG)
         resolved = dict(DEFAULT_CONFIG)
 
@@ -52,6 +59,11 @@ class ConfigService:
         }
 
     def update_config(self, patch: Dict[str, Any]) -> None:
+        """Apply runtime config overrides after validation.
+
+        Raises ValueError for forbidden keys (api keys / backend_url), unknown
+        keys, type mismatches, or values exceeding size limits.
+        """
         for key, value in patch.items():
             if key in _FORBIDDEN_OVERRIDE_KEYS:
                 raise ValueError(

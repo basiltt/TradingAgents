@@ -57,6 +57,8 @@ def _validate_url_ssrf(url: str) -> None:
 
 
 class ConnectivityRequest(BaseModel):
+    """Request body for /connectivity-check: provider plus optional key/custom URL."""
+
     provider: str
     api_key: str | None = None
     custom_url: str | None = None
@@ -64,6 +66,11 @@ class ConnectivityRequest(BaseModel):
 
 @router.post("/connectivity-check")
 async def connectivity_check(req: ConnectivityRequest):
+    """Probe an LLM provider's /models endpoint to verify reachability and auth.
+
+    400 for an unknown provider or missing base URL. Returns
+    {"status": "ok"|"error", "latency_ms": ...} with an error message on failure.
+    """
     if req.provider not in VALID_PROVIDERS:
         raise HTTPException(400, detail=f"Unknown provider: {req.provider}")
     base = (req.custom_url or "").strip().rstrip("/") or PROVIDER_BASE_URLS.get(req.provider, "")
@@ -114,6 +121,8 @@ async def connectivity_check(req: ConnectivityRequest):
 
 
 class FetchModelsRequest(BaseModel):
+    """Request body for /fetch-models: a custom URL and/or a native provider with optional key."""
+
     url: str | None = None
     api_key: str | None = None
     provider: str | None = None
@@ -222,6 +231,7 @@ async def fetch_models(req: FetchModelsRequest):
 
 @router.get("/models/{provider}")
 async def get_models(provider: str):
+    """List a provider's catalog models split into "quick" and "deep" tiers; 400 if unknown."""
     if provider not in VALID_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
     quick = get_model_options(provider, "quick")
@@ -231,4 +241,5 @@ async def get_models(provider: str):
 
 @router.get("/providers")
 async def get_providers():
+    """List all supported LLM provider identifiers; returns {"providers": [...]}."""
     return {"providers": sorted(VALID_PROVIDERS)}

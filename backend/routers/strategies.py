@@ -43,6 +43,11 @@ async def list_strategies(
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
 ):
+    """List strategies, optionally filtered by status and/or category.
+
+    422 if status or category is not a recognized value. Returns the matching
+    strategy list.
+    """
     if status and status not in VALID_STRATEGY_STATUSES:
         return JSONResponse({"detail": f"Invalid status filter: {status}", "code": "VALIDATION_ERROR"}, 422)
     if category and category not in VALID_STRATEGY_CATEGORIES:
@@ -54,6 +59,10 @@ async def list_strategies(
 
 @router.post("/strategies")
 async def create_strategy(request: Request):
+    """Create a strategy from the JSON body; 400 on bad JSON, 422 on validation error.
+
+    Returns the created strategy.
+    """
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
@@ -69,6 +78,7 @@ async def create_strategy(request: Request):
 
 @router.get("/strategies/export")
 async def export_strategies(request: Request):
+    """Export all strategies as {"strategies": [...]} for backup/transfer."""
     svc = _get_service(request)
     items = await svc.list_strategies()
     return {"strategies": items}
@@ -76,6 +86,12 @@ async def export_strategies(request: Request):
 
 @router.post("/strategies/import")
 async def import_strategies(request: Request):
+    """Bulk-import strategies from a list (or {"strategies": [...]}).
+
+    Validates every item before importing (max MAX_IMPORT_BATCH); 400 on bad
+    JSON, 422 if empty, too many, or any item fails validation. Returns the
+    count and the imported strategies.
+    """
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
@@ -104,6 +120,7 @@ async def import_strategies(request: Request):
 
 @router.get("/strategies/{strategy_id}")
 async def get_strategy(request: Request, strategy_id: str):
+    """Get one strategy by id; 404 if not found."""
     _validate_id(strategy_id)
     svc = _get_service(request)
     strategy = await svc.get_strategy(strategy_id)
@@ -114,6 +131,11 @@ async def get_strategy(request: Request, strategy_id: str):
 
 @router.patch("/strategies/{strategy_id}")
 async def update_strategy(request: Request, strategy_id: str):
+    """Partially update a strategy from the JSON body.
+
+    400 on bad JSON, 422 on validation error, 404 if not found. Returns the
+    updated strategy.
+    """
     _validate_id(strategy_id)
     try:
         body = await request.json()
@@ -133,6 +155,7 @@ async def update_strategy(request: Request, strategy_id: str):
 
 @router.delete("/strategies/{strategy_id}")
 async def delete_strategy(request: Request, strategy_id: str):
+    """Delete a strategy by id; 404 if not found, else {"deleted": True}."""
     _validate_id(strategy_id)
     svc = _get_service(request)
     ok = await svc.delete_strategy(strategy_id)

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrailingParams:
+    """Configuration for one symbol's trailing TP/SL loop (ATR multipliers, tick cadence, limits)."""
+
     symbol: str
     side: str  # "Buy" or "Sell"
     entry_price: float
@@ -73,27 +75,33 @@ class TrailingState:
 
     @property
     def symbol(self) -> str:
+        """The symbol this trailing state manages."""
         return self._params.symbol
 
     @property
     def is_active(self) -> bool:
+        """Return True if the trailing loop task is running and not cancelled."""
         return not self._cancelled and self._task is not None and not self._task.done()
 
     def start(self) -> None:
+        """Launch the background trailing tick loop as an asyncio task."""
         self._task = asyncio.create_task(
             self._run_loop(), name=f"trailing-{self._params.symbol}"
         )
 
     def cancel(self) -> None:
+        """Stop trailing and cancel the running loop task."""
         self._cancelled = True
         if self._task and not self._task.done():
             self._task.cancel()
 
     def suspend(self) -> None:
+        """Pause SL/TP updates (e.g. while sweep-defense is active) without ending the loop."""
         self._suspended = True
         self._log.info("Suspended (sweep defense active)")
 
     def resume_from_sweep(self, current_exchange_sl: float) -> None:
+        """Resume trailing after a suspend, re-syncing the SL to the exchange's current value."""
         self._suspended = False
         self._current_sl = current_exchange_sl
         self._log.info("Resumed from sweep, SL reset to %.6f", current_exchange_sl)

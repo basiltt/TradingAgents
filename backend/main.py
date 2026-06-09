@@ -111,6 +111,7 @@ class CSPCSRFMiddleware:
 
         # Inject security headers into every response
         async def send_with_csp(message):
+            """Append CSP and hardening security headers to the response start message."""
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 headers.append([b"content-security-policy", _CSP_HEADER_BYTES])
@@ -149,6 +150,7 @@ class ContentSizeLimitMiddleware:
             accumulated = 0
 
             async def size_limited_receive() -> Message:
+                """Receive wrapper that aborts (ValueError) if the streamed body exceeds the limit."""
                 nonlocal accumulated
                 msg = await receive()
                 if msg.get("type") == "http.request":
@@ -185,12 +187,17 @@ def _mcp_health_substatus(app: FastAPI) -> dict:
 
 
 def create_app() -> FastAPI:
+    """Build and configure the FastAPI application (lifespan, middleware, routers).
+
+    Raises RuntimeError if DATABASE_URL is not set. Returns the wired app instance.
+    """
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         raise RuntimeError("DATABASE_URL environment variable is required")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Application lifespan: initialize services/DB on startup and tear them down on shutdown."""
         app.state._ready = False
         log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
         if os.environ.get("LOG_FORMAT", "").lower() == "json":
@@ -721,6 +728,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     async def health(request: Request):
+        """Readiness/health probe: 503 while starting, else ok/degraded based on DB and load.
+
+        Reports DB health and active-run saturation; never fails on MCP sub-status.
+        """
         if not getattr(request.app.state, "_ready", False):
             return Response(
                 content=_json.dumps({"status": "starting"}),
@@ -753,6 +764,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
+        """Catch-all handler: log the unhandled exception and return a generic 500 JSON body."""
         logger.error("unhandled_exception", extra={"path": request.url.path, "method": request.method, "exc_type": type(exc).__name__}, exc_info=True)
         return Response(
             content='{"detail":"Internal server error","code":"INTERNAL_ERROR"}',

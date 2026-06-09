@@ -30,6 +30,12 @@ class PriorityLLMScheduler:
         return f"{account_id}:{next(self._counter)}"
 
     async def acquire(self, account_id: str, urgency: str) -> bool:
+        """Acquire an LLM execution slot for an account at the given urgency.
+
+        Enforces a per-account in-flight+queued cap and per-urgency semaphores
+        (FAST is non-blocking; others wait up to a burst timeout). Returns False
+        if no slot is available.
+        """
         inflight = self._account_inflight.get(account_id, 0)
         queued = self._account_queued.get(account_id, 0)
         if inflight + queued >= 2:
@@ -74,6 +80,7 @@ class PriorityLLMScheduler:
             return True
 
     def release(self, account_id: str, urgency: str) -> None:
+        """Release a previously-acquired slot for an account; guards against double-release."""
         token_key = None
         prefix = f"{account_id}:"
         for k in list(self._tokens):
@@ -98,6 +105,10 @@ class PriorityLLMScheduler:
 
     @asynccontextmanager
     async def slot(self, account_id: str, urgency: str):
+        """Async context manager that acquires a slot on entry and releases it on exit.
+
+        Raises RuntimeError if no slot is available.
+        """
         acquired = await self.acquire(account_id, urgency)
         if not acquired:
             raise RuntimeError(f"LLM slot not available for {account_id} urgency={urgency}")

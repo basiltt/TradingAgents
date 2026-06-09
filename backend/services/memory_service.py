@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryService:
+    """Reads and caches trading-memory entries from the memory markdown log."""
+
     def __init__(self, memory_path: str = "~/.tradingagents/memory/trading_memory.md"):
         self._path = os.path.expanduser(memory_path)
         self._cache: Optional[List[Dict[str, Any]]] = None
@@ -47,6 +49,7 @@ class MemoryService:
     def get_entries(
         self, page: int = 1, limit: int = 50
     ) -> Dict[str, Any]:
+        """Return a page of trading-memory entries with {"items", "total", "page", "limit"}."""
         entries = self._load()
         total = len(entries)
         start = (page - 1) * limit

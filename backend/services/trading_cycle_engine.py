@@ -33,51 +33,71 @@ class CycleError(Exception):
 
 
 class CycleAlreadyActiveError(CycleError):
+    """Raised when starting a cycle while one is already active for the account."""
+
     code = "CYCLE_ALREADY_ACTIVE"
     safe_message = "An active cycle already exists for this account."
 
 
 class InsufficientEquityError(CycleError):
+    """Raised when account equity is too low for the requested cycle config."""
+
     code = "INSUFFICIENT_EQUITY"
     safe_message = "Insufficient equity for this configuration."
 
 
 class NoQualifyingResultsError(CycleError):
+    """Raised when no scan results pass the cycle's filters."""
+
     code = "NO_QUALIFYING_RESULTS"
     safe_message = "No symbols match your filters."
 
 
 class ScanNotFoundError(CycleError):
+    """Raised when the referenced scan does not exist."""
+
     code = "SCAN_NOT_FOUND"
     safe_message = "Scan not found."
 
 
 class ScanTooOldError(CycleError):
+    """Raised when the scan's results are older than the allowed freshness window."""
+
     code = "SCAN_TOO_OLD"
     safe_message = "Scan results are too old."
 
 
 class CloseRuleLimitError(CycleError):
+    """Raised when the account already has the maximum number of close rules."""
+
     code = "CLOSE_RULE_LIMIT"
     safe_message = "Close rule limit reached for this account."
 
 
 class InsufficientPermissionsError(CycleError):
+    """Raised when the Bybit API key lacks permissions required to trade."""
+
     code = "INSUFFICIENT_PERMISSIONS"
     safe_message = "Bybit API key lacks required permissions."
 
 
 class AccountNotConfiguredError(CycleError):
+    """Raised when the account's trading infrastructure is not configured."""
+
     code = "ACCOUNT_NOT_CONFIGURED"
     safe_message = "Account infrastructure not configured."
 
 
 class CycleNotFoundError(CycleError):
+    """Raised when the referenced cycle does not exist."""
+
     code = "CYCLE_NOT_FOUND"
     safe_message = "Cycle not found."
 
 
 class CycleNotRunningError(CycleError):
+    """Raised when stopping a cycle that is not in a stoppable state."""
+
     code = "CYCLE_NOT_RUNNING"
     safe_message = "Cycle is not in a stoppable state."
 

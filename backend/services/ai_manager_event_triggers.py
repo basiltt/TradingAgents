@@ -384,4 +384,5 @@ class EventTriggerDetector:
 
     @property
     def seconds_since_last_eval(self) -> float:
+        """Seconds elapsed since the last evaluation cycle ran."""
         return time.monotonic() - self._last_eval_time

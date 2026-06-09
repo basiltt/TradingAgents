@@ -16,6 +16,10 @@ class CorrelationAnalyzer:
         self._threshold = correlation_threshold
 
     def compute(self, positions: List[Dict[str, Any]], klines: Dict[str, Dict[str, List]]) -> Dict[str, Any]:
+        """Compute the position correlation matrix, portfolio heat, and correlated clusters.
+
+        Returns zeros/empties when fewer than two distinct symbols are present.
+        """
         if len(positions) < 2:
             return {"matrix": {}, "portfolio_heat": 0.0, "clusters": [], "max_correlated_exposure_pct": 0.0}
 

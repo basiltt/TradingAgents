@@ -26,6 +26,7 @@ class AIManagerCircuitBreaker:
         self._tripped_at: Dict[str, float] = {}
 
     async def load_from_db(self, account_id: str, count: int, active: bool) -> None:
+        """Seed in-memory breaker state for an account from persisted values on startup."""
         self._counts[account_id] = count
         self._active[account_id] = active
         if active:
@@ -34,6 +35,11 @@ class AIManagerCircuitBreaker:
     async def record_outcome(
         self, account_id: str, realized_pnl: float, action_type: str
     ) -> None:
+        """Record a close outcome; trips the breaker after `threshold` consecutive losses.
+
+        Ignores non-close actions. A non-negative PnL resets the loss counter (and
+        closes an active breaker); a loss increments it and persists the new state.
+        """
         if action_type not in ("FULL_CLOSE", "PARTIAL_CLOSE"):
             return
         if realized_pnl >= 0:
@@ -65,9 +71,15 @@ class AIManagerCircuitBreaker:
             await self._repo.upsert_state(account_id, **fields)
 
     def is_tripped(self, account_id: str) -> bool:
+        """Return True if the breaker is currently open (active) for the account."""
         return self._active.get(account_id, False)
 
     async def check_cooldown(self, account_id: str) -> bool:
+        """Return True if cooldown has elapsed and a half-open probe is allowed.
+
+        Atomically claims the single half-open probe via a DB CAS when a repo is
+        configured, so only one trade is let through to test recovery.
+        """
         if not self._active.get(account_id):
             return False
         tripped_at = self._tripped_at.get(account_id, 0)
@@ -88,9 +100,11 @@ class AIManagerCircuitBreaker:
         return True
 
     def restart_cooldown(self, account_id: str) -> None:
+        """Reset the cooldown clock (e.g. after a failed half-open probe)."""
         self._tripped_at[account_id] = time.monotonic()
 
     async def reset(self, account_id: str) -> None:
+        """Fully close the breaker for an account and clear all loss/cooldown state."""
         self._counts[account_id] = 0
         self._active[account_id] = False
         self._tripped_at.pop(account_id, None)

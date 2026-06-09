@@ -20,6 +20,8 @@ _API_CALL_DELAY_S = 0.25
 
 
 class PositionReconciler:
+    """Background loop that reconciles DB trades with exchange positions and backfills closed PnL."""
+
     def __init__(
         self,
         db: Any,
@@ -37,6 +39,7 @@ class PositionReconciler:
         self._in_progress: set[str] = set()
 
     async def start(self) -> None:
+        """Start the periodic reconciliation loop unless disabled via env var."""
         if not self._enabled:
             logger.info("Position reconciler disabled via POSITION_SYNC_ENABLED=false")
             return
@@ -44,6 +47,7 @@ class PositionReconciler:
         logger.info("Position reconciler started (interval=%ds)", self._interval)
 
     async def shutdown(self) -> None:
+        """Cancel and await the reconciliation loop task."""
         if self._task and not self._task.done():
             self._task.cancel()
             try:

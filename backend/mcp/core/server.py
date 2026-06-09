@@ -67,6 +67,7 @@ class MCPServer:
     # --- MCP surface ---
 
     def initialize(self, *, requested_protocol: Optional[str] = None) -> dict[str, Any]:
+        """Build the MCP `initialize` response (server info, negotiated protocol, capabilities)."""
         return {
             "serverInfo": {"name": SERVER_NAME, "version": self._server_version},
             "protocolVersion": negotiate_protocol(requested_protocol),
@@ -104,6 +105,7 @@ class MCPServer:
         return "http-agent"
 
     def list_tools(self) -> list[dict[str, Any]]:
+        """List enabled tools as MCP descriptors (name, description, input schema, hint annotations)."""
         return [
             {
                 "name": spec.name,
@@ -122,6 +124,7 @@ class MCPServer:
     # --- resources / prompts (P1) — providers injected at composition time ---
 
     def list_resources(self) -> list[dict[str, str]]:
+        """List static MCP resources from the provider, or [] if none configured."""
         if self._resources is None:
             return []
         return list(self._resources.resources)
@@ -134,16 +137,19 @@ class MCPServer:
         return list(getter) if getter else []
 
     async def read_resource(self, uri: str) -> dict[str, Any]:
+        """Read a resource by URI via the provider; raises ValueError if resources are unavailable."""
         if self._resources is None:
             raise ValueError("resources not available")
         return await self._resources.read(uri, self._services, self._server_version)
 
     def list_prompts(self) -> list[dict[str, Any]]:
+        """List available MCP prompts from the provider, or [] if none configured."""
         if self._prompts is None:
             return []
         return self._prompts.list()
 
     def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Render a named prompt with the given arguments; raises ValueError if prompts are unavailable."""
         if self._prompts is None:
             raise ValueError("prompts not available")
         return self._prompts.get(name, arguments)
@@ -151,6 +157,11 @@ class MCPServer:
     async def call_tool(
         self, name: str, arguments: dict[str, Any], *, principal: str, session_id: str
     ) -> dict[str, Any]:
+        """Dispatch a tool call through validation + audit; returns its result envelope.
+
+        Returns a method-not-found error envelope (code -32601) if the tool is
+        unknown or disabled.
+        """
         spec = self._enabled.get(name)
         if spec is None:
             # disabled/unknown tool -> method-not-found semantics
@@ -170,4 +181,5 @@ class MCPServer:
         return await dispatch(spec, arguments, ctx, audit=self._audit.enqueue)
 
     async def shutdown(self) -> None:
+        """Flush and stop the background audit writer."""
         await self._audit.shutdown()

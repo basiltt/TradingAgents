@@ -17,10 +17,12 @@ class ServiceAccessors:
 
     @property
     def db(self) -> Any:
+        """The analysis/persistence DB handle, or None if unset."""
         return getattr(self._state, "db", None)
 
     @property
     def backtest_service(self) -> Any:
+        """The BacktestService for running/querying backtests, or None if unset."""
         return getattr(self._state, "backtest_service", None)
 
     @property
@@ -30,10 +32,12 @@ class ServiceAccessors:
 
     @property
     def accounts_service(self) -> Any:
+        """The AccountsService for account/balance reads, or None if unset."""
         return getattr(self._state, "accounts_service", None)
 
     @property
     def scanner_service(self) -> Any:
+        """The ScannerService for scan reads/launches, or None if unset."""
         return getattr(self._state, "scanner_service", None)
 
     @property
@@ -43,10 +47,12 @@ class ServiceAccessors:
 
     @property
     def signal_analytics_service(self) -> Any:
+        """The SignalAnalyticsService for signal-quality metrics, or None if unset."""
         return getattr(self._state, "signal_analytics_service", None)
 
     @property
     def sector_service(self) -> Any:
+        """The SectorService for symbol/sector classification, or None if unset."""
         return getattr(self._state, "sector_service", None)
 
     @property
@@ -56,4 +62,5 @@ class ServiceAccessors:
 
     @property
     def debug_trace_recorder(self) -> Any:
+        """The auto-trade debug trace recorder, or None if unset."""
         return getattr(self._state, "debug_trace_recorder", None)

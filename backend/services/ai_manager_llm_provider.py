@@ -271,6 +271,10 @@ def create_llm_callable_with_cleanup(
                 pass
 
         async def call_openai(system_prompt: str, context_prompt: str) -> str:
+            """Call the OpenAI-compatible chat endpoint and return the assistant text.
+
+            Acquires the global rate-limit slot for the duration of the request.
+            """
             acquired = await _acquire_global_rate_limit()
             try:
                 payload = {
@@ -314,6 +318,10 @@ def create_llm_callable_with_cleanup(
                 pass
 
         async def call_anthropic(system_prompt: str, context_prompt: str) -> str:
+            """Call the Anthropic Messages endpoint and return the assistant text.
+
+            Acquires the global rate-limit slot for the duration of the request.
+            """
             acquired = await _acquire_global_rate_limit()
             try:
                 payload = {

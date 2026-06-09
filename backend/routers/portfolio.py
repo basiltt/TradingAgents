@@ -22,6 +22,10 @@ async def get_dashboard(
     request: Request,
     account_type: str = Query(None, description="Filter by account type: demo or live"),
 ):
+    """Get per-account dashboard cards, optionally filtered by account type.
+
+    Each card is enriched with the account's current AI-manager task state.
+    """
     svc = _get_service(request)
     cards = await svc.get_dashboard()
     if account_type:
@@ -41,5 +45,6 @@ async def get_dashboard(
 
 @router.get("/portfolio/summary")
 async def get_portfolio_summary(request: Request):
+    """Get an aggregated cross-account portfolio summary (balances and totals)."""
     svc = _get_service(request)
     return await svc.get_portfolio_summary()

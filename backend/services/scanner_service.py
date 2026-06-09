@@ -470,6 +470,11 @@ class ScannerService:
             return set()
 
     async def start_scan(self, config: Dict[str, Any], schedule_id: str | None = None, triggered_by: str = "manual") -> str:
+        """Start a background market scan and return its new scan_id.
+
+        Enforces single-scan concurrency (raises ScannerBusyError if one is
+        already running) and evicts old finished scans, keeping the last 10.
+        """
         async with self._lock:
             active = sum(1 for s in self._scans.values() if s["status"] == "running")
             if active >= 1:
@@ -605,6 +610,7 @@ class ScannerService:
         return scan_id
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Get a scan by id, preferring the in-memory copy then falling back to the DB; None if absent."""
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan:
@@ -616,6 +622,7 @@ class ScannerService:
         return None
 
     async def cancel_scan(self, scan_id: str) -> bool:
+        """Cancel a running scan and its background task; returns False if not found/not running."""
         async with self._lock:
             scan = self._scans.get(scan_id)
             if not scan or scan["status"] != "running":
@@ -646,6 +653,10 @@ class ScannerService:
                 await asyncio.gather(*valid_tasks, return_exceptions=True)
 
     async def delete_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Delete a scan and its DB artifacts; raises ScannerBusyError if running, None if not found.
+
+        Returns a dict of deleted counts (results/analyses/sections).
+        """
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan and scan["status"] == "running":
@@ -660,11 +671,13 @@ class ScannerService:
         return result
 
     async def get_scan_analysis_count(self, scan_id: str) -> int:
+        """Return the number of analysis runs associated with a scan (0 if no DB)."""
         if not self._db:
             return 0
         return await self._db.get_scan_analysis_count(scan_id)
 
     async def list_scans(self) -> List[Dict[str, Any]]:
+        """List all scans (in-memory merged with DB), newest first by start time."""
         async with self._lock:
             in_memory_ids = set(self._scans.keys())
             result = [self._serialize(s) for s in self._scans.values()]
@@ -677,6 +690,11 @@ class ScannerService:
         return result
 
     async def resume_incomplete_scans(self) -> int:
+        """Resume scans left "running" after a restart; returns the count resumed.
+
+        At most one scan is resumed (remaining unfinished tickers are re-queued);
+        any extra stale running scans are marked failed.
+        """
         if not self._db:
             return 0
         running = await self._db.get_running_scans()

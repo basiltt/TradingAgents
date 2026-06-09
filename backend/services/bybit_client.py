@@ -24,6 +24,8 @@ _RETRY_BASE_DELAY = 0.5
 
 
 class BybitAPIError(Exception):
+    """Raised when the Bybit V5 API returns a non-zero retCode; carries code and message."""
+
     def __init__(self, ret_code: int, ret_msg: str):
         self.ret_code = ret_code
         self.ret_msg = ret_msg
@@ -31,6 +33,8 @@ class BybitAPIError(Exception):
 
 
 class BybitClient:
+    """Async client for the Bybit V5 REST API (signed account/position reads and orders)."""
+
     REST_ENDPOINTS = {
         "live": "https://api.bybit.com",
         "demo": "https://api-demo.bybit.com",
@@ -60,6 +64,7 @@ class BybitClient:
         return self._session
 
     async def close(self) -> None:
+        """Close the underlying aiohttp session if open."""
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -221,6 +226,7 @@ class BybitClient:
         await get_rate_gate().acquire_async(channel="private", lane=lane)
 
     async def test_connection(self) -> dict[str, Any]:
+        """Probe credentials via a wallet-balance call; returns {"success", "uid", "error"}."""
         try:
             await self._request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
             return {"success": True, "uid": None, "error": None}
@@ -228,6 +234,7 @@ class BybitClient:
             return {"success": False, "uid": None, "error": e.ret_msg}
 
     async def get_wallet_balance(self) -> dict[str, Any]:
+        """Fetch UNIFIED account balance (equity, wallet/available balance, UPL, per-coin)."""
         result = await self._request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
         account_list = result.get("list", [])
         if not account_list:
@@ -258,6 +265,10 @@ class BybitClient:
         return await self._request("POST", "/v5/account/demo-apply-money", params)
 
     async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        """List open linear USDT positions (paginated), optionally for one symbol.
+
+        Returns normalized position dicts; zero-size entries are filtered out.
+        """
         params: dict[str, Any] = {"category": "linear", "settleCoin": "USDT", "limit": "200"}
         if symbol:
             params["symbol"] = symbol
@@ -298,6 +309,7 @@ class BybitClient:
         ]
 
     async def get_open_orders(self) -> list[dict[str, Any]]:
+        """List active linear USDT orders as normalized dicts (id, symbol, side, qty, status, ...)."""
         result = await self._request("GET", "/v5/order/realtime", {"category": "linear", "settleCoin": "USDT"})
         orders = result.get("list", [])
         return [
@@ -319,6 +331,10 @@ class BybitClient:
     async def get_closed_pnl(
         self, start_time: int, end_time: int, limit: int = 100, cursor: str = ""
     ) -> dict[str, Any]:
+        """Fetch closed-PnL records in a time window (ms epochs); one page per call.
+
+        Returns {"list": [...], "nextPageCursor": ...}; pass the cursor back to page.
+        """
         params: dict[str, Any] = {
             "category": "linear",
             "settleCoin": "USDT",

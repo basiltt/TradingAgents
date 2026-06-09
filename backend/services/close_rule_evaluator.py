@@ -132,6 +132,7 @@ class CloseRuleEvaluator:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_ACCOUNTS)
 
         async def evaluate_account(account_id: str, account_rules: list[dict]) -> None:
+            """Evaluate one account's close rules under a concurrency limit and per-account timeout."""
             async with semaphore:
                 try:
                     await asyncio.wait_for(

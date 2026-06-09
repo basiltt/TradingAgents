@@ -30,6 +30,8 @@ def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 @dataclass
 class TradeExecution:
+    """Outcome record for one attempted auto-trade (account, symbol, side, status, order id/error)."""
+
     account_id: str
     symbol: str
     side: str
@@ -65,6 +67,7 @@ class AutoTradeExecutor:
         self._scan_context: ScanContext = ScanContext.empty(degraded=False)
 
     def set_scan_context(self, ctx: ScanContext) -> None:
+        """Set the frozen per-scan context used by the regime/strategy gates."""
         self._scan_context = ctx
 
     def set_mean_fetcher(self, fetcher) -> None:
@@ -134,6 +137,7 @@ class AutoTradeExecutor:
         )
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
+        """Initialize per-account executor state from the auto-trade configs and reset per-scan caches."""
         self._state.clear()
         self._mr_mean_cache = {}   # reset the per-scan MR mean cache (IR1)
         self._mr_price_cache = {}  # reset the per-scan MR mark-price cache (P2)
@@ -663,6 +667,7 @@ class AutoTradeExecutor:
             return executions
 
     def get_summaries(self) -> List[Dict[str, Any]]:
+        """Return per-account execution summaries (counts, stop reason, rule ids, executions)."""
         return [
             {
                 "account_id": state.config["account_id"],

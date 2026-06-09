@@ -22,6 +22,8 @@ DEGRADATION_MAP: dict[int, list[str]] = {
 
 
 class CapabilitiesStatusAggregator:
+    """Builds the AI-manager capability health view from config, degradation tier, and task state."""
+
     def __init__(
         self,
         config: dict[str, Any],
@@ -37,6 +39,11 @@ class CapabilitiesStatusAggregator:
         self._next_eval_at = next_eval_at
 
     def get_capabilities(self) -> list[dict[str, Any]]:
+        """Return per-capability status rows (enabled, healthy/degraded/disabled, next trigger).
+
+        A capability is "disabled" by config flag, "degraded" if cut at the current
+        degradation tier, else "healthy".
+        """
         degraded_keys: set[str] = set()
         for tier_level in range(1, self._tier + 1):
             degraded_keys.update(DEGRADATION_MAP.get(tier_level, []))
@@ -93,6 +100,7 @@ class CapabilitiesStatusAggregator:
         return results
 
     def get_response(self) -> dict[str, Any]:
+        """Return the full dashboard payload: capabilities plus tier and next-eval countdown."""
         countdown = 0
         if self._next_eval_at:
             now = datetime.now(timezone.utc)
