@@ -362,7 +362,10 @@ class AIManagerTask:
                             else:
                                 estimated_pnl = (entry - last_mark) * pos_size
                             if estimated_pnl < 0:
-                                asyncio.create_task(self._enforce_daily_limits(estimated_pnl))
+                                # AI-CONTEXT: track the task — a bare create_task is held
+                                # only by a weakref and can be GC'd before it records this
+                                # realized loss (risk bookkeeping for an exchange-side SL).
+                                self._track_task(asyncio.create_task(self._enforce_daily_limits(estimated_pnl)))
                                 self._log.info("Exchange-side SL for trailing %s, est PnL: $%.2f", symbol, estimated_pnl)
                         except (TypeError, ValueError):
                             self._log.warning("Could not compute PnL for exchange-closed trailing %s", symbol)
@@ -522,6 +525,15 @@ class AIManagerTask:
             self._log_async("critical", "lifecycle", "Task crashed unexpectedly")
         finally:
             await self._stop_orderbook_monitors()
+            # AI-CONTEXT: the commentary loop is an INDEPENDENT asyncio task (a
+            # `while True` sleeper) — cancelling self._task does NOT cancel it. It is
+            # otherwise stopped only on a MONITORING→other state transition, so a
+            # direct cancel()/disable() while the account is MONITORING (has open
+            # positions — exactly when commentary runs) would orphan it: the loop
+            # pins this whole AIManagerTask (no GC) AND keeps firing LLM commentary
+            # calls forever for a disabled account. Tear it down here so every exit
+            # path (transition OR cancel) reclaims it.
+            await self._stop_commentary_loop()
             if self._cleanup_task and not self._cleanup_task.done():
                 self._cleanup_task.cancel()
                 try:
@@ -707,7 +719,9 @@ class AIManagerTask:
                         attempt_number=1,
                     )
 
-                asyncio.create_task(self._persist_enrichment_data(result))
+                # AI-CONTEXT: track the task so it can't be GC'd before the
+                # enrichment persistence write completes (bare create_task is weak-ref'd).
+                self._track_task(asyncio.create_task(self._persist_enrichment_data(result)))
         except RuntimeError as e:
             if "slot not available" in str(e).lower():
                 if half_open_probe:
