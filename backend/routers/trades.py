@@ -186,7 +186,14 @@ async def list_trades_cross_account(
                 if float(pos.get("size", 0)) == 0:
                     continue
                 key = (aid, pos["symbol"], pos["side"], int(pos.get("positionIdx", 0)))
-                pnl_lookup[key] = float(pos.get("unrealisedPnl", 0))
+                # AI-CONTEXT: dual-key + `or 0` guard (codebase-wide form). A WS/exchange
+                # frame may carry unrealisedPnl as "" or None (key present, value empty);
+                # a bare float(get(...,0)) would raise ValueError on "" and fail the whole
+                # enrichment. Default/coerce to 0.0 instead.
+                try:
+                    pnl_lookup[key] = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)) or 0)
+                except (TypeError, ValueError):
+                    pnl_lookup[key] = 0.0
 
     def enrich(trade: dict) -> dict:
         """Serialize trade and attach unrealized_pnl from position lookup."""

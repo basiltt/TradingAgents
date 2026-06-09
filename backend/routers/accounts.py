@@ -510,13 +510,23 @@ async def get_trade_detail(request: Request, account_id: str, trade_id: str):
 
 
 def _serialize_trade_event(event: dict) -> dict:
-    """Serialize a trade event dict, converting UUIDs and datetimes to strings."""
+    """Serialize a trade event dict, converting UUIDs and datetimes to strings.
+
+    Also hoists ``error_message`` from the ``payload`` JSONB to the top level: the
+    trade_events table stores it inside payload, but the API contract (and the
+    frontend TradeEvent type / detail-panel error display) expects it as a
+    top-level field. Without this hoist it is always null in the UI.
+    """
     out = dict(event)
     for k, v in out.items():
         if isinstance(v, _uuid.UUID):
             out[k] = str(v)
         elif hasattr(v, "isoformat"):
             out[k] = v.isoformat()
+    if "error_message" not in out or out.get("error_message") is None:
+        payload = out.get("payload")
+        if isinstance(payload, dict):
+            out["error_message"] = payload.get("error_message")
     return out
 
 

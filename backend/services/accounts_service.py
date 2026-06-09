@@ -489,6 +489,7 @@ class AccountsService:
         })
         return {
             "side": side,
+            "symbol": symbol,
             "leverage": leverage,
             "max_leverage": max_leverage,
             "mark_price": str(mark_price),
@@ -497,6 +498,9 @@ class AccountsService:
             "qty": str(qty_rounded),
             "usdt_amount": str(usdt_amount),
             "trade_id": str(trade_record["id"]) if trade_record else None,
+            # AI-CONTEXT: the confirmation UI (PlaceTradeDialog) displays orderId;
+            # surface the exchange order id (distinct from our internal trade_id).
+            "orderId": result.get("orderId", ""),
         }
 
     # ── CRUD ────────────────────────────────────────────────────────────
