@@ -258,11 +258,21 @@ function Section({
   /** When true (e.g. the section contains a validation error), force it open. */
   forceOpen?: boolean;
 }) {
-  const [open, setOpen] = React.useState(defaultOpen);
-  // A failed submit inside a collapsed section must reveal its errors.
-  React.useEffect(() => {
+  // Initialize open from defaultOpen OR an initial forceOpen so a section mounted
+  // already-forced (e.g. a seeded form that fails validation immediately) starts
+  // open — matching the original mount-time effect behavior.
+  const [open, setOpen] = React.useState(defaultOpen || forceOpen);
+  // AI-CONTEXT: A failed submit inside a collapsed section must reveal its errors.
+  // We open on the rising edge of `forceOpen` using React's "adjust state during
+  // render when a prop changes" pattern rather than a setState-in-effect
+  // (react-hooks/set-state-in-effect). Tracking the previous value preserves the
+  // original semantics: only the false→true transition forces it open, so the user
+  // can still manually collapse the section afterward while forceOpen stays true.
+  const [prevForceOpen, setPrevForceOpen] = React.useState(forceOpen);
+  if (forceOpen !== prevForceOpen) {
+    setPrevForceOpen(forceOpen);
     if (forceOpen) setOpen(true);
-  }, [forceOpen]);
+  }
   return (
     <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4">
       <button
@@ -334,7 +344,14 @@ export function BacktestConfigForm({
   // Persist every change as a draft. RHF's watch(callback) fires on subsequent
   // changes only (not on subscribe), so this saves what the user edits without
   // clobbering the restored draft on mount.
+  // AI-CONTEXT: This MUST stay as watch(callback), NOT useWatch({control}). The
+  // callback subscription persists drafts as a side effect WITHOUT re-rendering the
+  // form; useWatch would re-render the entire (large) form on every keystroke — a
+  // real perf regression for zero behavioral gain. The React Compiler can't memoize
+  // watch() and therefore skips optimizing this component, which is acceptable here:
+  // the form is interaction-bound, not render-bound. Disable is scoped to this line.
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/incompatible-library -- intentional non-rendering RHF subscription; see note above
     const sub = watch((values) => {
       saveDraft(values as BacktestDraft);
     });

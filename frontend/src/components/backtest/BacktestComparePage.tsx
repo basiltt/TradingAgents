@@ -5,9 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { backtestApi } from "@/api/client";
 import type { BacktestRun } from "./types";
 import { formatUsd, formatPct, formatRatio, formatInt, pnlColorClass, TH_CLASS, TH_CLASS_RIGHT } from "./format";
-import { EquityOverlayChart, OVERLAY_COLORS, type EquityDataset } from "./EquityOverlayChart";
+import { EquityOverlayChart } from "./EquityOverlayChart";
+import { OVERLAY_COLORS, type EquityDataset } from "./equityOverlayData";
+import { bestRunIndex } from "./backtestCompare";
 import { MAX_COMPARE_RUNS } from "./comparisonBasket";
 import { cn } from "@/lib/utils";
+
+// AI-CONTEXT: bestRunIndex lives in ./backtestCompare so this file exports only
+// the component (React Fast Refresh / react-refresh/only-export-components). Tests
+// import bestRunIndex from ./backtestCompare directly.
 
 export interface BacktestComparePageProps {
   runIds: string[];
@@ -79,26 +85,11 @@ const ROWS: CompareRow[] = [
   },
 ];
 
-/** Index of the best run for a row, or -1 if not comparable. */
-export function bestRunIndex(
-  runs: BacktestRun[],
-  rawValue: ((r: BacktestRun) => number | null) | undefined,
-  better: "high" | "low" | undefined,
-): number {
-  if (!rawValue || !better) return -1;
-  let bestIdx = -1;
-  let bestVal: number | null = null;
-  runs.forEach((r, i) => {
-    const v = rawValue(r);
-    if (v == null || !Number.isFinite(v)) return;
-    if (bestVal == null || (better === "high" ? v > bestVal : v < bestVal)) {
-      bestVal = v;
-      bestIdx = i;
-    }
-  });
-  return bestIdx;
-}
-
+/**
+ * Side-by-side comparison of 2–N backtest runs: a metric table that highlights the
+ * best run per row plus an overlaid equity chart. `runIds` is clamped to
+ * {@link MAX_COMPARE_RUNS} before the API call so a hand-edited URL cannot 422.
+ */
 export function BacktestComparePage({ runIds, onBack }: BacktestComparePageProps) {
   // A hand-edited URL could carry more than the supported number of runs; clamp
   // before hitting the API (which would 422) so the UI stays well-defined.

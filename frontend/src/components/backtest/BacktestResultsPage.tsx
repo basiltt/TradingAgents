@@ -198,10 +198,18 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
     }
   }, [status]);
 
-  const [inBasket, setInBasket] = React.useState(false);
-  React.useEffect(() => {
+  // AI-CONTEXT: `inBasket` is derived from runId (via isInBasket, a localStorage
+  // read) but must also update when the user clicks Add/Remove. We use React's
+  // documented "adjust state while rendering when a prop changes" pattern instead
+  // of a setState-in-effect (react-hooks/set-state-in-effect): compare the live
+  // runId against the previous one during render and reseed synchronously. This
+  // avoids the extra commit+flash an effect would cause on run switches.
+  const [inBasket, setInBasket] = React.useState(() => isInBasket(runId));
+  const [seenRunId, setSeenRunId] = React.useState(runId);
+  if (runId !== seenRunId) {
+    setSeenRunId(runId);
     setInBasket(isInBasket(runId));
-  }, [runId]);
+  }
 
   const handleAddToComparison = () => {
     const next = addToBasket(runId);

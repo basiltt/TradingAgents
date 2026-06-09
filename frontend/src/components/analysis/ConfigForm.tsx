@@ -335,7 +335,7 @@ export function ConfigForm() {
       ta_prefilter_enabled: watchedPrefilter,
       ta_prefilter_threshold: watchedPrefilterThreshold,
     });
-  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews, watchedWorkflowMode, watchedPrefilter, watchedPrefilterThreshold]);
+  }, [watchedAssetType, watchedTicker, selectedProvider, watchedApiKey, watchedBackendUrl, watchedDeep, watchedQuick, watchedAnalysts, watchedDepth, watchedLang, watchedDebate, watchedRisk, watchedRecur, watchedCheckpoint, watchedPromptCache, watchedInterval, watchedVendorCore, watchedVendorTech, watchedVendorFund, watchedVendorNews, watchedWorkflowMode, watchedPrefilter, watchedPrefilterThreshold]);
 
   useEffect(() => {
     if (watchedBackendUrl?.trim()) {

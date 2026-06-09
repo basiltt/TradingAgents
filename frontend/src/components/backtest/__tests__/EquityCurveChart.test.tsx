@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { EquityCurveChart } from "../EquityCurveChart";
 import {
-  EquityCurveChart,
   prepareEquitySeries,
   equityDomain,
   formatTsLabel,
   buildBuyHoldSeries,
-} from "../EquityCurveChart";
+} from "../equityCurveData";
 import type { EquityPoint } from "../types";
 
 describe("formatTsLabel", () => {

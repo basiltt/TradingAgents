@@ -2,6 +2,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { type AutoTradeConfig } from "@/api/client";
 import { NeuSwitch } from "@/design-system/neumorphism";
+import { RECOMMENDED_PRESET, RECOMMENDED_BLOCKED_HOURS } from "./regimeStrategyPreset";
+
+// AI-CONTEXT: RECOMMENDED_PRESET lives in ./regimeStrategyPreset so this file
+// exports only the component (React Fast Refresh / react-refresh/only-export-components).
+// Tests import the preset from ./regimeStrategyPreset directly.
 
 const SECTION_CLASS =
   "neu-surface-base neu-surface-raised rounded-[var(--neu-radius-md)] p-4 border-none shadow-[var(--shadow-card)]";
@@ -12,29 +17,6 @@ interface Props {
   /** "manual" | "scheduled" — affects helper copy only. */
   context?: "manual" | "scheduled";
 }
-
-const RECOMMENDED_BLOCKED_HOURS = [1, 6, 7, 8, 9, 10, 11, 12];
-
-/**
- * One-click "research-recommended" preset (TASK-5.3): turns F1 on with the proven
- * Asian-session block + a conservative BTC-vol band, and primes F2 with small/tight
- * mean-reversion sizing. Long side stays OFF (negative expectancy per the report).
- * Applied via onChange so the parent's diff/confirm + persistence flow is reused.
- */
-export const RECOMMENDED_PRESET: Partial<AutoTradeConfig> = {
-  regime_filter_enabled: true,
-  session_filter_enabled: true,
-  session_blocked_hours_utc: [...RECOMMENDED_BLOCKED_HOURS],
-  btc_vol_filter_enabled: true,
-  btc_vol_min_threshold: 0.8,
-  btc_vol_max_threshold: 3.0,
-  mean_reversion_enabled: true,
-  strategy_cohort: "mean_reversion",
-  mr_capital_pct: 2,
-  mr_leverage: 5,
-  mr_time_stop_minutes: 120,
-  mr_long_enabled: false,
-};
 
 /**
  * Regime Multi-Strategy config (F1 session/regime filter, F2 mean-reversion,

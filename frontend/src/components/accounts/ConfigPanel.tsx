@@ -51,6 +51,39 @@ const VALID_RISK_LEVELS = ["conservative", "moderate", "aggressive"] as const;
 const SYMBOL_PATTERN = /^[A-Z0-9]{1,20}$/;
 
 /**
+ * Map a persisted AI-manager config object into editable form state.
+ *
+ * Every field is stringified (form inputs are controlled text) and falls back to
+ * its DEFAULT_FORM value when absent. `excluded_symbols` / `locked_positions`
+ * arrays are joined into comma-separated strings for the text inputs.
+ *
+ * @param saved - The persisted config (`Record<string, unknown>`), as stored in
+ *   Redux. Shape is loosely typed because it mirrors a server JSON blob.
+ * @returns A fully-populated {@link FormState} ready to seed the controlled inputs.
+ *
+ * @example
+ * configToForm({ confidence_threshold: 0.8, dry_run: true });
+ * // → { ...DEFAULT_FORM, confidence: "0.8", dryRun: true }
+ */
+function configToForm(saved: Record<string, unknown>): FormState {
+  return {
+    confidence: String(saved.confidence_threshold ?? DEFAULT_FORM.confidence),
+    maxLoss: String(saved.max_daily_loss_pct ?? DEFAULT_FORM.maxLoss),
+    interval: String(saved.evaluation_interval_s ?? DEFAULT_FORM.interval),
+    risk: String(saved.risk_tolerance ?? DEFAULT_FORM.risk),
+    dryRun: Boolean(saved.dry_run),
+    maxDailyActions: String(saved.max_daily_actions ?? DEFAULT_FORM.maxDailyActions),
+    maxHourlyActions: String(saved.max_hourly_actions ?? DEFAULT_FORM.maxHourlyActions),
+    minPositionAge: String(saved.min_position_age_s ?? DEFAULT_FORM.minPositionAge),
+    gracePeriod: String(saved.grace_period_s ?? DEFAULT_FORM.gracePeriod),
+    profitTarget: saved.daily_profit_target_pct != null ? String(saved.daily_profit_target_pct) : "",
+    maxSingleLoss: String(saved.max_single_decision_loss_pct ?? DEFAULT_FORM.maxSingleLoss),
+    excludedSymbols: ((saved.excluded_symbols as string[]) || []).join(", "),
+    lockedPositions: ((saved.locked_positions as string[]) || []).join(", "),
+  };
+}
+
+/**
  * AI Manager configuration panel for a single account.
  *
  * @param props.accountId - The account to configure.
@@ -70,25 +103,18 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
     dispatch(fetchConfig(accountId));
   }, [dispatch, accountId]);
 
-  useEffect(() => {
-    if (savedConfig) {
-      setForm({
-        confidence: String(savedConfig.confidence_threshold ?? "0.7"),
-        maxLoss: String(savedConfig.max_daily_loss_pct ?? "5.0"),
-        interval: String(savedConfig.evaluation_interval_s ?? "60"),
-        risk: String(savedConfig.risk_tolerance ?? "moderate"),
-        dryRun: Boolean(savedConfig.dry_run),
-        maxDailyActions: String(savedConfig.max_daily_actions ?? "30"),
-        maxHourlyActions: String(savedConfig.max_hourly_actions ?? "10"),
-        minPositionAge: String(savedConfig.min_position_age_s ?? "300"),
-        gracePeriod: String(savedConfig.grace_period_s ?? "0"),
-        profitTarget: savedConfig.daily_profit_target_pct != null ? String(savedConfig.daily_profit_target_pct) : "",
-        maxSingleLoss: String(savedConfig.max_single_decision_loss_pct ?? "3.0"),
-        excludedSymbols: (savedConfig.excluded_symbols as string[] || []).join(", "),
-        lockedPositions: (savedConfig.locked_positions as string[] || []).join(", "),
-      });
-    }
-  }, [savedConfig]);
+  // AI-CONTEXT: Seed the editable form from the persisted config whenever a new
+  // config object arrives from Redux. Implemented with React's "adjust state during
+  // render when a dependency changes" pattern (tracking the previous savedConfig
+  // reference) instead of a setState-in-effect (react-hooks/set-state-in-effect).
+  // The slice replaces the object reference on each fetch, so identity comparison
+  // correctly detects a fresh load. Local edits are preserved until the next fetch
+  // swaps the reference again.
+  const [seenConfig, setSeenConfig] = useState<Record<string, unknown> | null | undefined>(undefined);
+  if (savedConfig !== seenConfig) {
+    setSeenConfig(savedConfig);
+    if (savedConfig) setForm(configToForm(savedConfig));
+  }
 
   const handleSave = () => {
     const updates: Record<string, unknown> = {};

@@ -3,7 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { BacktestComparePage, bestRunIndex } from "../BacktestComparePage";
+import { BacktestComparePage } from "../BacktestComparePage";
+import { bestRunIndex } from "../backtestCompare";
 import type { BacktestMetrics, BacktestRun } from "../types";
 
 const server = setupServer();

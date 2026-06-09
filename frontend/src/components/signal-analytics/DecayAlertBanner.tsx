@@ -1,34 +1,13 @@
-export interface DecayAlert {
-  id: number;
-  alert_type: string;
-  severity: string;
-  message: string;
-  created_at: string;
-}
+import { type DecayAlert, severityClass } from "./decayAlerts";
+
+// AI-CONTEXT: DecayAlert, acknowledgeAlert, and severityClass live in ./decayAlerts
+// so this file exports only the component (React Fast Refresh /
+// react-refresh/only-export-components). SignalAnalyticsPage imports the type and
+// the acknowledge helper from ./decayAlerts directly.
 
 interface Props {
   alerts: DecayAlert[];
   onAcknowledge: (id: number) => void;
-}
-
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
-
-function severityClass(severity: string): string {
-  switch (severity.toLowerCase()) {
-    case "critical":
-      return "border-destructive/40 bg-destructive/8 text-destructive";
-    case "warning":
-      return "border-amber-500/40 bg-amber-500/8 text-amber-700 dark:text-amber-400";
-    default:
-      return "border-border/60 bg-card/70 text-foreground";
-  }
-}
-
-export async function acknowledgeAlert(id: number): Promise<void> {
-  await fetch(`${BASE_URL}/api/v1/signal-analytics/decay-alerts/${id}/acknowledge`, {
-    method: "POST",
-    headers: { "X-Requested-With": "XMLHttpRequest" },
-  });
 }
 
 export function DecayAlertBanner({ alerts, onAcknowledge }: Props) {

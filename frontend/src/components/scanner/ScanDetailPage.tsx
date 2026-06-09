@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { formatDurationBetween } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -276,20 +276,27 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
     queryKey: ["scan", scanId],
     queryFn: ({ signal }) => apiClient.getScan(scanId, signal),
     refetchInterval: (query) => {
-      const status = query.state.data?.status;
+      const data = query.state.data;
+      const status = data?.status;
       if (status === "running") return 3000;
-      if (isAutoTrading) return 3000;
+      // Keep polling while the user-triggered auto-trade run is in flight, i.e.
+      // until its summaries land. Derived here from the freshest query data rather
+      // than mirrored into state via an effect (react-hooks/set-state-in-effect).
+      const summaries = data?.auto_trade_summaries;
+      const stillAutoTrading = isAutoTrading && !(summaries && summaries.length > 0);
+      if (stillAutoTrading) return 3000;
       return false;
     },
   });
 
-  // Stop polling once auto_trade_summaries arrive
+  // AI-CONTEXT: `isAutoTrading` is the user's intent flag (set true when they click
+  // Auto Trade). The run is "active" only until auto_trade_summaries arrive — we
+  // DERIVE that here instead of resetting the flag in an effect, which removes the
+  // setState-in-effect and the extra render it caused. Drives the button's disabled
+  // state and label so it re-enables automatically once summaries are present.
   const autoTradeSummaries = scan?.auto_trade_summaries;
-  useEffect(() => {
-    if (isAutoTrading && autoTradeSummaries && autoTradeSummaries.length > 0) {
-      setIsAutoTrading(false);
-    }
-  }, [isAutoTrading, autoTradeSummaries]);
+  const autoTradingActive =
+    isAutoTrading && !(autoTradeSummaries && autoTradeSummaries.length > 0);
 
   const autoTradeMutation = useMutation({
     mutationFn: () => apiClient.triggerAutoTrade(scanId),
@@ -404,10 +411,10 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
             {isCrypto && scan.status === "completed" && (
               <button
                 onClick={() => autoTradeMutation.mutate()}
-                disabled={isAutoTrading || autoTradeMutation.isPending}
+                disabled={autoTradingActive || autoTradeMutation.isPending}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[var(--neu-radius-pill)] text-sm font-medium bg-[var(--neu-success)] text-white hover:brightness-110 shadow-[var(--neu-shadow-pill)] transition-all border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isAutoTrading || autoTradeMutation.isPending ? (
+                {autoTradingActive || autoTradeMutation.isPending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -417,7 +424,7 @@ export function ScanDetailPage({ scanId }: { scanId: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 )}
-                {isAutoTrading ? "Executing Trades..." : "Auto Trade"}
+                {autoTradingActive ? "Executing Trades..." : "Auto Trade"}
               </button>
             )}
             {isCrypto && scan.status === "completed" && (

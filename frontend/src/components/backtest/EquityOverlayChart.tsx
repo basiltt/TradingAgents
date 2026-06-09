@@ -9,56 +9,12 @@ import {
   Legend,
 } from "recharts";
 import { useMemo } from "react";
-import type { EquityPoint } from "./types";
+import { type EquityDataset, mergeEquityDatasets } from "./equityOverlayData";
 
-export interface EquityDataset {
-  label: string;
-  color: string;
-  data: EquityPoint[];
-}
-
-/** A color palette for overlaying up to 4 comparison runs. */
-export const OVERLAY_COLORS = [
-  "var(--neu-accent)",
-  "#f59e0b", // amber
-  "#8b5cf6", // violet
-  "#ec4899", // pink
-];
-
-interface MergedRow {
-  idx: number;
-  [seriesKey: string]: number;
-}
-
-/**
- * Merge N equity datasets into rows indexed by sample position (0..maxLen-1).
- * Each dataset becomes a `s{i}` numeric key. Datasets of differing lengths are
- * aligned by index; missing tail points are simply absent for that series so
- * recharts draws a shorter line. Returns the rows plus the series metadata.
- */
-export function mergeEquityDatasets(datasets: EquityDataset[]): {
-  rows: MergedRow[];
-  series: Array<{ key: string; label: string; color: string }>;
-} {
-  const series = datasets.map((d, i) => ({
-    key: `s${i}`,
-    label: d.label,
-    color: d.color,
-  }));
-  const maxLen = datasets.reduce((m, d) => Math.max(m, d.data.length), 0);
-  const rows: MergedRow[] = [];
-  for (let idx = 0; idx < maxLen; idx++) {
-    const row: MergedRow = { idx };
-    datasets.forEach((d, i) => {
-      const pt = d.data[idx];
-      if (pt && Number.isFinite(pt.equity)) {
-        row[`s${i}`] = Math.round(pt.equity * 100) / 100;
-      }
-    });
-    rows.push(row);
-  }
-  return { rows, series };
-}
+// AI-CONTEXT: EquityDataset, OVERLAY_COLORS, MergedRow, and mergeEquityDatasets
+// live in ./equityOverlayData so this file exports only the component (React Fast
+// Refresh / react-refresh/only-export-components). Import what the component needs
+// from ./equityOverlayData directly; do NOT re-export or the rule re-triggers.
 
 export interface EquityOverlayChartProps {
   datasets: EquityDataset[];

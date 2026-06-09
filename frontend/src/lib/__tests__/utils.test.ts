@@ -7,7 +7,11 @@ describe("cn", () => {
   });
 
   it("handles conditional classes", () => {
-    expect(cn("base", false && "hidden", "visible")).toBe("base visible");
+    // `show`/`hide` are runtime values (not literals) so the linter does not
+    // flag a constant truthiness expression; `cn` must drop the falsy branch.
+    const hide = false;
+    const show = true;
+    expect(cn("base", hide && "hidden", show && "visible")).toBe("base visible");
   });
 
   it("merges tailwind conflicts correctly", () => {
