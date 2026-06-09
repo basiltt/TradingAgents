@@ -454,7 +454,17 @@ class AccountsService:
                         event_type="filled", actor="system",
                         updates={
                             "order_id": result.get("orderId", ""),
-                            "filled_qty": float(result.get("cumExecQty") or qty_rounded),
+                            # AI-CONTEXT: filled_qty is the CUMULATIVE-CLOSED quantity
+                            # (the close/partial paths read it as "how much has been
+                            # closed so far": remaining = qty - filled_qty, and
+                            # _close_partial accumulates previously_filled + qty). At
+                            # OPEN nothing is closed yet, so it MUST be 0. Previously
+                            # this wrote the ENTRY fill qty (cumExecQty ≈ qty), which
+                            # made remaining == 0 and made close_single_trade reject
+                            # EVERY fully-filled position with "No remaining quantity
+                            # to close" — the manual-exit endpoint was broken. The
+                            # entry fill is recorded in entry_price/avg_fill_price.
+                            "filled_qty": 0.0,
                             "entry_price": float(result.get("avgPrice") or mark_price),
                             "avg_fill_price": float(result.get("avgPrice") or mark_price),
                             "fees": float(result.get("cumExecFee") or 0),

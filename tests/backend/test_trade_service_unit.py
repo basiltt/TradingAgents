@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,7 +15,6 @@ from backend.services.trade_repository import (
     TradeNotFound,
 )
 from backend.services.trade_service import TradeService
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -206,6 +204,25 @@ class TestCloseSingleTrade:
         mock_repo.get_trade.return_value = _make_trade(qty="1.0", filled_qty="1.0")
         with pytest.raises(InvalidStatusTransition, match="No remaining"):
             await service.close_single_trade("acc-1", "t1")
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_freshly_opened_trade_is_closeable(self, service, mock_db, mock_repo, mock_accounts, mock_ws):
+        """REGRESSION: a normally-opened trade has filled_qty==0 (nothing closed yet),
+        so remaining == qty and the manual-close endpoint must succeed. This guards
+        the CRITICAL bug where place_trade wrote filled_qty = entry-qty (== qty),
+        making remaining == 0 and rejecting EVERY full close with "No remaining
+        quantity to close". filled_qty means CUMULATIVE-CLOSED, not entry fill."""
+        _, client = mock_accounts
+        # filled_qty="0" is exactly what place_trade now writes at open.
+        trade = _make_trade(qty="1.0", filled_qty="0")
+        mock_repo.get_trade.return_value = trade
+        mock_repo.update_trade_status.return_value = trade
+        mock_repo.close_trade.return_value = {**trade, "status": "closed", "realized_pnl": "10", "net_pnl": "9"}
+        client.place_market_close_order.return_value = {"avgPrice": "51000", "cumExecFee": "5"}
+
+        result = await service.close_single_trade("acc-1", str(trade["id"]))
+        assert result["status"] == "closed"
+        client.place_market_close_order.assert_awaited_once()
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_raises_value_error_qty_exceeds_remaining(self, service, mock_repo):
