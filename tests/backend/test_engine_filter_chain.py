@@ -590,8 +590,14 @@ class TestInstrumentInfo:
         """A sub-cent symbol with a coarse fallback tick (0.01) must NOT have its SL
         rounded to 0 — a 0 SL was wrongly treated as the closest stop on a short,
         fabricating a ~100% win. With the round_price_to_tick zero-guard + the
-        sl_price>0 liquidation guard, an adverse short closes via LIQUIDATION (a real
-        loss), and reconciliation holds."""
+        SL-liquidation clamp, an adverse short closes via the (clamped) stop-loss for
+        a REAL loss — never a fabricated win — and reconciliation holds.
+
+        AI-CONTEXT: pre-clamp this asserted close_reason=='liquidation'. The SL-clamp
+        (trading_rules.clamp_sl_move_pct_to_liquidation, matching live) now pulls the
+        stop inside the liquidation band so it fires as 'sl' first. The invariant this
+        test actually guards — an adverse short is a LOSS, not a zeroed-SL fabricated
+        win — is unchanged and the central assertion below (pnl < 0)."""
         from datetime import datetime, timedelta, timezone
 
         from backend.services.backtest_engine import BacktestEngine
@@ -609,8 +615,9 @@ class TestInstrumentInfo:
         result = BacktestEngine().run(config, signals, klines, instrument_info=info)
         assert len(result.trades) == 1
         trade = result.trades[0]
-        # Must NOT be an SL at a zeroed price (which would be a huge fabricated profit).
-        assert trade["close_reason"] == "liquidation"
+        # Closes via the clamped SL (fires before liquidation, matching live) — NOT a
+        # zeroed-price SL that would fabricate a huge win.
+        assert trade["close_reason"] == "sl"
         assert trade["pnl"] < 0  # an adverse short is a loss, never a fabricated win
         # Reconciliation invariant holds.
         assert result.metrics["net_profit"] == pytest.approx(

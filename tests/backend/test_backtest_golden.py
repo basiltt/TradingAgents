@@ -12,12 +12,11 @@ reasons, and net profit / final equity within a tight relative tolerance.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from backend.services.backtest_engine import BacktestEngine
-
 
 BASE = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
 
@@ -310,16 +309,26 @@ class TestGoldenScenarios:
         assert result.trades[0]["close_reason"] == "equity_drop"
         _assert_reconciles(result, cfg)
 
-    def test_golden_liquidation_close(self):
-        """A high-leverage position with an adverse move beyond the liquidation
-        distance closes via LIQUIDATION (full margin + entry-fee loss) and still
-        reconciles. Covers the liquidation path (previously untested)."""
+    def test_golden_sl_clamped_before_liquidation(self):
+        """A high-leverage position with a large requested SL closes via the
+        liquidation-CLAMPED stop-loss, NOT liquidation — matching live placement,
+        which clamps the SL price-move to fire strictly before liquidation
+        (trading_rules.clamp_sl_move_pct_to_liquidation). With leverage=100 the raw
+        500% SL = 5% move sits beyond the ~0.45% liquidation band, so the clamp pulls
+        it inside and the position stops out via 'sl'. Guards live<->backtest parity.
+
+        AI-CONTEXT: this scenario previously asserted close_reason=='liquidation'
+        (pre-clamp). The SL-clamp now makes the stop fire before liquidation — the
+        live-accurate outcome — so liquidation is effectively unreachable for a
+        position that carries any SL (the clamp guarantees sl_price is inside the
+        liquidation band). That is the intended fix, not a regression."""
         cfg = _config(leverage=100, take_profit_pct=500.0, stop_loss_pct=500.0)
         prices = [50000 - i * 60 for i in range(40)]
         klines = {"BTCUSDT": [_candle(5 * i, p, p + 20, p - 100, p) for i, p in enumerate(prices)]}
         result = BacktestEngine().run(cfg, [_signal()], klines)
         assert len(result.trades) == 1
-        assert result.trades[0]["close_reason"] == "liquidation"
+        # Clamp makes the SL fire before liquidation — the live-accurate outcome.
+        assert result.trades[0]["close_reason"] == "sl"
         assert result.trades[0]["pnl"] < 0
         _assert_reconciles(result, cfg)
 
@@ -610,8 +619,10 @@ class TestDrilldownByteIdentical:
 
     def test_flag_true_vs_false_identical_without_fine_data(self):
         for cfg, sigs, klines in self._scenarios():
-            cfg_on = dict(cfg); cfg_on["drilldown_enabled"] = True
-            cfg_off = dict(cfg); cfg_off["drilldown_enabled"] = False
+            cfg_on = dict(cfg)
+            cfg_on["drilldown_enabled"] = True
+            cfg_off = dict(cfg)
+            cfg_off["drilldown_enabled"] = False
             on = BacktestEngine().run(cfg_on, sigs, klines)
             off = BacktestEngine().run(cfg_off, sigs, klines)
             assert on.trades == off.trades

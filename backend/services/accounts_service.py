@@ -29,11 +29,13 @@ _SNAPSHOT_COOLDOWN_S = 30.0
 _SNAPSHOT_RETENTION_DAYS = 1095  # ~3 years
 
 # Tier-1 maintenance margin rate used for the isolated-margin liquidation estimate
-# (matches trading_rules.compute_liquidation_price's default mmr).
+# (matches trading_rules.compute_liquidation_price's default mmr). Mirrors the SSOT
+# trading_rules._TIER1_MMR / _SL_LIQ_SAFETY (kept as Decimal here for the exact-money
+# price math; the float SSOT clamp is what the backtest uses for parity).
 _TIER1_MMR = Decimal("0.005")
 # Fraction of the liquidation distance the stop-loss is allowed to reach. The SL must
 # trigger strictly BEFORE liquidation; 0.9 mirrors the mean-reversion guard
-# (mean_reversion_math.check_geometry / MR_SL_LIQUIDATION).
+# (mean_reversion_math.check_geometry / MR_SL_LIQUIDATION) and trading_rules._SL_LIQ_SAFETY.
 _SL_LIQ_SAFETY = Decimal("0.9")
 
 

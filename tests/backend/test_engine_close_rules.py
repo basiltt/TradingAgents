@@ -226,9 +226,14 @@ class TestEquityCloseRules:
             ],
             "ETHUSDT": [
                 {"open_time": base_time, "open": 3000.0, "high": 3010.0, "low": 2990.0, "close": 3000.0, "volume": 100.0},
-                # ETH drops hard — causes equity drop
-                {"open_time": base_time + timedelta(minutes=5), "open": 3000.0, "high": 3000.0, "low": 2730.0, "close": 2750.0, "volume": 100.0},
-                {"open_time": base_time + timedelta(minutes=10), "open": 2750.0, "high": 2750.0, "low": 2720.0, "close": 2730.0, "volume": 100.0},
+                # ETH drops enough to trip the 3% portfolio drawdown rule, but stays
+                # ABOVE its own clamped SL (~8.55% move at 10x ≈ 2743.5) so the
+                # equity_drop_smart rule — not the SL — is what closes it. (Pre-clamp
+                # this dropped to 2730 and the wide SL never fired; the SL-clamp now
+                # makes an 8.55%+ drop hit the stop first, so we keep the drop just
+                # shy of that — low 2755 ≈ -8.2%, between the equity trigger and the SL.)
+                {"open_time": base_time + timedelta(minutes=5), "open": 3000.0, "high": 3000.0, "low": 2755.0, "close": 2760.0, "volume": 100.0},
+                {"open_time": base_time + timedelta(minutes=10), "open": 2760.0, "high": 2765.0, "low": 2755.0, "close": 2760.0, "volume": 100.0},
             ],
         }
 

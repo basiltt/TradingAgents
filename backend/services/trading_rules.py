@@ -21,6 +21,39 @@ DEFAULT_CAPITAL_PCT = 5.0
 DEFAULT_TAKE_PROFIT_PCT = 150.0
 DEFAULT_STOP_LOSS_PCT = 100.0
 
+# AI-CONTEXT: stop-loss vs liquidation clamp. PARITY-CRITICAL and money-critical.
+# Bybit isolated liquidation occurs at roughly (1/leverage - MMR) of adverse price
+# move. A stop-loss placed AT/BEYOND that never fires — the exchange force-liquidates
+# first for a full-margin loss. Live placement (accounts_service.place_trade) clamps
+# the SL price-move to _SL_LIQ_SAFETY x the liquidation distance so it triggers
+# strictly BEFORE liquidation; the backtest engine MUST apply the identical clamp or
+# it reports a liquidation where live takes a smaller stop loss (overstating losses,
+# breaking the <1% parity guarantee). Defined here in the SSOT so both engines share
+# one implementation. _TIER1_MMR matches compute_liquidation_price's default mmr.
+_TIER1_MMR = 0.005
+_SL_LIQ_SAFETY = 0.9
+
+
+def clamp_sl_move_pct_to_liquidation(sl_price_move_pct: float, leverage: int) -> float:
+    """Clamp a stop-loss PRICE-MOVE percent so it triggers before liquidation.
+
+    Args:
+        sl_price_move_pct: The adverse price move (in %) at which the SL fires, i.e.
+            stop_loss_pct / leverage.
+        leverage: Applied leverage.
+
+    Returns:
+        ``sl_price_move_pct`` unchanged when it is already safely inside liquidation,
+        else the clamped value (``_SL_LIQ_SAFETY`` x the liquidation distance).
+    """
+    if sl_price_move_pct <= 0 or leverage <= 0:
+        return sl_price_move_pct
+    liq_move_pct = (1.0 / leverage - _TIER1_MMR) * 100.0
+    max_sl_pct = liq_move_pct * _SL_LIQ_SAFETY
+    if max_sl_pct > 0 and sl_price_move_pct >= max_sl_pct:
+        return max_sl_pct
+    return sl_price_move_pct
+
 
 def determine_side(signal_direction: str, trade_direction: str) -> str:
     """Determine trade side from signal direction and trade config direction.
@@ -57,7 +90,13 @@ def compute_tp_sl(
         Tuple of (tp_price, sl_price).
     """
     tp_price_pct = tp_pct / leverage / 100.0
-    sl_price_pct = sl_pct / leverage / 100.0
+    # AI-CONTEXT: clamp the SL price-move to fire before liquidation — IDENTICAL to
+    # live place_trade. sl_pct/leverage is the price-move %; clamp it (in %), then
+    # divide by 100 to a fraction. Without this the backtest's SL sits at/beyond
+    # liquidation on common configs (e.g. lev=20 sl=100 -> 5% vs ~4.5% liq) and the
+    # sim reports a liquidation where live stops out smaller, breaking parity.
+    sl_move_pct = clamp_sl_move_pct_to_liquidation(sl_pct / leverage, leverage)
+    sl_price_pct = sl_move_pct / 100.0
 
     if side == "Buy":
         tp_price = entry * (1.0 + tp_price_pct)
