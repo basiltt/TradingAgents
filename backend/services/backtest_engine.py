@@ -17,6 +17,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from backend.schemas.backtest_schemas import SimulationResult
+from backend.services.trading_rules import (
+    DEFAULT_CAPITAL_PCT,
+    DEFAULT_LEVERAGE,
+    DEFAULT_STOP_LOSS_PCT,
+    DEFAULT_TAKE_PROFIT_PCT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -950,12 +956,12 @@ class BacktestEngine:
         max_leverage = int(info.get("max_leverage", 0) or 0)  # 0 → no cap
 
         # Compute position size. MR uses its own leverage/capital from the placement.
-        leverage = int(mr_placement["leverage"]) if mr_placement else config.get("leverage", 20)
+        leverage = int(mr_placement["leverage"]) if mr_placement else config.get("leverage", DEFAULT_LEVERAGE)
         # Cap leverage to the symbol's max, matching production (accounts_service caps
         # to the instrument's maxLeverage). Over-leveraging would mis-price liq/margin.
         if max_leverage > 0 and leverage > max_leverage:
             leverage = max_leverage
-        capital_pct = mr_placement["capital_pct"] if mr_placement else config.get("capital_pct", 5.0)
+        capital_pct = mr_placement["capital_pct"] if mr_placement else config.get("capital_pct", DEFAULT_CAPITAL_PCT)
 
         # Available-balance basis for the margin-affordability check. Use the SAME
         # totalAvailableBalance basis the per-scan sizing uses (wallet + carried
@@ -1006,8 +1012,8 @@ class BacktestEngine:
         # slipped fill), i.e. slightly less than the nominal TP% — exactly as live
         # trading. Anchoring TP/SL to the slipped price instead would hand the trader
         # the full nominal move plus the slippage, a systematic favorable bias.
-        tp_pct = mr_placement["take_profit_pct"] if mr_placement else config.get("take_profit_pct", 150.0)
-        sl_pct = mr_placement["stop_loss_pct"] if mr_placement else config.get("stop_loss_pct", 100.0)
+        tp_pct = mr_placement["take_profit_pct"] if mr_placement else config.get("take_profit_pct", DEFAULT_TAKE_PROFIT_PCT)
+        sl_pct = mr_placement["stop_loss_pct"] if mr_placement else config.get("stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
         tp_price, sl_price = compute_tp_sl(entry_base_price, side, tp_pct, sl_pct, leverage)
         # Round TP/SL DOWN to the instrument tick size, matching production
         # (accounts_service round_price uses ROUND_DOWN to tick_size). Unrounded

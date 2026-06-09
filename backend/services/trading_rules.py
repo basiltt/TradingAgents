@@ -9,6 +9,18 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+# AI-CONTEXT: Default trade parameters applied when an AutoTradeConfig omits them.
+# PARITY-CRITICAL: live placement (auto_trade_service._do_place) and the backtest
+# simulation (backtest_engine._open_position) MUST use the SAME defaults, or the
+# documented "<1% backtest-vs-live deviation" guarantee silently breaks. They were
+# previously hardcoded as bare literals in both engines with nothing enforcing sync;
+# centralizing them here (the single source of truth for execution formulas) makes a
+# default change a one-line edit that both engines pick up. Keys mirror the config keys.
+DEFAULT_LEVERAGE = 20
+DEFAULT_CAPITAL_PCT = 5.0
+DEFAULT_TAKE_PROFIT_PCT = 150.0
+DEFAULT_STOP_LOSS_PCT = 100.0
+
 
 def determine_side(signal_direction: str, trade_direction: str) -> str:
     """Determine trade side from signal direction and trade config direction.

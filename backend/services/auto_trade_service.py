@@ -14,6 +14,12 @@ from backend.services import strategy_router as _router
 from backend.services.scan_context import ScanContext
 from backend.services.sector_map import get_sector as _static_get_sector
 from backend.services.strategy_reason_codes import ReasonCode
+from backend.services.trading_rules import (
+    DEFAULT_CAPITAL_PCT,
+    DEFAULT_LEVERAGE,
+    DEFAULT_STOP_LOSS_PCT,
+    DEFAULT_TAKE_PROFIT_PCT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +213,13 @@ class AutoTradeExecutor:
                         logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id, "ref": ref_str[:50]})
                         return True
         except Exception as e:
-            logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+            # AI-CONTEXT: fail-OPEN (return False → not paused) on a rules-fetch error,
+            # but log at WARNING not debug: a degraded pause-gate (e.g. DB down) would
+            # otherwise let an account that should be paused resume trading with no
+            # visible signal in production. Warning makes that state alertable. We do
+            # NOT fail-closed here (unlike the unparseable-rule branch) because a
+            # transient list_rules blip should not halt ALL accounts' trading.
+            logger.warning("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         return False
 
     async def init_balances(self) -> None:
@@ -348,8 +360,18 @@ class AutoTradeExecutor:
                 if account_id not in positions_cache:
                     try:
                         positions_cache[account_id] = await self._accounts.get_positions(account_id)
-                    except Exception:
-                        positions_cache[account_id] = []
+                    except Exception as e:
+                        # AI-CONTEXT: fail-CLOSED. existing_symbols (built below) is the
+                        # guard at line ~1243 that blocks opening a SECOND position on an
+                        # already-held symbol. A swallowed fetch failure → empty set →
+                        # guard bypassed → possible duplicate position (doubled exposure)
+                        # on a live money path. So we log and skip the account this cycle,
+                        # matching the wallet-fetch sibling above — never trade blind to
+                        # current positions. (Previously this silently set [] and traded.)
+                        state.stopped = True
+                        state.stopped_reason = f"positions_fetch_failed: {str(e)[:200]}"
+                        logger.warning("auto_trade_existing_symbols_fetch_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                        continue
                 state.existing_symbols = {p.get("symbol", "") for p in positions_cache[account_id]}
                 state.position_directions = {
                     p.get("symbol", ""): ("short" if p.get("side", "").lower() == "sell" else "long")
@@ -1422,10 +1444,10 @@ class AutoTradeExecutor:
         cohort = cfg.get("strategy_cohort") or "trend"
         place_signal_direction = direction
         place_trade_direction = cfg.get("direction", "straight")
-        place_leverage = cfg.get("leverage", 20)
-        place_tp = cfg.get("take_profit_pct", 150)
-        place_sl = cfg.get("stop_loss_pct", 100)
-        place_capital = cfg.get("capital_pct", 5)
+        place_leverage = cfg.get("leverage", DEFAULT_LEVERAGE)
+        place_tp = cfg.get("take_profit_pct", DEFAULT_TAKE_PROFIT_PCT)
+        place_sl = cfg.get("stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
+        place_capital = cfg.get("capital_pct", DEFAULT_CAPITAL_PCT)
         strategy_kind = "trend"
         if mr_fade:
             mr = await self._compute_mr_params(state, cfg, result, symbol, direction, ctx, phase)
