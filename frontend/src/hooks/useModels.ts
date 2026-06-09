@@ -56,6 +56,12 @@ export function useModels(
     },
     enabled: !!url || !!nativeProvider,
     staleTime: 120_000,
+    // AI-CONTEXT: SECURITY — the queryKey embeds the user's plaintext apiKey. gcTime:0
+    // means this query is dropped from the cache as soon as it has no observers, so it
+    // is never a candidate for sessionStorage persistence (belt-and-braces with the
+    // shouldDehydrateQuery "proxy-models" exclusion in App.tsx). The key never lands at
+    // rest. staleTime keeps it fresh while a picker is mounted.
+    gcTime: 0,
     retry: 1,
   });
 }

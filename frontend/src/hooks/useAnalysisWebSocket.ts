@@ -16,6 +16,9 @@ import { updateRunStatus } from "@/store/analysis-slice";
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY = 1000;
 const MAX_DELAY = 30000;
+/** ±25% reconnect-backoff jitter band — see the delay calc in onclose for rationale. */
+const RECONNECT_JITTER_MIN = 0.75;
+const RECONNECT_JITTER_SPREAD = 0.5;
 // AI-CONTEXT: Ring-buffer cap — prevents memory growth on long-running analyses.
 const MAX_MESSAGES = 500;
 
@@ -323,7 +326,12 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       setStatus("reconnecting");
-      const delay = Math.min(BASE_DELAY * 2 ** attemptRef.current, MAX_DELAY);
+      // AI-CONTEXT: ±25% jitter on the backoff (matching useAccountWebSocket) so that
+      // after a server restart, every client viewing an analysis does NOT reconnect in
+      // lockstep at 1s/2s/4s… — synchronized retries can re-trip a recovering backend
+      // (thundering herd). The random factor spreads them out.
+      const base = Math.min(BASE_DELAY * 2 ** attemptRef.current, MAX_DELAY);
+      const delay = base * (RECONNECT_JITTER_MIN + Math.random() * RECONNECT_JITTER_SPREAD);
       attemptRef.current += 1;
       setAttempt(attemptRef.current);
       reconnectTimerRef.current = setTimeout(() => connectRef.current?.(), delay);

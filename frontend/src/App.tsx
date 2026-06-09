@@ -170,6 +170,16 @@ function App() {
           persister,
           maxAge: 60 * 60_000, // 1 hr — matches gcTime
           buster: "",          // change this string to invalidate old caches after deploys
+          // AI-CONTEXT: SECURITY — the model-picker query ("proxy-models") embeds the
+          // user's LLM provider API key in its queryKey for cache identity. Persisting
+          // it would write that plaintext key to sessionStorage ("rq-cache"), a second
+          // at-rest copy beyond the documented endpoints.ts case. Exclude it from
+          // dehydration so the key is never serialized to storage; it still caches
+          // in-memory for the session.
+          dehydrateOptions: {
+            shouldDehydrateQuery: (query) =>
+              query.state.status === "success" && query.queryKey[0] !== "proxy-models",
+          },
         }}
       >
         <AppFrame />

@@ -13,8 +13,41 @@ const BACKEND_PORT = process.env.TRADINGAGENTS_PORT?.trim() || "8877";
 const BACKEND_HTTP = `http://localhost:${BACKEND_PORT}`;
 const BACKEND_WS = `ws://localhost:${BACKEND_PORT}`;
 
+// AI-CONTEXT: SECURITY — Content-Security-Policy injected at BUILD time only.
+// This app intentionally stores user-owned LLM API keys client-side
+// (see src/lib/endpoints.ts); its threat model concedes XSS would expose them, so a
+// CSP that blocks injected scripts and cross-origin exfiltration meaningfully shrinks
+// the blast radius. It is applied via transformIndexHtml gated on `apply: "build"` so
+// the dev server's HMR (which needs inline scripts / eval that script-src 'self'
+// would block) is unaffected. frame-ancestors / HSTS must still be set as RESPONSE
+// HEADERS by the server — a meta tag cannot enforce them.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'", // no inline scripts ship in the prod build (verified)
+  "style-src 'self' 'unsafe-inline'", // design system uses inline style props
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self' ws: wss:", // all API/WS traffic is same-origin
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join("; ");
+
+const cspPlugin = {
+  name: "inject-csp-meta",
+  apply: "build" as const,
+  transformIndexHtml(html: string) {
+    return html.replace(
+      "<head>",
+      `<head>\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`,
+    );
+  },
+};
+
 export default defineConfig({
   plugins: [
+    cspPlugin,
     react(),
     tailwindcss(),
     // AI-CONTEXT: The service worker is intentionally self-destructing.

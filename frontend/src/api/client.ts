@@ -81,13 +81,27 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Fetch JSON from a path. Applies 30s default timeout, retries transient errors, and throws ApiError on non-2xx. */
+/**
+ * Fetch JSON from a path. Applies a 30s default timeout, retries transient errors,
+ * and throws ApiError on non-2xx.
+ *
+ * @param path - Request path (appended to BASE_URL).
+ * @param init - Standard fetch init (method, body, headers).
+ * @param signal - Caller-supplied AbortSignal. When provided it OWNS cancellation and
+ *   the built-in timeout is NOT applied (the caller controls the lifetime).
+ * @param timeoutMs - Override for the default timeout, used only when `signal` is not
+ *   provided. AI-CONTEXT: long-running operations (delete-all, snapshot-all, cache
+ *   warmup) would otherwise abort at 30s client-side while the server keeps working —
+ *   showing a failure for an operation that actually succeeded. Those endpoints pass a
+ *   larger budget here.
+ */
 async function request<T>(
   path: string,
   init?: RequestInit,
   signal?: AbortSignal,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
-  const effectiveSignal = signal ?? init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const effectiveSignal = signal ?? init?.signal ?? AbortSignal.timeout(timeoutMs);
   const method = init?.method?.toUpperCase() ?? "GET";
   const isIdempotent = method === "GET" || method === "HEAD";
   let lastError: unknown;
@@ -140,13 +154,18 @@ async function requestText(
 }
 
 /** Send a mutating request (POST/PUT/PATCH/DELETE) with optional JSON body. */
-function mutate<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+function mutate<T>(method: string, path: string, body?: unknown, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
   return request<T>(path, {
     method,
     headers: { ...DEFAULT_HEADERS, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
-  }, signal);
+  }, signal, timeoutMs);
 }
+
+/** Timeout budget for operations that can legitimately run for minutes (bulk
+ * delete/snapshot over a large DB, kline cache warmup). Applied only when the caller
+ * doesn't pass its own AbortSignal. */
+const LONG_OPERATION_TIMEOUT_MS = 10 * 60_000; // 10 minutes
 
 /**
  * A query-parameter value: a scalar, an array (serialized as repeated keys), or
@@ -615,6 +634,9 @@ export const apiClient = {
     mutate<{ deleted: number }>(
       "DELETE",
       "/api/v1/analysis",
+      undefined,
+      undefined,
+      LONG_OPERATION_TIMEOUT_MS,
     ),
 
   getReport: (runId: string, signal?: AbortSignal) =>
@@ -970,7 +992,7 @@ export const accountsApi = {
 
   /** POST /api/v1/snapshots/all — take snapshots for all active accounts. */
   takeAllSnapshots: () =>
-    mutate<{ snapshots: Record<string, unknown>[]; count: number }>("POST", "/api/v1/snapshots/all"),
+    mutate<{ snapshots: Record<string, unknown>[]; count: number }>("POST", "/api/v1/snapshots/all", undefined, undefined, LONG_OPERATION_TIMEOUT_MS),
 
   /** GET /api/v1/accounts/:id/snapshots — fetch daily snapshots with date range. */
   getSnapshots: (id: string, params?: { start_date?: string; end_date?: string; period?: string }, signal?: AbortSignal) => {
@@ -1674,6 +1696,7 @@ export const backtestApi = {
       buildQuery("/api/v1/backtest-cache/warmup", { symbols, interval, start, end }),
       {},
       signal,
+      LONG_OPERATION_TIMEOUT_MS,
     );
   },
 };
