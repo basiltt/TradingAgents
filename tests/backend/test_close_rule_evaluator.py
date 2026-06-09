@@ -192,16 +192,33 @@ class TestBreakevenFeeBuffer:
             {"symbol": "ETHUSDT", "positionValue": "5000"},
         ]
         buf = evaluator._breakeven_fee_buffer(positions)
-        assert buf == Decimal("15000") * Decimal("0.055") / Decimal("100") * Decimal("1.5")
+        assert buf == Decimal("12.375")
 
     def test_buffer_falls_back_to_size_times_mark(self, evaluator: CloseRuleEvaluator) -> None:
-        # no positionValue → size * markPrice = 0.5 * 20000 = 10000
+        # no positionValue → size * markPrice = 0.5 * 20000 = 10000; buffer = 8.25
         positions = [{"symbol": "BTCUSDT", "size": "0.5", "markPrice": "20000"}]
         buf = evaluator._breakeven_fee_buffer(positions)
-        assert buf == Decimal("10000") * Decimal("0.055") / Decimal("100") * Decimal("1.5")
+        assert buf == Decimal("8.25")
 
     def test_buffer_empty_positions_is_zero(self, evaluator: CloseRuleEvaluator) -> None:
         assert evaluator._breakeven_fee_buffer([]) == Decimal("0")
+
+    def test_buffer_short_negative_size_uses_abs(self, evaluator: CloseRuleEvaluator) -> None:
+        # short position: size -0.5 * 20000 = -10000 → abs → 10000; buffer = 8.25
+        positions = [{"symbol": "X", "size": "-0.5", "markPrice": "20000"}]
+        assert evaluator._breakeven_fee_buffer(positions) == Decimal("8.25")
+
+    def test_buffer_non_dict_element_returns_none(self, evaluator: CloseRuleEvaluator) -> None:
+        # Fail-closed: a non-dict element cannot be parsed → None (do not close).
+        assert evaluator._breakeven_fee_buffer([None]) is None
+
+    def test_buffer_unparseable_value_returns_none(self, evaluator: CloseRuleEvaluator) -> None:
+        # Fail-closed: a non-numeric notional → None (do not close).
+        assert evaluator._breakeven_fee_buffer([{"positionValue": "abc"}]) is None
+
+    def test_buffer_all_zero_fields_contributes_zero(self, evaluator: CloseRuleEvaluator) -> None:
+        # All fields present and numerically 0 is legitimate → contributes 0, not None.
+        assert evaluator._breakeven_fee_buffer([{"symbol": "X", "size": "0", "markPrice": "0"}]) == Decimal("0")
 
 
 class TestBreakevenCompound:

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
 from backend.services.trading_rules import check_trailing_trigger
@@ -390,16 +390,26 @@ class CloseRuleEvaluator:
             except Exception:
                 logger.exception("Error evaluating rule %s", rule["id"])
 
-    def _breakeven_fee_buffer(self, positions: list[dict]) -> Decimal:
+    def _breakeven_fee_buffer(self, positions: list[dict]) -> Optional[Decimal]:
         """Σ over open positions of notional × taker_rate × slippage_mult.
 
         Notional prefers the exchange-computed ``positionValue``; falls back to
-        ``size × markPrice``. Returns Decimal("0") for an empty/missing book (then
-        the watch closes as soon as total uPnL ≥ 0). Never raises — a malformed
-        position contributes 0 rather than aborting the sweep.
+        ``size × markPrice`` (``mark_price`` also accepted). Returns Decimal("0")
+        for an empty book (then the watch closes as soon as total uPnL ≥ 0).
+
+        FAIL-CLOSED: returns ``None`` if ANY element cannot be parsed into a
+        notional — a non-dict element, or fields that are not numeric. ``None``
+        means "cannot confirm breakeven"; the caller then does NOT close, so a
+        malformed/partial position can never SHRINK the buffer and fire a
+        premature mass close. A position whose fields are all present and
+        numerically 0 legitimately contributes 0 and is NOT treated as an error.
         """
+        if not positions:
+            return Decimal("0")
         total_notional = Decimal("0")
-        for p in positions or []:
+        for p in positions:
+            if not isinstance(p, dict):
+                return None
             try:
                 pv = p.get("positionValue")
                 if pv is not None and str(pv).strip() != "":
@@ -408,9 +418,9 @@ class CloseRuleEvaluator:
                     size = Decimal(str(p.get("size") or "0"))
                     mark = Decimal(str(p.get("markPrice") or p.get("mark_price") or "0"))
                     notional = abs(size * mark)
-                total_notional += notional
-            except (ValueError, TypeError, ArithmeticError):
-                continue
+            except (ValueError, TypeError, InvalidOperation, ArithmeticError):
+                return None
+            total_notional += notional
         return total_notional * BREAKEVEN_TAKER_RATE_PCT / Decimal("100") * BREAKEVEN_FEE_SLIPPAGE_MULT
 
     def _check_condition(
