@@ -94,19 +94,21 @@ cd frontend && npm run build                     # Production build
 
 ### Skill Execution — STRICT ENFORCEMENT
 
-When a skill is loaded (via `/skill-name` or auto-trigger), its instructions are **mandatory procedures, not suggestions**. Every step, review loop, and round count is a hard requirement.
+When a skill is loaded (via `/skill-name` or auto-trigger), its instructions are **mandatory procedures, not suggestions**. Every step and review loop is a hard requirement. Reviews are governed by **convergence**, not a round quota.
 
-**1. Never skip mandated review rounds.**
-- "10-15 rounds × 5 agents" = run at minimum 10 rounds (or hit 2 consecutive clean rounds early). 1 agent for 1 round is a critical violation.
+**1. Never skip mandated reviews.**
+- There is NO minimum round count. Each review runs until **2 consecutive rounds produce no new findings** (convergence), then stops. A review that converges on round 3 is complete and valid; do NOT pad rounds to hit a number.
+- Always 5 agents per round, all in one message. 1 agent for 1 round is a critical violation — convergence needs at least 2 rounds of evidence.
+- Fix every valid Critical/High/Medium finding the moment it appears. Convergence means findings have run dry, not that review was cut short.
 - Every ⛔ STOP gate means you cannot proceed until the gate condition is satisfied.
 
 **2. Never collapse multi-step workflows.**
 - If the skill prescribes Steps 2→3→4→5→6→7, execute ALL in order. Never jump from partial spec to implementation.
 
 **3. Never implement without passing all review gates.**
-- No code until spec review AND plan review complete with full round counts.
-- No phase advances until per-phase reviews ALL complete.
-- No final commit until final review steps complete.
+- No code until spec review AND plan review have converged (2 consecutive rounds with no new findings).
+- No phase advances until per-phase reviews ALL converge.
+- No final commit until final review steps converge.
 
 **4. TDD is non-negotiable.**
 - Every phase must include tests. Zero-test implementations are invalid.
@@ -124,9 +126,9 @@ When a skill is loaded (via `/skill-name` or auto-trigger), its instructions are
 - The ONLY reasons to stop mid-workflow: (a) a genuine external blocker you cannot resolve, (b) the skill's final step explicitly presents completion options (e.g., merge/PR/discard).
 - "Planning is done, implementation is next" is NOT a stopping point. Keep going.
 
-**8. Round counts are minimums.**
-- "10-15 rounds" = AT LEAST 10 unless 2 consecutive clean rounds occur earlier.
-- "20-25 rounds" = AT LEAST 20 unless 2 consecutive clean rounds occur earlier.
+**8. Reviews converge — they are not round quotas.**
+- There is no "minimum rounds" and no "AT LEAST N." A review is done when 2 consecutive rounds surface no new findings.
+- The numbers some docs still mention (15, 25) are infinite-loop safety caps only — a backstop, never a target. Never keep reviewing just to reach a cap.
 
 **If you're about to skip a step because "it seems unnecessary" — STOP. That instinct is exactly what these rules prevent. Follow the procedure.**
 
@@ -163,7 +165,7 @@ Before saying any task is done:
 
 - If a tracker exists, the workflow is IN PROGRESS — follow it.
 - Never implement without a reviewed spec and plan.
-- Never reduce review rounds below minimums (10 standard, 20 hardening).
+- Never reduce review rounds below convergence (2 consecutive rounds with no new findings).
 - Never ask "shall I continue?" — auto-progress is mandatory.
 - The skill workflow order is: discovery → requirements → spec → spec review → plan → plan review → implement (per phase with TDD) → final review → commit. Never jump phases.
 - **If you feel lost — READ THE TRACKER.** Do not guess, do not start over.
@@ -177,6 +179,6 @@ When compacting this conversation, ALWAYS preserve these in the summary:
 1. Which skill workflow is active (e.g., `/new-feature`, `/develop-plan`, `/implement-plan`)
 2. The exact step number currently in progress
 3. The path to the progress tracker file
-4. Which review rounds have been completed and how many remain
+4. How many review rounds have run for the active review and whether it has converged (2 consecutive rounds with no new findings)
 5. Any blockers or decisions made during the session
 6. The instruction: "After compaction, read the progress tracker and skill SKILL.md before doing anything else"
