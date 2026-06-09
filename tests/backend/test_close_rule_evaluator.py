@@ -218,9 +218,17 @@ class TestBreakevenFeeBuffer:
         # Fail-closed: a non-numeric notional → None (do not close).
         assert evaluator._breakeven_fee_buffer([{"positionValue": "abc"}]) is None
 
-    def test_buffer_all_zero_fields_contributes_zero(self, evaluator: CloseRuleEvaluator) -> None:
-        # All fields present and numerically 0 is legitimate → contributes 0, not None.
-        assert evaluator._breakeven_fee_buffer([{"symbol": "X", "size": "0", "markPrice": "0"}]) == Decimal("0")
+    def test_buffer_zero_notional_is_none(self, evaluator: CloseRuleEvaluator) -> None:
+        # A NON-EMPTY book that nets to zero total notional (e.g. size=0 stub rows from a
+        # degraded/stale get_positions frame during reconciliation) cannot confirm
+        # breakeven → None, NOT Decimal("0"). A zero buffer would make `pnl >= 0` fire a
+        # no-op mass close that ALSO tears down MAX_DURATION. Fail closed instead.
+        assert evaluator._breakeven_fee_buffer([{"symbol": "X", "size": "0", "markPrice": "0"}]) is None
+
+    def test_buffer_size_present_but_missing_mark_is_none(self, evaluator: CloseRuleEvaluator) -> None:
+        # Size present but NO markPrice/positionValue → mark defaults to 0 → notional 0
+        # → zero total notional → None (same fail-closed rationale, not Decimal("0")).
+        assert evaluator._breakeven_fee_buffer([{"symbol": "X", "size": "0.5"}]) is None
 
 
 class TestBreakevenCompound:

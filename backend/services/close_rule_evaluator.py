@@ -297,6 +297,10 @@ class CloseRuleEvaluator:
                     except Exception:
                         logger.warning("breakeven_buffer_fetch_failed", extra={"account_id": account_id, "rule_id": rule.get("id")})
                         breakeven_buffer = None
+                    logger.debug(
+                        "breakeven_watch account=%s rule=%s pnl=%s buffer=%s",
+                        account_id, rule.get("id"), pnl, breakeven_buffer,
+                    )
                 triggered = self._check_condition(
                     rule, equity=equity, pnl=pnl, balance=balance, breakeven_buffer=breakeven_buffer,
                 )
@@ -397,9 +401,16 @@ class CloseRuleEvaluator:
         notional — a non-dict element, or fields that are not numeric. ``None``
         means "cannot confirm breakeven"; the caller then does NOT close, so a
         malformed/partial position can never SHRINK the buffer and fire a
-        premature mass close. A NON-EMPTY list whose fields are all present and
-        numerically 0 legitimately sums to ``Decimal("0")`` and is NOT treated as
-        an error (only an EMPTY list returns ``None``).
+        premature mass close.
+
+        ZERO TOTAL NOTIONAL → ``None`` (same fail-closed rationale). A NON-EMPTY book
+        whose notionals sum to 0 (e.g. a stale/degraded position frame: ``size=0``
+        stub rows from a reconciliation get_positions snapshot, or rows with size
+        present but no ``markPrice``/``positionValue`` so notional resolves to 0)
+        cannot confirm breakeven. A zero buffer would make ``pnl >= 0`` fire a no-op
+        mass close that ALSO deactivates the account's other rules (e.g.
+        MAX_DURATION) — so a zero total notional is treated as "cannot confirm",
+        not as a legitimate 0 buffer.
         """
         if not positions:
             return None
@@ -418,6 +429,12 @@ class CloseRuleEvaluator:
             except (ValueError, TypeError, InvalidOperation, ArithmeticError):
                 return None
             total_notional += notional
+        if total_notional <= 0:
+            # Non-empty book but zero total notional (e.g. a stale/degraded position
+            # frame: size=0 stub rows, or size present but no mark/positionValue). A
+            # zero buffer would make `pnl >= 0` fire a no-op mass close that also tears
+            # down MAX_DURATION — fail closed instead (do not confirm breakeven).
+            return None
         return total_notional * BREAKEVEN_TAKER_RATE_PCT / Decimal("100") * BREAKEVEN_FEE_SLIPPAGE_MULT
 
     def _check_condition(

@@ -239,6 +239,72 @@ class TestTimeBasedRules:
         assert by_symbol["ETHUSDT"]["close_reason"] != "breakeven", by_symbol["ETHUSDT"]["close_reason"]
         assert by_symbol["ETHUSDT"]["close_reason"] == "backtest_end", by_symbol["ETHUSDT"]["close_reason"]
 
+    def test_breakeven_closes_all_via_account_netting(self):
+        """ACCOUNT-LEVEL netting: a winner's uPnL carries an underwater sibling over the
+        COMBINED fee buffer so BOTH close 'breakeven' in one candle — even though the
+        underwater leg ALONE is below (here: negative versus) its own buffer.
+
+        This is the core account-level behavior that every other breakeven test misses
+        (they're effectively single-position). A revert to PER-POSITION breakeven would
+        leave ETH open (ETH-alone uPnL < ETH-alone buffer), so this test is a real
+        discriminator for the netting.
+
+        Two positions on the SAME account, both entering near t=0 (past the 1h breakeven
+        window by the firing candle at t=120):
+          - BTC qty 0.2 (entry 50000). At t=120 mark 51000 → uPnL = 0.2*(+1000) = +200.
+          - ETH qty 3.164 (entry 3000; sized off post-BTC available ≈ 9494.5 → floor to
+            qty_step). At t=120 mark 2990 → uPnL = 3.164*(-10) ≈ -31.64 (NEGATIVE, well
+            below its own ~7.8 fee buffer).
+        Combined uPnL ≈ +168.36 ≥ combined buffer ≈ 16.22 → the account-level rule fires
+        and closes BOTH. max_duration is 5h (far away) so it can't interfere; the wide
+        500% TP/SL are never touched by these small moves."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        engine = BacktestEngine()
+        config = _make_config(
+            breakeven_timeout_hours=1.0,
+            take_profit_pct=500.0, stop_loss_pct=500.0,
+            max_trade_duration_hours=5.0, max_trades=5,
+            leverage=20, capital_pct=5.0, fee_rate_pct=0.055, slippage_bps=0,
+        )
+        base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        # Two scans staggered like test_breakeven_excludes_max_duration_queued_position_
+        # from_upnl_sum: BTC at t=0, ETH at t=30 (both past the 1h window by t=120).
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, scan_id="s1", signal_time=base_time,
+                         analysis_price=50000.0),
+            _make_signal(ticker="ETHUSDT", id=2, score=7, scan_id="s2",
+                         signal_time=base_time + timedelta(minutes=30), analysis_price=3000.0),
+        ]
+        # BTC: flat at 50000 for 2h (combined uPnL stays below buffer so breakeven can't
+        # fire early), then a +2% step to 51000 at t=120 → clear WINNER (+200), nowhere
+        # near the 500% TP.
+        btc = [
+            {"open_time": base_time + timedelta(minutes=5 * i),
+             "open": 50000.0, "high": 50050.0, "low": 49950.0, "close": 50000.0, "volume": 100.0}
+            for i in range(24)  # 0min .. 115min
+        ]
+        btc.append({"open_time": base_time + timedelta(minutes=120),
+                    "open": 50000.0, "high": 51000.0, "low": 50000.0, "close": 51000.0, "volume": 100.0})
+        # ETH: enters t=30, mildly underwater (2990) the whole time. Alone its uPnL
+        # (≈ -31.64) is NEGATIVE — it can never clear its own ~7.8 fee buffer, so a
+        # per-position breakeven would never fire for it. Needs a candle at t=120 so its
+        # latest price is 2990 when the account-level rule evaluates.
+        eth = [
+            {"open_time": base_time + timedelta(minutes=30 + 5 * i),
+             "open": 3000.0, "high": 2998.0, "low": 2985.0, "close": 2990.0, "volume": 100.0}
+            for i in range(19)  # 30min .. 120min
+        ]
+        result = engine.run(config, signals, {"BTCUSDT": btc, "ETHUSDT": eth})
+        by_symbol = {t["symbol"]: t for t in result.trades}
+        assert set(by_symbol) == {"BTCUSDT", "ETHUSDT"}, by_symbol
+        # BOTH legs close 'breakeven' on the same candle via account-level netting. ETH
+        # only closes because BTC's +200 carries the COMBINED uPnL over the combined
+        # buffer — ETH alone is underwater. If breakeven were per-position, ETH would
+        # stay open and force-close 'backtest_end', failing this assertion.
+        assert by_symbol["BTCUSDT"]["close_reason"] == "breakeven", by_symbol["BTCUSDT"]["close_reason"]
+        assert by_symbol["ETHUSDT"]["close_reason"] == "breakeven", by_symbol["ETHUSDT"]["close_reason"]
+
     def test_breakeven_not_applied_without_timeout(self):
         """Without breakeven_timeout, the same klines do NOT close via tp (control case)."""
         from backend.services.backtest_engine import BacktestEngine
