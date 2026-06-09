@@ -32,7 +32,19 @@ async def pool():
             await conn.execute("INSERT INTO schema_version (version) VALUES (0)")
         for ver, sql in _MIGRATIONS:
             if ver > current:
-                await conn.execute(sql)
+                # AI-CONTEXT: mirror async_persistence's migration runner — entries
+                # may be either a SQL string OR a callable(conn) migration (v26, v31,
+                # v32, v33, v38, v52 are function-based). Passing a function straight
+                # to conn.execute() raises "Expected str, got function". Split SQL on
+                # ';' for parity with production (a single execute() rejects multiple
+                # statements on some asyncpg/PG combos).
+                if callable(sql):
+                    await sql(conn)
+                else:
+                    for stmt in sql.split(";"):
+                        stmt = stmt.strip()
+                        if stmt:
+                            await conn.execute(stmt)
                 await conn.execute("UPDATE schema_version SET version = $1", ver)
     yield p
     async with p.acquire() as conn:
