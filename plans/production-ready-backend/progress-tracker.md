@@ -111,7 +111,8 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 | 2.5 | Documentation | 22 | DONE | — | ~487 docstrings (DB/repo/service/router/MCP); schema validators skipped |
 | 2.75 | Maintainability | 20 | DONE | R1 | money-guard fail-closed, parity defaults, named consts, 3x dedup |
 | 3 | Logging | 20 | DONE | R1 | logging already prod-grade; fixed pause fail-open visibility |
-| 4 | Testing | 36 | IN_PROGRESS | R1 | ALL 19 real pre-existing failures FIXED + TQ-1 env-leak root cause |
+| 4 | Testing | 36 | DONE | R1 | ALL 19 real pre-existing failures FIXED + TQ-1/TQ-2 infra root causes |
+| 5 | Bug Detection & Robustness | 36 | IN_PROGRESS | R1 | CRITICAL manual-close bug + HIGH fill-confirmation gap FIXED |
 | 2.5 | Documentation | 22 | PENDING | 0 | — |
 | 2.75 | Maintainability | 20 | PENDING | 0 | — |
 | 3 | Logging | 20 | PENDING | 0 | — |
@@ -157,7 +158,6 @@ pre-existing failures (any OTHER failure = your regression). Standard cmd in "Te
 All work committed on branch worktree-production-ready-backend-hardening (15 commits from 7ca17c9).
 
 ## Decided Log (Debate Resolution Protocol)
-_(entries added as findings are resolved; check before applying any contradicting fix)_
 - DECIDED-1 (R1): `ai_manager_task.py` exception handlers use `self._log` (per-account logger), NOT bare `logger`. Evidence: class defines `self._log = logging.getLogger(...)` at __init__; module has no `logger`. Status: FINAL.
 - DECIDED-2 (R1): `backtest_service.py` resolves `ScanContext` annotation via a `TYPE_CHECKING` import; runtime import stays lazy inside `_build_scan_contexts()` to avoid the scan_context→services→backtest_service cycle. Status: FINAL.
 - DECIDED-3 (R1): `trade_service._broadcast` uses `is not None` (not truthiness) for `realized_pnl`/`net_pnl` so a breakeven 0.0 PnL is broadcast as 0.0, not null. Status: FINAL.
@@ -195,3 +195,11 @@ Verified: 117 + 184 + 107(security) + 42(persistence) + 15(cycle) targeted tests
 
 ## Activity Log
 - 2026-06-09: Step 0 started. Worktree created from local HEAD (verified 17 backtest commits present). ruff installed. Baseline lint = 36 errors incl. 5 F821 real bugs. Backend test baseline running in bg.
+
+## Phase 5 findings (Bug Detection)
+- FIXED CRITICAL: filled_qty semantic conflict — manual close broken for every filled trade (accounts_service:457 wrote entry-qty; close reads it as closed-qty). Now 0 at open. *** FRONTEND FOLLOW-UP: CloseTradeModal/TradeRow/TradeDetailPanel.tsx read filled_qty as live size → must use qty-filled_qty. ***
+- FIXED HIGH: _close_full/_close_partial fabricated mark-price exit on unconfirmed fill (no cumExecQty>0 guard) → recorded closed while position may be live. Now routes to _handle_close_failure.
+- DEFERRED MEDIUM (F3): place_trade DB-write failure after order placed → swallowed, returns trade_id=None → orphaned position (only reconciler alerts, no auto-adopt). Fix = larger architectural change (distinct status + reconciler adoption). Revisit.
+- NEEDS-VERIFICATION (F4): _close_matching_trades closes only 1 DB trade per (symbol,side) — benign IF system never holds 2+ open per key (one-way + existing_symbols dedup usually prevents). Verify AI-manager/manual scale-in paths.
+- NEEDS-VERIFICATION (F5): record-only close with no avgPrice writes exit_price/realized_pnl=0, maybe never backfilled — per-trade analytics only, no capital impact. Verify reconciler backfill targets closed trades.
+- SOLID (no bugs): trade_repository state machine (FOR UPDATE + version + VALID_TRANSITIONS), auto_trade placement (per-(account,symbol) lock + orderLinkId idempotency + under-lock re-check), trading_rules math (div-by-zero guarded, rounding directions correct).
