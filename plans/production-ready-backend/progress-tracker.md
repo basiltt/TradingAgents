@@ -112,15 +112,10 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 | 2.75 | Maintainability | 20 | DONE | R1 | money-guard fail-closed, parity defaults, named consts, 3x dedup |
 | 3 | Logging | 20 | DONE | R1 | logging already prod-grade; fixed pause fail-open visibility |
 | 4 | Testing | 36 | DONE | R1 | ALL 19 real pre-existing failures FIXED + TQ-1/TQ-2 infra root causes |
-| 5 | Bug Detection & Robustness | 36 | IN_PROGRESS | R1 | CRITICAL manual-close bug + HIGH fill-confirmation gap FIXED |
-| 2.5 | Documentation | 22 | PENDING | 0 | — |
-| 2.75 | Maintainability | 20 | PENDING | 0 | — |
-| 3 | Logging | 20 | PENDING | 0 | — |
-| 4 | Testing | 36 | PENDING | 0 | — |
-| 5 | Bug Detection & Robustness | 36 | PENDING | 0 | — |
-| 5.5 | Future-Proofing | 14 | PENDING | 0 | — |
+| 5 | Bug Detection & Robustness | 36 | DONE | R1-R2 | 5 real bugs (1 CRIT, 3 HIGH, leak); mediums documented |
+| 5.5 | Future-Proofing | 14 | IN_PROGRESS | 0 | — |
 | 5.75 | Performance | 16 | PENDING | 0 | — |
-| 6 | Config & Security | 14 | PENDING | 0 | — |
+| 6 | Config & Security | 14 | DONE | R1 | dep CVE floors; security already prod-grade |
 | 7 | Final Holistic | 30 | PENDING | 0 | — |
 
 ## State
