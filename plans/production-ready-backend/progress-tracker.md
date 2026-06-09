@@ -109,7 +109,9 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 | 1 | Type Safety & Linting | 24 | DONE (gate met) | 3 | 14 real bugs + 76 B904; ruff 325→0, mypy 94→0 |
 | 2 | Clean Code & Patterns | 28 | DONE | R1 | 8 DRY/SRP refactors; god-methods deferred (risk>gain) |
 | 2.5 | Documentation | 22 | DONE | — | ~487 docstrings (DB/repo/service/router/MCP); schema validators skipped |
-| 2.75 | Maintainability | 20 | IN_PROGRESS | 0 | — |
+| 2.75 | Maintainability | 20 | DONE | R1 | money-guard fail-closed, parity defaults, named consts, 3x dedup |
+| 3 | Logging | 20 | DONE | R1 | logging already prod-grade; fixed pause fail-open visibility |
+| 4 | Testing | 36 | IN_PROGRESS | 0 | — |
 | 2.5 | Documentation | 22 | PENDING | 0 | — |
 | 2.75 | Maintainability | 20 | PENDING | 0 | — |
 | 3 | Logging | 20 | PENDING | 0 | — |
