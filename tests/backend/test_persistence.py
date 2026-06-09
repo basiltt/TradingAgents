@@ -210,8 +210,13 @@ def test_schema_migration_no_op_current_version():
     db2.close()
 
 
-def test_schema_migration_higher_version_refused():
-    """Opening a DB with a schema version newer than code supports raises RuntimeError."""
+def test_schema_migration_higher_version_tolerated(caplog):
+    """Opening the SYNC DB layer against a schema newer than its own migration list
+    must NOT raise: AsyncAnalysisDB owns migrations in production, and the sync path
+    is a read-only consumer that must coexist with a DB already migrated past its
+    own _MIGRATIONS tail. It logs a warning and skips sync migrations instead."""
+    import logging
+
     from backend.persistence import AnalysisDB
     conn = psycopg2.connect(_TEST_DSN)
     conn.autocommit = True
@@ -219,8 +224,11 @@ def test_schema_migration_higher_version_refused():
     cur.execute("UPDATE schema_version SET version = 9999")
     conn.close()
     try:
-        with pytest.raises(RuntimeError, match="newer"):
-            AnalysisDB(dsn=_TEST_DSN)
+        with caplog.at_level(logging.WARNING, logger="backend.persistence"):
+            db = AnalysisDB(dsn=_TEST_DSN)  # must NOT raise
+        db.close()
+        assert any("newer than sync max" in r.message for r in caplog.records), \
+            "expected a 'newer than sync max' warning when schema is ahead of the sync layer"
     finally:
         conn = psycopg2.connect(_TEST_DSN)
         conn.autocommit = True
