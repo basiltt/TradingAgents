@@ -203,3 +203,16 @@ Verified: 117 + 184 + 107(security) + 42(persistence) + 15(cycle) targeted tests
 - NEEDS-VERIFICATION (F4): _close_matching_trades closes only 1 DB trade per (symbol,side) — benign IF system never holds 2+ open per key (one-way + existing_symbols dedup usually prevents). Verify AI-manager/manual scale-in paths.
 - NEEDS-VERIFICATION (F5): record-only close with no avgPrice writes exit_price/realized_pnl=0, maybe never backfilled — per-trade analytics only, no capital impact. Verify reconciler backfill targets closed trades.
 - SOLID (no bugs): trade_repository state machine (FOR UPDATE + version + VALID_TRANSITIONS), auto_trade placement (per-(account,symbol) lock + orderLinkId idempotency + under-lock re-check), trading_rules math (div-by-zero guarded, rounding directions correct).
+
+## Phase 5 — concurrency/leak hunt (round 2) findings
+FIXED:
+- HIGH leak: AIManagerTask commentary loop orphaned on cancel()/disable while MONITORING → leaked task + perpetual LLM calls. Now stopped in _run finally.
+- MEDIUM: 2 fire-and-forget create_task (enforce_daily_limits, persist_enrichment) GC-able mid-flight → _track_task.
+- HIGH corruption: position_reconciler force-closed live trades on OK-but-empty get_positions() → untrusted-empty guard + 3 new tests.
+REMAINING (deferred — MEDIUM, more involved fixes):
+- F-recon-2 (MEDIUM): _fetch_closed_pnl_match returns same closedPnl record (matches[0]) to multiple trades on same (symbol,side) → double-counted PnL. Fix: track consumed exec_id per pass.
+- F-sched-3 (MEDIUM, race): scan_scheduler trigger() ("run now") bypasses claim_scheduled_scan CAS → cross-instance double-fire. Fix: route trigger through CAS.
+- F-cycle-4 (MEDIUM): trading_cycle_engine close-rule setup non-atomic (2 insert_close_rule + activate across separate conns) → partial write leaves cycle breakers inactive while positions live. Fix: wrap in one conn.transaction().
+- F-sched-5 (LOW): scheduler success-path DB error after start_scan loses in-flight tracking + mislabels execution failed.
+- F3-orphan (MEDIUM): place_trade DB-write fail after order placed → trade_id=None orphan (reconciler only alerts). Larger change.
+VERIFIED SOLID (credit): trade_repository state machine (FOR UPDATE+version+VALID_TRANSITIONS), idx_one_active_cycle unique index, claim_scheduled_scan CAS, event_bus bounded ring buffers, account_ws_manager bounded queues+tracked tasks, accounts cache eviction, scanner _scans eviction, analysis_service finally cleanup, backtest_service tracked tasks.
