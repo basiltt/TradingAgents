@@ -285,3 +285,10 @@ DOCUMENTED AS SCOPED FOLLOW-UP (feature-sized, deferred deliberately):
 ## FINAL STATE
 All gates: backend ruff 0, mypy 0; frontend tsc 0. ~54 commits. Pipeline + E2E review complete.
 Total real bugs fixed across pipeline + E2E: ~28 (1 CRITICAL, several HIGH incl. trading-cycle-breaking truncation, manual-close-broken, SSRF env-leak, fill-confirmation, reconciler-orphan, leak, SL-parity).
+
+## MERGE TO MAIN — 2026-06-09
+- Merged into `main` alongside `worktree-production-ready-frontend` via integration branch `integration/prod-ready-merge`.
+- Backend merge `7b00d0f`: only conflict = kline_cache_service.py import line (resolved: alphabetized datetime + kept Callable for main's on_progress). backtest_service.py auto-merged (main's _WARMUP_BAND + backend lint, both verified intact). All of main's d09a352 data-integrity logic (GREATEST coverage, gap-span fetch, on_progress) preserved.
+- main is now at `38b9800`.
+- Verified on main: 131 money-critical tests pass; ruff 0; import-collect 2645 clean; test_security 107 pass; persistence 42 pass.
+- DEPLOY ACTION ITEM (surfaced by E2E review, pre-existing not merge-caused): pre-existing OPEN trades in the live DB have filled_qty≈qty under old semantics → remaining_qty=0 → un-closeable. Ship a one-time backfill (migration 57): `UPDATE trades SET filled_qty=0 WHERE status IN ('open','partially_filled','closing')`. Review `partially_closed` rows manually (their filled_qty is legitimately non-zero). Async layer is at migration 56.

@@ -96,3 +96,9 @@ After compaction: read this tracker, re-read `~/.claude/skills/production-ready/
 - R1 (Phase 2.75): 3 maintainability agents → 36 findings. Fixed 11 named-constant/key-factory wins: useAccountWebSocket timing consts (DASHBOARD_DEBOUNCE/MIN_REFETCH/PING_WATCHDOG/JITTER), useAnalysisWebSocket NON_RETRIABLE_CLOSE_CODES, trades-slice UNREALIZED_PNL_EPSILON, ai-manager MAX_LLM_CALLS, trades/queryKeys.ts factory (centralizes ["trades",...] across 5 files), useTradeEvents stale const, documented ScannerPage intentional scan-ID no-restore. Deferred large extractions (WS router maps, AIMonitorPanel tables, ConfigPanel FIELD_BOUNDS, scanner field component). Routed ConfigPanel silent-discard bug → Phase 5. Verify: lint 0/0, tsc clean, 747/747. COMMIT next.
 - DEFERRED→Phase 5 (bug): ConfigPanel handleSave silently discards out-of-range field values (no user feedback) — agent2 F3. Real UX bug.
 - DEFERRED (Phase 2.75 large extractions, revisit Phase 7): useAccountWebSocket/useAnalysisWebSocket onmessage → handler map; AIMonitorPanel LivePositionsTable/DecisionsTable; ConfigPanel FIELD_BOUNDS schema; AutoTradeSection ClampedNumberField; ScheduledScansPage ScheduleActionButton.
+
+## MERGE TO MAIN — 2026-06-09
+- Merged into `main` alongside `worktree-production-ready-backend-hardening` via integration branch `integration/prod-ready-merge`.
+- Frontend merge `38b9800`: both overlap files (useAccountWebSocket.ts, trades-slice.test.ts) auto-merged cleanly; verified frontend delta vs frontend-tip == exactly the 6 backend-touched remaining_qty files. Zero frontend work lost.
+- Verified on main: tsc 0, eslint 0/0, 854/854 vitest, vite build pass.
+- E2E review (4 agents) confirmed remaining_qty contract aligned end-to-end (backend serialize_trade → REST+WS → CloseTradeModal/TradeRow/TradeDetailPanel). No merge defects.
