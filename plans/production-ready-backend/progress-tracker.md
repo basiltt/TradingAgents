@@ -108,7 +108,8 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 | 0 | Discovery & Baseline | — | DONE | — | 5 baseline bugs |
 | 1 | Type Safety & Linting | 24 | DONE (gate met) | 3 | 14 real bugs + 76 B904; ruff 325→0, mypy 94→0 |
 | 2 | Clean Code & Patterns | 28 | DONE | R1 | 8 DRY/SRP refactors; god-methods deferred (risk>gain) |
-| 2.5 | Documentation | 22 | IN_PROGRESS | 0 | — |
+| 2.5 | Documentation | 22 | DONE | — | ~487 docstrings (DB/repo/service/router/MCP); schema validators skipped |
+| 2.75 | Maintainability | 20 | IN_PROGRESS | 0 | — |
 | 2.5 | Documentation | 22 | PENDING | 0 | — |
 | 2.75 | Maintainability | 20 | PENDING | 0 | — |
 | 3 | Logging | 20 | PENDING | 0 | — |
@@ -175,6 +176,8 @@ Plus 76 B904 exception-chain losses.
 
 ## Test-quality findings (for Phase 4)
 - TQ-1: `tests/backend/test_validators.py` + `test_security.py` leak global env state (`ALLOW_LOCAL_LLM_BACKEND`) without cleanup → order-dependent failures (validators 25/25 alone, 14 fail when co-run after security). Fix in Phase 4: monkeypatch.delenv or autouse cleanup fixture. This is THE cause of the "14 validator failures" seen under xdist and batched runs — NOT a code bug.
+- TQ-2: `tests/backend/test_cycle_repository.py` — 15 ERRORS at fixture setup: `asyncpg.create_pool` path hits `TypeError: Expected str, got function` (py3.14 asyncpg compat) before the `pytest.skip("PostgreSQL not available")` fires. The skip guard runs a query that errors first. Fix: guard the DSN/connection earlier so it skips cleanly without Postgres.
+- TQ-3: Full-suite + some multi-file single-proc runs abort with a pytest-timeout on `concurrent.futures` `_global_shutdown_lock` during interpreter teardown (test_analysis_service thread executors). Fix: ensure executors are shut down in fixtures/teardown; or mark those tests to run isolated.
 
 ## Activity Log
 - 2026-06-09: Step 0 started. Worktree created from local HEAD (verified 17 backtest commits present). ruff installed. Baseline lint = 36 errors incl. 5 F821 real bugs. Backend test baseline running in bg.
