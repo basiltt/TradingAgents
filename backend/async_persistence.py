@@ -2848,6 +2848,32 @@ class AsyncAnalysisDB:
         )
         return int(result.split()[-1]) > 0
 
+    async def claim_manual_trigger(
+        self, schedule_id: str, old_last_run: Optional[str]
+    ) -> bool:
+        """Atomically claim a manual ('run now') trigger via compare-and-swap on
+        last_run_at. Stamps last_run_at to now only if the row is still active AND its
+        last_run_at still equals old_last_run (the value the caller just read). Returns
+        True if this caller won, False if another instance/request beat it — giving the
+        manual-trigger path the same single-runner guarantee across instances that
+        claim_scheduled_scan gives the scheduled loop (the in-memory _in_flight guard
+        only protects a single process).
+        """
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if old_last_run is None:
+            result = await self.pool.execute(
+                "UPDATE scheduled_scans SET last_run_at=$1, updated_at=$1 "
+                "WHERE id=$2 AND status='active' AND last_run_at IS NULL",
+                now, schedule_id,
+            )
+        else:
+            result = await self.pool.execute(
+                "UPDATE scheduled_scans SET last_run_at=$1, updated_at=$1 "
+                "WHERE id=$2 AND status='active' AND last_run_at=$3",
+                now, schedule_id, old_last_run,
+            )
+        return int(result.split()[-1]) > 0
+
     async def insert_schedule_execution(self, data: Dict[str, Any]) -> int:
         """Insert a schedule-execution record; return its new id."""
         return await self.pool.fetchval(

@@ -260,6 +260,16 @@ class ScanSchedulerService:
             if (datetime.now(timezone.utc) - last).total_seconds() < COOLDOWN_SECONDS:
                 raise ValueError("Cooldown: must wait 60 seconds between triggers")
 
+        # AI-CONTEXT: cross-instance claim. The _in_flight + cooldown checks above are
+        # per-PROCESS; in a multi-instance deployment two instances could each pass
+        # them and double-fire the same schedule. claim_manual_trigger does a DB CAS on
+        # last_run_at (stamp only if unchanged since we read it), so exactly one caller
+        # wins — the same single-runner guarantee the scheduled loop gets from
+        # claim_scheduled_scan.
+        claimed = await self._db.claim_manual_trigger(scan_id, existing.get("last_run_at"))
+        if not claimed:
+            raise ValueError("Another runner already triggered this schedule — please wait")
+
         self._in_flight[scan_id] = datetime.now(timezone.utc)  # sentinel to prevent concurrent execution
         try:
             await self._execute_schedule(existing, triggered_by="run_now")
