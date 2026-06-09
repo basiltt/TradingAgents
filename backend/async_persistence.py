@@ -1477,6 +1477,13 @@ def _default_dsn() -> str:
 
 
 class AsyncAnalysisDB:
+    """Async (asyncpg) persistence layer for the whole backend.
+
+    Owns the async connection pool plus a psycopg2 sync-bridge pool for graph
+    executor threads, applies schema migrations on connect, and provides CRUD
+    for analysis runs, scans, accounts, PnL, snapshots, strategies, scheduled
+    scans, and close rules/executions.
+    """
 
     def __init__(self, dsn: str | None = None):
         self._dsn = dsn or _default_dsn()
@@ -1488,6 +1495,7 @@ class AsyncAnalysisDB:
 
     @property
     def pool(self) -> "asyncpg.Pool":
+        """The live asyncpg pool; raises if the DB is closed or not yet connected."""
         if self._closed:
             raise RuntimeError("Database connection is closed")
         if self._pool is None:
@@ -1495,6 +1503,7 @@ class AsyncAnalysisDB:
         return self._pool
 
     async def connect(self):
+        """Create the async and sync connection pools and apply schema migrations."""
         self._pool = await asyncpg.create_pool(
             dsn=self._dsn,
             min_size=int(os.environ.get("DB_POOL_MIN", "2")),
@@ -1579,9 +1588,11 @@ class AsyncAnalysisDB:
     # ── Health / lifecycle ──────────────────────────────────────────
 
     def is_healthy(self) -> bool:
+        """Return True if the async pool exists and is not closing."""
         return self._pool is not None and not self._pool.is_closing()
 
     async def close(self):
+        """Close the sync and async connection pools and mark the DB shut down."""
         self._closed = True
         if self._sync_pool:
             self._sync_pool.closeall()
@@ -1613,6 +1624,7 @@ class AsyncAnalysisDB:
             self._sync_sem.release()
 
     def sync_save_report_section(self, run_id, section, content):
+        """Upsert a report section using the sync bridge (for executor threads)."""
         with self._get_sync_conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -1623,6 +1635,7 @@ class AsyncAnalysisDB:
             conn.commit()
 
     def sync_update_run_status(self, run_id, status, error, completed_at):
+        """Update a still-running run's status via the sync bridge (executor threads)."""
         with self._get_sync_conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -1664,6 +1677,7 @@ class AsyncAnalysisDB:
     # ── Analysis Runs ──────────────────────────────────────────────
 
     async def insert_run(self, run: Dict[str, Any]) -> None:
+        """Insert a new analysis run; raises ValueError if the run_id already exists."""
         try:
             await self.pool.execute(
                 "INSERT INTO analysis_runs "
@@ -1688,6 +1702,10 @@ class AsyncAnalysisDB:
         error: Optional[str],
         completed_at: Optional[str],
     ) -> bool:
+        """Update a run's status/error/completed_at only if still 'running'.
+
+        Returns True if a row was updated (i.e. it was running), False otherwise.
+        """
         result = await self.pool.execute(
             "UPDATE analysis_runs SET status=$1, error=$2, completed_at=$3 "
             "WHERE run_id=$4 AND status='running'",
@@ -1696,6 +1714,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1]) > 0
 
     async def save_report_section(self, run_id: str, section: str, content: str) -> None:
+        """Upsert a report section for a run (idempotent on run_id+section)."""
         try:
             await self.pool.execute(
                 "INSERT INTO report_sections (run_id, section, content) VALUES ($1, $2, $3) "
@@ -1706,6 +1725,7 @@ class AsyncAnalysisDB:
             pass
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single analysis run row, or None if not found."""
         row = await self.pool.fetchrow(
             "SELECT * FROM analysis_runs WHERE run_id=$1", run_id
         )
@@ -1721,6 +1741,11 @@ class AsyncAnalysisDB:
         to_date: Optional[str] = None,
         asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Return a paginated, filtered list of analysis runs (newest first).
+
+        Supports ticker/status/asset_type and analysis_date from/to filters.
+        Returns {"items", "total", "page", "limit"}.
+        """
         limit = min(max(limit, 1), 10000)
         conditions: list[str] = []
         params: list[Any] = []
@@ -1767,12 +1792,14 @@ class AsyncAnalysisDB:
         }
 
     async def get_report_sections(self, run_id: str) -> List[Dict[str, Any]]:
+        """Return all report sections for a run, ordered by insertion id."""
         rows = await self.pool.fetch(
             "SELECT * FROM report_sections WHERE run_id=$1 ORDER BY id", run_id
         )
         return [dict(r) for r in rows]
 
     async def recover_orphans(self) -> int:
+        """Mark all still-'running' runs as failed (startup crash recovery); return the count."""
         result = await self.pool.execute(
             "UPDATE analysis_runs SET status='failed', "
             "error='Server restarted — orphaned run' "
@@ -1781,6 +1808,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1])
 
     async def get_checkpoint_exists(self, ticker: str, date: str) -> bool:
+        """Return True if any analysis run exists for the given ticker and date."""
         row = await self.pool.fetchrow(
             "SELECT 1 FROM analysis_runs WHERE ticker=$1 AND analysis_date=$2 LIMIT 1",
             ticker, date,
@@ -1788,16 +1816,19 @@ class AsyncAnalysisDB:
         return row is not None
 
     async def delete_run(self, run_id: str) -> bool:
+        """Delete a single analysis run; return True if a row was removed."""
         result = await self.pool.execute(
             "DELETE FROM analysis_runs WHERE run_id=$1", run_id
         )
         return int(result.split()[-1]) > 0
 
     async def delete_all_runs(self) -> int:
+        """Delete every analysis run; return the number deleted."""
         result = await self.pool.execute("DELETE FROM analysis_runs")
         return int(result.split()[-1])
 
     async def delete_all_checkpoints(self) -> int:
+        """Delete all completed/failed/cancelled runs; return the number deleted."""
         result = await self.pool.execute(
             "DELETE FROM analysis_runs "
             "WHERE status IN ('completed', 'failed', 'cancelled')"
@@ -1805,6 +1836,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1])
 
     async def delete_ticker_checkpoints(self, ticker: str) -> int:
+        """Delete completed/failed/cancelled runs for one ticker; return the count."""
         result = await self.pool.execute(
             "DELETE FROM analysis_runs "
             "WHERE ticker=$1 AND status IN ('completed', 'failed', 'cancelled')",
@@ -1813,9 +1845,10 @@ class AsyncAnalysisDB:
         return int(result.split()[-1])
 
     async def checkpoint(self) -> None:
-        pass
+        """No-op checkpoint hook (kept for interface compatibility)."""
 
     async def health_check(self) -> str:
+        """Return "ok" if a trivial query succeeds, else "degraded"."""
         try:
             await self.pool.fetchval("SELECT 1")
             return "ok"
@@ -1825,6 +1858,7 @@ class AsyncAnalysisDB:
     # ── Scanner persistence ──────────────────────────────────────────
 
     async def insert_scan(self, scan: Dict[str, Any]) -> None:
+        """Insert a new market-scan row."""
         await self.pool.execute(
             "INSERT INTO scans "
             "(scan_id, status, config, total, completed, failed, started_at, schedule_id, triggered_by) "
@@ -1841,6 +1875,7 @@ class AsyncAnalysisDB:
         )
 
     async def update_scan(self, scan_id: str, **fields: Any) -> None:
+        """Update allowed scan columns; ignores unknown fields and no-ops if none."""
         allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -1857,6 +1892,12 @@ class AsyncAnalysisDB:
         )
 
     async def insert_scan_result(self, scan_id: str, result: Dict[str, Any]) -> Optional[int]:
+        """Upsert a per-ticker scan result; return its row id.
+
+        Defensively validates/clamps direction, confidence, score (-10..10),
+        status, and analysis_price before persisting. Upserts on (scan_id,
+        ticker), preserving a prior analysis_price when the new one is NULL.
+        """
         direction = result.get("direction", "hold")
         if direction not in ("buy", "sell", "hold"):
             logger.error("insert_scan_result: invalid direction %r — forcing hold", direction)
@@ -1911,6 +1952,10 @@ class AsyncAnalysisDB:
         return row["id"] if row else None
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Return a scan with its results (ordered by |score|), or None if not found.
+
+        Adds a skipped_count of results that came from the TA prefilter.
+        """
         row = await self.pool.fetchrow(
             "SELECT * FROM scans WHERE scan_id=$1", scan_id
         )
@@ -1930,6 +1975,11 @@ class AsyncAnalysisDB:
         return scan
 
     async def list_scans(self) -> List[Dict[str, Any]]:
+        """Return the 50 most recent scans with per-direction and skipped counts.
+
+        Results lists are left empty; each scan carries direction_counts and
+        skipped_count aggregates instead.
+        """
         rows = await self.pool.fetch(
             "SELECT scan_id, status, config, total, completed, failed, "
             "started_at, completed_at, schedule_id, triggered_by "
@@ -1963,12 +2013,14 @@ class AsyncAnalysisDB:
         return scans
 
     async def get_scan_completed_tickers(self, scan_id: str) -> set[str]:
+        """Return the set of tickers that already have a result row for a scan."""
         rows = await self.pool.fetch(
             "SELECT ticker FROM scan_results WHERE scan_id=$1", scan_id
         )
         return {r["ticker"] for r in rows}
 
     async def increment_scan_counter(self, scan_id: str, field: str) -> None:
+        """Increment a scan's 'completed' or 'failed' counter by one (ignores others)."""
         if field not in ("completed", "failed"):
             return
         await self.pool.execute(
@@ -1977,6 +2029,7 @@ class AsyncAnalysisDB:
         )
 
     async def get_running_scans(self) -> List[Dict[str, Any]]:
+        """Return all scans currently in 'running' status."""
         rows = await self.pool.fetch(
             "SELECT * FROM scans WHERE status='running'"
         )
@@ -2022,6 +2075,7 @@ class AsyncAnalysisDB:
         }
 
     async def get_scan_analysis_count(self, scan_id: str) -> int:
+        """Return the number of scan results that have a linked analysis run_id."""
         return await self.pool.fetchval(
             "SELECT COUNT(*) FROM scan_results WHERE scan_id=$1 AND run_id IS NOT NULL",
             scan_id,
@@ -2030,6 +2084,7 @@ class AsyncAnalysisDB:
     # ── Trading Accounts persistence ────────────────────────────────────
 
     async def insert_account(self, account: Dict[str, Any]) -> None:
+        """Insert a new trading account row (encrypted credentials included)."""
         await self.pool.execute(
             "INSERT INTO trading_accounts "
             "(id, label, account_type, api_key_masked, api_key_encrypted, "
@@ -2051,6 +2106,7 @@ class AsyncAnalysisDB:
         )
 
     async def list_accounts(self) -> List[Dict[str, Any]]:
+        """Return all non-deleted trading accounts (no secrets), newest first."""
         rows = await self.pool.fetch(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
@@ -2061,6 +2117,7 @@ class AsyncAnalysisDB:
         return [dict(r) for r in rows]
 
     async def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single non-deleted account (no secrets), or None if absent."""
         row = await self.pool.fetchrow(
             "SELECT id, label, account_type, api_key_masked, is_active, "
             "bybit_uid, last_connected_at, last_error, created_at, updated_at, "
@@ -2071,6 +2128,7 @@ class AsyncAnalysisDB:
         return dict(row) if row else None
 
     async def get_account_credentials(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Return an account's encrypted API key/secret as bytes, or None if absent."""
         row = await self.pool.fetchrow(
             "SELECT id, account_type, api_key_encrypted, api_secret_encrypted "
             "FROM trading_accounts WHERE id=$1 AND deleted_at IS NULL",
@@ -2085,6 +2143,11 @@ class AsyncAnalysisDB:
         return d
 
     async def update_account(self, account_id: str, **fields: Any) -> bool:
+        """Update allowed account fields; return True if a row was updated.
+
+        Filters to a column allowlist (only last_error may be set NULL), stamps
+        updated_at, and no-ops (returns False) when nothing updatable is given.
+        """
         allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics", "strategy_cohort"}
         nullable = {"last_error"}
         updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
@@ -2107,6 +2170,10 @@ class AsyncAnalysisDB:
         self, account_id: str, api_key_masked: str,
         api_key_encrypted: bytes, api_secret_encrypted: bytes, updated_at: str,
     ) -> bool:
+        """Replace an account's encrypted API key/secret and clear last_error.
+
+        Returns True if a non-deleted account row was updated.
+        """
         result = await self.pool.execute(
             "UPDATE trading_accounts SET api_key_masked=$1, api_key_encrypted=$2, "
             "api_secret_encrypted=$3, last_error=NULL, updated_at=$4 "
@@ -2116,6 +2183,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1]) > 0
 
     async def soft_delete_account(self, account_id: str, deleted_at: str) -> bool:
+        """Soft-delete an account (set deleted_at, deactivate); return True if updated."""
         result = await self.pool.execute(
             "UPDATE trading_accounts SET deleted_at=$1, is_active=0, updated_at=$1 "
             "WHERE id=$2 AND deleted_at IS NULL",
@@ -2150,6 +2218,11 @@ class AsyncAnalysisDB:
     # ── Closed PnL persistence ──────────────────────────────────────────
 
     async def insert_closed_pnl_records(self, account_id: str, records: List[Dict[str, Any]]) -> int:
+        """Insert closed-PnL records for an account; return how many were inserted.
+
+        Idempotent per (account_id, bybit_order_id) — duplicates are skipped, and
+        individual malformed records are logged and skipped without aborting.
+        """
         if not records:
             return 0
         inserted = 0
@@ -2183,6 +2256,10 @@ class AsyncAnalysisDB:
         self, account_id: str, start_time: int, end_time: int,
         page: int = 1, limit: int = 50,
     ) -> Dict[str, Any]:
+        """Return paginated closed-PnL records in a time window (newest first).
+
+        Returns {"items", "total", "page", "limit"}.
+        """
         offset = (page - 1) * limit
         total = await self.pool.fetchval(
             "SELECT COUNT(*) FROM closed_pnl_records "
@@ -2200,6 +2277,10 @@ class AsyncAnalysisDB:
     async def get_closed_pnl_summary(
         self, account_id: str, start_time: int, end_time: int,
     ) -> Dict[str, Any]:
+        """Aggregate one account's closed PnL in a window into win/loss summary stats.
+
+        Returns total/average win-loss figures and win rate; zeros when no records.
+        """
         rows = await self.pool.fetch(
             "SELECT closed_pnl FROM closed_pnl_records "
             "WHERE account_id=$1 AND created_time>=$2 AND created_time<=$3",
@@ -2234,6 +2315,12 @@ class AsyncAnalysisDB:
         self, start_time: int, end_time: int,
         account_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Aggregate closed PnL across all analytics-eligible accounts in a window.
+
+        Restricts to active, non-deleted, analytics-included accounts (optionally
+        one account_type). Returns the same win/loss summary shape as the
+        per-account summary.
+        """
         sql = (
             "SELECT cpr.closed_pnl FROM closed_pnl_records cpr "
             "JOIN trading_accounts ta ON ta.id = cpr.account_id "
@@ -2273,6 +2360,7 @@ class AsyncAnalysisDB:
         }
 
     async def get_latest_closed_pnl_time(self, account_id: str) -> Optional[int]:
+        """Return the max created_time of an account's closed PnL records, or None."""
         val = await self.pool.fetchval(
             "SELECT MAX(created_time) FROM closed_pnl_records WHERE account_id=$1",
             account_id,
@@ -2282,6 +2370,7 @@ class AsyncAnalysisDB:
     # ── Daily Snapshots ────────────────────────────────────────────────
 
     async def upsert_daily_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Insert or update a daily equity snapshot (keyed on account + date)."""
         snap_date = snapshot["snapshot_date"]
         if isinstance(snap_date, str):
             snap_date = date.fromisoformat(snap_date)
@@ -2321,6 +2410,7 @@ class AsyncAnalysisDB:
     async def get_daily_snapshots(
         self, account_id: str, start_date: str, end_date: str,
     ) -> List[Dict[str, Any]]:
+        """Return one account's daily snapshots in a date range, oldest first."""
         sd = date.fromisoformat(start_date) if isinstance(start_date, str) else start_date
         ed = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
         rows = await self.pool.fetch(
@@ -2334,6 +2424,11 @@ class AsyncAnalysisDB:
     async def get_all_account_snapshots(
         self, start_date: str, end_date: str, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Return daily snapshots for all analytics-eligible accounts in a date range.
+
+        Restricts to active, non-deleted, analytics-included accounts (optionally
+        one account_type); ordered oldest first.
+        """
         sd = date.fromisoformat(start_date) if isinstance(start_date, str) else start_date
         ed = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
         sql = (
@@ -2352,6 +2447,7 @@ class AsyncAnalysisDB:
         return [dict(r) for r in rows]
 
     async def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Return an account's most recent daily snapshot, or None if none exist."""
         row = await self.pool.fetchrow(
             "SELECT * FROM daily_snapshots "
             "WHERE account_id=$1 ORDER BY snapshot_date DESC LIMIT 1",
@@ -2360,6 +2456,7 @@ class AsyncAnalysisDB:
         return dict(row) if row else None
 
     async def get_previous_snapshot(self, account_id: str, before_date: Any) -> Optional[Dict[str, Any]]:
+        """Return an account's latest daily snapshot strictly before a date, or None."""
         if isinstance(before_date, str):
             before_date = date.fromisoformat(before_date)
         row = await self.pool.fetchrow(
@@ -2375,6 +2472,7 @@ class AsyncAnalysisDB:
     async def get_hf_snapshots(
         self, account_id: str, since_ts: datetime,
     ) -> List[Dict[str, Any]]:
+        """Return one account's high-frequency snapshots since a timestamp, oldest first."""
         rows = await self.pool.fetch(
             "SELECT * FROM high_freq_snapshots "
             "WHERE account_id=$1 AND ts >= $2 "
@@ -2386,6 +2484,11 @@ class AsyncAnalysisDB:
     async def get_all_hf_snapshots(
         self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Return high-frequency snapshots for all analytics-eligible accounts since a timestamp.
+
+        Restricts to active, non-deleted, analytics-included accounts (optionally
+        one account_type); ordered oldest first.
+        """
         sql = (
             "SELECT hf.* FROM high_freq_snapshots hf "
             "JOIN trading_accounts ta ON ta.id = hf.account_id "
@@ -2402,6 +2505,7 @@ class AsyncAnalysisDB:
         return [dict(r) for r in rows]
 
     async def insert_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> int:
+        """Batch-insert high-frequency snapshots with a shared timestamp; return the count."""
         if not snapshots:
             return 0
         batch_ts = datetime.now(timezone.utc)
@@ -2428,6 +2532,11 @@ class AsyncAnalysisDB:
         after_ts: Optional[str] = None,
         table: str = "daily_snapshots",
     ) -> int:
+        """Delete snapshot rows matching optional account/time bounds; return the count.
+
+        Validates table against the snapshot-table allowlist (ValueError otherwise)
+        and applies the correct date/timestamp column per table.
+        """
         if table not in self._VALID_SNAPSHOT_TABLES:
             raise ValueError(f"Invalid table: {table}")
         is_hf = table == "high_freq_snapshots"
@@ -2461,6 +2570,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1])
 
     async def cleanup_old_hf_snapshots(self, max_age_days: int = 1095) -> int:
+        """Delete high-frequency snapshots older than max_age_days; return the count."""
         result = await self.pool.execute(
             "DELETE FROM high_freq_snapshots WHERE ts < NOW() - make_interval(days => $1)",
             max_age_days,
@@ -2474,6 +2584,11 @@ class AsyncAnalysisDB:
         after_ts: Optional[str] = None,
         table: str = "daily_snapshots",
     ) -> int:
+        """Count snapshot rows matching optional account/time bounds.
+
+        Validates table against the snapshot-table allowlist (ValueError otherwise)
+        and applies the correct date/timestamp column per table.
+        """
         if table not in self._VALID_SNAPSHOT_TABLES:
             raise ValueError(f"Invalid table: {table}")
         is_hf = table == "high_freq_snapshots"
@@ -2508,6 +2623,7 @@ class AsyncAnalysisDB:
     # ── Strategies ──────────────────────────────────────────────────
 
     async def insert_strategy(self, strategy: Dict[str, Any]) -> None:
+        """Insert a new strategy row (config JSON-serialized)."""
         await self.pool.execute(
             "INSERT INTO strategies (id, name, description, category, status, config, created_at, updated_at) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -2518,6 +2634,7 @@ class AsyncAnalysisDB:
         )
 
     async def list_strategies(self, status: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return strategies (config deserialized) filtered by optional status/category, newest first."""
         conditions = []
         params: list = []
         idx = 0
@@ -2538,6 +2655,7 @@ class AsyncAnalysisDB:
         return [self._deserialize_strategy(r) for r in rows]
 
     async def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
+        """Return one strategy (config deserialized), or None if not found."""
         row = await self.pool.fetchrow(
             "SELECT id, name, description, category, status, config, created_at, updated_at "
             "FROM strategies WHERE id = $1",
@@ -2548,6 +2666,11 @@ class AsyncAnalysisDB:
         return self._deserialize_strategy(row)
 
     async def update_strategy(self, strategy_id: str, **fields: Any) -> bool:
+        """Update allowed strategy fields; return True if a row changed.
+
+        Serializes config to JSON, stamps updated_at, and no-ops (returns False)
+        when no updatable field is given.
+        """
         allowed = {"name", "description", "category", "status", "config"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -2568,6 +2691,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1]) > 0
 
     async def delete_strategy(self, strategy_id: str) -> bool:
+        """Delete a strategy by id; return True if a row was removed."""
         result = await self.pool.execute(
             "DELETE FROM strategies WHERE id = $1", strategy_id
         )
@@ -2576,6 +2700,7 @@ class AsyncAnalysisDB:
     # ── Scheduled Scans ──────────────────────────────────────────────
 
     async def insert_scheduled_scan(self, data: Dict[str, Any]) -> None:
+        """Insert a scheduled scan; raises ValueError if its id already exists."""
         try:
             await self.pool.execute(
                 "INSERT INTO scheduled_scans "
@@ -2597,6 +2722,7 @@ class AsyncAnalysisDB:
             raise ValueError(f"Scheduled scan {data['id']} already exists") from None
 
     async def update_scheduled_scan(self, schedule_id: str, fields: Dict[str, Any]) -> None:
+        """Update allowed scheduled-scan columns; JSON-encodes config dicts and no-ops if none."""
         allowed = {
             "name", "schedule_type", "schedule_config", "scan_config",
             "status", "timezone", "next_run_at", "last_run_at",
@@ -2667,24 +2793,28 @@ class AsyncAnalysisDB:
             return prior
 
     async def delete_scheduled_scan(self, schedule_id: str) -> bool:
+        """Delete a scheduled scan by id; return True if a row was removed."""
         result = await self.pool.execute(
             "DELETE FROM scheduled_scans WHERE id=$1", schedule_id
         )
         return int(result.split()[-1]) > 0
 
     async def list_scheduled_scans(self) -> List[Dict[str, Any]]:
+        """Return all scheduled scans (configs deserialized), newest first."""
         rows = await self.pool.fetch(
             "SELECT * FROM scheduled_scans ORDER BY created_at DESC"
         )
         return [self._deserialize_schedule(r) for r in rows]
 
     async def get_scheduled_scan(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Return one scheduled scan (configs deserialized), or None if not found."""
         row = await self.pool.fetchrow(
             "SELECT * FROM scheduled_scans WHERE id=$1", schedule_id
         )
         return self._deserialize_schedule(row) if row else None
 
     async def get_due_scheduled_scans(self) -> List[Dict[str, Any]]:
+        """Return up to 5 active scheduled scans whose next_run_at is now due."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = await self.pool.fetch(
             "SELECT * FROM scheduled_scans "
@@ -2697,6 +2827,12 @@ class AsyncAnalysisDB:
     async def claim_scheduled_scan(
         self, schedule_id: str, old_next: str, new_next: Optional[str]
     ) -> bool:
+        """Atomically claim a due scheduled scan via compare-and-swap on next_run_at.
+
+        Advances next_run_at to new_next and stamps last_run_at only if the row is
+        still active and its next_run_at equals old_next. Returns True if claimed
+        (guarantees a single runner across instances), False if another claimed it.
+        """
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         result = await self.pool.execute(
             "UPDATE scheduled_scans "
@@ -2707,6 +2843,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1]) > 0
 
     async def insert_schedule_execution(self, data: Dict[str, Any]) -> int:
+        """Insert a schedule-execution record; return its new id."""
         return await self.pool.fetchval(
             "INSERT INTO schedule_executions "
             "(schedule_id, scan_id, status, started_at, completed_at, error_message) "
@@ -2720,6 +2857,7 @@ class AsyncAnalysisDB:
         )
 
     async def update_schedule_execution(self, exec_id: int, fields: Dict[str, Any]) -> None:
+        """Update allowed columns on a schedule-execution row; no-ops if none given."""
         allowed = {"scan_id", "status", "completed_at", "error_message"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -2738,6 +2876,7 @@ class AsyncAnalysisDB:
     async def list_schedule_executions(
         self, schedule_id: str, limit: int = 20
     ) -> List[Dict[str, Any]]:
+        """Return a schedule's recent execution records, newest first."""
         rows = await self.pool.fetch(
             "SELECT * FROM schedule_executions "
             "WHERE schedule_id=$1 ORDER BY started_at DESC LIMIT $2",
@@ -2746,6 +2885,10 @@ class AsyncAnalysisDB:
         return [dict(r) for r in rows]
 
     async def cleanup_old_executions(self, days: int = 90, min_keep: int = 100) -> int:
+        """Delete execution records older than `days`, keeping the latest min_keep per schedule.
+
+        Returns the number of rows deleted.
+        """
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         result = await self.pool.execute(
             "DELETE FROM schedule_executions "
@@ -2763,15 +2906,18 @@ class AsyncAnalysisDB:
     async def update_scan_schedule_link(
         self, scan_id: str, schedule_id: str, triggered_by: str
     ) -> None:
+        """Link a scan back to the schedule that triggered it."""
         await self.pool.execute(
             "UPDATE scans SET schedule_id=$1, triggered_by=$2 WHERE scan_id=$3",
             schedule_id, triggered_by, scan_id,
         )
 
     async def count_scheduled_scans(self) -> int:
+        """Return the total number of scheduled scans."""
         return await self.pool.fetchval("SELECT COUNT(*) FROM scheduled_scans")
 
     async def mark_orphaned_executions(self) -> int:
+        """Fail executions stuck in 'started' for >10 minutes (crash recovery); return the count."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         threshold = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         result = await self.pool.execute(
@@ -2785,6 +2931,10 @@ class AsyncAnalysisDB:
     # ── Close Rules ──────────────────────────────────────────────
 
     async def insert_close_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a close rule (defaulting status to 'active'); return the stored row.
+
+        Serializes a datetime reference_value to ISO text before persisting.
+        """
         cols = ["account_id", "trigger_type", "threshold_value", "reference_value",
                 "status", "expires_at", "cycle_id"]
         vals = {c: rule.get(c) for c in cols}
@@ -2805,6 +2955,7 @@ class AsyncAnalysisDB:
         return self._serialize_row(row)
 
     async def list_close_rules(self, account_id: str) -> list:
+        """Return all close rules for an account (JSON-safe), newest first."""
         rows = await self.pool.fetch(
             "SELECT * FROM close_rules WHERE account_id = $1 ORDER BY created_at DESC",
             account_id,
@@ -2812,6 +2963,7 @@ class AsyncAnalysisDB:
         return [self._serialize_row(r) for r in rows]
 
     async def get_close_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        """Return one close rule (JSON-safe), or None if not found."""
         row = await self.pool.fetchrow(
             "SELECT * FROM close_rules WHERE id = $1", rule_id
         )
@@ -2820,6 +2972,12 @@ class AsyncAnalysisDB:
         return self._serialize_row(row)
 
     async def update_close_rule(self, rule_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update allowed close-rule columns; return the updated row or None.
+
+        Normalizes reference_value to text and expires_at/triggered_at to
+        datetimes, stamps updated_at, and returns None when nothing updatable is
+        given or the rule does not exist.
+        """
         allowed = {"trigger_type", "threshold_value", "reference_value", "status", "expires_at", "triggered_at"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -2879,6 +3037,7 @@ class AsyncAnalysisDB:
         return int(result.split()[-1])
 
     async def delete_close_rule(self, rule_id: str) -> bool:
+        """Delete a close rule and its executions in one transaction; return True if removed."""
         async with self._transaction() as conn:
             await conn.execute("DELETE FROM close_executions WHERE rule_id = $1", rule_id)
             result = await conn.execute("DELETE FROM close_rules WHERE id = $1", rule_id)
@@ -2968,6 +3127,7 @@ class AsyncAnalysisDB:
         return result
 
     async def count_rules_for_account(self, account_id: str) -> int:
+        """Return the number of active or paused close rules for an account."""
         return await self.pool.fetchval(
             "SELECT COUNT(*) FROM close_rules WHERE account_id = $1 AND status IN ('active', 'paused')",
             account_id,
@@ -2976,6 +3136,10 @@ class AsyncAnalysisDB:
     # ── Close Executions ─────────────────────────────────────────
 
     async def insert_close_execution(self, execution: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a close-execution record; return the stored row (JSON-safe).
+
+        Serializes the results payload to JSON when not already a string.
+        """
         cols = ["account_id", "rule_id", "trigger_source", "total_positions",
                 "closed_count", "failed_count", "results"]
         vals = {c: execution.get(c) for c in cols}
@@ -2990,6 +3154,10 @@ class AsyncAnalysisDB:
         return self._serialize_row(row)
 
     async def list_close_executions(self, account_id: str, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+        """Return paginated close executions for an account (newest first).
+
+        Returns {"items", "total", "page", "limit"}.
+        """
         offset = (page - 1) * limit
         total = await self.pool.fetchval(
             "SELECT COUNT(*) FROM close_executions WHERE account_id = $1",

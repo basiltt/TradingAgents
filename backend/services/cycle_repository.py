@@ -24,10 +24,17 @@ _ACTIVE_STATUSES = ("pending", "placing_trades", "running", "stopping")
 
 
 class CycleRepository:
+    """Async CRUD access for trading_cycles and cycle_trades tables.
+
+    Wraps an asyncpg pool and enforces a column allowlist on dynamic updates,
+    plus terminal-status guards so completed cycles cannot be mutated.
+    """
+
     def __init__(self, pool: asyncpg.Pool):
         self._pool = pool
 
     async def create_cycle(self, config: dict) -> int:
+        """Insert a new trading cycle from a config dict; return its id."""
         row = await self._pool.fetchrow(
             """
             INSERT INTO trading_cycles (
@@ -49,6 +56,7 @@ class CycleRepository:
         return row["id"]
 
     async def get_cycle(self, cycle_id: int) -> Optional[dict]:
+        """Return a cycle plus its trades (ordered by created_at), or None if absent."""
         cycle = await self._pool.fetchrow(
             "SELECT * FROM trading_cycles WHERE id = $1", cycle_id
         )
@@ -65,6 +73,11 @@ class CycleRepository:
     async def list_cycles(
         self, offset: int = 0, limit: int = 20, *, status: Optional[str] = None
     ) -> tuple[list[dict], int]:
+        """Return a page of cycles (newest first) and the total matching count.
+
+        ``status="active"`` matches any non-terminal status; any other value
+        filters on exact status; None returns all cycles.
+        """
         if status == "active":
             where = "WHERE status = ANY($1::text[])"
             params: list = [list(_ACTIVE_STATUSES)]
@@ -94,6 +107,13 @@ class CycleRepository:
     async def update_status(
         self, cycle_id: int, new_status: str, **kwargs
     ) -> bool:
+        """Transition a cycle to a new status with optional column updates.
+
+        Locks the row FOR UPDATE and refuses the change (returns False) if the
+        cycle is missing or already in a terminal status. Extra kwargs are
+        validated against the status-updatable column allowlist (ValueError on
+        unknown keys). Returns True when the update is applied.
+        """
         bad_keys = set(kwargs) - _STATUS_UPDATABLE_COLS
         if bad_keys:
             raise ValueError(f"Invalid update columns: {bad_keys}")
@@ -121,6 +141,10 @@ class CycleRepository:
             return True
 
     async def add_trade(self, cycle_id: int, trade_data: dict) -> int:
+        """Insert a trade row for a cycle; return its id.
+
+        Truncates error_msg to 500 characters before storing.
+        """
         error_msg = trade_data.get("error_msg")
         if error_msg and len(error_msg) > 500:
             error_msg = error_msg[:500]
@@ -137,6 +161,12 @@ class CycleRepository:
         return row["id"]
 
     async def update_trade(self, trade_id: int, **kwargs) -> None:
+        """Update allowed columns on a cycle trade.
+
+        Validates kwargs against the trade-updatable allowlist (ValueError on
+        unknown keys), truncates error_msg to 500 chars, and no-ops if no
+        columns are given.
+        """
         bad_keys = set(kwargs) - _TRADE_UPDATABLE_COLS
         if bad_keys:
             raise ValueError(f"Invalid trade update columns: {bad_keys}")
@@ -157,6 +187,7 @@ class CycleRepository:
             )
 
     async def increment_counters(self, cycle_id: int, placed: int = 0, failed: int = 0) -> None:
+        """Add to a cycle's trades_placed and trades_failed counters."""
         await self._pool.execute(
             """
             UPDATE trading_cycles
@@ -168,6 +199,7 @@ class CycleRepository:
         )
 
     async def find_stuck_cycles(self, max_age_seconds: int) -> list[dict]:
+        """Return in-flight cycles older than max_age_seconds (recovery sweep)."""
         rows = await self._pool.fetch(
             """
             SELECT * FROM trading_cycles
@@ -179,6 +211,7 @@ class CycleRepository:
         return [dict(r) for r in rows]
 
     async def find_all_non_terminal_cycles(self) -> list[dict]:
+        """Return every cycle still in a non-terminal status."""
         rows = await self._pool.fetch(
             """
             SELECT * FROM trading_cycles
@@ -188,6 +221,11 @@ class CycleRepository:
         return [dict(r) for r in rows]
 
     async def reconcile_counters(self, cycle_id: int) -> None:
+        """Recompute trades_placed/trades_failed from cycle_trades and overwrite them.
+
+        Counts filled vs. failed trade rows and writes the authoritative totals
+        back onto the cycle.
+        """
         row = await self._pool.fetchrow(
             """
             SELECT
@@ -207,18 +245,21 @@ class CycleRepository:
         )
 
     async def activate_cycle_rules(self, cycle_id: int) -> None:
+        """Flip the cycle's close_rules from pending_activation to active."""
         await self._pool.execute(
             "UPDATE close_rules SET status = 'active' WHERE cycle_id = $1 AND status = 'pending_activation'",
             cycle_id,
         )
 
     async def expire_cycle_rules(self, cycle_id: int) -> None:
+        """Mark the cycle's active/pending close_rules as expired."""
         await self._pool.execute(
             "UPDATE close_rules SET status = 'expired', updated_at = now() WHERE cycle_id = $1 AND status IN ('active', 'pending_activation')",
             cycle_id,
         )
 
     async def get_cycle_trade_symbols(self, cycle_id: int) -> list[str]:
+        """Return the distinct symbols of filled trades in a cycle."""
         rows = await self._pool.fetch(
             "SELECT DISTINCT symbol FROM cycle_trades WHERE cycle_id = $1 AND status = 'filled'",
             cycle_id,

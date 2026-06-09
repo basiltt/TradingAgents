@@ -34,6 +34,7 @@ class WSConnection:
         self._closed = False
 
     def next_seq(self) -> int:
+        """Return the next outbound message sequence number for this connection."""
         self._seq += 1
         return self._seq
 
@@ -53,6 +54,10 @@ class WSManager:
         self._consumer_lock = asyncio.Lock()
 
     async def connect(self, ws: WebSocket, run_id: str) -> WSConnection:
+        """Register a new WebSocket for a run and start its send/heartbeat loops.
+
+        Returns the wrapping WSConnection.
+        """
         conn = WSConnection(ws, run_id)
         async with self._lock:
             if run_id not in self._connections:
@@ -64,6 +69,10 @@ class WSManager:
         return conn
 
     async def disconnect(self, conn: WSConnection) -> None:
+        """Remove a connection, drop empty run groups, and cancel its loops.
+
+        Idempotent — a no-op if the connection is already closed.
+        """
         if conn._closed:
             return
         conn._closed = True
@@ -81,6 +90,11 @@ class WSManager:
             conn._heartbeat_task.cancel()
 
     async def broadcast(self, run_id: str, event: Dict[str, Any]) -> None:
+        """Enqueue an event to every connection for a run.
+
+        Events are dropped (and logged) for any connection whose outbound queue
+        is full, so a slow consumer cannot block the broadcast.
+        """
         async with self._lock:
             conns = list(self._connections.get(run_id, set()))
 
@@ -91,6 +105,7 @@ class WSManager:
                 logger.debug("Queue full on run %s, dropping event", run_id)
 
     async def send_to(self, conn: WSConnection, event: Dict[str, Any]) -> None:
+        """Enqueue an event to a single connection, closing it if its queue is full."""
         try:
             conn.outbound.put_nowait(event)
         except asyncio.QueueFull:
@@ -123,6 +138,12 @@ class WSManager:
             await self.disconnect(conn)
 
     async def handle_message(self, conn: WSConnection, raw: str) -> Optional[str]:
+        """Validate and process an inbound client frame; return its message type.
+
+        Enforces a max frame size ("frame_too_large") and a per-second rate limit
+        ("rate_limited"), returns None for non-JSON payloads, and updates last_pong
+        on "pong" frames. Otherwise returns the parsed message type.
+        """
         if len(raw) > _INBOUND_FRAME_MAX:
             return "frame_too_large"
 
@@ -154,9 +175,14 @@ class WSManager:
         await self.disconnect(conn)
 
     def get_connection_count(self, run_id: str) -> int:
+        """Return the number of active connections for a run."""
         return len(self._connections.get(run_id, set()))
 
     async def ensure_consumer(self, run_id: str, consume_fn) -> None:
+        """Start the per-run event-bus consumer task if one is not already running.
+
+        The task self-removes from the registry on completion via a done-callback.
+        """
         async with self._consumer_lock:
             task = self._consumers.get(run_id)
             if task and not task.done():
@@ -172,6 +198,7 @@ class WSManager:
         self._consumers.pop(run_id, None)
 
     async def remove_consumer_if_empty(self, run_id: str) -> None:
+        """Cancel and drop the run's consumer task if it has no remaining connections."""
         async with self._lock:
             count = len(self._connections.get(run_id, set()))
         if count > 0:
@@ -182,6 +209,7 @@ class WSManager:
             task.cancel()
 
     async def shutdown(self) -> None:
+        """Cancel and await all per-run consumer tasks (graceful teardown)."""
         async with self._consumer_lock:
             tasks = list(self._consumers.values())
             self._consumers.clear()

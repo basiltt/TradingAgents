@@ -83,6 +83,7 @@ class DebugTraceRepository:
 
     # ── config ────────────────────────────────────────────────
     async def get_config(self) -> dict[str, Any]:
+        """Return the singleton debug_config row, or built-in defaults if unset."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT tracing_enabled, retention_days, symbol_decision_cap FROM debug_config WHERE id=1"
@@ -95,6 +96,11 @@ class DebugTraceRepository:
         self, *, tracing_enabled: Optional[bool] = None,
         retention_days: Optional[int] = None, symbol_decision_cap: Optional[int] = None,
     ) -> dict[str, Any]:
+        """Patch the debug_config row with any provided fields; return the new config.
+
+        Only non-None arguments are written; stamps updated_at when anything
+        changes. Always returns the current config via get_config().
+        """
         sets: list[str] = []
         args: list[Any] = []
         i = 1
@@ -123,6 +129,10 @@ class DebugTraceRepository:
         scan_started_at: Optional[datetime] = None, scan_completed_at: Optional[datetime] = None,
         config_snapshot: Optional[dict] = None,
     ) -> int:
+        """Insert a debug run row (stamping exec_started_at) and return its id.
+
+        Strips credential-shaped keys from config_snapshot before persisting.
+        """
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
                 """
@@ -141,6 +151,7 @@ class DebugTraceRepository:
         total_symbols: int = 0, completed_symbols: int = 0, failed_symbols: int = 0,
         num_accounts: int = 0, dropped_event_count: int = 0,
     ) -> None:
+        """Stamp exec_completed_at and write the run's final phase and summary counts."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
@@ -162,6 +173,12 @@ class DebugTraceRepository:
         symbol_decisions: Optional[list[dict]] = None,
         exchange_snapshots: Optional[list[dict]] = None,
     ) -> None:
+        """Bulk-load trace events into their debug_* tables via binary COPY.
+
+        Each event category is optional and inserted only if non-empty. NUMERIC
+        money columns are coerced exactly through Decimal, and config snapshots
+        have credential-shaped keys stripped before persisting.
+        """
         async with self._pool.acquire() as conn:
             if account_traces:
                 await conn.copy_records_to_table(
@@ -276,6 +293,7 @@ class DebugTraceRepository:
 
     # ── reads ─────────────────────────────────────────────────
     async def get_latest_run_id_for_scan(self, scan_id: str) -> Optional[int]:
+        """Return the most recent debug run id for a scan, or None if none exist."""
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
                 "SELECT id FROM debug_runs WHERE scan_id=$1 ORDER BY created_at DESC LIMIT 1",
@@ -283,6 +301,12 @@ class DebugTraceRepository:
             )
 
     async def get_run_tree(self, run_id: int) -> dict[str, Any]:
+        """Assemble a full run trace tree for the UI, or {} if the run is missing.
+
+        Returns {"run", "accounts"} where each account node nests its lifecycle
+        events, symbol decisions, exchange snapshots, linked trades/close rules,
+        and a generated plain-English narrative.
+        """
         async with self._pool.acquire() as conn:
             run = await conn.fetchrow("SELECT * FROM debug_runs WHERE id=$1", run_id)
             if run is None:
@@ -369,6 +393,12 @@ class DebugTraceRepository:
                         account_id: Optional[str] = None,
                         from_ts: Optional[str] = None,
                         to_ts: Optional[str] = None) -> dict[str, Any]:
+        """Return a paginated, filtered list of debug runs (newest first).
+
+        Optional filters: account_id (joins account traces), trigger_source, and
+        a created_at from_ts/to_ts window. Returns {"items", "total", "limit",
+        "offset"}.
+        """
         args: list = []
         join = ""
         where: list[str] = []
@@ -403,6 +433,10 @@ class DebugTraceRepository:
     async def get_account_timeline(self, account_id: str, *, limit: int = 50,
                                    from_ts: Optional[str] = None,
                                    to_ts: Optional[str] = None) -> list[dict]:
+        """Return an account's recent trace rows joined to run metadata, newest first.
+
+        Supports an optional created_at from_ts/to_ts window and a row limit.
+        """
         args: list = [account_id]
         where = ["a.account_id=$1"]
         if from_ts:
@@ -426,6 +460,11 @@ class DebugTraceRepository:
 
     async def get_symbol_decisions(self, symbol: str, *, scan_id: Optional[str] = None,
                                    limit: int = 200) -> list[dict]:
+        """Return recent decisions for a symbol, newest first.
+
+        Optionally scopes to a single scan_id (joining runs); otherwise spans all
+        runs. Capped by limit.
+        """
         async with self._pool.acquire() as conn:
             if scan_id:
                 rows = await conn.fetch(

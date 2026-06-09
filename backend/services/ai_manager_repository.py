@@ -19,10 +19,18 @@ GENESIS_PREV_HASH = "0" * 64
 
 
 class AIManagerRepository:
+    """Async data-access layer for AI Account Manager tables.
+
+    Wraps an asyncpg pool and exposes raw-query helpers for the
+    ai_manager_* tables (state, decisions, patterns, failed outcomes,
+    logs, sweep/regime/correlation telemetry, and LLM-call audit).
+    """
+
     def __init__(self, pool):
         self._pool = pool
 
     async def get_state(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch the AI manager state row for an account, or None if absent."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM ai_manager_state WHERE account_id = $1",
@@ -64,6 +72,12 @@ class AIManagerRepository:
     })
 
     async def upsert_state(self, account_id: str, **fields) -> Dict[str, Any]:
+        """Insert or update the state row for an account and return it.
+
+        Stamps updated_at, validates field names against the allowed-column
+        allowlist (raising ValueError on unknown columns), then performs an
+        ON CONFLICT (account_id) upsert. Returns the resulting row as a dict.
+        """
         fields["updated_at"] = datetime.now(timezone.utc)
         invalid = set(fields.keys()) - self._ALLOWED_COLUMNS
         if invalid:
@@ -84,6 +98,7 @@ class AIManagerRepository:
             return dict(row) if row else {}
 
     async def update_heartbeat(self, account_id: str) -> None:
+        """Set the account's heartbeat_at to NOW() to signal liveness."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_state SET heartbeat_at = NOW() WHERE account_id = $1",
@@ -91,6 +106,7 @@ class AIManagerRepository:
             )
 
     async def get_enabled_accounts(self) -> list:
+        """Return id and circuit-breaker fields for every enabled AI account."""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT account_id, circuit_breaker_count, circuit_breaker_active "
@@ -99,6 +115,11 @@ class AIManagerRepository:
             return [dict(r) for r in rows]
 
     async def get_stranded_decisions(self) -> list:
+        """Return decisions with no execution_result older than 2 minutes.
+
+        These are stranded writes (executor crashed between insert and outcome
+        update) that a recovery sweep should reconcile.
+        """
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, timestamp, account_id FROM ai_manager_decisions "
@@ -109,6 +130,12 @@ class AIManagerRepository:
     async def insert_decision(
         self, account_id: str, decision_data: Dict[str, Any], hmac_key: str
     ) -> Tuple[int, datetime]:
+        """Append a hash-chained decision row for an account.
+
+        Takes a per-account advisory lock to serialize chain appends, reads the
+        previous decision_hash (or the genesis hash), computes an HMAC-SHA256
+        over the chain fields, and inserts the new row. Returns (id, timestamp).
+        """
         async with self._pool.acquire() as conn, conn.transaction():
             # Advisory lock serializes all chain appends for this account (covers genesis case)
             await conn.execute(
@@ -163,6 +190,12 @@ class AIManagerRepository:
     async def update_decision_outcome(
         self, decision_id: int, decision_timestamp: datetime, outcome: Dict[str, Any]
     ) -> None:
+        """Record a decision's outcome and execution_result.
+
+        Derives outcome_label from the realized PnL (profitable > 0.5,
+        loss < -0.5, else neutral) and updates the row matched by
+        (decision_id, decision_timestamp).
+        """
         outcome_label = None
         if outcome:
             pnl_val = outcome.get("realized_pnl")
@@ -192,6 +225,7 @@ class AIManagerRepository:
     async def get_recent_decisions(
         self, account_id: str, limit: int = 15
     ) -> List[Dict[str, Any]]:
+        """Return the most recent decisions for an account, newest first."""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, account_id, timestamp, action_taken, confidence, outcome_label "
@@ -203,6 +237,7 @@ class AIManagerRepository:
             return [dict(r) for r in rows]
 
     async def count_decisions(self, account_id: str) -> int:
+        """Return the total number of decisions recorded for an account."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT COUNT(*) AS cnt FROM ai_manager_decisions WHERE account_id = $1",
@@ -218,6 +253,12 @@ class AIManagerRepository:
         limit: int = 50,
         outcome_filter: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Keyset-paginate decisions for an account, newest first.
+
+        Pages by the (timestamp, id) cursor and optionally filters by
+        outcome_label. Returns (rows, next_cursor) where next_cursor is a
+        "timestamp_id" string, or None when no further pages remain.
+        """
         conditions = ["account_id = $1"]
         params: list = [account_id]
         idx = 2
@@ -256,6 +297,10 @@ class AIManagerRepository:
     async def get_patterns(
         self, account_id: str, active: bool = True, limit: int = 5
     ) -> List[Dict[str, Any]]:
+        """Return an account's patterns ordered by confidence descending.
+
+        Filters by the active flag and caps the result at limit rows.
+        """
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT * FROM ai_manager_patterns "
@@ -270,6 +315,12 @@ class AIManagerRepository:
     async def upsert_pattern(
         self, account_id: str, pattern_data: Dict[str, Any]
     ) -> int:
+        """Insert a pattern, or bump confidence/evidence_count on conflict.
+
+        Upserts on (account_id, pattern_type, symbol) for active rows; on
+        conflict updates confidence and increments evidence_count. Returns
+        the pattern id.
+        """
         symbol = pattern_data.get("symbol") or ""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -288,6 +339,7 @@ class AIManagerRepository:
             return row["id"] if row else 0
 
     async def count_active_patterns(self, account_id: str) -> int:
+        """Return the number of active patterns for an account."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT COUNT(*) as cnt FROM ai_manager_patterns "
@@ -297,6 +349,7 @@ class AIManagerRepository:
             return row["cnt"]
 
     async def deactivate_lowest_confidence_pattern(self, account_id: str) -> None:
+        """Deactivate the account's single lowest-confidence active pattern."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_patterns SET active = FALSE, updated_at = NOW() "
@@ -307,6 +360,11 @@ class AIManagerRepository:
             )
 
     async def increment_actions_atomic(self, account_id: str) -> bool:
+        """Atomically bump daily/hourly action counters if under their caps.
+
+        Returns True if the increment was applied (budget available), or False
+        when either the daily or hourly cap is already reached.
+        """
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "UPDATE ai_manager_state "
@@ -336,6 +394,7 @@ class AIManagerRepository:
     async def record_realized_loss(
         self, account_id: str, loss_amount: float
     ) -> Dict[str, Any]:
+        """Add to realized_loss_today; return updated loss and day-start equity."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "UPDATE ai_manager_state "
@@ -361,6 +420,7 @@ class AIManagerRepository:
     async def record_realized_profit(
         self, account_id: str, profit_amount: float
     ) -> Dict[str, Any]:
+        """Add to realized_profit_today; return updated profit and day-start equity."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "UPDATE ai_manager_state "
@@ -375,6 +435,10 @@ class AIManagerRepository:
     async def increment_token_budget_atomic(
         self, account_id: str, tokens_used: int, max_tokens: int
     ) -> bool:
+        """Atomically add tokens to today's budget if it stays within max_tokens.
+
+        Returns True if the increment fit under the cap, False otherwise.
+        """
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "UPDATE ai_manager_state "
@@ -401,6 +465,7 @@ class AIManagerRepository:
             )
 
     async def is_kill_switch_active(self, account_id: str) -> bool:
+        """Return True if the account's kill switch is set."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT kill_switch_active FROM ai_manager_state WHERE account_id = $1",
@@ -409,6 +474,7 @@ class AIManagerRepository:
             return bool(row and row["kill_switch_active"])
 
     async def set_kill_switch(self, account_id: str, active: bool) -> None:
+        """Set the kill_switch_active flag for a single account."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_state SET kill_switch_active = $2, updated_at = NOW() "
@@ -418,6 +484,7 @@ class AIManagerRepository:
             )
 
     async def set_global_kill(self, active: bool) -> None:
+        """Set the kill_switch_active flag for all enabled accounts at once."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_state SET kill_switch_active = $1, updated_at = NOW() "
@@ -426,6 +493,7 @@ class AIManagerRepository:
             )
 
     async def reset_kill_switch(self, account_id: str) -> None:
+        """Clear (set False) the kill switch for a single account."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_state SET kill_switch_active = FALSE, updated_at = NOW() "
@@ -436,6 +504,7 @@ class AIManagerRepository:
     async def sync_config_columns(
         self, account_id: str, config: Dict[str, Any]
     ) -> None:
+        """Persist config JSON plus the daily/hourly action caps it specifies."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_state "
@@ -452,6 +521,10 @@ class AIManagerRepository:
     async def insert_failed_outcome(
         self, decision_id: int, decision_timestamp: datetime, result: Dict, reason: str
     ) -> int:
+        """Record a failed execution outcome for retry; return the new row id.
+
+        Schedules the first retry 30 seconds out via next_retry_at.
+        """
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "INSERT INTO ai_manager_failed_outcomes "
@@ -466,6 +539,7 @@ class AIManagerRepository:
             return row["id"]
 
     async def get_pending_retries(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return unresolved failed outcomes whose next_retry_at is due, oldest first."""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT * FROM ai_manager_failed_outcomes "
@@ -476,6 +550,10 @@ class AIManagerRepository:
             return [dict(r) for r in rows]
 
     async def increment_retry(self, failed_id: int) -> None:
+        """Bump retry_count and schedule the next attempt with exponential backoff.
+
+        No-op once retry_count reaches max_retries.
+        """
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_failed_outcomes "
@@ -486,6 +564,7 @@ class AIManagerRepository:
             )
 
     async def mark_resolved(self, failed_id: int, reason: str) -> None:
+        """Mark a failed outcome resolved, appending the reason to failure_reason."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_failed_outcomes "
@@ -498,6 +577,7 @@ class AIManagerRepository:
     # Global state
 
     async def get_degradation_tier(self) -> int:
+        """Return the global degradation tier (0 if unset)."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT int_value FROM ai_manager_global_state WHERE key = 'degradation_tier'"
@@ -505,6 +585,7 @@ class AIManagerRepository:
             return row["int_value"] if row else 0
 
     async def set_degradation_tier(self, tier: int) -> None:
+        """Set the global degradation tier value."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_global_state SET int_value = $1, updated_at = NOW() "
@@ -537,6 +618,7 @@ class AIManagerRepository:
         description: str,
         confidence: float,
     ) -> None:
+        """Insert a new active pattern row (unconditional, no upsert)."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO ai_manager_patterns "
@@ -550,6 +632,11 @@ class AIManagerRepository:
             )
 
     async def get_performance_metrics(self, account_id: str, period: str = "7d") -> Dict[str, Any]:
+        """Aggregate decision outcomes into performance metrics over a period.
+
+        Period is one of "1d"/"7d"/"30d" (defaults to 7 days). Returns counts,
+        win rate, gross profit/loss, net PnL and profit factor (None if no losses).
+        """
         days = {"1d": 1, "7d": 7, "30d": 30}.get(period, 7)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -677,6 +764,7 @@ class AIManagerRepository:
     # ─── Enhanced AI Manager persistence ──────────────────────────────────
 
     async def get_sweep_state(self, account_id: str) -> Dict[str, Any]:
+        """Return the account's persisted sweep_state JSON (empty dict if none)."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT sweep_state FROM ai_manager_state WHERE account_id = $1",
@@ -687,6 +775,7 @@ class AIManagerRepository:
         return {}
 
     async def update_sweep_state(self, account_id: str, sweep_state: Dict[str, Any]) -> None:
+        """Persist the account's sweep_state JSON blob."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "UPDATE ai_manager_state SET sweep_state = $2::jsonb, updated_at = NOW() WHERE account_id = $1",
@@ -696,6 +785,7 @@ class AIManagerRepository:
     async def insert_regime_history(
         self, account_id: str, symbol: str, regime: str, confidence: float, detail: Dict[str, Any]
     ) -> None:
+        """Append a market-regime classification row for a symbol."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO ai_manager_regime_history (account_id, symbol, regime, confidence, detail) VALUES ($1, $2, $3, $4, $5::jsonb)",
@@ -705,6 +795,7 @@ class AIManagerRepository:
     async def insert_correlation_snapshot(
         self, account_id: str, portfolio_heat: float, matrix: Dict, clusters: list, position_count: int
     ) -> None:
+        """Append a portfolio correlation snapshot (heat, matrix, clusters)."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO ai_manager_correlation_snapshots (account_id, portfolio_heat, matrix, clusters, position_count) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)",
@@ -718,6 +809,11 @@ class AIManagerRepository:
     })
 
     async def insert_sweep_event(self, account_id: str, **kwargs) -> None:
+        """Insert a stop-hunt/sweep event row from filtered keyword fields.
+
+        Only keys in the sweep-event column allowlist are stored; an optional
+        ``detail`` kwarg is serialized to JSON into the detail column.
+        """
         detail = kwargs.pop("detail", None)
         filtered = {k: v for k, v in kwargs.items() if k in self._SWEEP_EVENT_COLUMNS}
         cols = ["account_id"] + list(filtered.keys())
@@ -738,6 +834,7 @@ class AIManagerRepository:
         self, account_id: str, symbol: str, imbalance_ratio: float, spread_bps: float,
         depth_ratio: float, bid_clusters: list, ask_clusters: list, spoofing_flags: Optional[list] = None,
     ) -> None:
+        """Append an order-book microstructure snapshot for a symbol."""
         async with self._pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO ai_manager_orderbook_snapshots (account_id, symbol, imbalance_ratio, spread_bps, depth_ratio, bid_clusters, ask_clusters, spoofing_flags) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)",
