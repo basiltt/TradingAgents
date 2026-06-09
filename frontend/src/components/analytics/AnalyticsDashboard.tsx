@@ -21,6 +21,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { CleanupDialog } from "./CleanupDialog";
 import { NeuSelect } from "@/design-system/neumorphism";
 import { readJson, writeJson } from "@/lib/storage";
+import { logger } from "@/lib/logger";
 
 const PERIODS = ["1m", "5m", "15m", "30m", "1H", "2H", "6H", "12H", "1D", "3D", "1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 type Period = (typeof PERIODS)[number];
@@ -207,7 +208,16 @@ export function AnalyticsDashboard({ accountId, embedded = false }: Props) {
       if (selectedAccount === "portfolio") {
         await refetch();
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      // AI-CONTEXT: The toggle is non-critical, so we don't block the UI with an
+      // error banner — but a silently-failing analytics-inclusion write should still
+      // be observable (the user's intent didn't persist).
+      logger.warn("AnalyticsDashboard", "setAnalyticsInclusion failed", {
+        accountId: id,
+        include,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   const handleCleanupComplete = () => {

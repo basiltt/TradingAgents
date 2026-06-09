@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { accountsApi } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setLoading } from "@/store/accounts-slice";
+import { logger } from "@/lib/logger";
 
 /** Minimum delay between manual refresh calls to prevent API flooding (ms). */
 const MANUAL_REFRESH_COOLDOWN_MS = 10_000;
@@ -29,7 +30,7 @@ export function useAccountPolling() {
       dispatch(setDashboard(cards));
     } catch (err) {
       if (err instanceof Error && err.name !== "AbortError") {
-        console.warn("[useAccountPolling] poll failed:", err.message);
+        logger.warn("useAccountPolling", "poll failed", { message: err.message });
       }
     }
   }, [dispatch]);

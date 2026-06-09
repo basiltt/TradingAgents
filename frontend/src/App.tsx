@@ -27,6 +27,7 @@ import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { NeuThemeScope } from "@/design-system/neumorphism";
 import { Toaster } from "@/components/ui/sonner";
 import { useThemeEffect } from "@/hooks/useThemeEffect";
+import { logger } from "@/lib/logger";
 import { store } from "./store";
 import { useAppSelector } from "./store";
 import { createAppRouter } from "./routes/route-tree";
@@ -110,7 +111,19 @@ function AppFrame() {
       contrast={contrast}
       className="min-h-screen"
     >
-      <ErrorBoundary FallbackComponent={ErrorFallback} onReset={() => window.location.reload()}>
+      <ErrorBoundary
+        FallbackComponent={ErrorFallback}
+        onError={(error, info) =>
+          // AI-CONTEXT: Single observability hook for unhandled render crashes. The
+          // fallback UI shows the user a recovery path; this records WHAT crashed
+          // (message + component stack) for the error reporter so production
+          // failures aren't invisible. Never logs props/state (may contain PII).
+          logger.error("AppErrorBoundary", error instanceof Error ? error.message : String(error), {
+            componentStack: info.componentStack,
+          })
+        }
+        onReset={() => window.location.reload()}
+      >
         <RouterProvider router={router} />
       </ErrorBoundary>
       <Toaster />

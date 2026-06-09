@@ -11,6 +11,7 @@ import { accountsApi } from "@/api/client";
 import type { DashboardCard } from "@/api/client";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { setDashboard, setFilterType, setLoading, setError } from "@/store/accounts-slice";
+import { logger } from "@/lib/logger";
 import { useAccountPolling } from "@/hooks/useAccountPolling";
 import { AccountCard } from "./AccountCard";
 import { FleetCohortPanel } from "./FleetCohortPanel";
@@ -127,7 +128,7 @@ export function AccountsDashboard() {
     } catch (e: unknown) {
       const msg = (e as { message?: string }).message || "Failed to load accounts";
       if (!silent) dispatch(setError(msg));
-      else console.warn("[AccountsDashboard] silent fetch failed:", msg);
+      else logger.warn("AccountsDashboard", "silent fetch failed", { message: msg });
     }
   }, [dispatch]);
 
