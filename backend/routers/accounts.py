@@ -7,7 +7,7 @@ import logging
 import math
 import uuid as _uuid
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -40,6 +40,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
 
 _background_tasks: set = set()
+
+
+def _bybit_error_response(exc: BybitAPIError, event: str, **log_extra: Any) -> JSONResponse:
+    """Log a Bybit API failure and build the standard 502 error response.
+
+    AI-CONTEXT: every account endpoint that calls the exchange handled
+    ``BybitAPIError`` with the identical shape — log ``event`` with the truncated
+    ``ret_msg`` (and any endpoint-specific extras), then return a 502 with the
+    ``BYBIT_ERROR`` code and the raw ret_msg as detail. Centralizing it keeps that
+    contract consistent while preserving each call site's distinct log event name.
+
+    Args:
+        exc: The raised BybitAPIError (its ``ret_msg`` is surfaced to the client).
+        event: The structured log event name (kept per-endpoint for filtering).
+        **log_extra: Extra structured-log fields (e.g. ``account_id``).
+
+    Returns:
+        A 502 JSONResponse with ``{"detail": ret_msg, "code": "BYBIT_ERROR"}``.
+    """
+    logger.error(event, extra={**log_extra, "ret_msg": exc.ret_msg[:200]})
+    return JSONResponse({"detail": exc.ret_msg, "code": "BYBIT_ERROR"}, 502)
 
 
 def _validate_id(value: str, name: str = "ID") -> str:
@@ -82,8 +103,7 @@ async def create_account(request: Request):
         logger.warning("create_account_credential_failed", extra={"error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
-        logger.error("create_account_bybit_error", extra={"ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "create_account_bybit_error")
 
 
 @router.get("/accounts")
@@ -153,8 +173,7 @@ async def rotate_credentials(request: Request, account_id: str):
         logger.warning("rotate_credentials_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         return JSONResponse({"detail": str(e), "code": "CREDENTIAL_VALIDATION_FAILED"}, 400)
     except BybitAPIError as e:
-        logger.error("rotate_credentials_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "rotate_credentials_bybit_error", account_id=account_id)
 
 
 @router.delete("/accounts/{account_id}")
@@ -272,8 +291,7 @@ async def place_trade(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 400)
     except BybitAPIError as e:
-        logger.error("place_trade_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "place_trade_bybit_error", account_id=account_id)
 
 
 @router.get("/accounts/{account_id}/wallet")
@@ -286,8 +304,7 @@ async def get_wallet(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
-        logger.error("get_wallet_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "get_wallet_bybit_error", account_id=account_id)
 
 
 @router.get("/accounts/{account_id}/positions")
@@ -300,8 +317,7 @@ async def get_positions(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
-        logger.error("get_positions_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "get_positions_bybit_error", account_id=account_id)
 
 
 @router.get("/accounts/{account_id}/orders")
@@ -314,8 +330,7 @@ async def get_orders(request: Request, account_id: str):
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "NOT_FOUND"}, 404)
     except BybitAPIError as e:
-        logger.error("get_orders_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "get_orders_bybit_error", account_id=account_id)
 
 
 @router.get("/accounts/{account_id}/closed-pnl")
@@ -341,8 +356,7 @@ async def get_closed_pnl(
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
-        logger.error("get_closed_pnl_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "get_closed_pnl_bybit_error", account_id=account_id)
 
 
 @router.get("/accounts/{account_id}/closed-pnl/summary")
@@ -366,8 +380,7 @@ async def get_pnl_summary(
     except ValueError as e:
         return JSONResponse({"detail": str(e), "code": "VALIDATION_ERROR"}, 422)
     except BybitAPIError as e:
-        logger.error("get_pnl_summary_bybit_error", extra={"account_id": account_id, "ret_msg": e.ret_msg[:200]})
-        return JSONResponse({"detail": e.ret_msg, "code": "BYBIT_ERROR"}, 502)
+        return _bybit_error_response(e, "get_pnl_summary_bybit_error", account_id=account_id)
 
 
 # --- Trade endpoints ---
