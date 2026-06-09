@@ -176,11 +176,74 @@ class TestTimeBasedTriggers:
 
     def test_offset_naive_datetime_fallback(self, evaluator: CloseRuleEvaluator) -> None:
         from datetime import datetime, timezone, timedelta
-        # Generate naive datetime 3 hours ago based on UTC
+        # Naive datetime 3 hours ago → still parsed as elapsed; with pnl >= buffer it fires.
         ref = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None).isoformat()
         rule = _make_rule("BREAKEVEN_TIMEOUT", "2", ref)
-        assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is True
+        assert evaluator._check_condition(
+            rule, Decimal("0"), Decimal("100"), Decimal("0"), breakeven_buffer=Decimal("10")
+        ) is True
 
+
+class TestBreakevenFeeBuffer:
+    def test_buffer_uses_position_value_when_present(self, evaluator: CloseRuleEvaluator) -> None:
+        # notional 10000 + 5000 = 15000; buffer = 15000 * 0.055/100 * 1.5 = 12.375
+        positions = [
+            {"symbol": "BTCUSDT", "positionValue": "10000"},
+            {"symbol": "ETHUSDT", "positionValue": "5000"},
+        ]
+        buf = evaluator._breakeven_fee_buffer(positions)
+        assert buf == Decimal("15000") * Decimal("0.055") / Decimal("100") * Decimal("1.5")
+
+    def test_buffer_falls_back_to_size_times_mark(self, evaluator: CloseRuleEvaluator) -> None:
+        # no positionValue → size * markPrice = 0.5 * 20000 = 10000
+        positions = [{"symbol": "BTCUSDT", "size": "0.5", "markPrice": "20000"}]
+        buf = evaluator._breakeven_fee_buffer(positions)
+        assert buf == Decimal("10000") * Decimal("0.055") / Decimal("100") * Decimal("1.5")
+
+    def test_buffer_empty_positions_is_zero(self, evaluator: CloseRuleEvaluator) -> None:
+        assert evaluator._breakeven_fee_buffer([]) == Decimal("0")
+
+
+class TestBreakevenCompound:
+    def _elapsed_rule(self):
+        from datetime import datetime, timezone, timedelta
+        ref = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        return _make_rule("BREAKEVEN_TIMEOUT", "2", ref)
+
+    def _fresh_rule(self):
+        from datetime import datetime, timezone
+        return _make_rule("BREAKEVEN_TIMEOUT", "2", datetime.now(timezone.utc).isoformat())
+
+    def test_before_time_never_fires_even_if_pnl_high(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = self._fresh_rule()
+        assert evaluator._check_condition(
+            rule, Decimal("0"), Decimal("1000"), Decimal("0"), breakeven_buffer=Decimal("10")
+        ) is False
+
+    def test_after_time_pnl_below_buffer_does_not_fire(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = self._elapsed_rule()
+        assert evaluator._check_condition(
+            rule, Decimal("0"), Decimal("5"), Decimal("0"), breakeven_buffer=Decimal("10")
+        ) is False
+
+    def test_after_time_pnl_at_buffer_fires(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = self._elapsed_rule()
+        assert evaluator._check_condition(
+            rule, Decimal("0"), Decimal("10"), Decimal("0"), breakeven_buffer=Decimal("10")
+        ) is True
+
+    def test_after_time_pnl_above_buffer_fires(self, evaluator: CloseRuleEvaluator) -> None:
+        rule = self._elapsed_rule()
+        assert evaluator._check_condition(
+            rule, Decimal("0"), Decimal("50"), Decimal("0"), breakeven_buffer=Decimal("10")
+        ) is True
+
+    def test_after_time_no_buffer_provided_does_not_fire(self, evaluator: CloseRuleEvaluator) -> None:
+        # Without position data the buffer is unknown → fail safe (do not close).
+        rule = self._elapsed_rule()
+        assert evaluator._check_condition(
+            rule, Decimal("0"), Decimal("1000"), Decimal("0")
+        ) is False
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,14 @@ _NON_EQUITY_TRIGGERS = frozenset({"BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING
 # PAUSE_TRADING is not a closable rule, so both are excluded from the generic sweep.
 _POLL_EXCLUDED_TRIGGERS = frozenset({"TRAILING_PROFIT", "PAUSE_TRADING"})
 
+# Breakeven watch-and-close: after breakeven_timeout_hours, the account closes ALL
+# positions once total open unrealised PnL clears this fee buffer, so the mass close
+# nets ~flat after taker fees rather than a small loss. Buffer = Σ notional × rate ×
+# slippage_mult. Live wallet frames carry no config fee rate, so use the Bybit
+# USDT-perp taker rate as a fixed conservative estimate.
+BREAKEVEN_TAKER_RATE_PCT = Decimal("0.055")
+BREAKEVEN_FEE_SLIPPAGE_MULT = Decimal("1.5")
+
 
 class CloseRuleEvaluator:
     """Evaluates active close rules against live prices and triggers closures.
@@ -382,18 +390,54 @@ class CloseRuleEvaluator:
             except Exception:
                 logger.exception("Error evaluating rule %s", rule["id"])
 
+    def _breakeven_fee_buffer(self, positions: list[dict]) -> Decimal:
+        """Σ over open positions of notional × taker_rate × slippage_mult.
+
+        Notional prefers the exchange-computed ``positionValue``; falls back to
+        ``size × markPrice``. Returns Decimal("0") for an empty/missing book (then
+        the watch closes as soon as total uPnL ≥ 0). Never raises — a malformed
+        position contributes 0 rather than aborting the sweep.
+        """
+        total_notional = Decimal("0")
+        for p in positions or []:
+            try:
+                pv = p.get("positionValue")
+                if pv is not None and str(pv).strip() != "":
+                    notional = abs(Decimal(str(pv)))
+                else:
+                    size = Decimal(str(p.get("size") or "0"))
+                    mark = Decimal(str(p.get("markPrice") or p.get("mark_price") or "0"))
+                    notional = abs(size * mark)
+                total_notional += notional
+            except (ValueError, TypeError, ArithmeticError):
+                continue
+        return total_notional * BREAKEVEN_TAKER_RATE_PCT / Decimal("100") * BREAKEVEN_FEE_SLIPPAGE_MULT
+
     def _check_condition(
         self,
         rule: dict,
         equity: Decimal,
         pnl: Decimal,
         balance: Decimal,
+        breakeven_buffer: Optional[Decimal] = None,
     ) -> bool:
         trigger_type = rule["trigger_type"]
 
-        # Time-based rules: check elapsed time, don't parse reference as Decimal
-        if trigger_type in _TIME_TRIGGERS:
+        # MAX_DURATION: pure elapsed-time force close.
+        if trigger_type == "MAX_DURATION":
             return self._check_time_elapsed(rule)
+
+        # BREAKEVEN_TIMEOUT: windowed account-level watch. After breakeven time
+        # elapses, fire only when total open unrealised PnL has recovered to >= the
+        # fee buffer (so the mass close nets ~flat). Before the time, never fire.
+        # If the buffer is unknown (no position data passed by the caller), fail
+        # safe and do NOT close — we cannot confirm breakeven without notional.
+        if trigger_type == "BREAKEVEN_TIMEOUT":
+            if not self._check_time_elapsed(rule):
+                return False
+            if breakeven_buffer is None:
+                return False
+            return pnl >= breakeven_buffer
 
         # TRAILING_PROFIT handled separately in _evaluate_trailing_profit
         if trigger_type == "TRAILING_PROFIT":
