@@ -32,7 +32,7 @@ _DRAWDOWN_TRIGGERS = frozenset({"EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"})
 _TIME_TRIGGERS = frozenset({"BREAKEVEN_TIMEOUT", "MAX_DURATION"})
 _ZERO_EQUITY_TRIGGERS = frozenset({"BALANCE_BELOW", "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"})
 # Trigger types that are NOT part of the equity-threshold debounce sweep.
-_NON_EQUITY_TRIGGERS = frozenset({"BREAKEVEN_TIMEOUT", "MAX_DURATION", "TRAILING_PROFIT", "PAUSE_TRADING"})
+_NON_EQUITY_TRIGGERS = frozenset({"MAX_DURATION", "TRAILING_PROFIT", "PAUSE_TRADING"})
 # Poll-fallback path: TRAILING_PROFIT is handled by its own evaluator and
 # PAUSE_TRADING is not a closable rule, so both are excluded from the generic sweep.
 _POLL_EXCLUDED_TRIGGERS = frozenset({"TRAILING_PROFIT", "PAUSE_TRADING"})
@@ -288,7 +288,20 @@ class CloseRuleEvaluator:
 
         for rule in rules:
             try:
-                triggered = self._check_condition(rule, equity=equity, pnl=pnl, balance=balance)
+                breakeven_buffer = None
+                if rule["trigger_type"] == "BREAKEVEN_TIMEOUT" and self._check_time_elapsed(rule):
+                    # Past the breakeven window — fetch positions once to size the fee
+                    # buffer. Fail safe: on any error leave buffer None (condition won't
+                    # fire) rather than mass-closing on incomplete data.
+                    try:
+                        positions = await self._accounts_service.get_positions(account_id)
+                        breakeven_buffer = self._breakeven_fee_buffer(positions or [])
+                    except Exception:
+                        logger.warning("breakeven_buffer_fetch_failed", extra={"account_id": account_id, "rule_id": rule.get("id")})
+                        breakeven_buffer = None
+                triggered = self._check_condition(
+                    rule, equity=equity, pnl=pnl, balance=balance, breakeven_buffer=breakeven_buffer,
+                )
                 if triggered:
                     logger.info(
                         "Rule %s triggered for account %s (type=%s, threshold=%s)",
@@ -298,24 +311,6 @@ class CloseRuleEvaluator:
                     if not did_transition:
                         continue
 
-                    # BREAKEVEN_TIMEOUT: modify TP instead of closing
-                    if rule["trigger_type"] == "BREAKEVEN_TIMEOUT":
-                        # Skip if symbol is actively trailing — reset back to active
-                        trailing_symbols = self._get_active_trailing()
-                        rule_symbol = rule.get("symbol", "")
-                        if rule_symbol in trailing_symbols:
-                            logger.info("Skipping BREAKEVEN_TIMEOUT rule %s — symbol %s actively trailing, resetting to active", rule["id"], rule_symbol)
-                            await self._db.update_close_rule(rule["id"], status="active")
-                            continue
-                        try:
-                            await self._handle_breakeven_timeout(account_id, rule)
-                            await self._db.update_close_rule(rule["id"], status="executed")
-                            self._rule_failures.pop(rule["id"], None)
-                            logger.info("Breakeven timeout rule %s executed for account %s", rule["id"], account_id)
-                        except Exception:
-                            logger.exception("Breakeven timeout handler failed for rule %s", rule["id"])
-                            await self._db.update_close_rule(rule["id"], status="active")
-                        continue
                     try:
                         close_kwargs: dict[str, Any] = {}
                         if rule.get("cycle_id") and self._cycle_repo:
@@ -585,61 +580,3 @@ class CloseRuleEvaluator:
             logger.warning("invalid_time_rule_data", extra={"rule_id": rule.get("id")})
             return False
 
-    async def _handle_breakeven_timeout(self, account_id: str, rule: dict) -> None:
-        """Move all positions' TP to breakeven (1% unrealised PnL to cover fees)."""
-        try:
-            client = await self._accounts_service.get_client(account_id)
-            positions = await client.get_positions()
-            if not positions:
-                return
-            for pos in positions:
-                try:
-                    symbol = pos.get("symbol", "")
-                    side = pos.get("side", "")
-                    avg_price = float(pos.get("avgPrice") or pos.get("entryPrice") or "0")
-                    leverage = float(pos.get("leverage") or "1")
-                    if avg_price <= 0:
-                        continue
-
-                    # Calculate breakeven TP: 1% profit on leveraged position using Decimal
-                    avg_price_dec = Decimal(str(avg_price))
-                    leverage_dec = Decimal(str(leverage))
-                    price_move_pct = Decimal("1.0") / leverage_dec
-
-                    if side == "Buy":
-                        new_tp_dec = avg_price_dec * (Decimal("1") + price_move_pct / Decimal("100"))
-                    elif side == "Sell":
-                        new_tp_dec = avg_price_dec * (Decimal("1") - price_move_pct / Decimal("100"))
-                    else:
-                        continue
-
-                    # Fetch instrument info to get tickSize
-                    try:
-                        instrument = await client.get_instrument_info(symbol)
-                        price_filter = instrument.get("priceFilter", {})
-                        tick_size_str = price_filter.get("tickSize")
-                    except Exception:
-                        tick_size_str = None
-
-                    if tick_size_str:
-                        tick_size = Decimal(tick_size_str)
-                        rounded_tp = (new_tp_dec / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
-                        new_tp = str(rounded_tp)
-                    else:
-                        new_tp = str(round(new_tp_dec, 6))
-
-                    await client.set_trading_stop(
-                        symbol=symbol,
-                        take_profit=new_tp,
-                        position_idx=int(pos.get("positionIdx", 0)),
-                    )
-                    logger.info("breakeven_tp_set", extra={
-                        "account_id": account_id, "symbol": symbol,
-                        "side": side, "new_tp": new_tp,
-                    })
-                except Exception:
-                    logger.warning("breakeven_tp_set_failed", extra={
-                        "account_id": account_id, "symbol": pos.get("symbol"),
-                    }, exc_info=True)
-        except Exception:
-            logger.exception("breakeven_timeout_handler_failed", extra={"account_id": account_id})

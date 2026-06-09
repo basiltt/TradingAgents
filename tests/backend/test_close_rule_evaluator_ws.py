@@ -106,20 +106,45 @@ async def test_ws_triggered_rule_fires_close(evaluator, mock_deps):
 
 
 @pytest.mark.asyncio
-async def test_time_based_rules_skipped_in_ws(evaluator, mock_deps):
-    _, _, db = mock_deps
+async def test_max_duration_skipped_but_breakeven_evaluated_in_ws(evaluator, mock_deps):
+    _, accounts_service, db = mock_deps
     db.list_active_rules_for_account = AsyncMock(return_value=[
         {"id": "r1", "account_id": "acc1", "trigger_type": "BREAKEVEN_TIMEOUT",
          "threshold_value": "6", "reference_value": "2025-05-23T10:00:00Z", "cycle_id": None},
         {"id": "r2", "account_id": "acc1", "trigger_type": "MAX_DURATION",
          "threshold_value": "12", "reference_value": "2025-05-23T10:00:00Z", "cycle_id": None},
     ])
+    # Real open position → non-zero fee buffer (1000 * 0.055/100 * 1.5 = 0.825).
+    # With pnl 0 < buffer, the WS-evaluated BREAKEVEN rule must NOT fire.
+    accounts_service.get_positions = AsyncMock(return_value=[{"symbol": "BTCUSDT", "positionValue": "1000"}])
 
     wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
     await evaluator.on_wallet_update("acc1", wallet_data)
 
-    # No close should be attempted since only time-based rules exist
+    # MAX_DURATION stays out of the WS sweep; BREAKEVEN is now WS-evaluated but holds (pnl 0 < fee buffer).
     mock_deps[0].close_all_for_rule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_breakeven_fires_in_ws_when_recovered(evaluator, mock_deps):
+    """End-to-end WS path: after the breakeven window, once total open uPnL clears the
+    fee buffer the rule closes ALL via the generic close path."""
+    close_service, accounts_service, db = mock_deps
+    db.list_active_rules_for_account = AsyncMock(return_value=[
+        {"id": "r1", "account_id": "acc1", "trigger_type": "BREAKEVEN_TIMEOUT",
+         "threshold_value": "6", "reference_value": "2025-05-23T10:00:00Z", "cycle_id": None},
+    ])
+    # Real open position → fee buffer 0.825; wallet pnl 50 clears it → breakeven fires.
+    accounts_service.get_positions = AsyncMock(return_value=[{"symbol": "BTCUSDT", "positionValue": "1000"}])
+    db.atomic_trigger_rule = AsyncMock(return_value=True)
+    close_service.close_all_for_rule = AsyncMock(return_value={"closed": 1, "failed": 0})
+    db.update_close_rule = AsyncMock()
+    db.deactivate_rules_for_account = AsyncMock(return_value=0)
+
+    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "50"}
+    await evaluator.on_wallet_update("acc1", wallet_data)
+
+    close_service.close_all_for_rule.assert_called_once()
 
 
 @pytest.mark.asyncio

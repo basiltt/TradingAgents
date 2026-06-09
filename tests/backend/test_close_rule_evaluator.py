@@ -263,64 +263,6 @@ class TestBreakevenCompound:
         ) is False
 
 
-@pytest.mark.asyncio
-async def test_handle_breakeven_timeout_with_tick_size():
-    from unittest.mock import AsyncMock
-    from backend.services.close_rule_evaluator import CloseRuleEvaluator
-
-    # Mock Bybit client
-    mock_client = AsyncMock()
-    mock_client.get_positions.return_value = [
-        {
-            "symbol": "BTCUSDT",
-            "side": "Buy",
-            "avgPrice": "65123.45",
-            "leverage": "20",
-            "positionIdx": 0,
-        },
-        {
-            "symbol": "ETHUSDT",
-            "side": "Sell",
-            "avgPrice": "3456.78",
-            "leverage": "10",
-            "positionIdx": 0,
-        }
-    ]
-
-    async def mock_get_instrument_info(symbol):
-        if symbol == "BTCUSDT":
-            return {"priceFilter": {"tickSize": "0.1"}}
-        elif symbol == "ETHUSDT":
-            return {"priceFilter": {"tickSize": "0.05"}}
-        return {}
-
-    mock_client.get_instrument_info.side_effect = mock_get_instrument_info
-
-    # Mock accounts service
-    mock_accounts_service = AsyncMock()
-    mock_accounts_service.get_client.return_value = mock_client
-
-    evaluator = CloseRuleEvaluator(close_service=None, accounts_service=mock_accounts_service, db=None)  # type: ignore[arg-type]
-
-    rule = {"id": "rule_1", "account_id": "acc_1"}
-    await evaluator._handle_breakeven_timeout("acc_1", rule)
-
-    # Verify set_trading_stop calls
-    mock_client.set_trading_stop.assert_any_call(
-        symbol="BTCUSDT",
-        take_profit="65156.0",
-        position_idx=0,
-    )
-
-    mock_client.set_trading_stop.assert_any_call(
-        symbol="ETHUSDT",
-        take_profit="3453.30",
-        position_idx=0,
-    )
-
-
-
-
 # ---------------------------------------------------------------------------
 # CRITICAL regression: equity<=0 must NEVER fire an equity-based close.
 # A partial/bad WS wallet frame can yield equity=0; without this guard,
@@ -345,3 +287,90 @@ class TestEquityZeroGuard:
         # a genuine drop (equity 4000 from reference 5000 = 20%) still triggers
         rule = _make_rule("EQUITY_DROP_PCT", "10", reference="5000")
         assert evaluator._check_condition(rule, Decimal("4000"), Decimal("0"), Decimal("0")) is True
+
+
+# ---------------------------------------------------------------------------
+# BREAKEVEN_TIMEOUT end-to-end: after the breakeven window, the rule closes ALL
+# positions via the generic close path (close_all_for_rule) once total open
+# unrealised PnL clears the fee buffer. These exercise the wiring added in Task 2
+# (_evaluate_account_rules_with_data computes the buffer and passes it through).
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_breakeven_fires_close_all_when_recovered():
+    """After breakeven time, when total open uPnL >= fee buffer, the rule closes ALL
+    via close_all_for_rule and transitions to executed."""
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal as D
+    from unittest.mock import AsyncMock
+    from backend.services.close_rule_evaluator import CloseRuleEvaluator
+
+    close_service = AsyncMock()
+    close_service.close_all_for_rule.return_value = {"closed": 2, "failed": 0}
+    accounts = AsyncMock()
+    # notional 1000 -> buffer = 1000 * 0.055/100 * 1.5 = 0.825; pnl 5 clears it.
+    accounts.get_positions.return_value = [{"symbol": "BTCUSDT", "positionValue": "1000"}]
+    db = AsyncMock()
+    db.atomic_trigger_rule.return_value = True
+    db.deactivate_rules_for_account.return_value = 0
+
+    ev = CloseRuleEvaluator(close_service=close_service, accounts_service=accounts, db=db)
+    ref = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    rule = {"id": "r1", "account_id": "acc1", "trigger_type": "BREAKEVEN_TIMEOUT",
+            "threshold_value": "2", "reference_value": ref}
+
+    await ev._evaluate_account_rules_with_data(
+        "acc1", [rule], equity=D("1000"), pnl=D("5"), balance=D("1000")
+    )
+    close_service.close_all_for_rule.assert_awaited_once_with("acc1", "r1")
+    db.update_close_rule.assert_any_await("r1", status="executed")
+
+
+@pytest.mark.asyncio
+async def test_breakeven_does_not_fire_when_pnl_below_buffer():
+    """After breakeven time but uPnL below buffer -> no close, no trigger."""
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal as D
+    from unittest.mock import AsyncMock
+    from backend.services.close_rule_evaluator import CloseRuleEvaluator
+
+    close_service = AsyncMock()
+    accounts = AsyncMock()
+    # notional 100000 -> buffer = 82.5; pnl 5 < 82.5.
+    accounts.get_positions.return_value = [{"symbol": "BTCUSDT", "positionValue": "100000"}]
+    db = AsyncMock()
+
+    ev = CloseRuleEvaluator(close_service=close_service, accounts_service=accounts, db=db)
+    ref = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    rule = {"id": "r1", "account_id": "acc1", "trigger_type": "BREAKEVEN_TIMEOUT",
+            "threshold_value": "2", "reference_value": ref}
+
+    await ev._evaluate_account_rules_with_data(
+        "acc1", [rule], equity=D("1000"), pnl=D("5"), balance=D("1000")
+    )
+    close_service.close_all_for_rule.assert_not_awaited()
+    db.atomic_trigger_rule.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_breakeven_fails_closed_when_positions_unreadable():
+    """If positions can't be fetched/parsed, buffer is None -> rule does NOT fire."""
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal as D
+    from unittest.mock import AsyncMock
+    from backend.services.close_rule_evaluator import CloseRuleEvaluator
+
+    close_service = AsyncMock()
+    accounts = AsyncMock()
+    accounts.get_positions.side_effect = RuntimeError("api down")
+    db = AsyncMock()
+
+    ev = CloseRuleEvaluator(close_service=close_service, accounts_service=accounts, db=db)
+    ref = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    rule = {"id": "r1", "account_id": "acc1", "trigger_type": "BREAKEVEN_TIMEOUT",
+            "threshold_value": "2", "reference_value": ref}
+
+    await ev._evaluate_account_rules_with_data(
+        "acc1", [rule], equity=D("1000"), pnl=D("9999"), balance=D("1000")
+    )
+    close_service.close_all_for_rule.assert_not_awaited()
+    db.atomic_trigger_rule.assert_not_awaited()
