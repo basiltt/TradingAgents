@@ -200,8 +200,10 @@ class TestBreakevenFeeBuffer:
         buf = evaluator._breakeven_fee_buffer(positions)
         assert buf == Decimal("8.25")
 
-    def test_buffer_empty_positions_is_zero(self, evaluator: CloseRuleEvaluator) -> None:
-        assert evaluator._breakeven_fee_buffer([]) == Decimal("0")
+    def test_buffer_empty_positions_is_none(self, evaluator: CloseRuleEvaluator) -> None:
+        # No positions = cannot be at breakeven = do not close → None (not Decimal("0"),
+        # which would fire a no-op close and wrongly deactivate other rules like MAX_DURATION).
+        assert evaluator._breakeven_fee_buffer([]) is None
 
     def test_buffer_short_negative_size_uses_abs(self, evaluator: CloseRuleEvaluator) -> None:
         # short position: size -0.5 * 20000 = -10000 → abs → 10000; buffer = 8.25

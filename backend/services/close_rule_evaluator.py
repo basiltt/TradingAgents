@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
 from backend.services.trading_rules import check_trailing_trigger
@@ -25,11 +25,9 @@ _STUCK_RULE_RECOVERY_AGE_S = 90
 # trigger type added to one list but not another would silently mis-route rules.
 # Centralizing them here removes that drift risk. Semantics:
 #   _DRAWDOWN_TRIGGERS      — equity-drop rules; evaluated with ZERO debounce (urgent).
-#   _TIME_TRIGGERS          — duration/timeout rules; checked against elapsed wall time.
 #   _ZERO_EQUITY_TRIGGERS   — rules that fire immediately when equity hits/passes 0.
 #   _NON_EQUITY_TRIGGERS    — rules excluded from the equity-debounce evaluation path.
 _DRAWDOWN_TRIGGERS = frozenset({"EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"})
-_TIME_TRIGGERS = frozenset({"BREAKEVEN_TIMEOUT", "MAX_DURATION"})
 _ZERO_EQUITY_TRIGGERS = frozenset({"BALANCE_BELOW", "EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"})
 # Trigger types that are NOT part of the equity-threshold debounce sweep.
 _NON_EQUITY_TRIGGERS = frozenset({"MAX_DURATION", "TRAILING_PROFIT", "PAUSE_TRADING"})
@@ -389,18 +387,22 @@ class CloseRuleEvaluator:
         """Σ over open positions of notional × taker_rate × slippage_mult.
 
         Notional prefers the exchange-computed ``positionValue``; falls back to
-        ``size × markPrice`` (``mark_price`` also accepted). Returns Decimal("0")
-        for an empty book (then the watch closes as soon as total uPnL ≥ 0).
+        ``size × markPrice`` (``mark_price`` also accepted).
 
-        FAIL-CLOSED: returns ``None`` if ANY element cannot be parsed into a
+        Returns ``None`` for an EMPTY book: no positions = cannot be at breakeven =
+        do not close (firing a no-op close would wrongly deactivate the account's
+        other rules, e.g. MAX_DURATION).
+
+        FAIL-CLOSED: also returns ``None`` if ANY element cannot be parsed into a
         notional — a non-dict element, or fields that are not numeric. ``None``
         means "cannot confirm breakeven"; the caller then does NOT close, so a
         malformed/partial position can never SHRINK the buffer and fire a
-        premature mass close. A position whose fields are all present and
-        numerically 0 legitimately contributes 0 and is NOT treated as an error.
+        premature mass close. A NON-EMPTY list whose fields are all present and
+        numerically 0 legitimately sums to ``Decimal("0")`` and is NOT treated as
+        an error (only an EMPTY list returns ``None``).
         """
         if not positions:
-            return Decimal("0")
+            return None
         total_notional = Decimal("0")
         for p in positions:
             if not isinstance(p, dict):

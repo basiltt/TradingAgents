@@ -123,6 +123,9 @@ async def test_max_duration_skipped_but_breakeven_evaluated_in_ws(evaluator, moc
 
     # MAX_DURATION stays out of the WS sweep; BREAKEVEN is now WS-evaluated but holds (pnl 0 < fee buffer).
     mock_deps[0].close_all_for_rule.assert_not_called()
+    # Prove the WS path actually EVALUATED breakeven (fetched positions to size the buffer),
+    # rather than merely that nothing closed.
+    accounts_service.get_positions.assert_awaited()
 
 
 @pytest.mark.asyncio
