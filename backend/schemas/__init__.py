@@ -347,6 +347,10 @@ class TradeResponse(BaseModel):
     order_type: str
     qty: float
     filled_qty: Optional[float] = None
+    # remaining_qty = qty - filled_qty (still-open size). filled_qty is the
+    # CUMULATIVE-CLOSED qty (0 at open), so clients needing the live position size
+    # (display, partial-close max) MUST use remaining_qty, not filled_qty.
+    remaining_qty: Optional[float] = None
     entry_price: Optional[float] = None
     avg_fill_price: Optional[float] = None
     exit_price: Optional[float] = None

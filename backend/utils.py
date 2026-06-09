@@ -34,8 +34,15 @@ def mask_secrets(config: Dict[str, Any]) -> Dict[str, Any]:
 def serialize_trade(trade: dict) -> dict:
     """Serialize a trade record for JSON responses.
 
-    Converts UUID, datetime, and Decimal fields to JSON-safe types
-    and parses stringified metadata.
+    Converts UUID, datetime, and Decimal fields to JSON-safe types and parses
+    stringified metadata. Also derives ``remaining_qty`` = qty - filled_qty, the
+    still-open position size.
+
+    AI-CONTEXT: ``filled_qty`` is the CUMULATIVE-CLOSED quantity (0 at open, grows
+    as the position is closed/partially-closed), NOT the entry fill. Clients that
+    need the LIVE size (display, partial-close max) must use ``remaining_qty`` — a
+    raw ``filled_qty`` read shows 0 for a freshly-opened trade. Computing it here
+    once keeps that semantic in a single place instead of re-deriving it per client.
     """
     out = dict(trade)
     for k, v in out.items():
@@ -51,6 +58,12 @@ def serialize_trade(trade: dict) -> dict:
         except (json.JSONDecodeError, TypeError):
             logger.warning("invalid_trade_metadata", extra={"trade_id": out.get("id")})
             out["metadata"] = {}
+    try:
+        _qty = float(out.get("qty") or 0)
+        _filled = float(out.get("filled_qty") or 0)
+        out["remaining_qty"] = max(0.0, _qty - _filled)
+    except (TypeError, ValueError):
+        out["remaining_qty"] = None
     return out
 
 
