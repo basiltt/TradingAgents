@@ -166,6 +166,46 @@ class AutoTradeExecutor:
             state.trades_failed = account_failed.get(aid, 0)
             state.executions = list(account_executions.get(aid, []))
 
+    async def _is_account_paused(self, account_id: str) -> bool:
+        """Return True if the account has an ACTIVE, unexpired AI PAUSE_TRADING rule.
+
+        AI-CONTEXT: position-safety gate shared by init_balances and
+        post_scan_recheck (previously duplicated). Iterates the account's rules; for
+        the active PAUSE_TRADING rule it compares elapsed time against
+        ``threshold_value`` hours. An expired pause rule is deleted (so it stops
+        gating) and treated as not-paused. A rule whose ``reference_value`` cannot be
+        parsed is treated as PAUSED — fail-closed: we never resume auto-trading on an
+        ambiguous pause signal (safety over availability for a money path). A failure
+        to even list the rules is logged at debug and treated as not-paused (the
+        caller's surrounding logic still applies other gates).
+
+        Args:
+            account_id: The account to check.
+
+        Returns:
+            True if trading is currently paused for this account, else False.
+        """
+        if not self._close_svc:
+            return False
+        try:
+            active_rules = await self._close_svc.list_rules(account_id)
+            for rule in active_rules:
+                if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
+                    ref_str = rule.get("reference_value", "")
+                    hours = float(rule.get("threshold_value", 0))
+                    try:
+                        ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                        if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                            return True
+                        await self._close_svc.delete_rule(account_id, rule["id"])
+                    except (ValueError, TypeError):
+                        # Fail-closed: unparseable pause rule = stay paused (safety).
+                        logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id, "ref": ref_str[:50]})
+                        return True
+        except Exception as e:
+            logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+        return False
+
     async def init_balances(self) -> None:
         """Pre-fetch wallet balances and check positions for all configured accounts."""
         rules_created_for: set = set()  # track accounts that already got close rules this cycle
@@ -257,28 +297,9 @@ class AutoTradeExecutor:
                 logger.warning("auto_trade_account_deleted", extra={"account_id": account_id})
                 continue
             # Check for AI PAUSE_TRADING rule
-            if self._close_svc:
-                try:
-                    active_rules = await self._close_svc.list_rules(account_id)
-                    for rule in active_rules:
-                        if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
-                            ref_str = rule.get("reference_value", "")
-                            hours = float(rule.get("threshold_value", 0))
-                            try:
-                                ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-                                if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
-                                    state.stopped = True
-                                    state.stopped_reason = "ai_paused_trading"
-                                    break
-                                await self._close_svc.delete_rule(account_id, rule["id"])
-                            except (ValueError, TypeError):
-                                # Fail-closed: unparseable pause rule = stay paused (safety)
-                                state.stopped = True
-                                state.stopped_reason = "ai_paused_trading"
-                                logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id, "ref": ref_str[:50]})
-                                break
-                except Exception as e:
-                    logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+            if await self._is_account_paused(account_id):
+                state.stopped = True
+                state.stopped_reason = "ai_paused_trading"
             if state.stopped:
                 continue
             # Check positions if skip_if_positions_open is enabled
@@ -864,26 +885,7 @@ class AutoTradeExecutor:
                     continue
 
                 # Check for AI PAUSE_TRADING rule before deleting rules
-                paused = False
-                if self._close_svc:
-                    try:
-                        active_rules = await self._close_svc.list_rules(account_id)
-                        for rule in active_rules:
-                            if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
-                                ref_str = rule.get("reference_value", "")
-                                hours = float(rule.get("threshold_value", 0))
-                                try:
-                                    ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-                                    if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
-                                        paused = True
-                                        break
-                                    await self._close_svc.delete_rule(account_id, rule["id"])
-                                except (ValueError, TypeError):
-                                    paused = True
-                                    logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id})
-                                    break
-                    except Exception:
-                        pass
+                paused = await self._is_account_paused(account_id)
                 if paused:
                     async with self._lock:
                         for state in states:
