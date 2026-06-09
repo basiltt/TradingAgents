@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import {
   createRouter,
@@ -12,6 +12,30 @@ import { neuUiSlice } from "@/design-system/neumorphism";
 import { routeTree } from "../route-tree";
 import { analysisSlice } from "@/store/analysis-slice";
 import { uiSlice } from "@/store/ui-slice";
+
+// AI-CONTEXT: This is a routing SMOKE test — it asserts each route renders its
+// heading, not data behavior. The route components (HistoryList, ConfigPage, etc.)
+// fire real fetch() on mount; left unmocked they hit happy-dom's http://localhost:3000
+// and emit ECONNREFUSED noise. Mock the whole API client so every useQuery resolves
+// to inert empty data, keeping the test fast, deterministic, and network-free.
+vi.mock("@/api/client", () => {
+  const empty = async () => ({});
+  const emptyList = async () => [];
+  return {
+    apiClient: new Proxy(
+      {},
+      {
+        get: () => vi.fn(emptyList),
+      },
+    ),
+    accountsApi: new Proxy({}, { get: () => vi.fn(emptyList) }),
+    tradesApi: new Proxy({}, { get: () => vi.fn(empty) }),
+    cyclesApi: new Proxy({}, { get: () => vi.fn(emptyList) }),
+    backtestApi: new Proxy({}, { get: () => vi.fn(emptyList) }),
+    mcpApi: new Proxy({}, { get: () => vi.fn(empty) }),
+    ApiError: class ApiError extends Error {},
+  };
+});
 
 function renderWithRouter(initialPath: string) {
   const store = configureStore({

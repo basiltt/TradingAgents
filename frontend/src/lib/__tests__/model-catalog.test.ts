@@ -65,4 +65,53 @@ describe("model-catalog", () => {
       }
     });
   });
+
+  describe("edge cases", () => {
+    it("getModelOptions returns [] for an empty provider string", () => {
+      expect(getModelOptions("", "quick")).toEqual([]);
+      expect(getModelOptions("", "deep")).toEqual([]);
+    });
+
+    it("getModelOptions does not trim — whitespace provider is unknown", () => {
+      expect(getModelOptions(" openai ", "quick")).toEqual([]);
+    });
+
+    it("getAllProviderModels returns [] for an empty provider string", () => {
+      expect(getAllProviderModels("")).toEqual([]);
+    });
+
+    it("getAllProviderModels is case-insensitive", () => {
+      expect(getAllProviderModels("ANTHROPIC")).toEqual(getAllProviderModels("anthropic"));
+    });
+
+    it("orders getAllProviderModels deep-first (first entry is a deep model)", () => {
+      const all = getAllProviderModels("openai");
+      const deep = getModelOptions("openai", "deep");
+      expect(all[0].value).toBe(deep[0].value);
+      expect(all[0].value).toBe("gpt-5.4");
+    });
+
+    it("dedupes a value shared across deep and quick (keeps the deep entry once)", () => {
+      // anthropic: claude-sonnet-4-6 appears in both quick and deep.
+      const all = getAllProviderModels("anthropic");
+      const shared = all.filter(o => o.value === "claude-sonnet-4-6");
+      expect(shared).toHaveLength(1);
+    });
+
+    it("appends quick-only models after the deep block", () => {
+      // openai quick has gpt-5.4-nano which is absent from deep → must appear, after deep entries.
+      const all = getAllProviderModels("openai");
+      const values = all.map(o => o.value);
+      expect(values).toContain("gpt-5.4-nano");
+      expect(values.indexOf("gpt-5.4-nano")).toBeGreaterThan(values.indexOf("gpt-5.4"));
+    });
+
+    it("nvidia: distinct deep/quick values both survive dedup", () => {
+      const all = getAllProviderModels("nvidia");
+      const values = all.map(o => o.value);
+      expect(values).toContain("deepseek-v4-pro");
+      expect(values).toContain("deepseek-v4-flash");
+      expect(values).toHaveLength(2);
+    });
+  });
 });
