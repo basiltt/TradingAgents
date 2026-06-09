@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Callable, Optional
 
+from backend.services.trading_rules import check_trailing_trigger
+
 logger = logging.getLogger(__name__)
 
 EVALUATION_INTERVAL = 60  # seconds
@@ -485,7 +487,11 @@ class CloseRuleEvaluator:
                     continue
 
                 peak = account_peaks[symbol]
-                if peak > 0 and per_unit_pnl < peak * _TRAIL_RATIO:
+                # AI-CONTEXT: use the shared SSOT (trading_rules.check_trailing_trigger)
+                # so the live evaluator and the backtest engine apply the IDENTICAL
+                # retracement rule (per_unit_pnl < peak × ratio). Previously this was a
+                # hardcoded `peak * 0.5` here, duplicated in the backtest — a drift trap.
+                if check_trailing_trigger(per_unit_pnl, peak, _TRAIL_RATIO):
                     logger.info(
                         "Trailing profit triggered for %s on account %s: per_unit=$%.4f, peak=$%.4f",
                         symbol, account_id, per_unit_pnl, peak,

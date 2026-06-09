@@ -1772,7 +1772,11 @@ class BacktestEngine:
         3. If per_unit_pnl > stored_peak: update peak (new high)
         4. If per_unit_pnl < peak × 0.5: CLOSE position
         """
-        from backend.services.trading_rules import check_trailing_activation, compute_unrealized_pnl
+        from backend.services.trading_rules import (
+            check_trailing_activation,
+            check_trailing_trigger,
+            compute_unrealized_pnl,
+        )
 
         trailing_pct = config.get("trailing_profit_pct", 0)
         if not trailing_pct:
@@ -1830,8 +1834,9 @@ class BacktestEngine:
                 pos.trailing_active = True
                 continue
 
-            # Step 4: Check trigger — per_unit_pnl < peak × 0.5
-            if pos.trailing_active and pos.trailing_peak > 0 and per_unit_pnl < pos.trailing_peak * 0.5:
+            # Step 4: Check trigger — per_unit_pnl < peak × 0.5 (shared SSOT so live
+            # and backtest apply the identical retracement rule).
+            if pos.trailing_active and check_trailing_trigger(per_unit_pnl, pos.trailing_peak):
                 positions_to_close.append(pos)
 
         # Close triggered positions. Guard against a position already closed by an
