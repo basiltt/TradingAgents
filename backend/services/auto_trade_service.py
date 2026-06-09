@@ -29,6 +29,30 @@ def _to_symbol(ticker: str) -> str:
     return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
 
 
+def _resolve_position_direction(signal_direction: str, is_reverse: bool) -> str:
+    """Resolve the actual position side ("long"/"short") after the reverse knob.
+
+    AI-CONTEXT: this is the trend-path direction recorded in state.position_directions
+    (used by correlation/exposure checks). It was previously inlined as the same
+    doubly-nested ternary at three call sites — a change to reverse semantics needed
+    three synchronized edits. ``signal_direction`` is the raw scan direction; with
+    ``is_reverse`` (config direction == "reverse") the long/short sense is flipped.
+    NOTE: the mean-reversion (mr_fade) path does NOT use this — its side is the fade
+    side, unrelated to the signal/reverse knob, and stays inline at its call site.
+
+    Args:
+        signal_direction: Raw scan direction ("buy"/"long" or "sell"/"short").
+        is_reverse: True when the config trades the reverse of the signal.
+
+    Returns:
+        "long" or "short" — the side the position is actually opened on.
+    """
+    sig = "short" if signal_direction in ("short", "sell") else "long"
+    if is_reverse:
+        return "long" if sig == "short" else "short"
+    return sig
+
+
 def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     bad = ("key", "secret", "token", "password")
     return {k: v for k, v in cfg.items() if not any(b in k.lower() for b in bad)}
@@ -1564,8 +1588,7 @@ class AutoTradeExecutor:
                 state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
             else:
                 _is_rev = cfg.get("direction") == "reverse"
-                _sig_dir = "short" if direction in ("short", "sell") else "long"
-                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                state.position_directions[symbol] = _resolve_position_direction(direction, _is_rev)
             logger.info("auto_trade_executed", extra={
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
@@ -1608,8 +1631,7 @@ class AutoTradeExecutor:
                 state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
             else:
                 _is_rev = cfg.get("direction") == "reverse"
-                _sig_dir = "short" if direction in ("short", "sell") else "long"
-                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                state.position_directions[symbol] = _resolve_position_direction(direction, _is_rev)
             execution = TradeExecution(
                 account_id=account_id,
                 symbol=symbol,
@@ -1647,8 +1669,7 @@ class AutoTradeExecutor:
                     state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
                 else:
                     _is_rev = cfg.get("direction") == "reverse"
-                    _sig_dir = "short" if direction in ("short", "sell") else "long"
-                    state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                    state.position_directions[symbol] = _resolve_position_direction(direction, _is_rev)
                 logger.error("auto_trade_ambiguous_phantom_risk", extra={
                     "account_id": account_id, "symbol": symbol,
                     "error": err_str[:512],
