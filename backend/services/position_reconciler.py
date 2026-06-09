@@ -17,9 +17,16 @@ logger = logging.getLogger(__name__)
 _INITIAL_DELAY_S = 30
 _DEFAULT_INTERVAL_S = 60
 _API_CALL_DELAY_S = 0.25
+# Max closed-PnL pages to scan when matching a stale trade to its exchange close.
+# Bounds the cursor walk so a huge history can't stall reconciliation, while being
+# deep enough (50 × 100 = 5000 records) that a busy account's older closes still
+# surface — mirrors accounts_service._fetch_and_store_closed_pnl's max_pages.
+_MAX_CLOSED_PNL_PAGES = 50
 
 
 class PositionReconciler:
+    """Background loop that reconciles DB trades with exchange positions and backfills closed PnL."""
+
     def __init__(
         self,
         db: Any,
@@ -37,6 +44,7 @@ class PositionReconciler:
         self._in_progress: set[str] = set()
 
     async def start(self) -> None:
+        """Start the periodic reconciliation loop unless disabled via env var."""
         if not self._enabled:
             logger.info("Position reconciler disabled via POSITION_SYNC_ENABLED=false")
             return
@@ -44,6 +52,7 @@ class PositionReconciler:
         logger.info("Position reconciler started (interval=%ds)", self._interval)
 
     async def shutdown(self) -> None:
+        """Cancel and await the reconciliation loop task."""
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -141,7 +150,7 @@ class PositionReconciler:
         # the order, or a limit order is still unfilled) must NOT be judged
         # "stale" and force-closed in the DB — that would orphan a live position.
         # Skip trades younger than this grace window from stale detection.
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         _now = datetime.now(timezone.utc)
         _grace = timedelta(seconds=90)
@@ -161,7 +170,31 @@ class PositionReconciler:
             except Exception:
                 return False
 
+        # AI-CONTEXT: untrusted-empty guard. client.get_positions() can return an
+        # OK-but-EMPTY/partial list on a transient Bybit blip (throttle, replication
+        # lag, retCode 0 with [] ) WITHOUT raising. If we trusted that, every
+        # eligible DB trade would see exchange_count==0 and be force-closed below —
+        # mass-orphaning LIVE exchange positions (their DB rows flipped to
+        # closed/external, never un-closed by the PnL backfill). So: if the exchange
+        # reports ZERO open positions while the DB has eligible (non-young) open
+        # trades, treat the reading as untrustworthy and SKIP stale-detection this
+        # cycle. A genuinely-flat account simply has no eligible trades to reconcile,
+        # so this never blocks a real close — only a real position confirmed gone on
+        # a later cycle (with a non-empty list) will be reconciled. Backfill (PnL on
+        # already-closed trades) still proceeds; it does not force-close anything.
+        _has_eligible_open = any(
+            not _is_young(t) for t in all_reconcile_candidates
+        )
+        _trust_positions = bool(position_counts) or not _has_eligible_open
+        if not _trust_positions:
+            logger.warning(
+                "reconcile_skip_untrusted_empty_positions account=%s db_open=%d",
+                account_id, len(all_reconcile_candidates),
+            )
+
         for key, trades in trade_groups.items():
+            if not _trust_positions:
+                break
             exchange_count = position_counts.get(key, 0)
             # exclude young trades from the "stale" candidate set for this key
             eligible = [t for t in trades if not _is_young(t)]
@@ -329,42 +362,38 @@ class PositionReconciler:
     async def _fetch_closed_pnl_match(
         self, client: Any, symbol: str, side: str, start_ms: int, end_ms: int,
     ) -> dict | None:
-        """Fetch closed PnL records and find the matching one for this trade."""
-        try:
-            result = await client.get_closed_pnl(
-                start_time=start_ms, end_time=end_ms, limit=100
-            )
-        except Exception:
-            logger.warning("get_closed_pnl failed for %s", symbol)
-            return None
+        """Fetch closed-PnL records and find the matching one for this trade.
 
+        Pages the exchange's closed-PnL feed cursor-to-cursor (bounded by
+        _MAX_CLOSED_PNL_PAGES) until the symbol's record is found or the feed is
+        exhausted. AI-CONTEXT: previously this read only 2 pages (200 records); a busy
+        account that closed >200 positions of OTHER symbols inside the trade's window
+        would never surface this trade's record, leaving it unreconciled (zero
+        exit_price/PnL) forever. Returns the newest matching record, or None.
+        """
         close_side = "Sell" if side == "Buy" else "Buy"
-
-        matches = [
-            r for r in result.get("list", [])
-            if r.get("symbol") == symbol and r.get("side") == close_side
-        ]
-
-        if not matches:
-            # Try pagination if first page didn't contain our symbol
+        cursor = ""
+        for _page in range(_MAX_CLOSED_PNL_PAGES):
+            try:
+                result = await client.get_closed_pnl(
+                    start_time=start_ms, end_time=end_ms, limit=100, cursor=cursor,
+                ) if cursor else await client.get_closed_pnl(
+                    start_time=start_ms, end_time=end_ms, limit=100,
+                )
+            except Exception:
+                logger.warning("get_closed_pnl failed for %s", symbol)
+                return None
+            matches = [
+                r for r in result.get("list", [])
+                if r.get("symbol") == symbol and r.get("side") == close_side
+            ]
+            if matches:
+                matches.sort(key=lambda r: int(r.get("updatedTime", 0)), reverse=True)
+                return matches[0]
             cursor = result.get("nextPageCursor", "")
-            if cursor:
-                try:
-                    result2 = await client.get_closed_pnl(
-                        start_time=start_ms, end_time=end_ms, limit=100, cursor=cursor
-                    )
-                    matches = [
-                        r for r in result2.get("list", [])
-                        if r.get("symbol") == symbol and r.get("side") == close_side
-                    ]
-                except Exception:
-                    pass
-
-        if not matches:
-            return None
-
-        matches.sort(key=lambda r: int(r.get("updatedTime", 0)), reverse=True)
-        return matches[0]
+            if not cursor:
+                break
+        return None
 
     @staticmethod
     def _infer_close_reason(order_type: str, record: dict, trade: dict | None = None, exit_price: float = 0.0) -> str:

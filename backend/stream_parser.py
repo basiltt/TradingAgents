@@ -238,34 +238,31 @@ def parse_stream_chunk(
 
     # Compliance Officer result
     compliance_val = chunk.get("compliance_result")
-    if isinstance(compliance_val, str) and compliance_val.strip():
-        if compliance_val.strip() != state.prev_compliance:
-            state._ensure_in_progress(events, "Compliance Officer")
-            events.append(AgentStatusEvent(agent="Compliance Officer", status="completed"))
-            events.append(ReportChunkEvent(section="compliance", content=compliance_val.strip(), append=False))
-            state.prev_compliance = compliance_val.strip()
+    if isinstance(compliance_val, str) and compliance_val.strip() and compliance_val.strip() != state.prev_compliance:
+        state._ensure_in_progress(events, "Compliance Officer")
+        events.append(AgentStatusEvent(agent="Compliance Officer", status="completed"))
+        events.append(ReportChunkEvent(section="compliance", content=compliance_val.strip(), append=False))
+        state.prev_compliance = compliance_val.strip()
 
     # Risk Manager result
     risk_mgr_val = chunk.get("risk_manager_result")
-    if isinstance(risk_mgr_val, str) and risk_mgr_val.strip():
-        if risk_mgr_val.strip() != state.prev_risk_manager:
-            state._ensure_in_progress(events, "Risk Manager")
-            events.append(AgentStatusEvent(agent="Risk Manager", status="completed"))
-            events.append(ReportChunkEvent(section="risk_manager", content=risk_mgr_val.strip(), append=False))
-            state.prev_risk_manager = risk_mgr_val.strip()
+    if isinstance(risk_mgr_val, str) and risk_mgr_val.strip() and risk_mgr_val.strip() != state.prev_risk_manager:
+        state._ensure_in_progress(events, "Risk Manager")
+        events.append(AgentStatusEvent(agent="Risk Manager", status="completed"))
+        events.append(ReportChunkEvent(section="risk_manager", content=risk_mgr_val.strip(), append=False))
+        state.prev_risk_manager = risk_mgr_val.strip()
 
     # Confluence summary
     confluence_val = chunk.get("confluence_summary")
-    if isinstance(confluence_val, str) and confluence_val.strip():
-        if confluence_val.strip() != state.prev_confluence:
-            state._ensure_in_progress(events, "Confluence Checker")
-            events.append(AgentStatusEvent(agent="Confluence Checker", status="completed"))
-            events.append(ReportChunkEvent(section="confluence", content=confluence_val.strip(), append=False))
-            events.append(AgentStatusEvent(agent="Bull Researcher", status="in_progress"))
-            state.mark_in_progress("Bull Researcher")
-            events.append(AgentStatusEvent(agent="Bear Researcher", status="in_progress"))
-            state.mark_in_progress("Bear Researcher")
-            state.prev_confluence = confluence_val.strip()
+    if isinstance(confluence_val, str) and confluence_val.strip() and confluence_val.strip() != state.prev_confluence:
+        state._ensure_in_progress(events, "Confluence Checker")
+        events.append(AgentStatusEvent(agent="Confluence Checker", status="completed"))
+        events.append(ReportChunkEvent(section="confluence", content=confluence_val.strip(), append=False))
+        events.append(AgentStatusEvent(agent="Bull Researcher", status="in_progress"))
+        state.mark_in_progress("Bull Researcher")
+        events.append(AgentStatusEvent(agent="Bear Researcher", status="in_progress"))
+        state.mark_in_progress("Bear Researcher")
+        state.prev_confluence = confluence_val.strip()
 
     risk = chunk.get("risk_debate_state")
     if risk and risk != state.prev_risk and state.workflow_mode != "quick_trade":
@@ -313,11 +310,10 @@ def parse_stream_chunk(
 
     # Execution Monitor notes
     exec_notes = chunk.get("execution_notes")
-    if isinstance(exec_notes, str) and exec_notes.strip():
-        if exec_notes.strip() != state.prev_execution_notes:
-            state._ensure_in_progress(events, "Execution Monitor")
-            events.append(AgentStatusEvent(agent="Execution Monitor", status="completed"))
-            events.append(ReportChunkEvent(section="execution_monitor", content=exec_notes.strip(), append=False))
-            state.prev_execution_notes = exec_notes.strip()
+    if isinstance(exec_notes, str) and exec_notes.strip() and exec_notes.strip() != state.prev_execution_notes:
+        state._ensure_in_progress(events, "Execution Monitor")
+        events.append(AgentStatusEvent(agent="Execution Monitor", status="completed"))
+        events.append(ReportChunkEvent(section="execution_monitor", content=exec_notes.strip(), append=False))
+        state.prev_execution_notes = exec_notes.strip()
 
     return events

@@ -34,7 +34,7 @@ def _validate_date_param(value: str | None, name: str) -> str | None:
     try:
         date.fromisoformat(value)
     except ValueError:
-        raise HTTPException(422, detail=f"Invalid {name} format, expected YYYY-MM-DD")
+        raise HTTPException(422, detail=f"Invalid {name} format, expected YYYY-MM-DD") from None
     return value
 
 
@@ -49,7 +49,7 @@ def _validate_account_id(account_id: str) -> str:
     try:
         _uuid.UUID(account_id)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail="Invalid account ID format")
+        raise HTTPException(400, detail="Invalid account ID format") from None
     return account_id
 
 
@@ -61,7 +61,7 @@ def _resolve_dates(
             s = date.fromisoformat(start_date)
             e = date.fromisoformat(end_date)
         except ValueError:
-            raise HTTPException(422, detail="Invalid date format, expected YYYY-MM-DD")
+            raise HTTPException(422, detail="Invalid date format, expected YYYY-MM-DD") from None
         if s > e:
             raise HTTPException(422, detail="start_date must be before or equal to end_date")
         return start_date, end_date
@@ -92,6 +92,11 @@ def _resolve_dates(
 
 @router.post("/accounts/{account_id}/snapshots")
 async def take_snapshot(request: Request, account_id: str):
+    """Capture a fresh balance/equity snapshot for one account.
+
+    Returns the created snapshot; 429 if rate-limited, 409 if the account is
+    inactive, 404 if not found, 502 on exchange API error.
+    """
     _validate_account_id(account_id)
     svc = _get_service(request)
     try:
@@ -110,6 +115,10 @@ async def take_snapshot(request: Request, account_id: str):
 
 @router.post("/snapshots/all")
 async def take_all_snapshots(request: Request):
+    """Capture snapshots (standard + high-frequency) for all accounts.
+
+    Returns {"snapshots": [...], "count": n}.
+    """
     svc = _get_service(request)
     results = await svc.take_all_snapshots()
     await svc.take_all_hf_snapshots()
@@ -146,6 +155,11 @@ async def get_snapshots(
     end_date: str = Query(None),
     period: str = Query("1M"),
 ):
+    """List equity snapshots for an account over a date range or named period.
+
+    Sub-day periods (e.g. "5m", "1H") return high-frequency snapshots; longer
+    periods return daily snapshots between the resolved start/end dates.
+    """
     _validate_account_id(account_id)
     svc = _get_service(request)
     if _is_sub_day(period):
@@ -163,6 +177,11 @@ async def get_analytics(
     end_date: str = Query(None),
     period: str = Query("1M"),
 ):
+    """Compute performance analytics (KPIs) for an account over the period.
+
+    Sub-day periods use high-frequency analytics; longer periods compute over
+    the resolved daily date range.
+    """
     _validate_account_id(account_id)
     svc = _get_service(request)
     if _is_sub_day(period):
@@ -180,6 +199,11 @@ async def get_portfolio_snapshots(
     period: str = Query("1M"),
     account_type: str = Query(None),
 ):
+    """List aggregated portfolio snapshots, optionally filtered by account type.
+
+    account_type may be "demo" or "live". Sub-day periods return
+    high-frequency snapshots; longer periods return daily snapshots.
+    """
     svc = _get_service(request)
     _validate_account_type(account_type)
     if _is_sub_day(period):
@@ -197,6 +221,11 @@ async def get_portfolio_analytics(
     period: str = Query("1M"),
     account_type: str = Query(None),
 ):
+    """Compute aggregated portfolio analytics, optionally filtered by account type.
+
+    account_type may be "demo" or "live". Sub-day periods use high-frequency
+    analytics; longer periods compute over the resolved daily date range.
+    """
     svc = _get_service(request)
     _validate_account_type(account_type)
     if _is_sub_day(period):
@@ -230,6 +259,11 @@ async def count_account_snapshots(
     before: str = Query(None),
     after: str = Query(None),
 ):
+    """Count an account's snapshot rows matching a cleanup filter (dry-run for deletion).
+
+    Requires at least one of preset/before/after. Returns per-table counts and
+    a grand total.
+    """
     _validate_account_id(account_id)
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
@@ -248,6 +282,11 @@ async def cleanup_account_snapshots(
     before: str = Query(None),
     after: str = Query(None),
 ):
+    """Delete an account's snapshot rows matching a cleanup filter.
+
+    Requires at least one of preset/before/after. Returns per-table deleted
+    counts and a grand total.
+    """
     _validate_account_id(account_id)
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
@@ -265,6 +304,11 @@ async def count_portfolio_snapshots(
     before: str = Query(None),
     after: str = Query(None),
 ):
+    """Count portfolio-wide snapshot rows matching a cleanup filter (dry-run).
+
+    Requires at least one of preset/before/after. Returns per-table counts and
+    a grand total.
+    """
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
     try:
@@ -281,6 +325,11 @@ async def cleanup_portfolio_snapshots(
     before: str = Query(None),
     after: str = Query(None),
 ):
+    """Delete portfolio-wide snapshot rows matching a cleanup filter.
+
+    Requires at least one of preset/before/after. Returns per-table deleted
+    counts and a grand total.
+    """
     _validate_cleanup_params(preset, before, after)
     svc = _get_service(request)
     try:

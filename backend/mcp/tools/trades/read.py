@@ -66,6 +66,8 @@ async def trades_list(args: TradesListIn, ctx: Any) -> TradesListOut:
 
     rows = result.get("trades", result.get("items", [])) if isinstance(result, dict) else result
     repo_cursor = result.get("next_cursor") if isinstance(result, dict) else None
+    if rows is None:
+        rows = []
     if not args.detail:
         rows = [{k: r[k] for k in _SUMMARY if k in r} for r in rows]
     redacted = redact_records(rows, allow_financial_detail=args.financial_detail)

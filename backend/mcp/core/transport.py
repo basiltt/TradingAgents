@@ -68,10 +68,13 @@ def _register_delegate(fast: Any, server: Any, spec: Any) -> None:
     # KEYWORD_ONLY params are introspection-only — so the body still forwards a
     # flat dict unchanged.
     _delegate.__name__ = spec.name
-    _delegate.__signature__ = _model_signature(input_model)
+    # functions honor a custom __signature__ at runtime (read by inspect.signature),
+    # but typeshed doesn't declare the attribute as settable on a function object.
+    _sig = _model_signature(input_model)
+    _delegate.__signature__ = _sig  # type: ignore[attr-defined]  # runtime-supported on functions
     _delegate.__annotations__ = {
         name: param.annotation
-        for name, param in _delegate.__signature__.parameters.items()
+        for name, param in _sig.parameters.items()
     }
     _delegate.__annotations__["return"] = dict
     fast.add_tool(
@@ -93,7 +96,9 @@ def _model_signature(model: Any) -> "inspect.Signature":
     Annotated so FastMCP advertises the field's constraints/description."""
     params: list[inspect.Parameter] = []
     for field_name, field_info in model.model_fields.items():
-        annotated = Annotated[field_info.annotation, field_info]
+        # Dynamic Annotated build: field_info.annotation is a runtime value, but mypy
+        # parses Annotated[]'s first arg as a static type-form. Valid at runtime.
+        annotated = Annotated[field_info.annotation, field_info]  # type: ignore[name-defined]  # runtime type-form
         default = (
             inspect.Parameter.empty
             if field_info.is_required()

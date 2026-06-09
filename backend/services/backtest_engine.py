@@ -17,13 +17,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from backend.schemas.backtest_schemas import SimulationResult
+from backend.services.trading_rules import (
+    DEFAULT_CAPITAL_PCT,
+    DEFAULT_LEVERAGE,
+    DEFAULT_STOP_LOSS_PCT,
+    DEFAULT_TAKE_PROFIT_PCT,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class BacktestCancelled(Exception):
     """Raised when a backtest is cancelled via cancel_event."""
-    pass
 
 
 @dataclass
@@ -308,7 +313,7 @@ class BacktestEngine:
                 last_price = symbol_klines[-1]["close"] if symbol_klines else pos.entry_price
                 last_time = symbol_klines[-1]["open_time"] if symbol_klines else signals[-1]["signal_time"]
                 self._close_position(state, pos, "backtest_end", last_price, last_time, fee_rate)
-            if "backtest_end" not in [w for w in warnings]:
+            if "backtest_end" not in list(warnings):
                 warnings.append(f"force_closed_{len([t for t in state.closed_trades if t.get('close_reason') == 'backtest_end'])}_positions_at_end")
 
         if on_progress:
@@ -408,9 +413,11 @@ class BacktestEngine:
         # Step 3: Apply filter chain (strict pass)
         entered = 0
         for sig in unique_signals:
-            if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
-                if self._open_position(config, sig, klines, state, current_time):
-                    entered += 1
+            if (
+                self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False)
+                and self._open_position(config, sig, klines, state, current_time)
+            ):
+                entered += 1
 
         # Step 4: fill_to_max_trades relaxed pass
         if config.get("fill_to_max_trades") and entered < config.get("max_trades", 999):
@@ -420,9 +427,11 @@ class BacktestEngine:
             for sig in remaining:
                 if entered >= config.get("max_trades", 999):
                     break
-                if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True):
-                    if self._open_position(config, sig, klines, state, current_time, relaxed=True):
-                        entered += 1
+                if (
+                    self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
+                    and self._open_position(config, sig, klines, state, current_time, relaxed=True)
+                ):
+                    entered += 1
 
         return entered
 
@@ -437,9 +446,11 @@ class BacktestEngine:
         """Process signals in immediate mode: one-at-a-time, no dedup."""
         entered = 0
         for sig in scan_signals:
-            if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False):
-                if self._open_position(config, sig, klines, state, current_time):
-                    entered += 1
+            if (
+                self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False)
+                and self._open_position(config, sig, klines, state, current_time)
+            ):
+                entered += 1
 
         # fill_to_max_trades backfill — mirrors production's fill_immediate_remaining
         # (auto_trade_service), which after the strict immediate pass relaxes the
@@ -456,9 +467,11 @@ class BacktestEngine:
             for sig in remaining:
                 if state.scan_entered >= config.get("max_trades", 999):
                     break
-                if self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True):
-                    if self._open_position(config, sig, klines, state, current_time, relaxed=True):
-                        entered += 1
+                if (
+                    self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
+                    and self._open_position(config, sig, klines, state, current_time, relaxed=True)
+                ):
+                    entered += 1
         return entered
 
     @staticmethod
@@ -487,8 +500,8 @@ class BacktestEngine:
         _open_position from the REAL next-bar-open entry (more faithful + no look-ahead,
         no entry-price hack). A missing mean fails closed (MR unavailable)."""
         from backend.services import features as _feat
-        from backend.services import strategy_router as _router
         from backend.services import regime_filter as _f1
+        from backend.services import strategy_router as _router
 
         ctx = self._ctx
         cohort = _feat.resolve_cohort(config.get("strategy_cohort"), None) or "trend"
@@ -642,10 +655,12 @@ class BacktestEngine:
         # user knows results may diverge from live trading (which DOES enforce it).
 
         # 10. Adaptive blacklist (computed from backtest's own trade history)
-        if config.get("adaptive_blacklist_enabled"):
-            if self._is_adaptively_blacklisted(config, ticker, state, current_time):
-                state.signals_filtered += 1
-                return False
+        if (
+            config.get("adaptive_blacklist_enabled")
+            and self._is_adaptively_blacklisted(config, ticker, state, current_time)
+        ):
+            state.signals_filtered += 1
+            return False
 
         # 11. Signal sides filter — also signal-space; SKIP for MR (live C4 fix; MR
         # side is governed by mr_short_enabled/mr_long_enabled, not signal_sides).
@@ -688,10 +703,9 @@ class BacktestEngine:
         # legitimately uses the LIFETIME entry count, not the per-scan one.
         target_type = config.get("target_goal_type")
         target_value = config.get("target_goal_value")
-        if target_type == "trade_count" and target_value:
-            if state.signals_entered >= target_value:
-                state.signals_filtered += 1
-                return False
+        if target_type == "trade_count" and target_value and state.signals_entered >= target_value:
+            state.signals_filtered += 1
+            return False
 
         # 16. Balance check
         if state.sizing_capital <= 0:
@@ -819,9 +833,14 @@ class BacktestEngine:
     ) -> bool:
         """Open a new position from a qualifying signal. Returns True on success."""
         from backend.services.trading_rules import (
-            determine_side, apply_slippage, compute_tp_sl,
-            compute_position_size, compute_liquidation_price,
-            compute_fee, compute_locked_margin, round_price_to_tick,
+            apply_slippage,
+            compute_fee,
+            compute_liquidation_price,
+            compute_locked_margin,
+            compute_position_size,
+            compute_tp_sl,
+            determine_side,
+            round_price_to_tick,
         )
 
         ticker = signal["ticker"]
@@ -937,12 +956,12 @@ class BacktestEngine:
         max_leverage = int(info.get("max_leverage", 0) or 0)  # 0 → no cap
 
         # Compute position size. MR uses its own leverage/capital from the placement.
-        leverage = int(mr_placement["leverage"]) if mr_placement else config.get("leverage", 20)
+        leverage = int(mr_placement["leverage"]) if mr_placement else config.get("leverage", DEFAULT_LEVERAGE)
         # Cap leverage to the symbol's max, matching production (accounts_service caps
         # to the instrument's maxLeverage). Over-leveraging would mis-price liq/margin.
         if max_leverage > 0 and leverage > max_leverage:
             leverage = max_leverage
-        capital_pct = mr_placement["capital_pct"] if mr_placement else config.get("capital_pct", 5.0)
+        capital_pct = mr_placement["capital_pct"] if mr_placement else config.get("capital_pct", DEFAULT_CAPITAL_PCT)
 
         # Available-balance basis for the margin-affordability check. Use the SAME
         # totalAvailableBalance basis the per-scan sizing uses (wallet + carried
@@ -993,8 +1012,8 @@ class BacktestEngine:
         # slipped fill), i.e. slightly less than the nominal TP% — exactly as live
         # trading. Anchoring TP/SL to the slipped price instead would hand the trader
         # the full nominal move plus the slippage, a systematic favorable bias.
-        tp_pct = mr_placement["take_profit_pct"] if mr_placement else config.get("take_profit_pct", 150.0)
-        sl_pct = mr_placement["stop_loss_pct"] if mr_placement else config.get("stop_loss_pct", 100.0)
+        tp_pct = mr_placement["take_profit_pct"] if mr_placement else config.get("take_profit_pct", DEFAULT_TAKE_PROFIT_PCT)
+        sl_pct = mr_placement["stop_loss_pct"] if mr_placement else config.get("stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
         tp_price, sl_price = compute_tp_sl(entry_base_price, side, tp_pct, sl_pct, leverage)
         # Round TP/SL DOWN to the instrument tick size, matching production
         # (accounts_service round_price uses ROUND_DOWN to tick_size). Unrounded
@@ -1292,7 +1311,7 @@ class BacktestEngine:
                     else:
                         positions_to_close.append((pos, "liquidation", pos.liq_price, candle_time))
                     continue
-                elif pos.side == "Sell" and high >= pos.liq_price:
+                if pos.side == "Sell" and high >= pos.liq_price:
                     if pos.sl_price > 0 and pos.sl_price < pos.liq_price and high >= pos.sl_price:
                         positions_to_close.append((pos, "sl", pos.sl_price, candle_time))
                     else:
@@ -1353,7 +1372,10 @@ class BacktestEngine:
     ) -> None:
         """Close a position: compute PnL, update wallet, record trade."""
         from backend.services.trading_rules import (
-            compute_unrealized_pnl, compute_fee, compute_liquidation_pnl, apply_slippage,
+            apply_slippage,
+            compute_fee,
+            compute_liquidation_pnl,
+            compute_unrealized_pnl,
         )
 
         # Compute realized PnL
@@ -1548,10 +1570,10 @@ class BacktestEngine:
                 break
             candles_at_minute: dict[str, dict[str, Any]] = {}
             for sym in list({p.symbol for p in state.open_positions}):
-                c = per_symbol_at.get(sym, {}).get(minute)
-                if c is not None:
-                    marks[sym] = c["close"]
-                    candles_at_minute[sym] = c
+                candle = per_symbol_at.get(sym, {}).get(minute)
+                if candle is not None:
+                    marks[sym] = candle["close"]
+                    candles_at_minute[sym] = candle
             # Evaluate the full equity-rule kernel at this minute, stamped at the minute.
             self._eval_equity_core(config, state, marks, minute, fee_rate, candles_at_minute)
 
@@ -1583,7 +1605,10 @@ class BacktestEngine:
         window shrinks to one minute and the firing time/price match the true crossing.
         """
         from backend.services.trading_rules import (
-            compute_unrealized_pnl, check_equity_drop, check_close_on_profit, check_equity_rise,
+            check_close_on_profit,
+            check_equity_drop,
+            check_equity_rise,
+            compute_unrealized_pnl,
         )
 
         if not state.open_positions:
@@ -1702,12 +1727,16 @@ class BacktestEngine:
         # now enforces the same cross-field rule, but defend in depth here too.)
         close_on_profit = config.get("close_on_profit_pct")
         target_goal_value = config.get("target_goal_value")
-        if close_on_profit and target_goal_value and state.cycle_start_equity > 0:
-            if check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value):
-                for pos in list(state.open_positions):
-                    self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
-                state.cycle_start_equity = 0  # Cycle terminated
-                return  # Cycle closed — don't also evaluate the rise goal this candle
+        if (
+            close_on_profit
+            and target_goal_value
+            and state.cycle_start_equity > 0
+            and check_close_on_profit(equity, state.cycle_start_equity, close_on_profit, target_goal_value)
+        ):
+            for pos in list(state.open_positions):
+                self._close_position(state, pos, "close_on_profit", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+            state.cycle_start_equity = 0  # Cycle terminated
+            return  # Cycle closed — don't also evaluate the rise goal this candle
 
         # --- EQUITY_RISE_PCT (target_goal_type == "profit_pct") ---
         # Production maps a profit_pct target goal to an EQUITY_RISE_PCT close rule
@@ -1720,11 +1749,11 @@ class BacktestEngine:
             config.get("target_goal_type") == "profit_pct"
             and target_goal_value
             and state.cycle_start_equity > 0
+            and check_equity_rise(equity, state.cycle_start_equity, target_goal_value)
         ):
-            if check_equity_rise(equity, state.cycle_start_equity, target_goal_value):
-                for pos in list(state.open_positions):
-                    self._close_position(state, pos, "equity_rise", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
-                state.cycle_start_equity = 0  # Cycle terminated
+            for pos in list(state.open_positions):
+                self._close_position(state, pos, "equity_rise", latest_prices.get(pos.symbol, pos.entry_price), candle_time, fee_rate)
+            state.cycle_start_equity = 0  # Cycle terminated
 
     def _evaluate_trailing_profit_for_symbol(
         self,
@@ -1743,7 +1772,11 @@ class BacktestEngine:
         3. If per_unit_pnl > stored_peak: update peak (new high)
         4. If per_unit_pnl < peak × 0.5: CLOSE position
         """
-        from backend.services.trading_rules import compute_unrealized_pnl, check_trailing_activation
+        from backend.services.trading_rules import (
+            check_trailing_activation,
+            check_trailing_trigger,
+            compute_unrealized_pnl,
+        )
 
         trailing_pct = config.get("trailing_profit_pct", 0)
         if not trailing_pct:
@@ -1801,10 +1834,10 @@ class BacktestEngine:
                 pos.trailing_active = True
                 continue
 
-            # Step 4: Check trigger — per_unit_pnl < peak × 0.5
-            if pos.trailing_active and pos.trailing_peak > 0:
-                if per_unit_pnl < pos.trailing_peak * 0.5:
-                    positions_to_close.append(pos)
+            # Step 4: Check trigger — per_unit_pnl < peak × 0.5 (shared SSOT so live
+            # and backtest apply the identical retracement rule).
+            if pos.trailing_active and check_trailing_trigger(per_unit_pnl, pos.trailing_peak):
+                positions_to_close.append(pos)
 
         # Close triggered positions. Guard against a position already closed by an
         # earlier rule this candle (defensive parity with the TP/SL close loop —

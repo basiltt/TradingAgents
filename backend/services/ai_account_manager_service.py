@@ -11,7 +11,7 @@ import json as _json
 import logging
 import time as _time
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig, AIManagerStatus
 from backend.services.ai_manager_circuit_breaker import AIManagerCircuitBreaker
@@ -61,18 +61,20 @@ class AIAccountManagerService:
         self._tasks: Dict[str, "AIManagerTask"] = {}
         self._account_locks: Dict[str, asyncio.Lock] = {}
         self._reconcile_lock = asyncio.Lock()
-        self._compiled_graph = None
+        self._compiled_graph: Optional[Any] = None
         self._health_task: Optional[asyncio.Task] = None
         self._dead_letter_task: Optional[asyncio.Task] = None
         self._pattern_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
-        self._singleton_conn = None
+        self._singleton_conn: Optional[Any] = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
-        self._llm_callable = None  # Set externally: async (system_prompt, context_prompt) -> str
-        self._pattern_llm_callable = None  # Set externally when LLM provider is configured
-        self._memory = None
-        self._llm_logger = None  # Initialized in start()
+        # Set externally (main.py) when an LLM provider is configured.
+        self._llm_callable: Optional[Callable] = None  # async (system_prompt, context_prompt) -> str
+        self._pattern_llm_callable: Optional[Callable] = None
+        self._model_name: Optional[str] = None  # resolved model name for the configured LLM
+        self._memory: Optional[Any] = None
+        self._llm_logger: Optional[Any] = None  # LLMCallBatchLogger, initialized in start()
         try:
             from backend.services.ai_manager_memory import AIManagerMemory
             self._memory = AIManagerMemory(repo=ai_manager_repo)
@@ -152,7 +154,7 @@ class AIAccountManagerService:
             self._ws_manager.deregister_wallet_listener(self._on_ws_event)
 
         # Cancel all per-account tasks
-        for account_id, task in list(self._tasks.items()):
+        for _account_id, task in list(self._tasks.items()):
             task.cancel()
 
         # Wait with timeout
@@ -360,25 +362,25 @@ class AIAccountManagerService:
         state = await self._repo.get_state(account_id)
         if not state:
             return None
-        
+
         # Resolve real-time FSM state from in-memory task if active
         fsm_state = state["fsm_state"]
         task = self._tasks.get(account_id)
-        
+
         emergency_ref_equity = state.get("emergency_ref_equity")
         emergency_cooldown_until = state.get("emergency_cooldown_until")
         raw_closed_symbols = state.get("emergency_closed_symbols")
-        
+
         if task and not task.is_dead():
             fsm_state = task.state
             now_mono = _time.monotonic()
             now_utc = datetime.now(timezone.utc)
-            
+
             # Get real-time ref equity
             ws_buf = getattr(task, "_ws_buffer", None)
             if isinstance(ws_buf, dict):
                 emergency_ref_equity = ws_buf.get("_emergency_ref_equity")
-            
+
             # Get real-time cooldown
             cooldown_val = getattr(task, "_emergency_cooldown_until", None)
             if isinstance(cooldown_val, (int, float)):
@@ -389,7 +391,7 @@ class AIAccountManagerService:
                     emergency_cooldown_until = None
             else:
                 emergency_cooldown_until = None
-                
+
             # Get real-time closed symbols
             closed_syms = getattr(task, "_emergency_closed_symbols", None)
             if isinstance(closed_syms, dict):
@@ -716,7 +718,7 @@ class AIAccountManagerService:
                     if not config:
                         from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
                         config = _AIMConfig()
-                    
+
                     config.auto_enabled = True
                     logger.info("Auto-starting AI manager for account %s due to scheduled scan setting", account_id)
                     await self.enable(account_id, config)
@@ -733,7 +735,7 @@ class AIAccountManagerService:
                             config = _AIMConfig(**existing_config)
                         except Exception:
                             pass
-                        
+
                         # Only auto-disable accounts that were auto-started (not manually enabled by user)
                         if config and config.auto_enabled:
                             logger.info(
@@ -1022,6 +1024,7 @@ class AIAccountManagerService:
 
     @classmethod
     def create(cls, app_state) -> "AIAccountManagerService":
+        """Build the service from app_state, wiring its dependencies (repos, schedulers, locks)."""
         import os
 
         return cls(

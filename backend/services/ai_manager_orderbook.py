@@ -35,6 +35,7 @@ class SweepDetector:
         self._last_update: float = 0.0
 
     def update_trade(self, trade: Dict[str, Any]) -> None:
+        """Append a trade to the rolling tape and refresh the 30s average volume."""
         self._trades.append(trade)
         self._update_avg_volume()
 
@@ -54,6 +55,12 @@ class SweepDetector:
     def check_sweep(
         self, my_sl: Optional[float], my_side: str, current_price: float
     ) -> Optional[Dict[str, Any]]:
+        """Detect a likely stop-hunt sweep targeting my SL from a recent volume burst.
+
+        Returns a detection dict (confidence, direction, swept level, volume ratio)
+        when price is approaching my_sl on abnormal volume above the confidence
+        threshold, else None.
+        """
         if not self._trades or self._avg_volume_30s == 0 or my_sl is None:
             return None
 
@@ -105,15 +112,23 @@ class OrderBookMonitor:
         self._running = False
 
     def update_orderbook(self, bids: List, asks: List) -> None:
+        """Replace the cached top-50 bid/ask levels from raw exchange data."""
         self._bids = [(float(b[0]), float(b[1])) for b in bids[:50]]
         self._asks = [(float(a[0]), float(a[1])) for a in asks[:50]]
 
     def update_trade(self, trade: Dict[str, Any]) -> None:
+        """Forward a trade to the sweep detector's tape."""
         self._sweep_detector.update_trade(trade)
 
     def get_snapshot(
         self, my_sl: Optional[float], my_side: str, current_price: float
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Build an order-book feature snapshot plus any active sweep detection.
+
+        Returns (features, sweep) where features include imbalance, spread,
+        depth ratio, and liquidity clusters (flagged when near my_sl), and sweep
+        is the detector result or None.
+        """
         imbalance = self._compute_imbalance(10)
         spread = self._compute_spread()
         bid_clusters = self._find_clusters("bid")
@@ -175,12 +190,14 @@ class OrderBookMonitor:
         return clusters[:5]
 
     async def start(self) -> None:
+        """Start the background WebSocket loop streaming orderbook/trade data (idempotent)."""
         if self._running:
             return
         self._running = True
         self._task = asyncio.create_task(self._ws_loop())
 
     async def stop(self) -> None:
+        """Stop the monitor: close the WebSocket, cancel tasks, and close the HTTP session."""
         self._running = False
         if self._ws and not self._ws.closed:
             await self._ws.close()
@@ -245,16 +262,17 @@ class OrderBookMonitor:
             logger.debug("REST fallback failed for %s", self._symbol)
 
     async def _connect_and_listen(self) -> None:
-        self._ensure_session()
-        self._ws = await asyncio.wait_for(
-            self._session.ws_connect(_WS_PUBLIC_LINEAR, heartbeat=20),
+        session = self._ensure_session()
+        ws = await asyncio.wait_for(
+            session.ws_connect(_WS_PUBLIC_LINEAR, heartbeat=20),
             timeout=15,
         )
-        await self._ws.send_json({
+        self._ws = ws
+        await ws.send_json({
             "op": "subscribe",
             "args": [f"orderbook.50.{self._symbol}", f"publicTrade.{self._symbol}"],
         })
-        async for msg in self._ws:
+        async for msg in ws:
             if not self._running:
                 break
             if msg.type == aiohttp.WSMsgType.TEXT:

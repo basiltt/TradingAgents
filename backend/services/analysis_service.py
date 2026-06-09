@@ -8,19 +8,25 @@ import copy
 import json
 import logging
 import os
-import uuid
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from langgraph.errors import GraphRecursionError
 
-from backend.utils import mask_secrets
+from backend.async_persistence import AsyncAnalysisDB
 from backend.callbacks import WebCallbackHandler
 from backend.event_bus import EventBus
-from backend.async_persistence import AsyncAnalysisDB
 from backend.services.config_service import ConfigService
-from backend.stream_parser import parse_stream_chunk, make_seq_counter, StreamParserState, ProgressEvent, ReportChunkEvent
+from backend.stream_parser import (
+    ProgressEvent,
+    ReportChunkEvent,
+    StreamParserState,
+    make_seq_counter,
+    parse_stream_chunk,
+)
+from backend.utils import mask_secrets
 from backend.validators import validate_backend_url
 from backend.ws_manager import WSManager
 
@@ -76,6 +82,13 @@ _WARNING_MARKERS = ("[ERROR]", "Data Quality Warning")
 
 
 class AnalysisService:
+    """Orchestrates analysis runs: lifecycle, concurrency limits, and persistence.
+
+    Owns the in-memory registry of active runs, enforces the max-concurrent and
+    zombie-thread limits, drives the trading graph, and exposes read APIs for
+    run records, reports, and snapshots backed by the async DB.
+    """
+
     def __init__(
         self,
         persistence: AsyncAnalysisDB,
@@ -99,12 +112,21 @@ class AnalysisService:
 
     @property
     def max_concurrent(self) -> int:
+        """The current cap on simultaneously running analyses."""
         return self._max_concurrent
 
     def set_max_concurrent(self, value: int) -> None:
+        """Set the max-concurrent cap, clamped to [1, hard maximum]."""
         self._max_concurrent = max(1, min(value, _HARD_MAX_CONCURRENT))
 
     async def start_analysis(self, request: Dict[str, Any]) -> str:
+        """Start a new analysis run and return its run_id.
+
+        Raises ConcurrencyLimitError if the server is shutting down, the
+        max-concurrent cap is reached, or there are too many zombie threads.
+        Persists the run row, registers it as active, and launches the analysis
+        task in the background.
+        """
         if self._shutting_down:
             raise ConcurrencyLimitError("Server is shutting down, not accepting new analyses.")
         async with self._lock:
@@ -148,6 +170,12 @@ class AnalysisService:
         return run_id
 
     async def cancel_analysis(self, run_id: str) -> bool:
+        """Request cancellation of a run; return True if cancelled or already done.
+
+        Signals the run's cancel event and cancels its task if active. Falls back
+        to the DB for unknown runs, returning False only if the run does not exist
+        and True if it is no longer running.
+        """
         async with self._lock:
             run = self._active_runs.get(run_id)
             if run:
@@ -165,9 +193,15 @@ class AnalysisService:
         return db_run["status"] != "running"
 
     async def shutdown(self) -> None:
+        """Drain active analyses within a 30s deadline, then cancel and shut down.
+
+        Stops accepting new runs, signals all cancel events, waits up to 30
+        seconds for in-flight runs to finish, force-cancels any stragglers, and
+        tears down the graph executor.
+        """
         self._shutting_down = True
         async with self._lock:
-            for rid, run in list(self._active_runs.items()):
+            for _rid, run in list(self._active_runs.items()):
                 if run.get("cancel_event"):
                     run["cancel_event"].set()
 
@@ -182,7 +216,7 @@ class AnalysisService:
 
         tasks_to_await = []
         async with self._lock:
-            for rid, run in list(self._active_runs.items()):
+            for _rid, run in list(self._active_runs.items()):
                 task = run.get("task")
                 if task and not task.done():
                     task.cancel()
@@ -199,6 +233,7 @@ class AnalysisService:
             _graph_executor_dead = True
 
     async def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Return a run record (with config parsed to a dict), or None if absent."""
         run = await self._db.get_run(run_id)
         if run and isinstance(run.get("config"), str):
             try:
@@ -225,9 +260,11 @@ class AnalysisService:
         return await self.get_run(run_id)
 
     async def delete_run(self, run_id: str) -> bool:
+        """Delete a single run record; return True if a row was removed."""
         return await self._db.delete_run(run_id)
 
     async def delete_all_runs(self) -> int:
+        """Cancel all active runs then delete every run record; return the count deleted."""
         async with self._lock:
             run_ids = list(self._active_runs.keys())
         for rid in run_ids:
@@ -235,6 +272,11 @@ class AnalysisService:
         return await self._db.delete_all_runs()
 
     async def list_runs(self, **kwargs) -> Dict[str, Any]:
+        """Return a paginated list of runs with each config slimmed to the model fields.
+
+        Filter/pagination kwargs are passed through to the DB. Each item's config
+        is reduced to deep_think_llm and quick_think_llm.
+        """
         result = await self._db.list_runs(**kwargs)
         for item in result.get("items", []):
             cfg = item.get("config")
@@ -253,6 +295,10 @@ class AnalysisService:
         return result
 
     async def get_report(self, run_id: str) -> Optional[str]:
+        """Return the run's report as joined Markdown, or None if no sections exist.
+
+        Internal sections (those whose name starts with "_") are excluded.
+        """
         sections = await self._db.get_report_sections(run_id)
         if not sections:
             return None
@@ -262,6 +308,12 @@ class AnalysisService:
         )
 
     async def get_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Return the run's UI snapshot, reconciled with individually-saved sections.
+
+        Prefers the stored _snapshot blob but always merges in DB report sections
+        (which are authoritative and may post-date the blob), constructing a
+        minimal snapshot if only sections exist. Returns None if there is nothing.
+        """
         sections = await self._db.get_report_sections(run_id)
         snapshot = None
         for s in sections:
@@ -580,8 +632,8 @@ class AnalysisService:
         # --- TA Pre-Filter gate (crypto only) ---
         if config.get("ta_prefilter_enabled") and config.get("asset_type") == "crypto":
             try:
+                from tradingagents.dataflows.bybit_data import get_shared_circuit_breaker, get_shared_limiter
                 from tradingagents.ta_prefilter import TAPreFilterEngine
-                from tradingagents.dataflows.bybit_data import get_shared_limiter, get_shared_circuit_breaker
                 with self._prefilter_init_lock:
                     if self._prefilter_limiter is None:
                         self._prefilter_limiter = get_shared_limiter()
@@ -659,8 +711,9 @@ class AnalysisService:
         # For crypto: fetch live price + lower-timeframe candles so all agents
         # are aware of the current market price, not just historical klines.
         if config.get("asset_type") == "crypto" and hasattr(graph, "_crypto_shared"):
-            from tradingagents.dataflows.bybit_data import build_current_price_context
             import time as _time
+
+            from tradingagents.dataflows.bybit_data import build_current_price_context
             as_of_ms = int(_time.time() * 1000)
             try:
                 price_ctx = build_current_price_context(
@@ -779,7 +832,7 @@ class AnalysisService:
 
 
 class ConcurrencyLimitError(Exception):
-    pass
+    """Raised when a new analysis is rejected due to concurrency/shutdown limits."""
 
 
 def _safe_json(obj: Any) -> str:

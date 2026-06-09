@@ -60,11 +60,16 @@ async def test_debounce_allows_after_interval(evaluator, mock_deps):
     _, _, db = mock_deps
     db.list_active_rules_for_account = AsyncMock(return_value=[])
 
-    wallet_data = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+    # Use DIFFERENT equity on the second event: on_wallet_update dedups identical
+    # consecutive equity readings (a partial/duplicate WS frame must not re-trigger
+    # evaluation). This test isolates the DEBOUNCE-interval behaviour, so vary the
+    # equity to bypass that orthogonal equity-dedup guard.
+    wallet_data_1 = {"totalEquity": "1000", "totalWalletBalance": "1000", "totalPerpUPL": "0"}
+    wallet_data_2 = {"totalEquity": "1001", "totalWalletBalance": "1001", "totalPerpUPL": "0"}
 
-    await evaluator.on_wallet_update("acc1", wallet_data)
+    await evaluator.on_wallet_update("acc1", wallet_data_1)
     evaluator._last_ws_eval["acc1"] = time.monotonic() - 2.0
-    await evaluator.on_wallet_update("acc1", wallet_data)
+    await evaluator.on_wallet_update("acc1", wallet_data_2)
 
     assert db.list_active_rules_for_account.call_count == 2
 

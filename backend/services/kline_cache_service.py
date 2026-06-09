@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, date, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import httpx
@@ -221,7 +221,7 @@ class KlineCacheService:
         """
         gaps = await self.get_coverage_gaps(symbols, interval, start, end)
 
-        stats = {
+        stats: dict[str, Any] = {
             "cached": len(symbols) - len(gaps),
             "fetched": 0,
             "failed": 0,
@@ -383,7 +383,7 @@ class KlineCacheService:
         current_end = end_ms
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for page in range(_MAX_PAGES):
+            for _page in range(_MAX_PAGES):
                 if current_end <= start_ms:
                     break
 

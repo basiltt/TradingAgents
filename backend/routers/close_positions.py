@@ -32,12 +32,17 @@ def _validate_id(value: str, name: str = "ID") -> str:
     try:
         _uuid.UUID(value)
     except (ValueError, AttributeError):
-        raise HTTPException(400, detail=f"Invalid {name} format")
+        raise HTTPException(400, detail=f"Invalid {name} format") from None
     return value
 
 
 @router.post("/accounts/{account_id}/positions/close-all")
 async def close_all_positions(request: Request, account_id: str):
+    """Close every open position for one account (rate-limited).
+
+    409 if a close is already in progress, 404 if the account is not found,
+    502 on exchange error. Returns the close summary.
+    """
     _validate_id(account_id, "account ID")
     await _check_rate_limit(account_id)
     svc = _get_service(request)
@@ -140,6 +145,11 @@ async def master_close_all(request: Request):
 
 @router.post("/accounts/{account_id}/close-rules")
 async def create_close_rule(request: Request, account_id: str):
+    """Create a conditional close rule for an account from the JSON body.
+
+    400 on bad JSON/value, 422 on validation error, 409 if the per-account rule
+    limit is reached, 502 on exchange error. Returns the created rule (201).
+    """
     _validate_id(account_id, "account ID")
     await _check_rate_limit(account_id)
     try:
@@ -166,6 +176,7 @@ async def create_close_rule(request: Request, account_id: str):
 
 @router.get("/accounts/{account_id}/close-rules")
 async def list_close_rules(request: Request, account_id: str):
+    """List all conditional close rules configured for an account."""
     _validate_id(account_id, "account ID")
     svc = _get_service(request)
     return await svc.list_rules(account_id)
@@ -173,6 +184,11 @@ async def list_close_rules(request: Request, account_id: str):
 
 @router.put("/accounts/{account_id}/close-rules/{rule_id}")
 async def update_close_rule(request: Request, account_id: str, rule_id: str):
+    """Update an existing close rule from the JSON body.
+
+    400 on bad JSON/value, 422 on validation error, 404 if the rule is not
+    found. Returns the updated rule.
+    """
     _validate_id(account_id, "account ID")
     _validate_id(rule_id, "rule ID")
     try:
@@ -196,6 +212,7 @@ async def update_close_rule(request: Request, account_id: str, rule_id: str):
 
 @router.delete("/accounts/{account_id}/close-rules/{rule_id}")
 async def delete_close_rule(request: Request, account_id: str, rule_id: str):
+    """Delete a close rule by id; 404 if not found, else {"status": "deleted"}."""
     _validate_id(account_id, "account ID")
     _validate_id(rule_id, "rule ID")
     svc = _get_service(request)
@@ -212,6 +229,7 @@ async def list_close_executions(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
 ):
+    """List a paginated history of close-rule executions for an account."""
     _validate_id(account_id, "account ID")
     svc = _get_service(request)
     return await svc.list_executions(account_id, page, limit)

@@ -1,7 +1,8 @@
 """Tests for the filter chain in BacktestEngine — verifies 17-step filter matches production."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
 
 
 def _make_config(**overrides):
@@ -430,10 +431,14 @@ class TestImmediateModeFillToMaxTrades:
                 take_profit_pct=500.0, stop_loss_pct=500.0, slippage_bps=0,
             )
 
+        # signal_time aligns with the flat-kline start (00:00). The _make_signal default
+        # (08:00) lands past the 00:00→04:05 coverage, so each signal would be dropped as
+        # a no-kline signal before the strict/relaxed fill passes could enter it.
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         signals = [
-            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0),
-            _make_signal(ticker="ETHUSDT", id=2, score=3, analysis_price=3000.0),
-            _make_signal(ticker="SOLUSDT", id=3, score=2, analysis_price=150.0),
+            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0, signal_time=base),
+            _make_signal(ticker="ETHUSDT", id=2, score=3, analysis_price=3000.0, signal_time=base),
+            _make_signal(ticker="SOLUSDT", id=3, score=2, analysis_price=150.0, signal_time=base),
         ]
 
         def flat(start):
@@ -466,10 +471,13 @@ class TestImmediateModeFillToMaxTrades:
             fill_to_max_trades=True, leverage=10, capital_pct=5.0,
             take_profit_pct=500.0, stop_loss_pct=500.0, slippage_bps=0,
         )
+        # signal_time aligns with the flat-kline start (00:00); the _make_signal default
+        # (08:00) is past the 00:00→04:05 coverage and would be dropped pre-fill.
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         signals = [
-            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0),
-            _make_signal(ticker="ETHUSDT", id=2, score=3, analysis_price=3000.0),
-            _make_signal(ticker="SOLUSDT", id=3, score=2, analysis_price=150.0),
+            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0, signal_time=base),
+            _make_signal(ticker="ETHUSDT", id=2, score=3, analysis_price=3000.0, signal_time=base),
+            _make_signal(ticker="SOLUSDT", id=3, score=2, analysis_price=150.0, signal_time=base),
         ]
 
         def flat(start):
@@ -495,7 +503,7 @@ class TestInstrumentInfo:
 
     @staticmethod
     def _coarse_klines(symbol, start, n=40):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         return [{"open_time": base + timedelta(minutes=i * 5),
                  "open": start + i * 5, "high": start + i * 5 + 30,
@@ -506,9 +514,14 @@ class TestInstrumentInfo:
         """A coarse-lot symbol (qty_step=10, min_qty=10, max_leverage=25): qty rounds
         DOWN to the step and leverage is capped, vs the 0.001/uncapped default."""
         from backend.services.backtest_engine import BacktestEngine
+        # signal_time must align with the coarse-kline start (00:00). That series only
+        # covers 00:00→03:15; the _make_signal default (08:00) lands PAST coverage and
+        # is dropped as a no-kline signal before sizing, so the entry never exercises
+        # the qty-step/leverage path. Candle 0's open == analysis_price (1000.0).
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         config = _make_config(leverage=100, capital_pct=20.0,
                               take_profit_pct=50.0, stop_loss_pct=500.0, slippage_bps=0, fee_rate_pct=0.0)
-        signals = [_make_signal(ticker="PEPEUSDT", analysis_price=1000.0)]
+        signals = [_make_signal(ticker="PEPEUSDT", analysis_price=1000.0, signal_time=base)]
         klines = {"PEPEUSDT": self._coarse_klines("PEPEUSDT", 1000.0)}
         info = {"PEPEUSDT": {"qty_step": 10.0, "min_qty": 10.0, "tick_size": 0.1, "max_leverage": 25}}
 
@@ -533,9 +546,13 @@ class TestInstrumentInfo:
         rejected (no trade) — matching production, which raises below min order qty."""
         from backend.services.backtest_engine import BacktestEngine
         # Tiny capital + huge min_qty → rounded qty < min_qty → rejected.
+        # signal_time aligns with the coarse-kline start (00:00); the _make_signal
+        # default (08:00) lands past the 00:00→03:15 coverage and would be dropped as a
+        # no-kline signal (signals_no_kline), never reaching the min_qty sizing gate.
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         config = _make_config(leverage=1, capital_pct=1.0,
                               take_profit_pct=50.0, stop_loss_pct=500.0, slippage_bps=0, fee_rate_pct=0.0)
-        signals = [_make_signal(ticker="PEPEUSDT", analysis_price=1000.0)]
+        signals = [_make_signal(ticker="PEPEUSDT", analysis_price=1000.0, signal_time=base)]
         klines = {"PEPEUSDT": self._coarse_klines("PEPEUSDT", 1000.0)}
         # qty raw = 1%*10000*1/1000 = 0.1, min_qty 1000 → rejected.
         info = {"PEPEUSDT": {"qty_step": 1.0, "min_qty": 1000.0, "tick_size": 0.1, "max_leverage": 25}}
@@ -546,8 +563,9 @@ class TestInstrumentInfo:
     def test_tp_sl_rounded_to_tick(self):
         """TP/SL trigger prices are rounded DOWN to the instrument tick size, matching
         production's round_price (ROUND_DOWN to tick)."""
+        from datetime import datetime, timedelta, timezone
+
         from backend.services.backtest_engine import BacktestEngine
-        from datetime import datetime, timezone, timedelta
         base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         config = _make_config(leverage=10, capital_pct=20.0,
                               take_profit_pct=50.0, stop_loss_pct=500.0, slippage_bps=0, fee_rate_pct=0.0)
@@ -572,10 +590,17 @@ class TestInstrumentInfo:
         """A sub-cent symbol with a coarse fallback tick (0.01) must NOT have its SL
         rounded to 0 — a 0 SL was wrongly treated as the closest stop on a short,
         fabricating a ~100% win. With the round_price_to_tick zero-guard + the
-        sl_price>0 liquidation guard, an adverse short closes via LIQUIDATION (a real
-        loss), and reconciliation holds."""
+        SL-liquidation clamp, an adverse short closes via the (clamped) stop-loss for
+        a REAL loss — never a fabricated win — and reconciliation holds.
+
+        AI-CONTEXT: pre-clamp this asserted close_reason=='liquidation'. The SL-clamp
+        (trading_rules.clamp_sl_move_pct_to_liquidation, matching live) now pulls the
+        stop inside the liquidation band so it fires as 'sl' first. The invariant this
+        test actually guards — an adverse short is a LOSS, not a zeroed-SL fabricated
+        win — is unchanged and the central assertion below (pnl < 0)."""
+        from datetime import datetime, timedelta, timezone
+
         from backend.services.backtest_engine import BacktestEngine
-        from datetime import datetime, timezone, timedelta
         base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         config = _make_config(leverage=20, capital_pct=20.0,
                               take_profit_pct=150.0, stop_loss_pct=100.0, slippage_bps=0)
@@ -590,8 +615,9 @@ class TestInstrumentInfo:
         result = BacktestEngine().run(config, signals, klines, instrument_info=info)
         assert len(result.trades) == 1
         trade = result.trades[0]
-        # Must NOT be an SL at a zeroed price (which would be a huge fabricated profit).
-        assert trade["close_reason"] == "liquidation"
+        # Closes via the clamped SL (fires before liquidation, matching live) — NOT a
+        # zeroed-price SL that would fabricate a huge win.
+        assert trade["close_reason"] == "sl"
         assert trade["pnl"] < 0  # an adverse short is a loss, never a fabricated win
         # Reconciliation invariant holds.
         assert result.metrics["net_profit"] == pytest.approx(

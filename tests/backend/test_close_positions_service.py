@@ -25,7 +25,8 @@ def mock_accounts():
     svc = MagicMock()
     client = AsyncMock()
     client.get_positions.return_value = []
-    client.place_market_close_order.return_value = {"orderId": "ord-1"}
+    # cumExecQty > 0 => _close_single_position counts the close as confirmed.
+    client.place_market_close_order.return_value = {"orderId": "ord-1", "cumExecQty": "0.1"}
     svc.get_client = AsyncMock(return_value=client)
     svc.get_wallet = AsyncMock(return_value={"totalEquity": "1000"})
     svc.invalidate_cache = MagicMock()
@@ -116,9 +117,9 @@ async def test_close_all_positions_with_failures(service, mock_accounts):
         {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"},
         {"symbol": "ETHUSDT", "side": "Sell", "size": "1.0"},
     ]
-    # First call succeeds, second raises generic exception
+    # First call succeeds (confirmed fill), second raises generic exception
     client.place_market_close_order.side_effect = [
-        {"orderId": "ord-1"},
+        {"orderId": "ord-1", "cumExecQty": "0.1"},
         Exception("network error"),
     ]
 
@@ -210,7 +211,7 @@ async def test_close_all_for_rule_happy_path(service, mock_accounts, mock_db):
     client.get_positions.return_value = [
         {"symbol": "BTCUSDT", "side": "Buy", "size": "0.1"},
     ]
-    client.place_market_close_order.return_value = {"orderId": "ord-1"}
+    client.place_market_close_order.return_value = {"orderId": "ord-1", "cumExecQty": "0.1"}
     mock_db.delete_all_rules_for_account = AsyncMock()
 
     result = await service.close_all_for_rule("acc-1", "rule-1", symbols=["BTCUSDT"])

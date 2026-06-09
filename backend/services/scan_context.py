@@ -26,6 +26,8 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 class BtcRegime(TypedDict):
+    """BTC market-regime snapshot: regime label, volatility value, and availability flag."""
+
     regime: str           # "ranging" | "trending" | "volatile" | "unknown"
     vol_value: Optional[float]
     unavailable: bool
@@ -33,6 +35,12 @@ class BtcRegime(TypedDict):
 
 @dataclass(frozen=True)
 class ScanContext:
+    """Frozen, precomputed per-scan context (BTC regimes, EMAs, prices, kill switches).
+
+    Built once per scan and consumed read-only on the trade hot path for O(1)
+    lookups with no network I/O.
+    """
+
     btc: dict[tuple[str, int], BtcRegime] = field(default_factory=dict)        # (interval, lookback) -> BtcRegime
     means: dict[tuple[str, int, str], float] = field(default_factory=dict)     # (symbol, period, interval) -> EMA
     prices: dict[str, float] = field(default_factory=dict)                     # symbol -> mark price
@@ -54,6 +62,7 @@ class ScanContext:
 
     # ── accessors ──
     def get_btc(self, interval: str, lookback: int) -> Optional[BtcRegime]:
+        """Get the BTC regime for an (interval, lookback) key, or None if absent."""
         return self.btc.get((interval, lookback))
 
     def routing_regime(self, interval: str, lookback: int) -> str:
@@ -64,15 +73,19 @@ class ScanContext:
         return br["regime"] if br else "unknown"
 
     def get_mean(self, symbol: str, period: int, interval: str) -> Optional[float]:
+        """Get the precomputed EMA for (symbol, period, interval), or None if absent."""
         return self.means.get((symbol, period, interval))
 
     def get_price(self, symbol: str) -> Optional[float]:
+        """Get the precomputed mark price for a symbol, or None if absent."""
         return self.prices.get(symbol)
 
     def is_killed(self, feature: str) -> bool:
+        """Return True if the named feature (or the master "__all__" switch) is killed."""
         return bool(self.kill.get("__all__") or self.kill.get(feature, False))
 
     def is_stale(self, now: datetime, ttl_minutes: float) -> bool:
+        """Return True if the context is degraded or older than ttl_minutes (fail-closed)."""
         if self.degraded:
             return True
         return (now - self.computed_at).total_seconds() / 60.0 > ttl_minutes

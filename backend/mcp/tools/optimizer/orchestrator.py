@@ -176,7 +176,7 @@ async def run_sweep_pooled(
                 return {}
 
         metrics_list = await asyncio.gather(*[_one(c) for c in combos], return_exceptions=True)
-        for cfg, metrics in zip(combos, metrics_list):
+        for cfg, metrics in zip(combos, metrics_list, strict=True):
             m = metrics if isinstance(metrics, dict) else {}
             results.append({"config": cfg, "config_hash": config_hash(cfg), "metrics": m})
     finally:

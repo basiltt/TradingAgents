@@ -43,6 +43,7 @@ class BybitRateGate:
 
     @property
     def current_usage(self) -> dict:
+        """Current per-channel request counts within their rolling windows."""
         now = time.monotonic()
         with self._lock:
             return {
@@ -53,6 +54,7 @@ class BybitRateGate:
 
     @property
     def wait_count(self) -> int:
+        """Number of callers currently waiting on the rate gate."""
         return self._wait_count
 
     def _get_channel(self, channel: str):
@@ -78,13 +80,12 @@ class BybitRateGate:
         if lane == "mcp":
             # subordinate lane: leave headroom for live (reserve ~25%, >=1).
             effective_budget = max(1, int(max_budget * 0.75))
-        elif lane == "live" and channel == "private":
+        elif lane == "live" and channel == "private" and max_budget > 4:
             # background live traffic leaves a SMALL fixed headroom (1 slot when
             # the budget is large enough) so order placement — which uses the full
             # budget — always has room ahead of it, without materially shrinking
             # the existing live budget.
-            if max_budget > 4:
-                effective_budget = max_budget - 1
+            effective_budget = max_budget - 1
         # 'order' uses the full budget (no reservation against it).
         self._wait_count += 1
         try:
@@ -109,6 +110,7 @@ class BybitRateGate:
             self._wait_count -= 1
 
     def acquire_sync(self, channel: str = "public", timeout: float = 10.0) -> bool:
+        """Blocking variant of acquire for sync callers; returns False if it times out."""
         timestamps, max_budget, window = self._get_channel(channel)
         deadline = time.monotonic() + timeout
         self._wait_count += 1
@@ -133,6 +135,7 @@ _gate_init_lock = threading.Lock()
 
 
 def get_rate_gate() -> BybitRateGate:
+    """Return the process-wide BybitRateGate singleton, creating it on first use."""
     global _gate
     if _gate is None:
         with _gate_init_lock:

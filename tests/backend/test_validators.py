@@ -3,6 +3,20 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_allow_local(monkeypatch):
+    """Ensure ALLOW_LOCAL_LLM_BACKEND is UNSET for every validator test.
+
+    AI-CONTEXT: validators._allow_local() reads this env var; when it is truthy
+    the SSRF private/loopback checks are intentionally skipped (for co-located
+    proxies). If another test — or a developer's .env — leaks it as set, these
+    rejection tests would silently pass-through and FAIL order-dependently
+    (this was the root cause of the historical "14 validator failures under
+    xdist/batched runs"). Clearing it here makes every test deterministic.
+    """
+    monkeypatch.delenv("ALLOW_LOCAL_LLM_BACKEND", raising=False)
+
+
 def test_valid_http_url():
     from backend.validators import validate_backend_url
     from unittest.mock import patch

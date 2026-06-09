@@ -111,7 +111,7 @@ export function TradeDetailPanel() {
               {/* Position Info */}
               <Section title="Position Details">
                 <div className="space-y-1">
-                  <Row label="Quantity" value={`${formatQty(trade.filled_qty ?? (isActive ? trade.qty : null))} / ${formatQty(trade.qty)}`} />
+                  <Row label="Quantity" value={`${formatQty(trade.remaining_qty ?? (isActive ? trade.qty : null))} / ${formatQty(trade.qty)}`} />
                   <Row label="Entry Price" value={formatPrice(trade.entry_price)} mono />
                   <Row label="Avg Fill Price" value={formatPrice(trade.avg_fill_price)} mono />
                   <Row label="Exit Price" value={formatPrice(trade.exit_price)} mono />

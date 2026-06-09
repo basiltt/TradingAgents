@@ -115,8 +115,8 @@ def compute_indicators(candles: list[dict]) -> dict:
     # --- True Range series ---
     tr_series: list[float] = []
     for i in range(1, len(candles)):
-        h, l, pc = highs[i], lows[i], closes[i - 1]
-        tr = max(h - l, abs(h - pc), abs(l - pc))
+        high, low, pc = highs[i], lows[i], closes[i - 1]
+        tr = max(high - low, abs(high - pc), abs(low - pc))
         tr_series.append(tr)
 
     # --- ATR(14) — simple moving average of last 14 TRs ---
@@ -148,9 +148,7 @@ def compute_indicators(candles: list[dict]) -> dict:
     bb_width = _bb_width_at(closes)
 
     # Build a history of BB widths for median computation.
-    bb_widths: list[float] = []
-    for i in range(20, len(closes) + 1):
-        bb_widths.append(_bb_width_at(closes[:i]))
+    bb_widths: list[float] = [_bb_width_at(closes[:i]) for i in range(20, len(closes) + 1)]
     bb_width_median = statistics.median(bb_widths) if bb_widths else bb_width
 
     # --- ADX(14) simplified ---
@@ -211,7 +209,7 @@ def _compute_adx(
     smooth_minus = _wilder_smooth(minus_dm_series, period)
 
     dx_series: list[float] = []
-    for s_tr, s_plus, s_minus in zip(smooth_tr, smooth_plus, smooth_minus):
+    for s_tr, s_plus, s_minus in zip(smooth_tr, smooth_plus, smooth_minus, strict=True):
         if s_tr == 0:
             continue
         plus_di = 100.0 * s_plus / s_tr

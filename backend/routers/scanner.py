@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from backend.schemas import ScanRequest, ScanResultItem, FilterPreviewResponse, PROVIDER_API_KEY_MAP
+from backend.schemas import PROVIDER_API_KEY_MAP, FilterPreviewResponse, ScanRequest, ScanResultItem
 from backend.services.scanner_service import ScannerBusyError
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def _validate_scan_id(scan_id: str) -> None:
     try:
         uuid.UUID(scan_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid scan_id format")
+        raise HTTPException(status_code=400, detail="Invalid scan_id format") from None
 
 
 def _validate_scan_response(raw: dict) -> dict:
@@ -42,6 +42,12 @@ def _validate_scan_response(raw: dict) -> dict:
 
 @router.post("/scanner", status_code=201)
 async def start_scan(request: Request, body: ScanRequest):
+    """Launch a batch scan analyzing all available symbols and return its scan_id.
+
+    Resolves the LLM provider from request/config; 422 if its API key is
+    missing, 409 if a scan is already running. Returns scan_id with status
+    "running".
+    """
     resolved = request.app.state.config_service.get_config()["resolved"]
     provider = body.provider or resolved.get("llm_provider", "openai")
     backend_url = body.backend_url or resolved.get("backend_url")
@@ -59,18 +65,20 @@ async def start_scan(request: Request, body: ScanRequest):
     try:
         scan_id = await request.app.state.scanner_service.start_scan(scan_config)
     except ScannerBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"scan_id": scan_id, "status": "running"}
 
 
 @router.get("/scanner")
 async def list_scans(request: Request):
+    """List all scans; returns {"scans": [...]}."""
     scans = await request.app.state.scanner_service.list_scans()
     return {"scans": scans}
 
 
 @router.get("/scanner/{scan_id}")
 async def get_scan(request: Request, scan_id: str):
+    """Get one scan with its results (re-validated through Pydantic); 404 if not found."""
     _validate_scan_id(scan_id)
     scan = await request.app.state.scanner_service.get_scan(scan_id)
     if not scan:
@@ -80,6 +88,7 @@ async def get_scan(request: Request, scan_id: str):
 
 @router.post("/scanner/{scan_id}/cancel")
 async def cancel_scan(request: Request, scan_id: str):
+    """Cancel a running scan; 404 if not found, else {"status": "cancelled"}."""
     _validate_scan_id(scan_id)
     result = await request.app.state.scanner_service.cancel_scan(scan_id)
     if not result:
@@ -97,12 +106,16 @@ async def delete_scan_preview(request: Request, scan_id: str):
 
 @router.delete("/scanner/{scan_id}", status_code=200)
 async def delete_scan(request: Request, scan_id: str):
+    """Delete a scan and its associated analysis runs.
+
+    409 if a scan is currently running, 404 if not found.
+    """
     _validate_scan_id(scan_id)
     from backend.services.scanner_service import ScannerBusyError
     try:
         result = await request.app.state.scanner_service.delete_scan(scan_id)
     except ScannerBusyError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
     if result is None:
         raise HTTPException(status_code=404, detail="Scan not found")
     return result
@@ -116,6 +129,12 @@ async def filter_preview(
     min_confidence: str = Query(default="moderate"),
     signal_filter: str = Query(default="both"),
 ):
+    """Preview how many scan results qualify for trading under given filter params.
+
+    Applies the cycle engine's filter (min_score, min_confidence, signal_filter)
+    without placing trades. Returns qualifying count, symbols, and a per-direction
+    breakdown. 404 if the scan is not found.
+    """
     from backend.services.trading_cycle_engine import TradingCycleEngine
     _validate_scan_id(scan_id)
     db = request.app.state.db

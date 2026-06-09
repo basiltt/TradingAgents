@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from backend.services.analysis_service import ConcurrencyLimitError, DEFAULT_MAX_CONCURRENT
+from backend.services.analysis_service import DEFAULT_MAX_CONCURRENT, ConcurrencyLimitError
 from backend.services.auto_trade_service import AutoTradeExecutor
 
 logger = logging.getLogger(__name__)
@@ -304,7 +304,6 @@ def _parse_signal_from_reports(reports: Dict[str, str]) -> Dict[str, Any]:
 
 class ScannerBusyError(Exception):
     """Raised when a scan is already in progress for the target account."""
-    pass
 
 
 class ScannerService:
@@ -371,8 +370,9 @@ class ScannerService:
         """Read the kill-switch unconditionally + build the scan-time ScanContext and
         attach it to the executor. Safe no-op for the default (all-off) fleet."""
         from datetime import datetime, timezone
-        from backend.services.kill_switch import read_kill_switches
+
         from backend.services import market_data as _md
+        from backend.services.kill_switch import read_kill_switches
 
         kill = await read_kill_switches(self._db) if self._db else {"__all__": True}
 
@@ -470,6 +470,11 @@ class ScannerService:
             return set()
 
     async def start_scan(self, config: Dict[str, Any], schedule_id: str | None = None, triggered_by: str = "manual") -> str:
+        """Start a background market scan and return its new scan_id.
+
+        Enforces single-scan concurrency (raises ScannerBusyError if one is
+        already running) and evicts old finished scans, keeping the last 10.
+        """
         async with self._lock:
             active = sum(1 for s in self._scans.values() if s["status"] == "running")
             if active >= 1:
@@ -605,6 +610,7 @@ class ScannerService:
         return scan_id
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Get a scan by id, preferring the in-memory copy then falling back to the DB; None if absent."""
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan:
@@ -616,6 +622,7 @@ class ScannerService:
         return None
 
     async def cancel_scan(self, scan_id: str) -> bool:
+        """Cancel a running scan and its background task; returns False if not found/not running."""
         async with self._lock:
             scan = self._scans.get(scan_id)
             if not scan or scan["status"] != "running":
@@ -646,6 +653,10 @@ class ScannerService:
                 await asyncio.gather(*valid_tasks, return_exceptions=True)
 
     async def delete_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Delete a scan and its DB artifacts; raises ScannerBusyError if running, None if not found.
+
+        Returns a dict of deleted counts (results/analyses/sections).
+        """
         async with self._lock:
             scan = self._scans.get(scan_id)
             if scan and scan["status"] == "running":
@@ -660,23 +671,30 @@ class ScannerService:
         return result
 
     async def get_scan_analysis_count(self, scan_id: str) -> int:
+        """Return the number of analysis runs associated with a scan (0 if no DB)."""
         if not self._db:
             return 0
         return await self._db.get_scan_analysis_count(scan_id)
 
     async def list_scans(self) -> List[Dict[str, Any]]:
+        """List all scans (in-memory merged with DB), newest first by start time."""
         async with self._lock:
             in_memory_ids = set(self._scans.keys())
             result = [self._serialize(s) for s in self._scans.values()]
         if self._db:
             db_scans = await self._db.list_scans()
-            for ds in db_scans:
-                if ds["scan_id"] not in in_memory_ids:
-                    result.append(self._serialize_db(ds))
+            result.extend(
+                self._serialize_db(ds) for ds in db_scans if ds["scan_id"] not in in_memory_ids
+            )
         result.sort(key=lambda s: s.get("started_at") or "", reverse=True)
         return result
 
     async def resume_incomplete_scans(self) -> int:
+        """Resume scans left "running" after a restart; returns the count resumed.
+
+        At most one scan is resumed (remaining unfinished tickers are re-queued);
+        any extra stale running scans are marked failed.
+        """
         if not self._db:
             return 0
         running = await self._db.get_running_scans()
@@ -865,6 +883,31 @@ class ScannerService:
             "auto_trade_summaries": scan.get("auto_trade_summaries") or [],
         }
 
+    async def _append_auto_trade_results(self, scan_id: str, executions: list) -> None:
+        """Append execution outcomes to a scan's auto_trade_results under the lock.
+
+        Re-fetches the scan inside the lock (it may have been evicted/cancelled
+        between phases) and extends ``auto_trade_results`` with the standard
+        6-field outcome dict. A no-op if the scan is gone or ``executions`` is
+        empty. AI-CONTEXT: centralizes the lock + re-fetch + extend pattern that
+        the batch / fill / post-scan-recheck phases each performed identically.
+
+        Args:
+            scan_id: The scan whose results buffer to append to.
+            executions: TradeExecution-like objects with symbol/side/status/
+                order_id/error/account_id attributes.
+        """
+        if not executions:
+            return
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            if scan:
+                scan["auto_trade_results"].extend(
+                    {"symbol": e.symbol, "side": e.side, "status": e.status,
+                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
+                    for e in executions
+                )
+
     async def _run_scan(self, scan_id: str, symbols_override: Optional[List[str]] = None) -> None:
         try:
             if symbols_override is not None:
@@ -923,7 +966,7 @@ class ScannerService:
             logger.debug("Skipping CoinGecko prefetch — no fundamentals/social analysts selected")
 
         # Pre-classify symbols for sector concentration limit (only if auto-trade is active)
-        if self._sector_service and scan.get("auto_trade_executor"):
+        if self._sector_service and scan and scan.get("auto_trade_executor"):
             try:
                 await self._sector_service.ensure_classified(symbols)
             except Exception:
@@ -983,44 +1026,20 @@ class ScannerService:
             if executor and all_results and not cancelled and not too_many_failures:
                 try:
                     batch_executions = await executor.execute_batch(all_results)
-                    if batch_executions:
-                        async with self._lock:
-                            scan = self._scans.get(scan_id)
-                            if scan:
-                                scan["auto_trade_results"].extend(
-                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
-                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                                    for e in batch_executions
-                                )
+                    await self._append_auto_trade_results(scan_id, batch_executions)
                 except Exception as e:
                     logger.warning("auto_trade_batch_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
                 # Fill remaining slots for immediate-mode configs with fill_to_max_trades
                 try:
                     fill_executions = await executor.fill_immediate_remaining(all_results)
-                    if fill_executions:
-                        async with self._lock:
-                            scan = self._scans.get(scan_id)
-                            if scan:
-                                scan["auto_trade_results"].extend(
-                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
-                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                                    for e in fill_executions
-                                )
+                    await self._append_auto_trade_results(scan_id, fill_executions)
                 except Exception as e:
                     logger.warning("auto_trade_fill_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
                 # Post-scan re-check: handle accounts where conditions changed during the scan
                 # (positions closed by TP/SL/drawdown, or close_on_profit_pct threshold now met)
                 try:
                     recheck_executions = await executor.post_scan_recheck(all_results)
-                    if recheck_executions:
-                        async with self._lock:
-                            scan = self._scans.get(scan_id)
-                            if scan:
-                                scan["auto_trade_results"].extend(
-                                    {"symbol": e.symbol, "side": e.side, "status": e.status,
-                                     "order_id": e.order_id, "error": e.error, "account_id": e.account_id}
-                                    for e in recheck_executions
-                                )
+                    await self._append_auto_trade_results(scan_id, recheck_executions)
                 except Exception as e:
                     logger.warning("auto_trade_post_scan_recheck_error", extra={"scan_id": scan_id, "error": str(e)[:200]})
 

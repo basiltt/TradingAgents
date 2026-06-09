@@ -30,6 +30,7 @@ class StructuredFormatter(logging.Formatter):
     """JSON log formatter with correlation ID and standard fields."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Render a log record as a JSON line with correlation ID and standard fields."""
         cid = correlation_id.get("")
         entry: dict[str, Any] = {
             "ts": self.formatTime(record),
@@ -59,18 +60,22 @@ class _Metrics:
         self._startup_time: float = time.time()
 
     def record_request(self, method: str, path: str, status: int, duration: float) -> None:
+        """Record one request's count and duration, keyed by method/normalized-path/status."""
         key = f'{method}|{_normalize_path(path)}|{status}'
         self._request_count[key] += 1
         self._request_duration_sum[key] += duration
         self._request_duration_count[key] += 1
 
     def inc_active(self) -> None:
+        """Increment the active-requests gauge."""
         self._active_requests += 1
 
     def dec_active(self) -> None:
+        """Decrement the active-requests gauge (clamped at zero)."""
         self._active_requests = max(0, self._active_requests - 1)
 
     def prometheus_text(self) -> str:
+        """Render all collected metrics in Prometheus text exposition format."""
         lines: list[str] = []
         lines.append("# HELP http_requests_total Total HTTP requests")
         lines.append("# TYPE http_requests_total counter")
@@ -136,6 +141,7 @@ class ObservabilityMiddleware:
         status_code = 500
 
         async def send_wrapper(message: dict) -> None:
+            """Capture the response status and inject the x-correlation-id header on send."""
             nonlocal status_code
             if message["type"] == "http.response.start":
                 status_code = message.get("status", 200)

@@ -288,3 +288,33 @@ class TestAIManagerTrigger:
         await asyncio.sleep(0.01)  # Yield to background tasks
         
         mock_aim.reconcile_active_schedules.assert_called_once()
+
+
+class TestManualTriggerClaim:
+    """The manual 'run now' trigger must use a cross-instance DB claim so two
+    instances can't double-fire the same schedule."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_proceeds_when_claim_won(self, svc, db):
+        db.get_scheduled_scan = AsyncMock(return_value={
+            "id": "s1", "status": "active", "last_run_at": None,
+        })
+        db.claim_manual_trigger = AsyncMock(return_value=True)  # we won the claim
+        svc._execute_schedule = AsyncMock()
+        await svc.trigger("s1")
+        db.claim_manual_trigger.assert_awaited_once_with("s1", None)
+        svc._execute_schedule.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_trigger_refused_when_claim_lost(self, svc, db):
+        """Another instance already claimed it → claim returns False → we must NOT
+        execute the scan (no cross-instance double-fire)."""
+        db.get_scheduled_scan = AsyncMock(return_value={
+            "id": "s1", "status": "active", "last_run_at": None,
+        })
+        db.claim_manual_trigger = AsyncMock(return_value=False)  # lost the race
+        svc._execute_schedule = AsyncMock()
+        with pytest.raises(ValueError, match="already triggered"):
+            await svc.trigger("s1")
+        svc._execute_schedule.assert_not_awaited()
+        assert "s1" not in svc._in_flight

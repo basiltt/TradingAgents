@@ -1,10 +1,11 @@
 """Phase 4 security tests — R1 + R2."""
 
 import os
+from unittest.mock import patch
+
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
@@ -16,10 +17,20 @@ def app(tmp_path):
 
 @pytest_asyncio.fixture
 async def client(app):
+    # AI-CONTEXT: stub MCP boot for these security/CSRF/SSRF tests. The real
+    # mcp_boot starts an anyio streamable-HTTP transport task group inside the
+    # app lifespan; tearing that down from a different anyio task than it was
+    # entered in (the manual lifespan_context exit below) raises
+    # "Attempted to exit cancel scope in a different task...". MCP is irrelevant
+    # to these tests, so no-op its boot to keep lifespan teardown clean.
+    async def _no_mcp(_app):
+        _app.state.mcp_server = None
+
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        async with app.router.lifespan_context(app):
-            yield c
+    with patch("backend.mcp.mount.mcp_boot", _no_mcp):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            async with app.router.lifespan_context(app):
+                yield c
 
 
 CSRF = {"X-Requested-With": "XMLHttpRequest"}
@@ -262,9 +273,8 @@ async def test_csp_header_contains_frame_ancestors(client):
 async def test_csp_header_injection_via_env_var(app):
     """R1-F8: Newline injection in WEB_CSP_CONNECT_SRC is sanitized."""
     from fastapi.testclient import TestClient
-    with patch.dict(os.environ, {"WEB_CSP_CONNECT_SRC": "'self'\r\nX-Injected: evil"}):
-        with TestClient(app) as tc:
-            resp = tc.get("/api/v1/health")
+    with patch.dict(os.environ, {"WEB_CSP_CONNECT_SRC": "'self'\r\nX-Injected: evil"}), TestClient(app) as tc:
+        resp = tc.get("/api/v1/health")
     csp = resp.headers.get("content-security-policy", "")
     assert "\n" not in csp
     assert "X-Injected" not in csp
@@ -302,6 +312,7 @@ async def test_cors_disallowed_origin_not_reflected(client):
 def test_ws_check_origin_empty_string():
     """R1-F7: Empty Origin header is treated as absent (returns False)."""
     from unittest.mock import MagicMock
+
     from backend.routers.ws import _check_origin
 
     ws = MagicMock()
@@ -313,6 +324,7 @@ def test_ws_check_origin_empty_string():
 def test_ws_check_origin_case_sensitive():
     """_check_origin allows port-matched origins; uppercase scheme with same port is allowed."""
     from unittest.mock import MagicMock
+
     from backend.routers.ws import _check_origin
 
     ws = MagicMock()
@@ -875,6 +887,7 @@ async def test_list_analyses_invalid_asset_type_rejected(client):
 def test_ws_check_origin_allowed_returns_true():
     """R3: _check_origin returns True for an allowed origin."""
     from unittest.mock import MagicMock
+
     from backend.routers.ws import _check_origin
 
     ws = MagicMock()
@@ -959,9 +972,17 @@ async def test_start_analysis_invalid_vendor_value_rejected(client):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_start_analysis_backend_url_private_ip_rejected(client):
+async def test_start_analysis_backend_url_private_ip_rejected(client, monkeypatch):
     """R4: Private IP in backend_url causes 400 via SSRF validator — integration level."""
     import socket
+    # AI-CONTEXT: validate_backend_url() honors the ALLOW_LOCAL_LLM_BACKEND
+    # operator opt-in (co-located proxies), which short-circuits the
+    # private/internal-IP block. litellm runs a bare load_dotenv() at import
+    # time, which walks up the tree and loads the developer's repo-root .env,
+    # leaking ALLOW_LOCAL_LLM_BACKEND=true into the test process. Neutralize it
+    # here so this test deterministically exercises the default-secure SSRF
+    # rejection path (the var is server-side only, never attacker-controllable).
+    monkeypatch.delenv("ALLOW_LOCAL_LLM_BACKEND", raising=False)
     private_ip_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))]
     with patch("backend.validators.socket.getaddrinfo", return_value=private_ip_info):
         resp = await client.post(
@@ -1004,21 +1025,20 @@ async def test_start_analysis_missing_api_key_bypassed_with_backend_url(client):
     """R4: backend_url present bypasses API key check — intentional behavior."""
     import socket
     public_ip_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
-    with patch("backend.validators.socket.getaddrinfo", return_value=public_ip_info):
-        with patch(
-            "backend.services.analysis_service.AnalysisService.start_analysis",
-            return_value="run-id-bypass",
-        ):
-            resp = await client.post(
-                "/api/v1/analysis",
-                json={
-                    "ticker": "SPY",
-                    "analysis_date": "2025-06-01",
-                    "provider": "openai",
-                    "backend_url": "http://example.com:4141",
-                },
-                headers=CSRF,
-            )
+    with patch("backend.validators.socket.getaddrinfo", return_value=public_ip_info), patch(
+        "backend.services.analysis_service.AnalysisService.start_analysis",
+        return_value="run-id-bypass",
+    ):
+        resp = await client.post(
+            "/api/v1/analysis",
+            json={
+                "ticker": "SPY",
+                "analysis_date": "2025-06-01",
+                "provider": "openai",
+                "backend_url": "http://example.com:4141",
+            },
+            headers=CSRF,
+        )
     # API key check skipped when backend_url is provided
     assert resp.status_code == 201
 
@@ -1031,9 +1051,8 @@ async def test_start_analysis_missing_api_key_bypassed_with_backend_url(client):
 async def test_csp_semicolon_injection_stripped(app):
     """R4: Semicolon in WEB_CSP_CONNECT_SRC does not inject a new CSP directive."""
     from fastapi.testclient import TestClient
-    with patch.dict(os.environ, {"WEB_CSP_CONNECT_SRC": "'self'; img-src *"}):
-        with TestClient(app) as tc:
-            resp = tc.get("/api/v1/health")
+    with patch.dict(os.environ, {"WEB_CSP_CONNECT_SRC": "'self'; img-src *"}), TestClient(app) as tc:
+        resp = tc.get("/api/v1/health")
     csp = resp.headers.get("content-security-policy", "")
     # The injected img-src directive must not appear
     assert "img-src *" not in csp
@@ -1048,6 +1067,7 @@ async def test_csp_semicolon_injection_stripped(app):
 def test_ws_check_origin_no_origin_header():
     """R4: _check_origin with absent origin key returns False."""
     from unittest.mock import MagicMock
+
     from backend.routers.ws import _check_origin
 
     ws = MagicMock()
@@ -1059,6 +1079,7 @@ def test_ws_check_origin_no_origin_header():
 def test_ws_check_origin_empty_allowed_list():
     """R4: _check_origin with empty cors_origins list returns False for any origin."""
     from unittest.mock import MagicMock
+
     from backend.routers.ws import _check_origin
 
     ws = MagicMock()
@@ -1222,19 +1243,18 @@ async def test_start_scanner_backend_url_private_ip_deferred(client):
     """
     import socket
     private_ip_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))]
-    with patch("backend.validators.socket.getaddrinfo", return_value=private_ip_info):
-        with patch(
-            "backend.services.scanner_service.ScannerService.start_scan",
-            return_value="scan-id-123",
-        ):
-            resp = await client.post(
-                "/api/v1/scanner",
-                json={
-                    "analysis_date": "2025-06-01",
-                    "backend_url": "http://internal.corp:8080",
-                },
-                headers=CSRF,
-            )
+    with patch("backend.validators.socket.getaddrinfo", return_value=private_ip_info), patch(
+        "backend.services.scanner_service.ScannerService.start_scan",
+        return_value="scan-id-123",
+    ):
+        resp = await client.post(
+            "/api/v1/scanner",
+            json={
+                "analysis_date": "2025-06-01",
+                "backend_url": "http://internal.corp:8080",
+            },
+            headers=CSRF,
+        )
     # Scanner returns 201 immediately (start_scan returns scan_id, not doing SSRF check at request time)
     assert resp.status_code == 201
 

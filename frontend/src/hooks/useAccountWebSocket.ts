@@ -144,6 +144,8 @@ export function useAccountWebSocket() {
           trade_id: msg.trade_id as string,
           updates: {
             filled_qty: msg.filled_qty as number,
+            // keep the live size in sync so display/partial-close max update
+            remaining_qty: msg.remaining_qty as number,
             version: msg.version as number,
             status: "partially_closed",
           },

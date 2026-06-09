@@ -41,6 +41,15 @@ dependencies = [
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.0",
     "mcp>=1.12.0",
+    # AI-CONTEXT: security floors for transitive deps flagged by pip-audit (Phase 6
+    # hardening). Pinning the minimum PATCHED version here forces a fresh install /
+    # CI to resolve past the known CVEs without changing app code. Bump these as new
+    # advisories land.
+    "starlette>=1.0.1",      # PYSEC-2026-161 (FastAPI's ASGI core)
+    "aiohttp>=3.14.0",       # CVE-2026-34993, CVE-2026-47265
+    "urllib3>=2.7.0",        # PYSEC-2026-142, PYSEC-2026-141
+    "idna>=3.15",            # CVE-2026-45409
+    "python-dotenv>=1.2.2",  # CVE-2026-28684 (raise floor from 1.1.1)
 ]
 
 [project.scripts]
@@ -65,3 +74,57 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+# ── Ruff: strict-but-pragmatic lint config for the `backend/` package ──────────
+# AI-CONTEXT: Scoped to backend/ (the /production-ready target). The selected rule
+# families prioritise correctness, bug-prone patterns, async safety, and modern
+# Python idioms over pure cosmetics, which keeps the finding count tractable on a
+# ~47.6k-LOC codebase while still catching real defects (e.g. F821 undefined names,
+# B904 exception-chaining loss, B-series footguns). Cosmetic/high-churn rules
+# (annotation style migrations, long-line reflow) are deferred via `ignore` and
+# handled deliberately rather than via a mass auto-rewrite.
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "build", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "SIM", "UP", "I", "C4", "PIE", "RET", "PERF", "ASYNC"]
+ignore = [
+    "E501",   # line-too-long — addressed deliberately, not via mass reflow
+    "UP006",  # non-pep585-annotation (Dict->dict) — large annotation churn, defer
+    "UP007",  # non-pep604-annotation-union (Optional[X]->X|None style) — defer
+    "UP035",  # deprecated-import (typing.Dict etc.) — paired with UP006, defer
+    "UP037",  # quoted-annotation — defer with annotation cleanup
+    "UP045",  # non-pep604-annotation-optional — defer
+    "SIM105", # suppressible-exception (contextlib.suppress) — readability tradeoff
+    # AI-CONTEXT: SIM108 (if/else -> ternary) is DISABLED because applying it to this
+    # codebase repeatedly produces NESTED ternaries (e.g.
+    # `0.0 if v is None else -v if d == "max" else v`), which the project's own
+    # type-safety standard explicitly forbids ("No nested ternaries"). The explicit
+    # if/else blocks are clearer for these multi-branch value selections. Enabling
+    # the rule would trade clarity for line-count and violate the standard.
+    "SIM108",
+    "RET504", # unnecessary-assign-before-return — often aids debuggability
+    "RET505", # superfluous-else-return — stylistic, keep explicit branches
+    # AI-CONTEXT: PERF203 (try/except inside a loop) is a FALSE POSITIVE for this
+    # codebase's dominant pattern: per-iteration error isolation in resilient batch
+    # loops (reconcile each account, process each scan symbol, broadcast to each WS
+    # client). Hoisting the try/except out of the loop would let one item's failure
+    # abort the whole batch — a correctness regression. Per-item isolation is
+    # intentional and correct; the micro-overhead is irrelevant next to the I/O each
+    # iteration performs. Disabled globally with rationale rather than mangling ~28
+    # correct sites or littering them with noqa.
+    "PERF203",
+]
+# AI-CONTEXT: FastAPI's dependency-injection idiom legitimately calls
+# Query()/Depends()/Path() in argument defaults; B008 is a false positive there.
+flake8-bugbear.extend-immutable-calls = [
+    "fastapi.Query", "fastapi.Depends", "fastapi.Path", "fastapi.Header",
+    "fastapi.Body", "fastapi.Form", "fastapi.File", "fastapi.Cookie",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert-heavy patterns and broader imports.
+"tests/**" = ["B011"]
+

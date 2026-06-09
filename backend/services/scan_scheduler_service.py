@@ -34,6 +34,13 @@ def _is_sentinel(val: Any) -> bool:
 
 
 class ScanSchedulerService:
+    """Manages scheduled market scans: CRUD, the polling loop, and execution.
+
+    Tracks in-flight runs to enforce single-flight execution, computes next-run
+    times from interval/cron/daily/weekly/once schedules, and optionally
+    notifies the AI manager service when active schedules change.
+    """
+
     def __init__(self, scanner_service: Any, db: Any, config_service: Any, ai_manager_service: Any = None):
         self._scanner = scanner_service
         self._db = db
@@ -45,6 +52,7 @@ class ScanSchedulerService:
         self._last_cleanup: Optional[datetime] = None
 
     def set_ai_manager_service(self, ai_manager_service: Any) -> None:
+        """Inject the AI manager service (resolves a startup wiring cycle)."""
         self._ai_manager_service = ai_manager_service
 
     # ── CRUD ─────────────────────────────────────────────────────────
@@ -67,6 +75,12 @@ class ScanSchedulerService:
                 raise ValueError("Invalid time value")
 
     async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create and persist a new schedule; return the stored row.
+
+        Validates the schedule timing, enforces the MAX_SCHEDULES cap (raising
+        ValueError when exceeded), resolves the scan config (injecting API keys),
+        computes the first next_run_at, and triggers AI-manager reconciliation.
+        """
         self._validate_schedule(data["schedule_type"], data.get("schedule_config", {}))
         count = await self._db.count_scheduled_scans()
         if count >= MAX_SCHEDULES:
@@ -96,6 +110,12 @@ class ScanSchedulerService:
         return await self._db.get_scheduled_scan(scan_id)
 
     async def update(self, scan_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing schedule and return the stored row.
+
+        Raises KeyError if the schedule is missing. Preserves the existing LLM
+        API key when a masked/blank one is sent, resets consecutive_failures,
+        and only recomputes next_run_at when a timing field actually changed.
+        """
         existing = await self._db.get_scheduled_scan(scan_id)
         if not existing:
             raise KeyError(f"Schedule {scan_id} not found")
@@ -145,6 +165,10 @@ class ScanSchedulerService:
         return await self._db.get_scheduled_scan(scan_id)
 
     async def delete(self, scan_id: str) -> bool:
+        """Delete a schedule, clear any in-flight marker, and reconcile.
+
+        Returns True if a row was deleted, False otherwise.
+        """
         result = await self._db.delete_scheduled_scan(scan_id)
         if result:
             self._in_flight.pop(scan_id, None)
@@ -154,15 +178,23 @@ class ScanSchedulerService:
         return result
 
     async def list_all(self) -> List[Dict[str, Any]]:
+        """Return all scheduled scans."""
         return await self._db.list_scheduled_scans()
 
     def get_running_schedule_ids(self) -> set:
+        """Return the set of schedule ids with a run currently in flight."""
         return set(self._in_flight.keys())
 
     async def get(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single schedule by id, or None if not found."""
         return await self._db.get_scheduled_scan(scan_id)
 
     async def pause(self, scan_id: str) -> Dict[str, Any]:
+        """Pause an active/error schedule, clearing its next_run_at.
+
+        Raises KeyError if missing, or ValueError if the schedule is not in an
+        'active' or 'error' status. Returns the updated row.
+        """
         existing = await self._db.get_scheduled_scan(scan_id)
         if not existing:
             raise KeyError(f"Schedule {scan_id} not found")
@@ -180,6 +212,12 @@ class ScanSchedulerService:
         return await self._db.get_scheduled_scan(scan_id)
 
     async def resume(self, scan_id: str) -> Dict[str, Any]:
+        """Reactivate a paused/error/cancelled schedule and recompute next_run_at.
+
+        Raises KeyError if missing, or ValueError if the status is not
+        resumable. For 'once' schedules whose computed next run is already in
+        the past, schedules it immediately. Returns the updated row.
+        """
         existing = await self._db.get_scheduled_scan(scan_id)
         if not existing:
             raise KeyError(f"Schedule {scan_id} not found")
@@ -202,6 +240,13 @@ class ScanSchedulerService:
         return await self._db.get_scheduled_scan(scan_id)
 
     async def trigger(self, scan_id: str) -> Dict[str, Any]:
+        """Run a schedule immediately ("run now"); return the updated row.
+
+        Raises KeyError if missing, or ValueError if the schedule is
+        completed/cancelled, another scan is already in flight, or the 60s
+        cooldown since the last run has not elapsed. Clears the in-flight
+        sentinel and re-raises on execution failure.
+        """
         existing = await self._db.get_scheduled_scan(scan_id)
         if not existing:
             raise KeyError(f"Schedule {scan_id} not found")
@@ -215,6 +260,16 @@ class ScanSchedulerService:
             if (datetime.now(timezone.utc) - last).total_seconds() < COOLDOWN_SECONDS:
                 raise ValueError("Cooldown: must wait 60 seconds between triggers")
 
+        # AI-CONTEXT: cross-instance claim. The _in_flight + cooldown checks above are
+        # per-PROCESS; in a multi-instance deployment two instances could each pass
+        # them and double-fire the same schedule. claim_manual_trigger does a DB CAS on
+        # last_run_at (stamp only if unchanged since we read it), so exactly one caller
+        # wins — the same single-runner guarantee the scheduled loop gets from
+        # claim_scheduled_scan.
+        claimed = await self._db.claim_manual_trigger(scan_id, existing.get("last_run_at"))
+        if not claimed:
+            raise ValueError("Another runner already triggered this schedule — please wait")
+
         self._in_flight[scan_id] = datetime.now(timezone.utc)  # sentinel to prevent concurrent execution
         try:
             await self._execute_schedule(existing, triggered_by="run_now")
@@ -225,11 +280,13 @@ class ScanSchedulerService:
         return await self._db.get_scheduled_scan(scan_id)
 
     async def list_executions(self, schedule_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return recent execution records for a schedule, newest first."""
         return await self._db.list_schedule_executions(schedule_id, limit)
 
     # ── Scheduler Loop ───────────────────────────────────────────────
 
     def start(self) -> None:
+        """Start the background scheduler poll loop (idempotent if already running)."""
         if self._loop_task and not self._loop_task.done():
             return
         self._shutdown_event.clear()
@@ -237,6 +294,7 @@ class ScanSchedulerService:
         logger.info("Scheduler loop started")
 
     async def shutdown(self) -> None:
+        """Stop the poll loop and mark any in-flight executions cancelled."""
         self._shutdown_event.set()
         if self._loop_task:
             self._loop_task.cancel()
@@ -246,7 +304,7 @@ class ScanSchedulerService:
                 pass
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        for schedule_id, exec_id in list(self._in_flight.items()):
+        for _schedule_id, exec_id in list(self._in_flight.items()):
             if not _is_sentinel(exec_id):
                 try:
                     await self._db.update_schedule_execution(
@@ -510,6 +568,12 @@ class ScanSchedulerService:
     # ── Recovery ─────────────────────────────────────────────────────
 
     async def recover_on_startup(self) -> None:
+        """Reconcile schedules whose next_run_at was missed while the service was down.
+
+        Replays at most one recently-missed 'once' schedule (within the missed
+        window), marks older 'once' schedules completed, rolls recurring
+        schedules forward to their next run, and flags orphaned executions failed.
+        """
         schedules = await self._db.list_scheduled_scans()
         now = datetime.now(timezone.utc)
         replayed = 0

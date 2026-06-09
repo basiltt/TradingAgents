@@ -12,8 +12,12 @@ from backend.ai_manager_schemas import AIManagerConfigPatch
 from backend.rate_limit import check_rate_limit as _check_rate_limit
 from backend.routers._validators import validate_account_id as _validate_account_id
 from backend.schemas.ai_manager_dashboard import (
-    LLMCallEntry, LLMCallListResponse, CapabilitiesResponse,
-    MarketInsightResponse, AnalysisContextResponse, ErrorResponse,
+    AnalysisContextResponse,
+    CapabilitiesResponse,
+    ErrorResponse,
+    LLMCallEntry,
+    LLMCallListResponse,
+    MarketInsightResponse,
 )
 from backend.services.ai_manager_capabilities_status import CapabilitiesStatusAggregator
 
@@ -49,7 +53,7 @@ async def enable_ai_manager(request: Request, account_id: str):
     await _check_rate_limit(account_id)
     svc = _get_service(request)
     from backend.ai_manager_schemas import AIManagerConfig
-    
+
     existing_config = None
     try:
         existing_config = await svc.get_config(account_id)
@@ -60,7 +64,7 @@ async def enable_ai_manager(request: Request, account_id: str):
         config = AIManagerConfig(**existing_config)
     else:
         config = AIManagerConfig()
-    
+
     config.auto_enabled = False
     await svc.enable(account_id, config)
     return {"status": "enabled", "account_id": account_id}
@@ -103,7 +107,7 @@ async def get_config(request: Request, account_id: str):
     try:
         config = await svc.get_config(account_id)
     except ValueError as e:
-        raise HTTPException(404, detail=str(e))
+        raise HTTPException(404, detail=str(e)) from e
     return config
 
 
@@ -119,7 +123,7 @@ async def patch_config(request: Request, account_id: str, body: AIManagerConfigP
     try:
         await svc.patch_config(account_id, updates)
     except ValueError as e:
-        raise HTTPException(404, detail=str(e))
+        raise HTTPException(404, detail=str(e)) from e
     return {"status": "updated", "account_id": account_id}
 
 
@@ -182,7 +186,7 @@ async def lock_position(request: Request, account_id: str, symbol: str):
     try:
         await svc.lock_position(account_id, symbol)
     except ValueError as e:
-        raise HTTPException(404, detail=str(e))
+        raise HTTPException(404, detail=str(e)) from e
     return {"status": "locked", "account_id": account_id, "symbol": symbol}
 
 
@@ -196,7 +200,7 @@ async def unlock_position(request: Request, account_id: str, symbol: str):
     try:
         await svc.unlock_position(account_id, symbol)
     except ValueError as e:
-        raise HTTPException(404, detail=str(e))
+        raise HTTPException(404, detail=str(e)) from e
     return {"status": "unlocked", "account_id": account_id, "symbol": symbol}
 
 
@@ -298,7 +302,7 @@ async def get_llm_calls(
             parts = cursor.split("|")
             cursor_ts, cursor_id = parts[0], int(parts[1])
         except (ValueError, IndexError):
-            raise HTTPException(400, detail="Invalid cursor format")
+            raise HTTPException(400, detail="Invalid cursor format") from None
 
     calls, next_cursor = await svc._repo.get_llm_calls(
         account_id, limit=limit, cursor_timestamp=cursor_ts, cursor_id=cursor_id

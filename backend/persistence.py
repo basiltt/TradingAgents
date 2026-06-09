@@ -378,7 +378,7 @@ CREATE TABLE IF NOT EXISTS close_rules (
     trigger_type VARCHAR(30) NOT NULL CHECK(trigger_type IN ('BALANCE_BELOW','BALANCE_ABOVE','EQUITY_DROP_PCT','EQUITY_RISE_PCT','PNL_BELOW','PNL_ABOVE')),
     threshold_value NUMERIC(20,8) NOT NULL,
     reference_value NUMERIC(20,8),
-    status VARCHAR(15) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','triggered','executed','expired')),
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -600,6 +600,13 @@ def _default_dsn() -> str:
 
 
 class AnalysisDB:
+    """Synchronous (psycopg2) persistence layer — twin of AsyncAnalysisDB.
+
+    Used by graph-executor threads and legacy/test paths. The async layer owns
+    schema migrations in production; this sync layer is a coexisting consumer and
+    skips migrating past its own version tail. Wraps a threaded connection pool.
+    """
+
     _POOL_MAX = max(2, min(200, int(os.environ.get("DB_POOL_MAX", "20") or "20")))
     _POOL_TIMEOUT = max(5, min(300, int(os.environ.get("DB_POOL_TIMEOUT", "30") or "30")))
 
@@ -723,6 +730,7 @@ class AnalysisDB:
                 raise
 
     def insert_run(self, run: Dict[str, Any]) -> None:
+        """Insert a new analysis run; raises ValueError if the run_id already exists."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -744,7 +752,7 @@ class AnalysisDB:
                 conn.commit()
             except psycopg2.IntegrityError:
                 conn.rollback()
-                raise ValueError(f"Run {run['run_id']} already exists")
+                raise ValueError(f"Run {run['run_id']} already exists") from None
             except Exception:
                 conn.rollback()
                 raise
@@ -756,6 +764,10 @@ class AnalysisDB:
         error: Optional[str],
         completed_at: Optional[str],
     ) -> bool:
+        """Update a run's status/error/completed_at only if still 'running'.
+
+        Returns True if a row was updated (i.e. it was running), False otherwise.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -771,6 +783,7 @@ class AnalysisDB:
                 raise
 
     def save_report_section(self, run_id: str, section: str, content: str) -> None:
+        """Upsert a report section for a run (idempotent on run_id+section)."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -784,6 +797,7 @@ class AnalysisDB:
                 conn.rollback()
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single analysis run row, or None if not found."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -804,6 +818,11 @@ class AnalysisDB:
         to_date: Optional[str] = None,
         asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Return a paginated, filtered list of analysis runs (newest first).
+
+        Supports ticker/status/asset_type and analysis_date from/to filters.
+        Returns {"items", "total", "page", "limit"}.
+        """
         limit = min(max(limit, 1), 500)
         conditions: list[str] = []
         params: list[Any] = []
@@ -853,6 +872,7 @@ class AnalysisDB:
         }
 
     def get_report_sections(self, run_id: str) -> List[Dict[str, Any]]:
+        """Return all report sections for a run, ordered by insertion id."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -867,6 +887,7 @@ class AnalysisDB:
         return [dict(r) for r in rows]
 
     def recover_orphans(self) -> int:
+        """Mark all still-'running' runs as failed (startup crash recovery); return the count."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -882,6 +903,7 @@ class AnalysisDB:
                 raise
 
     def get_checkpoint_exists(self, ticker: str, date: str) -> bool:
+        """Return True if any analysis run exists for the given ticker and date."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -896,6 +918,7 @@ class AnalysisDB:
         return row is not None
 
     def delete_run(self, run_id: str) -> bool:
+        """Delete a single analysis run; return True if a row was removed."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -907,6 +930,7 @@ class AnalysisDB:
                 raise
 
     def delete_all_runs(self) -> int:
+        """Delete every analysis run; return the number deleted."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -918,6 +942,7 @@ class AnalysisDB:
                 raise
 
     def delete_all_checkpoints(self) -> int:
+        """Delete all completed/failed/cancelled runs; return the number deleted."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -932,6 +957,7 @@ class AnalysisDB:
                 raise
 
     def delete_ticker_checkpoints(self, ticker: str) -> int:
+        """Delete completed/failed/cancelled runs for one ticker; return the count."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -947,9 +973,10 @@ class AnalysisDB:
                 raise
 
     def checkpoint(self) -> None:
-        pass
+        """No-op checkpoint hook (kept for interface compatibility)."""
 
     def health_check(self) -> str:
+        """Return "ok" if a trivial query succeeds, else "degraded"."""
         try:
             with self._get_conn() as conn:
                 cur = conn.cursor()
@@ -962,6 +989,7 @@ class AnalysisDB:
     # ── Scanner persistence ──────────────────────────────────────────
 
     def insert_scan(self, scan: Dict[str, Any]) -> None:
+        """Insert a new market-scan row."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -987,6 +1015,7 @@ class AnalysisDB:
                 raise
 
     def update_scan(self, scan_id: str, **fields: Any) -> None:
+        """Update allowed scan columns; ignores unknown fields and no-ops if none."""
         allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -1005,6 +1034,11 @@ class AnalysisDB:
                 raise
 
     def insert_scan_result(self, scan_id: str, result: Dict[str, Any]) -> None:
+        """Upsert a per-ticker scan result (idempotent on scan_id+ticker).
+
+        Defensively validates/clamps direction, confidence, score (-10..10), and
+        status before persisting.
+        """
         direction = result.get("direction", "hold")
         if direction not in ("buy", "sell", "hold"):
             logger.error(
@@ -1055,6 +1089,10 @@ class AnalysisDB:
                 raise
 
     def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
+        """Return a scan with its results (ordered by |score|), or None if not found.
+
+        Adds a skipped_count of results that came from the TA prefilter.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1080,6 +1118,11 @@ class AnalysisDB:
         return scan
 
     def list_scans(self) -> List[Dict[str, Any]]:
+        """Return the 50 most recent scans with per-direction and skipped counts.
+
+        Results lists are left empty; each scan carries direction_counts and
+        skipped_count aggregates instead.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1122,6 +1165,7 @@ class AnalysisDB:
         return scans
 
     def get_scan_completed_tickers(self, scan_id: str) -> set[str]:
+        """Return the set of tickers that already have a result row for a scan."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1135,6 +1179,7 @@ class AnalysisDB:
         return {r[0] for r in rows}
 
     def increment_scan_counter(self, scan_id: str, field: str) -> None:
+        """Increment a scan's 'completed' or 'failed' counter by one (ignores others)."""
         if field not in ("completed", "failed"):
             return
         with self._get_conn() as conn:
@@ -1150,6 +1195,7 @@ class AnalysisDB:
                 raise
 
     def get_running_scans(self) -> List[Dict[str, Any]]:
+        """Return all scans currently in 'running' status."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1208,6 +1254,7 @@ class AnalysisDB:
         }
 
     def get_scan_analysis_count(self, scan_id: str) -> int:
+        """Return the number of scan results that have a linked analysis run_id."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1221,12 +1268,14 @@ class AnalysisDB:
                 raise
 
     def close(self) -> None:
+        """Mark the DB closed and close all pooled connections."""
         self._closed = True
         self._pool.closeall()
 
     # ── Trading Accounts persistence ────────────────────────────────────
 
     def insert_account(self, account: Dict[str, Any]) -> None:
+        """Insert a new trading account row (encrypted credentials included)."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1257,6 +1306,7 @@ class AnalysisDB:
                 raise
 
     def list_accounts(self) -> List[Dict[str, Any]]:
+        """Return all non-deleted trading accounts (no secrets), newest first."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1274,6 +1324,7 @@ class AnalysisDB:
         return [dict(r) for r in rows]
 
     def get_account(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single non-deleted account (no secrets), or None if absent."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1291,6 +1342,7 @@ class AnalysisDB:
         return dict(row) if row else None
 
     def get_account_credentials(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Return an account's encrypted API key/secret, or None if absent."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1306,6 +1358,11 @@ class AnalysisDB:
         return dict(row) if row else None
 
     def update_account(self, account_id: str, **fields: Any) -> bool:
+        """Update allowed account fields; return True if a row was updated.
+
+        Filters to a column allowlist (only last_error may be set NULL), stamps
+        updated_at, and no-ops (returns False) when nothing updatable is given.
+        """
         allowed = {"label", "is_active", "bybit_uid", "last_connected_at", "last_error", "include_in_analytics"}
         nullable = {"last_error"}
         updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k in nullable)}
@@ -1330,6 +1387,10 @@ class AnalysisDB:
         self, account_id: str, api_key_masked: str,
         api_key_encrypted: bytes, api_secret_encrypted: bytes, updated_at: str,
     ) -> bool:
+        """Replace an account's encrypted API key/secret and clear last_error.
+
+        Returns True if a non-deleted account row was updated.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1346,6 +1407,7 @@ class AnalysisDB:
         return cur.rowcount > 0
 
     def soft_delete_account(self, account_id: str, deleted_at: str) -> bool:
+        """Soft-delete an account (set deleted_at, deactivate); return True if updated."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1363,6 +1425,11 @@ class AnalysisDB:
     # ── Closed PnL persistence ──────────────────────────────────────────
 
     def insert_closed_pnl_records(self, account_id: str, records: List[Dict[str, Any]]) -> int:
+        """Insert closed-PnL records for an account; return how many were inserted.
+
+        Idempotent per (account_id, bybit_order_id) — duplicates are skipped, and
+        individual malformed records are logged and skipped without aborting.
+        """
         if not records:
             return 0
         inserted = 0
@@ -1405,6 +1472,10 @@ class AnalysisDB:
         self, account_id: str, start_time: int, end_time: int,
         page: int = 1, limit: int = 100,
     ) -> Dict[str, Any]:
+        """Return paginated closed-PnL records in a time window (newest first).
+
+        Returns {"items", "total", "page", "limit"}.
+        """
         offset = (page - 1) * limit
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -1431,6 +1502,10 @@ class AnalysisDB:
     def get_closed_pnl_summary(
         self, account_id: str, start_time: int, end_time: int,
     ) -> Dict[str, Any]:
+        """Aggregate one account's closed PnL in a window into win/loss summary stats.
+
+        Returns total/average win-loss figures and win rate; zeros when no records.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1474,6 +1549,12 @@ class AnalysisDB:
         self, start_time: int, end_time: int,
         account_type: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Aggregate closed PnL across all analytics-eligible accounts in a window.
+
+        Restricts to active, non-deleted, analytics-included accounts (optionally
+        one account_type). Returns the same win/loss summary shape as the
+        per-account summary.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1521,6 +1602,7 @@ class AnalysisDB:
         }
 
     def get_latest_closed_pnl_time(self, account_id: str) -> Optional[int]:
+        """Return the max created_time of an account's closed PnL records, or None."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1537,6 +1619,7 @@ class AnalysisDB:
     # ── Daily Snapshots ────────────────────────────────────────────────
 
     def upsert_daily_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Insert or update a daily equity snapshot (keyed on account + date)."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1582,6 +1665,7 @@ class AnalysisDB:
     def get_daily_snapshots(
         self, account_id: str, start_date: str, end_date: str,
     ) -> List[Dict[str, Any]]:
+        """Return one account's daily snapshots in a date range, oldest first."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1600,6 +1684,11 @@ class AnalysisDB:
     def get_all_account_snapshots(
         self, start_date: str, end_date: str, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Return daily snapshots for all analytics-eligible accounts in a date range.
+
+        Restricts to active, non-deleted, analytics-included accounts (optionally
+        one account_type); ordered oldest first.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1623,6 +1712,7 @@ class AnalysisDB:
         return [dict(r) for r in rows]
 
     def get_latest_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
+        """Return an account's most recent daily snapshot, or None if none exist."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1638,6 +1728,7 @@ class AnalysisDB:
         return dict(row) if row else None
 
     def get_previous_snapshot(self, account_id: str, before_date: str) -> Optional[Dict[str, Any]]:
+        """Return an account's latest daily snapshot strictly before a date, or None."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1658,6 +1749,7 @@ class AnalysisDB:
     def get_hf_snapshots(
         self, account_id: str, since_ts: datetime,
     ) -> List[Dict[str, Any]]:
+        """Return one account's high-frequency snapshots since a timestamp, oldest first."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1676,6 +1768,11 @@ class AnalysisDB:
     def get_all_hf_snapshots(
         self, since_ts: datetime, account_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Return high-frequency snapshots for all analytics-eligible accounts since a timestamp.
+
+        Restricts to active, non-deleted, analytics-included accounts (optionally
+        one account_type); ordered oldest first.
+        """
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1699,6 +1796,7 @@ class AnalysisDB:
         return [dict(r) for r in rows]
 
     def insert_hf_snapshots(self, snapshots: List[Dict[str, Any]]) -> int:
+        """Batch-insert high-frequency snapshots with a shared timestamp; return the count."""
         if not snapshots:
             return 0
         with self._get_conn() as conn:
@@ -1732,6 +1830,11 @@ class AnalysisDB:
         after_ts: Optional[str] = None,
         table: str = "daily_snapshots",
     ) -> int:
+        """Delete snapshot rows matching optional account/time bounds; return the count.
+
+        Validates table against the snapshot-table allowlist (ValueError otherwise)
+        and applies the correct date/timestamp column per table.
+        """
         if table not in self._VALID_SNAPSHOT_TABLES:
             raise ValueError(f"Invalid table: {table}")
         is_hf = table == "high_freq_snapshots"
@@ -1767,6 +1870,7 @@ class AnalysisDB:
                 raise
 
     def cleanup_old_hf_snapshots(self, max_age_days: int = 1095) -> int:
+        """Delete high-frequency snapshots older than max_age_days; return the count."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1788,6 +1892,11 @@ class AnalysisDB:
         after_ts: Optional[str] = None,
         table: str = "daily_snapshots",
     ) -> int:
+        """Count snapshot rows matching optional account/time bounds.
+
+        Validates table against the snapshot-table allowlist (ValueError otherwise)
+        and applies the correct date/timestamp column per table.
+        """
         if table not in self._VALID_SNAPSHOT_TABLES:
             raise ValueError(f"Invalid table: {table}")
         is_hf = table == "high_freq_snapshots"
@@ -1830,6 +1939,7 @@ class AnalysisDB:
         return d
 
     def insert_strategy(self, strategy: Dict[str, Any]) -> None:
+        """Insert a new strategy row (config JSON-serialized)."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1849,6 +1959,7 @@ class AnalysisDB:
                 raise
 
     def list_strategies(self, status: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return strategies (config deserialized) filtered by optional status/category, newest first."""
         conditions = []
         params: list = []
         if status:
@@ -1866,12 +1977,10 @@ class AnalysisDB:
             except Exception:
                 conn.rollback()
                 raise
-        result = []
-        for r in rows:
-            result.append(self._deserialize_strategy(r))
-        return result
+        return [self._deserialize_strategy(r) for r in rows]
 
     def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
+        """Return one strategy (config deserialized), or None if not found."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -1885,6 +1994,11 @@ class AnalysisDB:
         return self._deserialize_strategy(row)
 
     def update_strategy(self, strategy_id: str, **fields: Any) -> bool:
+        """Update allowed strategy fields; return True if a row changed.
+
+        Serializes config to JSON, stamps updated_at, and no-ops (returns False)
+        when no updatable field is given.
+        """
         allowed = {"name", "description", "category", "status", "config"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -1908,6 +2022,7 @@ class AnalysisDB:
         return affected > 0
 
     def delete_strategy(self, strategy_id: str) -> bool:
+        """Delete a strategy by id; return True if a row was removed."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1922,6 +2037,7 @@ class AnalysisDB:
     # ── Scheduled Scans ──────────────────────────────────────────────
 
     def insert_scheduled_scan(self, data: Dict[str, Any]) -> None:
+        """Insert a scheduled scan; raises ValueError if its id already exists."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1946,12 +2062,13 @@ class AnalysisDB:
                 conn.commit()
             except psycopg2.IntegrityError:
                 conn.rollback()
-                raise ValueError(f"Scheduled scan {data['id']} already exists")
+                raise ValueError(f"Scheduled scan {data['id']} already exists") from None
             except Exception:
                 conn.rollback()
                 raise
 
     def update_scheduled_scan(self, schedule_id: str, fields: Dict[str, Any]) -> None:
+        """Update allowed scheduled-scan columns; JSON-encodes config dicts and no-ops if none."""
         allowed = {
             "name", "schedule_type", "schedule_config", "scan_config",
             "status", "timezone", "next_run_at", "last_run_at",
@@ -1977,6 +2094,7 @@ class AnalysisDB:
                 raise
 
     def delete_scheduled_scan(self, schedule_id: str) -> bool:
+        """Delete a scheduled scan by id; return True if a row was removed."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -1989,6 +2107,7 @@ class AnalysisDB:
         return affected > 0
 
     def list_scheduled_scans(self) -> List[Dict[str, Any]]:
+        """Return all scheduled scans (configs deserialized), newest first."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -2009,6 +2128,7 @@ class AnalysisDB:
         return d
 
     def get_scheduled_scan(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Return one scheduled scan (configs deserialized), or None if not found."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -2020,6 +2140,7 @@ class AnalysisDB:
         return self._deserialize_schedule(row) if row else None
 
     def get_due_scheduled_scans(self) -> List[Dict[str, Any]]:
+        """Return up to 5 active scheduled scans whose next_run_at is now due."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -2038,6 +2159,12 @@ class AnalysisDB:
     def claim_scheduled_scan(
         self, schedule_id: str, old_next: str, new_next: Optional[str]
     ) -> bool:
+        """Atomically claim a due scheduled scan via compare-and-swap on next_run_at.
+
+        Advances next_run_at to new_next and stamps last_run_at only if the row is
+        still active and its next_run_at equals old_next. Returns True if claimed
+        (guarantees a single runner across instances), False if another claimed it.
+        """
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._get_conn() as conn:
             cur = conn.cursor()
@@ -2055,6 +2182,7 @@ class AnalysisDB:
                 raise
 
     def insert_schedule_execution(self, data: Dict[str, Any]) -> int:
+        """Insert a schedule-execution record; return its new id."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -2079,6 +2207,7 @@ class AnalysisDB:
                 raise
 
     def update_schedule_execution(self, exec_id: int, fields: Dict[str, Any]) -> None:
+        """Update allowed columns on a schedule-execution row; no-ops if none given."""
         allowed = {"scan_id", "status", "completed_at", "error_message"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -2099,6 +2228,7 @@ class AnalysisDB:
     def list_schedule_executions(
         self, schedule_id: str, limit: int = 20
     ) -> List[Dict[str, Any]]:
+        """Return a schedule's recent execution records, newest first."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -2113,6 +2243,10 @@ class AnalysisDB:
                 raise
 
     def cleanup_old_executions(self, days: int = 90, min_keep: int = 100) -> int:
+        """Delete execution records older than `days`, keeping the latest min_keep per schedule.
+
+        Returns the number of rows deleted.
+        """
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._get_conn() as conn:
             cur = conn.cursor()
@@ -2138,6 +2272,7 @@ class AnalysisDB:
     def update_scan_schedule_link(
         self, scan_id: str, schedule_id: str, triggered_by: str
     ) -> None:
+        """Link a scan back to the schedule that triggered it."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -2151,6 +2286,7 @@ class AnalysisDB:
                 raise
 
     def count_scheduled_scans(self) -> int:
+        """Return the total number of scheduled scans."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -2161,6 +2297,7 @@ class AnalysisDB:
                 raise
 
     def mark_orphaned_executions(self) -> int:
+        """Fail executions stuck in 'started' for >10 minutes (crash recovery); return the count."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         threshold = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._get_conn() as conn:
@@ -2182,6 +2319,10 @@ class AnalysisDB:
     # ── Close Rules ──────────────────────────────────────────────
 
     def insert_close_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a close rule (defaulting status to 'active'); return the stored row.
+
+        Serializes a datetime reference_value to ISO text before persisting.
+        """
         cols = ["account_id", "trigger_type", "threshold_value", "reference_value",
                 "status", "expires_at", "cycle_id"]
         vals = {c: rule.get(c) for c in cols}
@@ -2210,6 +2351,7 @@ class AnalysisDB:
         return self._serialize_row(row)
 
     def list_close_rules(self, account_id: str) -> list:
+        """Return all close rules for an account (JSON-safe), newest first."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -2224,6 +2366,7 @@ class AnalysisDB:
         return [self._serialize_row(r) for r in rows]
 
     def get_close_rule(self, rule_id: str) -> Optional[Dict[str, Any]]:
+        """Return one close rule (JSON-safe), or None if not found."""
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             try:
@@ -2237,6 +2380,11 @@ class AnalysisDB:
         return self._serialize_row(row)
 
     def update_close_rule(self, rule_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update allowed close-rule columns; return the updated row or None.
+
+        Normalizes reference_value to text, stamps updated_at, and returns None
+        when nothing updatable is given or the rule does not exist.
+        """
         allowed = {"trigger_type", "threshold_value", "reference_value", "status", "expires_at", "triggered_at"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -2308,6 +2456,7 @@ class AnalysisDB:
         return affected
 
     def delete_close_rule(self, rule_id: str) -> bool:
+        """Delete a close rule and its executions in one transaction; return True if removed."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -2395,6 +2544,7 @@ class AnalysisDB:
         return result
 
     def count_rules_for_account(self, account_id: str) -> int:
+        """Return the number of active or paused close rules for an account."""
         with self._get_conn() as conn:
             cur = conn.cursor()
             try:
@@ -2411,6 +2561,10 @@ class AnalysisDB:
     # ── Close Executions ─────────────────────────────────────────
 
     def insert_close_execution(self, execution: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert a close-execution record; return the stored row (JSON-safe).
+
+        Serializes the results payload to JSON when not already a string.
+        """
         cols = ["account_id", "rule_id", "trigger_source", "total_positions",
                 "closed_count", "failed_count", "results"]
         vals = {c: execution.get(c) for c in cols}
@@ -2433,6 +2587,10 @@ class AnalysisDB:
         return self._serialize_row(row)
 
     def list_close_executions(self, account_id: str, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+        """Return paginated close executions for an account (newest first).
+
+        Returns {"items", "total", "page", "limit"}.
+        """
         offset = (page - 1) * limit
         with self._get_conn() as conn:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -2462,13 +2620,9 @@ class AnalysisDB:
         """Convert DB row to JSON-safe dict."""
         result = {}
         for k, v in dict(row).items():
-            if isinstance(v, datetime):
+            if isinstance(v, (datetime, date)):
                 result[k] = v.isoformat()
-            elif isinstance(v, date):
-                result[k] = v.isoformat()
-            elif isinstance(v, uuid.UUID):
-                result[k] = str(v)
-            elif isinstance(v, Decimal):
+            elif isinstance(v, (uuid.UUID, Decimal)):
                 result[k] = str(v)
             else:
                 result[k] = v

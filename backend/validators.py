@@ -7,7 +7,6 @@ import os
 import socket
 from urllib.parse import urlparse
 
-
 _CGN_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
 
 
@@ -33,7 +32,7 @@ def validate_backend_url(url: str, server_port: int) -> str:
     try:
         infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
-        raise ValueError(f"Cannot resolve hostname: {hostname}")
+        raise ValueError(f"Cannot resolve hostname: {hostname}") from None
 
     if not infos:
         raise ValueError(f"No addresses found for hostname: {hostname}")
@@ -43,7 +42,7 @@ def validate_backend_url(url: str, server_port: int) -> str:
     try:
         addr = ipaddress.ip_address(resolved_ip)
     except ValueError:
-        raise ValueError(f"Invalid resolved IP: {resolved_ip}")
+        raise ValueError(f"Invalid resolved IP: {resolved_ip}") from None
 
     # Skip private/loopback checks when local backends are explicitly allowed
     if not _allow_local():

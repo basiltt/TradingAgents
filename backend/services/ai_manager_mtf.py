@@ -6,8 +6,7 @@ Higher timeframes act as a filter for AI decisions.
 
 from __future__ import annotations
 
-import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 _TF_WEIGHTS = {"5m": 0.1, "15m": 0.2, "1h": 0.35, "4h": 0.35}
 
@@ -95,7 +94,7 @@ class MultiTimeframeAnalyzer:
         return min(1.0, sum(alignments) / len(alignments))
 
     def _find_key_levels(self, klines: Dict[str, List]) -> List[Dict[str, Any]]:
-        levels = []
+        levels: List[Dict[str, Any]] = []
         for tf, data in klines.items():
             if not data or len(data) < 20:
                 continue

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -39,7 +39,7 @@ def _validate_run_id(run_id: str) -> str:
     try:
         uuid.UUID(run_id)
     except (ValueError, AttributeError, TypeError):
-        raise HTTPException(422, detail="Invalid run_id format (expected a UUID)")
+        raise HTTPException(422, detail="Invalid run_id format (expected a UUID)") from None
     return run_id
 
 
@@ -56,11 +56,11 @@ async def create_backtest(request: Request, body: BacktestCreateRequest):
     try:
         run_id = await svc.create_backtest(body.model_dump(), client_id=_client_id(request))
     except BacktestRateLimitError as exc:
-        raise HTTPException(429, detail=str(exc))
+        raise HTTPException(429, detail=str(exc)) from exc
     except BacktestValidationError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=str(exc)) from exc
     except BacktestBusyError as exc:
-        raise HTTPException(503, detail=str(exc))
+        raise HTTPException(503, detail=str(exc)) from exc
     return JSONResponse(status_code=201, content={"run_id": run_id})
 
 
@@ -72,7 +72,7 @@ async def list_backtests(
 ):
     """List backtest runs (newest first), optionally filtered by status."""
     svc = _get_service(request)
-    filters = {"limit": limit}
+    filters: dict[str, Any] = {"limit": limit}
     if status:
         filters["status"] = status
     runs = await svc.list_backtests(filters)
@@ -91,9 +91,9 @@ async def compare_backtests(
     try:
         result = await svc.compare_backtests(run_ids)
     except BacktestNotFoundError as exc:
-        raise HTTPException(404, detail=str(exc))
+        raise HTTPException(404, detail=str(exc)) from exc
     except BacktestValidationError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=str(exc)) from exc
     return _jsonable(result)
 
 
@@ -136,7 +136,7 @@ async def cancel_backtest(request: Request, run_id: str):
     try:
         ok = await svc.cancel_backtest(run_id)
     except BacktestConflictError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     if not ok:
         raise HTTPException(404, detail="Backtest run not found")
     return {"cancelled": True, "run_id": run_id}
@@ -150,7 +150,7 @@ async def delete_backtest(request: Request, run_id: str):
     try:
         ok = await svc.delete_backtest(run_id)
     except BacktestConflictError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     if not ok:
         raise HTTPException(404, detail="Backtest run not found")
     return Response(status_code=204)
@@ -176,7 +176,7 @@ async def cache_status(
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(422, detail="start/end must be ISO 8601 datetimes")
+        raise HTTPException(422, detail="start/end must be ISO 8601 datetimes") from None
     result = await svc.cache_status(symbols, interval, start_dt, end_dt)
     return result
 
@@ -200,11 +200,11 @@ async def warmup_cache(
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(422, detail="start/end must be ISO 8601 datetimes")
+        raise HTTPException(422, detail="start/end must be ISO 8601 datetimes") from None
     try:
         stats = await svc.warmup_cache(symbols, interval, start_dt, end_dt)
     except BacktestValidationError as exc:
-        raise HTTPException(422, detail=str(exc))
+        raise HTTPException(422, detail=str(exc)) from exc
     return JSONResponse(status_code=202, content=_jsonable(stats))
 
 

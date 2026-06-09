@@ -38,25 +38,32 @@ class TestLiquidation:
     """Test liquidation close rule (Task 3.7)."""
 
     def test_long_liquidation_on_extreme_drop(self):
-        """Long position liquidated when low breaches liq_price (and SL is wider)."""
+        """A wide requested SL is CLAMPED to fire before liquidation (matching live),
+        so an extreme adverse drop closes via the clamped 'sl' for a real loss — not
+        liquidation. AI-CONTEXT: pre-clamp this asserted 'liquidation' (the raw 25%
+        SL at 20x sat beyond the ~4.5% liq band). trading_rules.clamp_sl_move_pct_to_
+        liquidation now pulls the stop inside that band (4.05%), so it triggers first
+        — the live-accurate outcome. Liquidation-with-an-SL is now unreachable by
+        design (the clamp guarantees sl_price is inside the liquidation band)."""
         from backend.services.backtest_engine import BacktestEngine
 
         engine = BacktestEngine()
-        # 20x leverage → liq ~4.5% below entry = 47750. Wide SL (won't catch).
+        # 20x leverage → liq ~4.5% below entry = 47750. The requested 25%-move SL is
+        # clamped to ~4.05% (0.9× liq distance), so it fires before liquidation.
         config = _make_config(leverage=20, stop_loss_pct=500.0, take_profit_pct=500.0)
         signals = [_make_signal()]
 
         base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
         klines = {"BTCUSDT": [
             {"open_time": base_time, "open": 50000.0, "high": 50100.0, "low": 49900.0, "close": 50000.0, "volume": 100.0},
-            # Crash below liquidation (47750)
+            # Crash below the clamped SL / liquidation band.
             {"open_time": base_time + timedelta(minutes=5), "open": 50000.0, "high": 50000.0, "low": 47000.0, "close": 47500.0, "volume": 100.0},
         ]}
 
         result = engine.run(config, signals, klines)
         assert len(result.trades) == 1
-        assert result.trades[0]["close_reason"] == "liquidation"
-        assert result.trades[0]["pnl"] < 0  # full margin loss
+        assert result.trades[0]["close_reason"] == "sl"
+        assert result.trades[0]["pnl"] < 0  # real loss, clamped before liquidation
 
     def test_sl_wins_when_closer_than_liquidation(self):
         """When SL is between entry and liq, SL fires (not liquidation)."""

@@ -238,8 +238,7 @@ async def _build(auto_configs, scan_results, now, kill, fetcher, concurrency):
         )
 
     btc_pairs = await asyncio.gather(*[_guarded(_btc_one(i, lb)) for (i, lb) in btc_tuples])
-    for key, regime in btc_pairs:
-        btc[key] = regime
+    btc.update(btc_pairs)
 
     # MR means + per-symbol mark prices (qualifying symbols only)
     means: dict[tuple[str, int, str], float] = {}

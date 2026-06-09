@@ -7,21 +7,21 @@ cycling through: sleeping → monitoring → analyzing → executing.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import re
 import time
-import copy
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig
+from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_evaluator import AIManagerEvaluator
 from backend.services.ai_manager_event_triggers import EventTriggerDetector
 from backend.services.ai_manager_mtf import MultiTimeframeAnalyzer
-from backend.services.ai_manager_correlation import CorrelationAnalyzer
 from backend.services.ai_manager_orderbook import OrderBookMonitor
-from backend.services.ai_manager_trailing import TrailingState, TrailingParams
+from backend.services.ai_manager_trailing import TrailingParams, TrailingState
 
 MAX_DAILY_TOKEN_BUDGET = 20_000_000
 
@@ -43,6 +43,28 @@ _EMERGENCY_CLOSE_SYMBOL_TTL_S = 30.0
 _MAX_REASONING_CHARS = 2000
 _CHAIN_KEY_VERSION = 1
 _ALLOWED_ACTIONS = frozenset({"CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE", "PARTIAL_CLOSE", "REDUCE", "ADJUST_TP_SL", "PAUSE_TRADING"})
+
+
+def _extract_upnl(pos: Dict[str, Any]) -> float:
+    """Read a position's unrealized PnL as a float, tolerant of both key spellings.
+
+    Bybit position frames may carry either ``unrealisedPnl`` (exchange spelling) or
+    ``unrealized_pnl`` (our normalized spelling); a missing/None/non-numeric value
+    coerces to ``0.0`` rather than raising. AI-CONTEXT: this is the safe, total
+    extraction used on non-bespoke paths — callers that need custom malformed-value
+    logging (e.g. the unrealized-loss tally) keep their own try/except.
+
+    Args:
+        pos: A position dict from the WS buffer or exchange.
+
+    Returns:
+        The unrealized PnL as a float, or 0.0 if absent/None/unparseable.
+    """
+    raw = pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0))
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 class AIManagerTask:
@@ -126,7 +148,7 @@ class AIManagerTask:
         self._last_trigger_reason: Optional[str] = None
         self._trigger_queue: list = []  # [(priority, symbol, reason)]
         self._trigger_symbol: Optional[str] = None
-        self._rapid_cycle_handle = None  # asyncio.TimerHandle for queue drain debounce
+        self._rapid_cycle_handle: Optional[asyncio.TimerHandle] = None  # queue drain debounce
         self._drain_count: int = 0  # Track consecutive rapid evals in one drain cycle
         # Dashboard enhancement attributes
         self._commentary_task: Optional[asyncio.Task] = None
@@ -136,9 +158,13 @@ class AIManagerTask:
         self._urgency_history_1h: list = []
         self._emitted_attention_ids: set = set()
         self._last_eval_completed_at: Optional[datetime] = None
+        # LLM provider identity (provider/model/key fingerprint) — set by the service
+        # so a config change can rebuild the task's callable. Absent until first set.
+        self._llm_identity: Optional[str] = None
 
     @property
     def state(self) -> str:
+        """The task's current lifecycle state."""
         return self._state
 
     def start(self) -> None:
@@ -162,6 +188,10 @@ class AIManagerTask:
             pass
 
     def transition_to(self, new_state: str) -> None:
+        """Move the task to a new lifecycle state, logging and persisting the transition.
+
+        No-op if already in that state.
+        """
         if self._state == new_state:
             return
         old_state = self._state
@@ -332,7 +362,10 @@ class AIManagerTask:
                             else:
                                 estimated_pnl = (entry - last_mark) * pos_size
                             if estimated_pnl < 0:
-                                asyncio.create_task(self._enforce_daily_limits(estimated_pnl))
+                                # AI-CONTEXT: track the task — a bare create_task is held
+                                # only by a weakref and can be GC'd before it records this
+                                # realized loss (risk bookkeeping for an exchange-side SL).
+                                self._track_task(asyncio.create_task(self._enforce_daily_limits(estimated_pnl)))
                                 self._log.info("Exchange-side SL for trailing %s, est PnL: $%.2f", symbol, estimated_pnl)
                         except (TypeError, ValueError):
                             self._log.warning("Could not compute PnL for exchange-closed trailing %s", symbol)
@@ -428,13 +461,13 @@ class AIManagerTask:
             # Fetch positions
             positions = await self._service._accounts_service.get_positions(self._account_id) or []
             self._ws_buffer["positions"] = positions
-            
+
             # Fetch wallet/equity
             wallet = await self._service._accounts_service.get_wallet(self._account_id) or {}
             self._ws_buffer["equity"] = wallet.get("totalEquity")
             self._ws_buffer["available_balance"] = wallet.get("totalWalletBalance")
             self._ws_buffer["wallet"] = wallet
-            
+
             # Initialize peak PnL tracking for active positions
             for pos in positions:
                 symbol = pos.get("symbol")
@@ -443,7 +476,7 @@ class AIManagerTask:
 
             self._log.info("Initialized state from exchange: %d position(s) found", len(positions))
             self._log_async("info", "lifecycle", f"Task started, {len(positions)} open position(s) found")
-            
+
             # Transition to MONITORING if we have open positions on startup
             if self._state == SLEEPING and self._has_open_positions(self._ws_buffer):
                 self.transition_to(MONITORING)
@@ -492,6 +525,15 @@ class AIManagerTask:
             self._log_async("critical", "lifecycle", "Task crashed unexpectedly")
         finally:
             await self._stop_orderbook_monitors()
+            # AI-CONTEXT: the commentary loop is an INDEPENDENT asyncio task (a
+            # `while True` sleeper) — cancelling self._task does NOT cancel it. It is
+            # otherwise stopped only on a MONITORING→other state transition, so a
+            # direct cancel()/disable() while the account is MONITORING (has open
+            # positions — exactly when commentary runs) would orphan it: the loop
+            # pins this whole AIManagerTask (no GC) AND keeps firing LLM commentary
+            # calls forever for a disabled account. Tear it down here so every exit
+            # path (transition OR cancel) reclaims it.
+            await self._stop_commentary_loop()
             if self._cleanup_task and not self._cleanup_task.done():
                 self._cleanup_task.cancel()
                 try:
@@ -619,8 +661,8 @@ class AIManagerTask:
                 state_dict = await self._build_graph_state()
 
                 # Dashboard enhancement: emit LLM started event
-                from uuid import uuid4
                 import time as _time
+                from uuid import uuid4
                 _eval_cycle_id = uuid4()
                 _call_id = uuid4()
                 _urgency = self._get_urgency()
@@ -677,7 +719,9 @@ class AIManagerTask:
                         attempt_number=1,
                     )
 
-                asyncio.create_task(self._persist_enrichment_data(result))
+                # AI-CONTEXT: track the task so it can't be GC'd before the
+                # enrichment persistence write completes (bare create_task is weak-ref'd).
+                self._track_task(asyncio.create_task(self._persist_enrichment_data(result)))
         except RuntimeError as e:
             if "slot not available" in str(e).lower():
                 if half_open_probe:
@@ -830,6 +874,40 @@ class AIManagerTask:
         except Exception:
             self._log.warning("Failed to reset half_open_used")
 
+    def _build_standard_decision_data(
+        self, now_utc: datetime, action_type: str, symbol: str, result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build the audit-trail decision record for a STANDARD (non-emergency) action.
+
+        AI-CONTEXT: the ADJUST_TP_SL and close-action paths in _execute_action built
+        this identical 11-field dict inline; centralizing it keeps the persisted audit
+        shape (consumed by insert_decision + the dashboard) consistent. The emergency
+        fast-path uses a different snapshot/reasoning shape and intentionally does NOT
+        use this helper.
+
+        Args:
+            now_utc: Decision timestamp (UTC).
+            action_type: The action being taken (e.g. CLOSE_LONG, ADJUST_TP_SL).
+            symbol: The position symbol the action targets.
+            result: The graph/LLM result dict (provides reason, confidence, graph_path).
+
+        Returns:
+            The decision-data dict passed to repo.insert_decision().
+        """
+        return {
+            "timestamp": now_utc,
+            "action_type": action_type,
+            "evaluation_type": "standard",
+            "urgency": self._get_urgency(),
+            "state_snapshot": copy.deepcopy(self._ws_buffer),
+            "action_taken": {"action": action_type, "symbol": symbol},
+            "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
+            "confidence": result.get("confidence", 0.0),
+            "graph_path": result.get("graph_path"),
+            "strategy_version": self._config.strategy_version,
+            "chain_key_version": _CHAIN_KEY_VERSION,
+        }
+
     async def _execute_action(self, result: Dict[str, Any]) -> None:
         action_type = result.get("action", "HOLD")
         symbol = result.get("symbol", "")
@@ -927,7 +1005,7 @@ class AIManagerTask:
 
         # Min profit-to-close ratio: don't close profitable positions too early
         if not _is_urgent and action_type in ("CLOSE_LONG", "CLOSE_SHORT", "CLOSE_ALL", "FULL_CLOSE"):
-            upnl = float(position.get("unrealisedPnl", position.get("unrealized_pnl", 0)) or 0)
+            upnl = _extract_upnl(position)
             if upnl > 0 and self._config.min_profit_to_close_ratio > 0:
                 tp_price = position.get("takeProfit")
                 entry_price_s = position.get("avgPrice")
@@ -991,19 +1069,7 @@ class AIManagerTask:
 
             if action_type == "ADJUST_TP_SL":
                 now_utc = datetime.now(timezone.utc)
-                decision_data = {
-                    "timestamp": now_utc,
-                    "action_type": action_type,
-                    "evaluation_type": "standard",
-                    "urgency": self._get_urgency(),
-                    "state_snapshot": copy.deepcopy(self._ws_buffer),
-                    "action_taken": {"action": action_type, "symbol": symbol},
-                    "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
-                    "confidence": result.get("confidence", 0.0),
-                    "graph_path": result.get("graph_path"),
-                    "strategy_version": self._config.strategy_version,
-                    "chain_key_version": _CHAIN_KEY_VERSION,
-                }
+                decision_data = self._build_standard_decision_data(now_utc, action_type, symbol, result)
                 decision_id, decision_ts = await self._service._repo.insert_decision(
                     self._account_id, decision_data, self._service._hmac_key
                 )
@@ -1028,19 +1094,7 @@ class AIManagerTask:
                 return
 
             now_utc = datetime.now(timezone.utc)
-            decision_data = {
-                "timestamp": now_utc,
-                "action_type": action_type,
-                "evaluation_type": "standard",
-                "urgency": self._get_urgency(),
-                "state_snapshot": copy.deepcopy(self._ws_buffer),
-                "action_taken": {"action": action_type, "symbol": symbol},
-                "reasoning": result.get("reason", "")[:_MAX_REASONING_CHARS],
-                "confidence": result.get("confidence", 0.0),
-                "graph_path": result.get("graph_path"),
-                "strategy_version": self._config.strategy_version,
-                "chain_key_version": _CHAIN_KEY_VERSION,
-            }
+            decision_data = self._build_standard_decision_data(now_utc, action_type, symbol, result)
 
             decision_id, decision_ts = await self._service._repo.insert_decision(
                 self._account_id, decision_data, self._service._hmac_key
@@ -1071,6 +1125,8 @@ class AIManagerTask:
             self._log.exception("Execution failed for %s", symbol)
             if decision_id is not None:
                 try:
+                    # decision_id and decision_ts are assigned together from insert_decision()
+                    assert decision_ts is not None
                     await self._service._repo.insert_failed_outcome(
                         decision_id, decision_ts, {}, "execution_error"
                     )
@@ -1087,6 +1143,8 @@ class AIManagerTask:
         # Post-execution bookkeeping (outside position lock)
         if exec_result is not None and decision_id is not None:
             try:
+                # decision_id and decision_ts are assigned together from insert_decision()
+                assert decision_ts is not None
                 await self._service._repo.update_decision_outcome(
                     decision_id, decision_ts, exec_result
                 )
@@ -1167,8 +1225,8 @@ class AIManagerTask:
             self._mr_symbols_primed = True
         except Exception:
             self._log.debug("get_open_mr_symbols failed; retaining last-known MR set")
-        episodic = []
-        patterns = []
+        episodic: list[Dict[str, Any]] = []
+        patterns: list[Dict[str, Any]] = []
         decision_count = 100
         try:
             if hasattr(self._service, '_memory') and self._service._memory:
@@ -1329,6 +1387,8 @@ class AIManagerTask:
 
         self._active_trailing[symbol] = ts
         ts.start()
+        # ts.start() assigns ts._task via create_task, so it is non-None here
+        assert ts._task is not None
         self._track_task(ts._task)
         self._log.info("Started trailing for %s: SL=%.6f TP=%.6f ATR=%.6f", symbol, initial_sl, initial_tp, atr)
 
@@ -1472,7 +1532,10 @@ class AIManagerTask:
         # negative UPnL would be force-closed, violating "F2 owns MR exits". _mr_symbols
         # is refreshed on each eval; prime it here if a WS-driven emergency fires before
         # the first eval (cold start) so the exclusion holds from the very first tick.
-        if self._mr_symbols is None or (not self._mr_symbols and not self._mr_symbols_primed):
+        # AI-CONTEXT: _mr_symbols is typed `set` and always assigned a set (never None),
+        # so the real guard is "empty AND not yet primed" — a removed `is None` clause
+        # here would only have misled readers into thinking it is nullable.
+        if not self._mr_symbols and not self._mr_symbols_primed:
             try:
                 self._mr_symbols = await self._service._repo.get_open_mr_symbols(self._account_id)
             except Exception:
@@ -1488,10 +1551,7 @@ class AIManagerTask:
                 symbol = pos.get("symbol", "")
                 if not symbol or symbol in excluded or symbol in locked:
                     continue
-                try:
-                    upnl = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)))
-                except (ValueError, TypeError):
-                    upnl = 0.0
+                upnl = _extract_upnl(pos)
                 if upnl < 0:
                     close_symbols.append(symbol)
         else:
@@ -1544,10 +1604,7 @@ class AIManagerTask:
         estimated_upnl = 0.0
         for p in pre_close_positions:
             if p.get("symbol") in symbol_set:
-                try:
-                    estimated_upnl += float(p.get("unrealisedPnl", p.get("unrealized_pnl", 0)) or 0)
-                except (ValueError, TypeError):
-                    pass
+                estimated_upnl += _extract_upnl(p)
 
         try:
             close_result = await asyncio.wait_for(
@@ -2018,7 +2075,10 @@ class AIManagerTask:
             try:
                 await self._service._repo.cleanup_old_data()
             except Exception:
-                logger.debug("Data cleanup failed, will retry next hour")
+                # AI-CONTEXT: use self._log (per-account logger). Bare `logger` is
+                # undefined in this module — referencing it would raise NameError
+                # inside the except handler, masking the original cleanup failure.
+                self._log.debug("Data cleanup failed, will retry next hour")
 
     # --- Dashboard Enhancement: Helper Methods ---
 
@@ -2115,7 +2175,8 @@ class AIManagerTask:
             try:
                 await self._generate_commentary_once()
             except Exception as e:
-                logger.warning("Commentary generation failed for %s: %s", self._account_id, e)
+                # AI-CONTEXT: self._log, not bare `logger` (undefined here).
+                self._log.warning("Commentary generation failed for %s: %s", self._account_id, e)
 
     async def _generate_commentary_once(self) -> None:
         from backend.services.ai_manager_commentary import compute_day_score, generate_template_commentary
@@ -2161,7 +2222,7 @@ class AIManagerTask:
 
     async def _check_attention_triggers(self, eval_result: dict, prev_urgency: str, curr_urgency: str) -> None:
         if not hasattr(self, '_emitted_attention_ids'):
-            self._emitted_attention_ids: set = set()
+            self._emitted_attention_ids = set()
 
         items_to_emit: list[dict] = []
         now = datetime.now(timezone.utc).isoformat()
@@ -2249,7 +2310,8 @@ class AIManagerTask:
             deleted_calls = await self._service._repo.cleanup_old_llm_calls(days=90)
             deleted_commentary = await self._service._repo.cleanup_old_commentary(days=7)
             if deleted_calls or deleted_commentary:
-                logger.info("Daily cleanup for %s: removed %d LLM calls, %d commentary entries",
-                            self._account_id, deleted_calls, deleted_commentary)
+                # AI-CONTEXT: self._log, not bare `logger` (undefined here).
+                self._log.info("Daily cleanup for %s: removed %d LLM calls, %d commentary entries",
+                               self._account_id, deleted_calls, deleted_commentary)
         except Exception as e:
-            logger.warning("Daily dashboard cleanup failed for %s: %s", self._account_id, e)
+            self._log.warning("Daily dashboard cleanup failed for %s: %s", self._account_id, e)

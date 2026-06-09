@@ -24,7 +24,15 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    # AI-CONTEXT: Import for type-checkers/static analysis only. ScanContext is
+    # imported lazily at runtime inside _build_scan_contexts() to avoid an
+    # import cycle (scan_context -> services -> backtest_service); this block
+    # lets the `dict[str, "ScanContext"]` return annotation resolve without
+    # paying that cost or tripping F821 (undefined name) in linters.
+    from backend.services.scan_context import ScanContext
 
 logger = logging.getLogger(__name__)
 
@@ -601,9 +609,8 @@ class BacktestService:
             rows = await self._db.pool.fetch(query, start, end)
 
         # Convert asyncpg Records to plain dicts
-        signals = []
-        for row in rows:
-            signals.append({
+        signals = [
+            {
                 "id": row["id"],
                 "ticker": row["ticker"],
                 "direction": row["direction"],
@@ -613,7 +620,9 @@ class BacktestService:
                 "scan_id": row["scan_id"],
                 "signal_source": row.get("signal_source", "unknown"),
                 "analysis_price": float(row["analysis_price"]) if row.get("analysis_price") else None,
-            })
+            }
+            for row in rows
+        ]
 
         logger.info(
             "backtest_signals_loaded",
@@ -670,7 +679,7 @@ class BacktestService:
         The cancel event was registered in create_backtest; we reuse it so a cancel
         arriving in the launch gap is honored. The reserved slot is released here.
         """
-        from backend.services.backtest_engine import BacktestEngine, BacktestCancelled
+        from backend.services.backtest_engine import BacktestCancelled, BacktestEngine
 
         # Reuse the event registered at create time (cancel may already be set).
         cancel_event = self._cancel_events.get(run_id) or threading.Event()
@@ -827,10 +836,9 @@ class BacktestService:
                 lambda: engine.run(config, signals, klines, cancel_event, phase_b_cb, instrument_info, scan_contexts, fine_klines or None),
             )
             engine_done = True
-            if fine_klines:
-                # Tell the consumer drill-down actually ran (and on how many trades).
-                if result.warnings is not None:
-                    result.warnings.append(f"drilldown_applied_{len(fine_klines)}_symbols")
+            # Tell the consumer drill-down actually ran (and on how many trades).
+            if fine_klines and result.warnings is not None:
+                result.warnings.append(f"drilldown_applied_{len(fine_klines)}_symbols")
 
             # Surface config knobs the engine cannot honor so results aren't
             # silently misleading. max_same_sector needs the IO-bound sector
@@ -906,7 +914,7 @@ class BacktestService:
             logger.info("backtest_validation_failed",
                         extra={"run_id": run_id, "reason": str(exc)[:200]})
             await self._mark_status(run_id, "failed", completed=True, error=str(exc)[:480])
-        except Exception as exc:  # noqa: BLE001 — must never crash the service
+        except Exception:  # noqa: BLE001 — must never crash the service
             # Distinguish a SIMULATION failure from a POST-simulation persistence
             # failure: the latter still means the backtest computed successfully.
             phase = "persistence" if engine_done else "simulation"
@@ -1029,11 +1037,12 @@ class BacktestService:
         # neighbour) to every OTHER trade that was open at that time. Bounded by the
         # number of portfolio closes; still only the bars that can actually fire.
         _PORTFOLIO_REASONS = {"equity_drop", "equity_drop_smart", "equity_rise", "close_on_profit"}
-        portfolio_exits: list[tuple[int, datetime]] = []
-        for t in trades:
-            if t.get("close_reason") in _PORTFOLIO_REASONS and isinstance(t.get("exit_time"), datetime):
-                portfolio_exits.append((_bar_open_epoch(t["exit_time"]), t["exit_time"]))
-        for fire_epoch, fire_time in portfolio_exits:
+        portfolio_exits: list[tuple[int, datetime]] = [
+            (_bar_open_epoch(t["exit_time"]), t["exit_time"])
+            for t in trades
+            if t.get("close_reason") in _PORTFOLIO_REASONS and isinstance(t.get("exit_time"), datetime)
+        ]
+        for fire_epoch, _fire_time in portfolio_exits:
             fire_epochs = {fire_epoch - bar_s, fire_epoch, fire_epoch + bar_s}
             for t in trades:
                 sym = t.get("symbol")
@@ -1095,8 +1104,8 @@ class BacktestService:
         engine stays deterministic. Degraded when BTC data is unavailable (MR
         fail-closed downstream, matching live).
         """
-        from backend.services.scan_context import ScanContext
         from backend.services import market_data as _md
+        from backend.services.scan_context import ScanContext
 
         # Which features need scan-time market data?
         btc_needed = bool(config.get("regime_filter_enabled") and config.get("btc_vol_filter_enabled"))
@@ -1484,27 +1493,26 @@ class BacktestService:
             for t in trades
         ]
 
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    """
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                """
                     INSERT INTO backtest_results (run_id, metrics, equity_curve, summary, warnings)
                     VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (run_id) DO UPDATE
                       SET metrics = EXCLUDED.metrics, equity_curve = EXCLUDED.equity_curve,
                           summary = EXCLUDED.summary, warnings = EXCLUDED.warnings
                     """,
-                    run_id,
-                    json.dumps(metrics, default=str),
-                    json.dumps(equity_curve, default=str),
-                    json.dumps(_json_safe(summary), default=str),
-                    json.dumps(warnings, default=str),
-                )
-                # Idempotent: clear any prior trades for this run before inserting.
-                await conn.execute("DELETE FROM backtest_trades WHERE run_id = $1", run_id)
-                if records:
-                    await conn.executemany(
-                        """
+                run_id,
+                json.dumps(metrics, default=str),
+                json.dumps(equity_curve, default=str),
+                json.dumps(_json_safe(summary), default=str),
+                json.dumps(warnings, default=str),
+            )
+            # Idempotent: clear any prior trades for this run before inserting.
+            await conn.execute("DELETE FROM backtest_trades WHERE run_id = $1", run_id)
+            if records:
+                await conn.executemany(
+                    """
                         INSERT INTO backtest_trades
                           (run_id, symbol, side, entry_price, exit_price, qty, leverage,
                            entry_time, exit_time, pnl, pnl_pct, fees_paid, close_reason,
@@ -1512,18 +1520,18 @@ class BacktestService:
                            strategy_kind)
                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
                         """,
-                        records,
-                    )
-                # Flip status to 'completed' IN THE SAME TRANSACTION so the
-                # invariant "results exist ⟺ status=completed" is atomic — a DB
-                # blip can't leave results committed with status=failed/running.
-                # guard_cancel is intentionally absent: completion wins over a late
-                # cancel (the work is done; mid-sim cancels never reach persist).
-                await conn.execute(
-                    "UPDATE backtest_runs SET status = 'completed', "
-                    "completed_at = now(), progress_pct = 100 WHERE id = $1",
-                    run_id,
+                    records,
                 )
+            # Flip status to 'completed' IN THE SAME TRANSACTION so the
+            # invariant "results exist ⟺ status=completed" is atomic — a DB
+            # blip can't leave results committed with status=failed/running.
+            # guard_cancel is intentionally absent: completion wins over a late
+            # cancel (the work is done; mid-sim cancels never reach persist).
+            await conn.execute(
+                "UPDATE backtest_runs SET status = 'completed', "
+                "completed_at = now(), progress_pct = 100 WHERE id = $1",
+                run_id,
+            )
 
 
     async def get_backtest_trades(

@@ -26,6 +26,10 @@ export interface Trade {
   order_type: string;
   qty: number;
   filled_qty: number | null;
+  // remaining_qty = qty - filled_qty (still-open size). filled_qty is the
+  // CUMULATIVE-CLOSED qty (0 at open), so use remaining_qty for live size /
+  // partial-close max, NOT filled_qty (which is 0 for a freshly-opened trade).
+  remaining_qty: number | null;
   entry_price: number | null;
   avg_fill_price: number | null;
   exit_price: number | null;

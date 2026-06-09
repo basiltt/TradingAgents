@@ -168,7 +168,7 @@ class AnalysisRequest(BaseModel):
         try:
             d = date.fromisoformat(v)
         except ValueError:
-            raise ValueError("Invalid date format, expected YYYY-MM-DD")
+            raise ValueError("Invalid date format, expected YYYY-MM-DD") from None
         if d > date.today():
             raise ValueError("Analysis date cannot be in the future")
         return v
@@ -347,6 +347,10 @@ class TradeResponse(BaseModel):
     order_type: str
     qty: float
     filled_qty: Optional[float] = None
+    # remaining_qty = qty - filled_qty (still-open size). filled_qty is the
+    # CUMULATIVE-CLOSED qty (0 at open), so clients needing the live position size
+    # (display, partial-close max) MUST use remaining_qty, not filled_qty.
+    remaining_qty: Optional[float] = None
     entry_price: Optional[float] = None
     avg_fill_price: Optional[float] = None
     exit_price: Optional[float] = None
@@ -650,7 +654,7 @@ class ScanRequest(BaseModel):
         try:
             d = date.fromisoformat(v)
         except ValueError:
-            raise ValueError("Invalid date format, expected YYYY-MM-DD")
+            raise ValueError("Invalid date format, expected YYYY-MM-DD") from None
         if d > date.today():
             raise ValueError("Analysis date cannot be in the future")
         return v
@@ -939,9 +943,8 @@ class UpdateStrategyRequest(BaseModel):
     @field_validator("config")
     @classmethod
     def validate_config_size(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if v is not None:
-            if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
-                raise ValueError("Config too large (max 64KB)")
+        if v is not None and len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
+            raise ValueError("Config too large (max 64KB)")
         return v
 
 
@@ -988,7 +991,7 @@ class ScheduleConfig(BaseModel):
             try:
                 datetime.fromisoformat(v.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
-                raise ValueError("run_at must be a valid ISO 8601 datetime string")
+                raise ValueError("run_at must be a valid ISO 8601 datetime string") from None
         return v
 
     @field_validator("time")
@@ -1008,7 +1011,7 @@ class ScheduleConfig(BaseModel):
         if v is not None:
             if not v:
                 raise ValueError("days list cannot be empty")
-            invalid = set(d.lower() for d in v) - VALID_DAYS_OF_WEEK
+            invalid = {d.lower() for d in v} - VALID_DAYS_OF_WEEK
             if invalid:
                 raise ValueError(f"Invalid days: {invalid}")
             v = [d.lower() for d in v]
@@ -1073,37 +1076,38 @@ class CreateScheduledScanRequest(BaseModel):
     def validate_scan_config(cls, v: Dict[str, Any]) -> Dict[str, Any]:
         if len(json.dumps(v)) > MAX_CONFIG_SIZE_BYTES:
             raise ValueError("scan_config too large (max 64KB)")
-        if "provider" in v and v["provider"] is not None:
-            if v["provider"] not in VALID_PROVIDERS:
-                raise ValueError(f"Invalid provider: {v['provider']}")
-        if "workflow_mode" in v and v["workflow_mode"] is not None:
-            if v["workflow_mode"] not in ("quick_trade", "deep_analysis"):
-                raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
+        if "provider" in v and v["provider"] is not None and v["provider"] not in VALID_PROVIDERS:
+            raise ValueError(f"Invalid provider: {v['provider']}")
+        if (
+            "workflow_mode" in v and v["workflow_mode"] is not None
+            and v["workflow_mode"] not in ("quick_trade", "deep_analysis")
+        ):
+            raise ValueError("workflow_mode must be 'quick_trade' or 'deep_analysis'")
         for model_key in ("deep_think_llm", "quick_think_llm"):
-            if model_key in v and v[model_key] is not None:
-                if not MODEL_ID_RE.match(v[model_key]):
-                    raise ValueError(f"Invalid model ID for {model_key}")
-        if "research_depth" in v and v["research_depth"] is not None:
-            if not (1 <= int(v["research_depth"]) <= 5):
-                raise ValueError("research_depth must be between 1 and 5")
-        if "max_debate_rounds" in v and v["max_debate_rounds"] is not None:
-            if not (1 <= int(v["max_debate_rounds"]) <= 10):
-                raise ValueError("max_debate_rounds must be between 1 and 10")
-        if "max_risk_discuss_rounds" in v and v["max_risk_discuss_rounds"] is not None:
-            if not (1 <= int(v["max_risk_discuss_rounds"]) <= 10):
-                raise ValueError("max_risk_discuss_rounds must be between 1 and 10")
-        if "max_parallel" in v and v["max_parallel"] is not None:
-            if not (1 <= int(v["max_parallel"]) <= 25):
-                raise ValueError("max_parallel must be between 1 and 25")
+            if model_key in v and v[model_key] is not None and not MODEL_ID_RE.match(v[model_key]):
+                raise ValueError(f"Invalid model ID for {model_key}")
+        if "research_depth" in v and v["research_depth"] is not None and not (1 <= int(v["research_depth"]) <= 5):
+            raise ValueError("research_depth must be between 1 and 5")
+        if (
+            "max_debate_rounds" in v and v["max_debate_rounds"] is not None
+            and not (1 <= int(v["max_debate_rounds"]) <= 10)
+        ):
+            raise ValueError("max_debate_rounds must be between 1 and 10")
+        if (
+            "max_risk_discuss_rounds" in v and v["max_risk_discuss_rounds"] is not None
+            and not (1 <= int(v["max_risk_discuss_rounds"]) <= 10)
+        ):
+            raise ValueError("max_risk_discuss_rounds must be between 1 and 10")
+        if "max_parallel" in v and v["max_parallel"] is not None and not (1 <= int(v["max_parallel"]) <= 25):
+            raise ValueError("max_parallel must be between 1 and 25")
         if "analysts" in v and v["analysts"] is not None:
             asset = v.get("asset_type", "crypto")
             valid = {e.value for e in CryptoAnalystType} if asset == "crypto" else {e.value for e in AnalystType}
             for a in v["analysts"]:
                 if a not in valid:
                     raise ValueError(f"Invalid analyst: {a}")
-        if "interval" in v and v["interval"] is not None:
-            if v["interval"] not in VALID_CRYPTO_INTERVALS:
-                raise ValueError(f"Invalid interval: {v['interval']}")
+        if "interval" in v and v["interval"] is not None and v["interval"] not in VALID_CRYPTO_INTERVALS:
+            raise ValueError(f"Invalid interval: {v['interval']}")
         if "auto_trade_configs" in v and v["auto_trade_configs"] is not None:
             if not isinstance(v["auto_trade_configs"], list):
                 raise ValueError("auto_trade_configs must be a list")
@@ -1111,7 +1115,7 @@ class CreateScheduledScanRequest(BaseModel):
                 try:
                     AutoTradeConfig(**cfg)
                 except Exception as e:
-                    raise ValueError(f"auto_trade_configs[{i}]: {e}")
+                    raise ValueError(f"auto_trade_configs[{i}]: {e}") from e
         return v
 
     @model_validator(mode="after")
@@ -1132,9 +1136,8 @@ class CreateScheduledScanRequest(BaseModel):
         elif t == ScheduleType.WEEKLY:
             if not cfg.day or not cfg.time:
                 raise ValueError("weekly schedule requires day and time")
-        elif t == ScheduleType.CRON:
-            if not cfg.cron_expression:
-                raise ValueError("cron schedule requires cron_expression")
+        elif t == ScheduleType.CRON and not cfg.cron_expression:
+            raise ValueError("cron schedule requires cron_expression")
         return self
 
 
@@ -1234,11 +1237,12 @@ class CreateCloseRuleRequest(BaseModel):
     @field_validator("threshold_value")
     @classmethod
     def validate_threshold(cls, v: str) -> str:
-        from decimal import Decimal as D, InvalidOperation
+        from decimal import Decimal as D
+        from decimal import InvalidOperation
         try:
             val = D(v)
         except (InvalidOperation, ValueError):
-            raise ValueError("threshold_value must be a valid number")
+            raise ValueError("threshold_value must be a valid number") from None
         if val <= 0:
             raise ValueError("threshold_value must be positive")
         if val > D("10000000"):
@@ -1282,11 +1286,12 @@ class UpdateCloseRuleRequest(BaseModel):
     def validate_threshold(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
-        from decimal import Decimal as D, InvalidOperation
+        from decimal import Decimal as D
+        from decimal import InvalidOperation
         try:
             val = D(v)
         except (InvalidOperation, ValueError):
-            raise ValueError("threshold_value must be a valid number")
+            raise ValueError("threshold_value must be a valid number") from None
         if val <= 0:
             raise ValueError("threshold_value must be positive")
         return v

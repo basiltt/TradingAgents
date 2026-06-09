@@ -24,6 +24,13 @@ ALLOWED_STOP_REASONS = frozenset({
     "rule_triggered",
 })
 
+# Max conditional close-rules a single account may hold at once. Bybit caps the
+# number of active conditional/stop orders per symbol; this app-level ceiling keeps
+# a cycle from exhausting it. Must agree with the auto-trade path's own limit.
+MAX_ACTIVE_CLOSE_RULES_PER_ACCOUNT = 9
+# Bybit return code for an order rejected due to insufficient available balance.
+_BYBIT_RETCODE_INSUFFICIENT_BALANCE = 110043
+
 
 class CycleError(Exception):
     """Base exception for trading cycle operations. Subclasses set code and safe_message."""
@@ -33,51 +40,71 @@ class CycleError(Exception):
 
 
 class CycleAlreadyActiveError(CycleError):
+    """Raised when starting a cycle while one is already active for the account."""
+
     code = "CYCLE_ALREADY_ACTIVE"
     safe_message = "An active cycle already exists for this account."
 
 
 class InsufficientEquityError(CycleError):
+    """Raised when account equity is too low for the requested cycle config."""
+
     code = "INSUFFICIENT_EQUITY"
     safe_message = "Insufficient equity for this configuration."
 
 
 class NoQualifyingResultsError(CycleError):
+    """Raised when no scan results pass the cycle's filters."""
+
     code = "NO_QUALIFYING_RESULTS"
     safe_message = "No symbols match your filters."
 
 
 class ScanNotFoundError(CycleError):
+    """Raised when the referenced scan does not exist."""
+
     code = "SCAN_NOT_FOUND"
     safe_message = "Scan not found."
 
 
 class ScanTooOldError(CycleError):
+    """Raised when the scan's results are older than the allowed freshness window."""
+
     code = "SCAN_TOO_OLD"
     safe_message = "Scan results are too old."
 
 
 class CloseRuleLimitError(CycleError):
+    """Raised when the account already has the maximum number of close rules."""
+
     code = "CLOSE_RULE_LIMIT"
     safe_message = "Close rule limit reached for this account."
 
 
 class InsufficientPermissionsError(CycleError):
+    """Raised when the Bybit API key lacks permissions required to trade."""
+
     code = "INSUFFICIENT_PERMISSIONS"
     safe_message = "Bybit API key lacks required permissions."
 
 
 class AccountNotConfiguredError(CycleError):
+    """Raised when the account's trading infrastructure is not configured."""
+
     code = "ACCOUNT_NOT_CONFIGURED"
     safe_message = "Account infrastructure not configured."
 
 
 class CycleNotFoundError(CycleError):
+    """Raised when the referenced cycle does not exist."""
+
     code = "CYCLE_NOT_FOUND"
     safe_message = "Cycle not found."
 
 
 class CycleNotRunningError(CycleError):
+    """Raised when stopping a cycle that is not in a stoppable state."""
+
     code = "CYCLE_NOT_RUNNING"
     safe_message = "Cycle is not in a stoppable state."
 
@@ -223,13 +250,13 @@ class TradingCycleEngine:
 
         rule_counts = await self._db.count_active_rules_by_account()
         current_count = rule_counts.get(account_id, 0)
-        if current_count >= 9:
+        if current_count >= MAX_ACTIVE_CLOSE_RULES_PER_ACCOUNT:
             raise CloseRuleLimitError()
 
         try:
             cycle_id = await self._repo.create_cycle(cfg)
         except asyncpg.UniqueViolationError:
-            raise CycleAlreadyActiveError()
+            raise CycleAlreadyActiveError() from None
 
         task = asyncio.create_task(self._execute_cycle(cycle_id, filtered, cfg))
         self._active_tasks[cycle_id] = task
@@ -352,7 +379,7 @@ class TradingCycleEngine:
         except asyncio.CancelledError:
             self._active_tasks.pop(cycle_id, None)
             raise
-        except Exception as e:
+        except Exception:
             logger.exception("Cycle %d failed unexpectedly", cycle_id)
             await self._finalize_cycle(cycle_id, "failed", "circuit_breaker")
         finally:
@@ -440,7 +467,7 @@ class TradingCycleEngine:
             except Exception as e:
                 err_msg = str(e)[:500]
                 retcode = getattr(e, "ret_code", None)
-                if retcode == 110043:
+                if retcode == _BYBIT_RETCODE_INSUFFICIENT_BALANCE:
                     await self._repo.update_trade(trade_id, status="failed", error_msg="insufficient_balance")
                     trades_failed += 1
                     await self._repo.increment_counters(cycle_id, failed=1)

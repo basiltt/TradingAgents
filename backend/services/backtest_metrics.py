@@ -643,7 +643,7 @@ def compute_all_metrics(
         "equity_points_dropped_non_dict": len(raw_equity) - len(equity_curve),
         # non-finite pnl values coerced to 0.0 (would silently dilute trade metrics)
         "trade_pnls_sanitized": sum(
-            1 for fp, t in zip(finite_pnls, trades)
+            1 for fp, t in zip(finite_pnls, trades, strict=True)
             if fp is None and t.get("pnl") is not None
         ),
         # non-finite equity values skipped in drawdown/run-up/Sharpe (wider blast radius)

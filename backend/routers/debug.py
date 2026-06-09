@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.schemas.debug import DebugConfigUpdate
@@ -19,6 +20,11 @@ def _repo(request: Request):
 
 @router.get("/debug/scan/{scan_id}")
 async def get_scan_tree(request: Request, scan_id: str, run_id: Optional[int] = Query(None)):
+    """Get the full debug decision tree for a scan's auto-trade run.
+
+    Uses the latest run for the scan unless run_id is given; 404 if no run or
+    tree exists.
+    """
     _, repo = _repo(request)
     rid = run_id or await repo.get_latest_run_id_for_scan(scan_id)
     if rid is None:
@@ -31,6 +37,11 @@ async def get_scan_tree(request: Request, scan_id: str, run_id: Optional[int] = 
 
 @router.get("/debug/scan/{scan_id}/account/{account_id}")
 async def get_scan_account(request: Request, scan_id: str, account_id: str, run_id: Optional[int] = Query(None)):
+    """Get the debug subtree for one account within a scan's auto-trade run.
+
+    Uses the latest run unless run_id is given; 404 if the run or account is
+    not found. Returns {"run": ..., "account": ...}.
+    """
     _, repo = _repo(request)
     rid = run_id or await repo.get_latest_run_id_for_scan(scan_id)
     if rid is None:
@@ -48,6 +59,10 @@ async def list_runs(request: Request, limit: int = Query(20, ge=1, le=100),
                     account_id: Optional[str] = None,
                     from_ts: Optional[str] = Query(None, alias="from"),
                     to_ts: Optional[str] = Query(None, alias="to")):
+    """List recent auto-trade debug runs with pagination and optional filters.
+
+    Filterable by trigger_source, account_id, and a from/to timestamp window.
+    """
     _, repo = _repo(request)
     return await repo.list_runs(limit=limit, offset=offset,
                                 trigger_source=trigger_source, account_id=account_id,
@@ -58,6 +73,10 @@ async def list_runs(request: Request, limit: int = Query(20, ge=1, le=100),
 async def account_timeline(request: Request, account_id: str, limit: int = Query(50, ge=1, le=200),
                            from_ts: Optional[str] = Query(None, alias="from"),
                            to_ts: Optional[str] = Query(None, alias="to")):
+    """Get a chronological timeline of auto-trade decisions for one account.
+
+    Optionally bounded by a from/to timestamp window. Returns {"items": [...]}.
+    """
     _, repo = _repo(request)
     return {"items": await repo.get_account_timeline(account_id, limit=limit,
                                                      from_ts=from_ts, to_ts=to_ts)}
@@ -66,18 +85,27 @@ async def account_timeline(request: Request, account_id: str, limit: int = Query
 @router.get("/debug/symbol/{symbol}")
 async def symbol_decisions(request: Request, symbol: str, scan_id: Optional[str] = None,
                            limit: int = Query(200, ge=1, le=1000)):
+    """Get per-symbol auto-trade decisions, optionally scoped to one scan.
+
+    Returns {"items": [...]}.
+    """
     _, repo = _repo(request)
     return {"items": await repo.get_symbol_decisions(symbol, scan_id=scan_id, limit=limit)}
 
 
 @router.get("/debug/config")
 async def get_config(request: Request):
+    """Get the current debug-tracing configuration."""
     _, repo = _repo(request)
     return await repo.get_config()
 
 
 @router.put("/debug/config")
 async def update_config(request: Request, body: DebugConfigUpdate):
+    """Update debug-tracing config (enabled, retention, decision cap) and refresh the recorder.
+
+    Returns the updated config.
+    """
     recorder, repo = _repo(request)
     cfg = await repo.update_config(
         tracing_enabled=body.tracing_enabled,

@@ -27,6 +27,7 @@ class PositionLockRegistry:
         self._internal_lock = asyncio.Lock()
 
     async def acquire(self, account_id: str, symbol: str, timeout: float = 30.0) -> bool:
+        """Acquire the (account_id, symbol) lock, waiting up to timeout; False on timeout."""
         key = (account_id, symbol)
         async with self._internal_lock:
             if key not in self._locks:
@@ -41,6 +42,7 @@ class PositionLockRegistry:
             return False
 
     def release(self, account_id: str, symbol: str) -> None:
+        """Release the (account_id, symbol) lock if currently held."""
         key = (account_id, symbol)
         lock = self._locks.get(key)
         if lock and lock.locked():
@@ -77,6 +79,7 @@ class PositionLockRegistry:
                     )
 
     async def evict_stale(self, max_idle_s: float = 300.0) -> None:
+        """Remove unheld locks idle for longer than max_idle_s to bound memory growth."""
         now = time.monotonic()
         async with self._internal_lock:
             keys_to_remove = []

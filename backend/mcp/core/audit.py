@@ -47,8 +47,15 @@ def verify_chain(rows: list[dict[str, Any]]) -> bool:
 
 
 class AuditRepoProtocol(Protocol):
-    async def last_chain(self) -> tuple[int, Optional[str]]: ...
-    async def append(self, record: dict[str, Any]) -> None: ...
+    """Persistence port for the audit chain: read the tail and append records."""
+
+    async def last_chain(self) -> tuple[int, Optional[str]]:
+        """Return the current chain tail as (last seq, last entry_hash)."""
+        ...
+
+    async def append(self, record: dict[str, Any]) -> None:
+        """Append one fully-formed audit record to durable storage."""
+        ...
 
 
 class AuditWriter:
@@ -67,11 +74,13 @@ class AuditWriter:
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
+        """Seed seq/prev_hash from the persisted tail and launch the writer task."""
         seq, prev = await self._repo.last_chain()
         self._seq, self._prev, self._seeded = seq, prev, True
         self._task = asyncio.create_task(self._run())
 
     async def enqueue(self, payload: dict[str, Any]) -> None:
+        """Queue a payload for chaining; falls back to a synchronous write if the queue is full."""
         try:
             self._queue.put_nowait(payload)
         except asyncio.QueueFull:
@@ -133,9 +142,11 @@ class AuditWriter:
             self._prev = entry_hash
 
     async def drain(self) -> None:
+        """Block until all currently-queued audit records have been written."""
         await self._queue.join()
 
     async def shutdown(self) -> None:
+        """Drain pending records, then cancel and await the writer task."""
         await self.drain()
         if self._task is not None:
             self._task.cancel()

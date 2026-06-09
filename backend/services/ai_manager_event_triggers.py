@@ -161,10 +161,13 @@ class EventTriggerDetector:
                 if vol_last is not None and vol_avg is not None:
                     vol_last_f, vol_avg_f = float(vol_last), float(vol_avg)
                     last_vol = self._last_eval_volume.get(symbol)
-                    if vol_avg_f > 0 and vol_last_f > self._volume_anomaly_multiplier * vol_avg_f:
-                        if last_vol is None or vol_last_f != last_vol:
-                            ratio = vol_last_f / vol_avg_f
-                            return True, f"volume_anomaly ({symbol}: {ratio:.1f}x avg)"
+                    if (
+                        vol_avg_f > 0
+                        and vol_last_f > self._volume_anomaly_multiplier * vol_avg_f
+                        and (last_vol is None or vol_last_f != last_vol)
+                    ):
+                        ratio = vol_last_f / vol_avg_f
+                        return True, f"volume_anomaly ({symbol}: {ratio:.1f}x avg)"
             except (ValueError, TypeError):
                 pass
 
@@ -339,10 +342,13 @@ class EventTriggerDetector:
                 if vol_last is not None and vol_avg is not None:
                     vol_last_f, vol_avg_f = float(vol_last), float(vol_avg)
                     last_vol = self._last_eval_volume.get(symbol)
-                    if vol_avg_f > 0 and vol_last_f > self._volume_anomaly_multiplier * vol_avg_f:
-                        if last_vol is None or vol_last_f != last_vol:
-                            ratio = vol_last_f / vol_avg_f
-                            self._update_result(results, symbol, f"volume_anomaly ({symbol}: {ratio:.1f}x avg)", ratio * 10)
+                    if (
+                        vol_avg_f > 0
+                        and vol_last_f > self._volume_anomaly_multiplier * vol_avg_f
+                        and (last_vol is None or vol_last_f != last_vol)
+                    ):
+                        ratio = vol_last_f / vol_avg_f
+                        self._update_result(results, symbol, f"volume_anomaly ({symbol}: {ratio:.1f}x avg)", ratio * 10)
             except (ValueError, TypeError):
                 pass
 
@@ -378,4 +384,5 @@ class EventTriggerDetector:
 
     @property
     def seconds_since_last_eval(self) -> float:
+        """Seconds elapsed since the last evaluation cycle ran."""
         return time.monotonic() - self._last_eval_time

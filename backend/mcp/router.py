@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from backend.mcp.core.netguard import is_loopback_host
 from backend.mcp.mount import MCP_RPC_PATH
+from backend.routers._validators import clamp_limit
 
 router = APIRouter(tags=["mcp"])
 
@@ -71,6 +72,12 @@ async def _audit_control_plane(
 
 
 class ConfigPatch(BaseModel):
+    """Patch body for PATCH /mcp/config; requires expected_row_version for optimistic locking.
+
+    Only `allow_debug` of the safe-mode flags is writable here — the money flags
+    (read_only / allow_real_trades) are deliberately not exposed.
+    """
+
     enabled: Optional[bool] = None
     capability_tier: Optional[str] = None
     enabled_groups: Optional[list[str]] = None
@@ -96,6 +103,11 @@ async def _pending_proposals(mgr) -> int:
 
 @router.get("/mcp/config")
 async def get_config(request: Request) -> dict[str, Any]:
+    """Get the MCP control-plane config (tier, enabled groups/tools, bind host, RPC endpoint).
+
+    503 if the MCP module is unavailable. The token is never returned — only
+    `has_token`.
+    """
     mgr = _manager(request)
     cfg = await mgr.config_repo.get()
     bind_host, bind_source = _resolve_bind_host()
@@ -197,7 +209,7 @@ def _bind_host_from_argv(argv: list[str]) -> Optional[str]:
             return tok.split("=", 1)[1].strip()
         if tok in ("-b", "--bind") and i + 1 < n:
             return _host_of_bind(argv[i + 1])
-        if tok.startswith("--bind=") or tok.startswith("-b="):
+        if tok.startswith(("--bind=", "-b=")):
             return _host_of_bind(tok.split("=", 1)[1])
         i += 1
     return None
@@ -219,6 +231,11 @@ def _mcp_rpc_endpoint(request: Request, bind_host: Optional[str]) -> str:
 
 @router.patch("/mcp/config")
 async def patch_config(request: Request, body: ConfigPatch) -> dict[str, Any]:
+    """Update MCP config with optimistic concurrency; 409 on row-version conflict.
+
+    Merges `allow_debug` into safe_mode_flags without clobbering money flags.
+    Returns the fresh config.
+    """
     mgr = _manager(request)
     patch = body.model_dump(
         exclude_none=True, exclude={"expected_row_version", "allow_debug"}
@@ -235,12 +252,17 @@ async def patch_config(request: Request, body: ConfigPatch) -> dict[str, Any]:
     try:
         await mgr.config_repo.update(patch, expected_row_version=body.expected_row_version)
     except MCPConflictError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     return await get_config(request)
 
 
 @router.post("/mcp/enable")
 async def enable(request: Request) -> dict[str, Any]:
+    """Run preflight checks and start the MCP server; record one-time egress consent.
+
+    422 if any preflight invariant fails (schema version, DB-pool budget, optimizer
+    SLIs). Returns {"enabled": True} on success.
+    """
     mgr = _manager(request)
     from backend.mcp.core.dbfloor import compute_mcp_acquire_cap, db_budget_ok
     from backend.mcp.core.preflight import run_preflight
@@ -302,6 +324,10 @@ async def enable(request: Request) -> dict[str, Any]:
 
 @router.post("/mcp/disable")
 async def disable(request: Request, kill: bool = False) -> dict[str, Any]:
+    """Disable the MCP server; pass kill=true to force-terminate in-flight calls.
+
+    Returns {"enabled": False, "killed": kill}.
+    """
     mgr = _manager(request)
     await mgr.disable(kill=kill)
     return {"enabled": False, "killed": kill}
@@ -309,6 +335,10 @@ async def disable(request: Request, kill: bool = False) -> dict[str, Any]:
 
 @router.post("/mcp/token/regenerate")
 async def regenerate_token(request: Request) -> dict[str, Any]:
+    """Generate a new MCP access token, store only its hash, and return the plaintext once.
+
+    Returns {"token": <plaintext>}; the plaintext is never persisted or shown again.
+    """
     mgr = _manager(request)
     from backend.mcp.core.auth import generate_token
 
@@ -320,6 +350,10 @@ async def regenerate_token(request: Request) -> dict[str, Any]:
 
 @router.get("/mcp/status")
 async def status(request: Request) -> dict[str, Any]:
+    """Get MCP runtime status (running/off, enabled flag, active tool count, pending proposals).
+
+    503 if the MCP module is unavailable.
+    """
     mgr = getattr(request.app.state, "mcp_manager", None)
     if mgr is None or mgr.config_repo is None:
         raise HTTPException(503, detail="MCP module not available")
@@ -348,7 +382,7 @@ async def health(request: Request) -> dict[str, Any]:
 async def list_tools(request: Request) -> dict[str, Any]:
     """Minimal P0 stub: enabled tool names. Enriched (full registry + est_tokens
     + presets) in P2 via /mcp/registry."""
-    mgr = _manager(request)
+    _manager(request)
     server = getattr(request.app.state, "mcp_server", None)
     if server is None:
         return {"tools": []}
@@ -509,6 +543,8 @@ async def registry(request: Request) -> dict[str, Any]:
 
 
 class PresetApply(BaseModel):
+    """Body for POST /mcp/registry/preset: the preset name plus expected_row_version."""
+
     preset: str
     expected_row_version: int
 
@@ -551,7 +587,7 @@ async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
             expected_row_version=body.expected_row_version,
         )
     except MCPConflictError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     # Return the fresh registry. We deliberately do NOT special-case body.preset
     # here: when several presets share this exact tool set, active_presets reports
     # ALL of them and the UI highlights each — identical to what a later cold GET
@@ -562,11 +598,12 @@ async def apply_preset(request: Request, body: PresetApply) -> dict[str, Any]:
 
 @router.get("/mcp/audit")
 async def audit_feed(request: Request, limit: int = 50) -> dict[str, Any]:
+    """Get the most recent audit-chain records (limit clamped to 1–200); returns {"items": [...]}."""
     mgr = _manager(request)
     from backend.mcp.repositories.audit_repo import AuditRepository
 
     repo = AuditRepository(mgr.config_repo._pool)  # noqa: SLF001
-    rows = await repo.recent(limit=min(max(limit, 1), 200))
+    rows = await repo.recent(limit=clamp_limit(limit, 1, 200))
     return {"items": rows}
 
 
@@ -584,13 +621,15 @@ def _sweep_repo(request: Request):
 
 @router.get("/mcp/sweeps")
 async def list_sweeps(request: Request, limit: int = 50) -> dict[str, Any]:
+    """List recent optimizer sweep jobs (limit clamped to 1–200); returns {"items": [...]}."""
     repo = _sweep_repo(request)
-    items = await repo.list_jobs(limit=min(max(limit, 1), 200))
+    items = await repo.list_jobs(limit=clamp_limit(limit, 1, 200))
     return {"items": items}
 
 
 @router.get("/mcp/sweeps/{sweep_id}")
 async def get_sweep(request: Request, sweep_id: str) -> dict[str, Any]:
+    """Get one sweep job plus its top-20 results; 404 if the sweep is not found."""
     repo = _sweep_repo(request)
     job = await repo.get_job(sweep_id)
     if job is None:
@@ -611,12 +650,16 @@ async def get_sweep_results(
 
         if objective not in OBJECTIVE_METRICS:
             raise HTTPException(422, detail={"unsupported_objective": objective})
-    rows = await repo.results(sweep_id, objective=objective, limit=min(max(limit, 1), 500))
+    rows = await repo.results(sweep_id, objective=objective, limit=clamp_limit(limit, 1, 500))
     return {"items": rows, "reranked_by": objective}
 
 
 @router.post("/mcp/sweeps/{sweep_id}/cancel")
 async def cancel_sweep(request: Request, sweep_id: str) -> dict[str, Any]:
+    """Cancel a sweep: cancel its in-flight task (if tracked) and mark the job cancelled.
+
+    Returns {"sweep_id": ..., "cancelled": bool}.
+    """
     repo = _sweep_repo(request)
     # cancel the in-flight task if tracked
     registry = getattr(request.app.state, "mcp_sweep_tasks", None)
@@ -637,13 +680,15 @@ def _proposal_repo(request: Request):
 
 @router.get("/mcp/proposals")
 async def list_proposals(request: Request, status: Optional[str] = None, limit: int = 50) -> dict[str, Any]:
+    """List config-change proposals, optionally filtered by status (limit clamped to 1–200)."""
     repo, _ = _proposal_repo(request)
-    items = await repo.list(status=status, limit=min(max(limit, 1), 200))
+    items = await repo.list(status=status, limit=clamp_limit(limit, 1, 200))
     return {"items": items}
 
 
 @router.get("/mcp/proposals/{proposal_id}")
 async def get_proposal(request: Request, proposal_id: str) -> dict[str, Any]:
+    """Get one config-change proposal by id; 404 if not found."""
     repo, _ = _proposal_repo(request)
     prop = await repo.get(proposal_id)
     if prop is None:
@@ -653,6 +698,11 @@ async def get_proposal(request: Request, proposal_id: str) -> dict[str, Any]:
 
 @router.post("/mcp/proposals/{proposal_id}/approve")
 async def approve_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
+    """Approve and apply a config-change proposal (the human money-path apply step).
+
+    503 if storage is unavailable, 409 if the proposal cannot be applied. Audited
+    either way; returns {"applied": True, ...summary}.
+    """
     repo, mgr = _proposal_repo(request)
     db = getattr(request.app.state, "db", None)
     if db is None:
@@ -669,7 +719,7 @@ async def approve_proposal_endpoint(request: Request, proposal_id: str) -> dict[
     except ProposalApplyError as exc:
         await _audit_control_plane(mgr, action="proposal_approve", outcome="rejected",
                                    mutating=True, detail={"proposal_id": proposal_id, "error": str(exc)})
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     await _audit_control_plane(mgr, action="proposal_approve", outcome="applied",
                                mutating=True, detail={"proposal_id": proposal_id})
     return {"applied": True, **summary}
@@ -677,11 +727,12 @@ async def approve_proposal_endpoint(request: Request, proposal_id: str) -> dict[
 
 @router.post("/mcp/proposals/{proposal_id}/reject")
 async def reject_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
+    """Reject a pending config-change proposal; 409 if it cannot transition. Returns {"rejected": True}."""
     repo, mgr = _proposal_repo(request)
     try:
         await repo.transition(proposal_id, to_status="rejected", approver="operator")
     except ValueError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     await _audit_control_plane(mgr, action="proposal_reject", outcome="rejected",
                                mutating=False, detail={"proposal_id": proposal_id})
     return {"rejected": True}
@@ -689,6 +740,11 @@ async def reject_proposal_endpoint(request: Request, proposal_id: str) -> dict[s
 
 @router.post("/mcp/proposals/{proposal_id}/revert")
 async def revert_proposal_endpoint(request: Request, proposal_id: str) -> dict[str, Any]:
+    """Revert a previously-applied config-change proposal.
+
+    503 if storage is unavailable, 409 if it cannot be reverted. Audited; returns
+    the revert summary.
+    """
     repo, mgr = _proposal_repo(request)
     db = getattr(request.app.state, "db", None)
     if db is None:
@@ -703,7 +759,7 @@ async def revert_proposal_endpoint(request: Request, proposal_id: str) -> dict[s
             proposal_repo=repo, db=db, proposal_id=proposal_id, approver="operator",
         )
     except ProposalApplyError as exc:
-        raise HTTPException(409, detail=str(exc))
+        raise HTTPException(409, detail=str(exc)) from exc
     await _audit_control_plane(mgr, action="proposal_revert", outcome="reverted",
                                mutating=True, detail={"proposal_id": proposal_id})
     return summary

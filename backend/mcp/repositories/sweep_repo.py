@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
@@ -125,10 +124,9 @@ class SweepRepository:
     ) -> None:
         """Persist one combo result in its OWN txn + bump completed_combos.
         Idempotent on (sweep_id, config_hash)."""
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    """
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                """
                     INSERT INTO mcp_sweep_results
                       (sweep_id, config, config_hash, metrics, objective_value, result_rank)
                     VALUES ($1,$2::jsonb,$3,$4::jsonb,$5,$6)
@@ -137,15 +135,15 @@ class SweepRepository:
                           objective_value = EXCLUDED.objective_value,
                           result_rank = EXCLUDED.result_rank
                     """,
-                    sweep_id, json.dumps(config), config_hash,
-                    json.dumps(_nan_to_null(metrics)), _safe_objective(objective_value),
-                    result_rank,
-                )
-                await conn.execute(
-                    "UPDATE mcp_sweep_jobs SET completed_combos = "
-                    "LEAST(completed_combos + 1, total_combos) WHERE id = $1",
-                    sweep_id,
-                )
+                sweep_id, json.dumps(config), config_hash,
+                json.dumps(_nan_to_null(metrics)), _safe_objective(objective_value),
+                result_rank,
+            )
+            await conn.execute(
+                "UPDATE mcp_sweep_jobs SET completed_combos = "
+                "LEAST(completed_combos + 1, total_combos) WHERE id = $1",
+                sweep_id,
+            )
 
     async def finish_job(
         self, sweep_id: str, *, status: str, best_result_id: Optional[str] = None

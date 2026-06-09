@@ -48,8 +48,12 @@ export function CloseTradeModal() {
   };
 
   const partialQty = parseFloat(qtyInput);
+  // Live (still-open) position size. remaining_qty = qty - filled_qty from the
+  // backend; filled_qty is cumulative-CLOSED (0 at open), so it must NOT be used
+  // as the closeable amount. Fall back to qty when remaining_qty is absent.
+  const liveQty = trade?.remaining_qty ?? trade?.qty ?? 0;
   const isValidPartial =
-    mode === "full" || (!isNaN(partialQty) && isFinite(partialQty) && partialQty > 0 && partialQty < (trade?.filled_qty ?? 0));
+    mode === "full" || (!isNaN(partialQty) && isFinite(partialQty) && partialQty > 0 && partialQty < liveQty);
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
@@ -57,7 +61,7 @@ export function CloseTradeModal() {
         <DialogHeader>
           <DialogTitle>Close Trade</DialogTitle>
           <DialogDescription>
-            {trade ? `${trade.symbol} ${trade.side === "Buy" ? "LONG" : "SHORT"} — ${trade.filled_qty ?? 0} qty` : ""}
+            {trade ? `${trade.symbol} ${trade.side === "Buy" ? "LONG" : "SHORT"} — ${liveQty} qty` : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -84,13 +88,13 @@ export function CloseTradeModal() {
           {mode === "partial" && (
             <div className="space-y-1">
               <label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/60">
-                Quantity (max {trade?.filled_qty})
+                Quantity (max {liveQty})
               </label>
               <Input
                 type="number"
                 step="any"
                 min="0"
-                max={trade?.filled_qty ?? undefined}
+                max={trade?.remaining_qty ?? trade?.qty ?? undefined}
                 value={qtyInput}
                 onChange={(e) => setQtyInput(e.target.value)}
                 placeholder="Enter quantity..."

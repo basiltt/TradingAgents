@@ -7,6 +7,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
+from backend.routers._validators import clamp_limit
 from backend.schemas import (
     CreateScheduledScanRequest,
     ScheduledScanResponse,
@@ -23,7 +24,7 @@ def _validate_uuid(value: str) -> None:
     try:
         uuid.UUID(value)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+        raise HTTPException(status_code=400, detail="Invalid ID format") from None
 
 
 def _get_service(request: Request):
@@ -43,16 +44,21 @@ def _redact_response(data: dict) -> ScheduledScanResponse:
 
 @router.post("/scheduled-scans", status_code=201)
 async def create_schedule(request: Request, body: CreateScheduledScanRequest):
+    """Create a new scheduled scan job; 422 on invalid config. Returns the redacted schedule."""
     svc = _get_service(request)
     try:
         result = await svc.create(body.model_dump())
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
 @router.get("/scheduled-scans")
 async def list_schedules(request: Request):
+    """List all scheduled scans (secrets redacted), flagging currently-running ones.
+
+    Returns {"schedules": [...]}.
+    """
     svc = _get_service(request)
     schedules = await svc.list_all()
     running_ids = svc.get_running_schedule_ids()
@@ -67,6 +73,7 @@ async def list_schedules(request: Request):
 
 @router.get("/scheduled-scans/{schedule_id}")
 async def get_schedule(request: Request, schedule_id: str):
+    """Get one scheduled scan plus its 5 most recent executions; 404 if not found."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
     schedule = await svc.get(schedule_id)
@@ -84,19 +91,21 @@ async def get_schedule(request: Request, schedule_id: str):
 
 @router.patch("/scheduled-scans/{schedule_id}")
 async def update_schedule(request: Request, schedule_id: str, body: UpdateScheduledScanRequest):
+    """Partially update a scheduled scan; 404 if not found, 422 on invalid config."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
     try:
         result = await svc.update(schedule_id, body.model_dump(exclude_unset=True))
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
 @router.delete("/scheduled-scans/{schedule_id}")
 async def delete_schedule(request: Request, schedule_id: str):
+    """Delete a scheduled scan; 404 if not found, else {"deleted": True}."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
     deleted = await svc.delete(schedule_id)
@@ -107,40 +116,43 @@ async def delete_schedule(request: Request, schedule_id: str):
 
 @router.post("/scheduled-scans/{schedule_id}/pause")
 async def pause_schedule(request: Request, schedule_id: str):
+    """Pause a scheduled scan so it stops auto-running; 404 if not found."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
     try:
         result = await svc.pause(schedule_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
 @router.post("/scheduled-scans/{schedule_id}/resume")
 async def resume_schedule(request: Request, schedule_id: str):
+    """Resume a paused scheduled scan; 404 if not found."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
     try:
         result = await svc.resume(schedule_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     return _redact_response(result)
 
 
 @router.post("/scheduled-scans/{schedule_id}/trigger")
 async def trigger_schedule(request: Request, schedule_id: str):
+    """Manually trigger a scheduled scan to run now; 404 if not found, 429 if already running."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
     try:
         result = await svc.trigger(schedule_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Schedule not found")
+        raise HTTPException(status_code=404, detail="Schedule not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=429, detail=str(e))
+        raise HTTPException(status_code=429, detail=str(e)) from e
     resp = _redact_response(result)
     if schedule_id in svc.get_running_schedule_ids():
         resp.is_running = True
@@ -149,8 +161,9 @@ async def trigger_schedule(request: Request, schedule_id: str):
 
 @router.get("/scheduled-scans/{schedule_id}/executions")
 async def list_executions(request: Request, schedule_id: str, limit: int = 20):
+    """List a schedule's past executions (limit clamped to 1–100); 404 if not found."""
     _validate_uuid(schedule_id)
     svc = _get_service(request)
-    limit = min(max(limit, 1), 100)
+    limit = clamp_limit(limit, 1, 100)
     executions = await svc.list_executions(schedule_id, limit=limit)
     return {"executions": [ScheduleExecutionResponse(**e) for e in executions]}

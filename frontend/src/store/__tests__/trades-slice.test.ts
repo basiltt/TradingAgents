@@ -33,6 +33,7 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
     order_type: "market",
     qty: 1,
     filled_qty: null,
+    remaining_qty: null,
     entry_price: 50000,
     avg_fill_price: null,
     exit_price: null,

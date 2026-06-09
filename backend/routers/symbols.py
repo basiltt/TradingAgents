@@ -15,6 +15,7 @@ async def list_symbols(
         return {"symbols": []}
 
     import asyncio
+
     from tradingagents.dataflows.bybit_data import get_valid_symbols
 
     symbols = await asyncio.to_thread(get_valid_symbols)

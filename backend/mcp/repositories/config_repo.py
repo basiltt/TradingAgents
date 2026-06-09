@@ -51,7 +51,7 @@ def _row_to_config(row: asyncpg.Record) -> MCPConfig:
     if not isinstance(flags, dict) or "read_only" not in flags:
         flags = dict(_FAILSAFE_FLAGS)
     # egress_consent_at may be absent on a record selected before the v45 column
-    consent = row["egress_consent_at"] if "egress_consent_at" in row else None
+    consent = row.get("egress_consent_at", None)
     return MCPConfig(
         enabled=row["enabled"],
         bind_host=row["bind_host"],

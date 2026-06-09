@@ -9,12 +9,17 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from backend.ai_manager_schemas import AIManagerConfig as _AIMConfig
-from backend.services.sector_map import get_sector as _static_get_sector
-from backend.services.scan_context import ScanContext
-from backend.services.strategy_reason_codes import ReasonCode
-from backend.services import strategy_router as _router
 from backend.services import regime_filter as _f1
-
+from backend.services import strategy_router as _router
+from backend.services.scan_context import ScanContext
+from backend.services.sector_map import get_sector as _static_get_sector
+from backend.services.strategy_reason_codes import ReasonCode
+from backend.services.trading_rules import (
+    DEFAULT_CAPITAL_PCT,
+    DEFAULT_LEVERAGE,
+    DEFAULT_STOP_LOSS_PCT,
+    DEFAULT_TAKE_PROFIT_PCT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,30 @@ def _to_symbol(ticker: str) -> str:
     return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
 
 
+def _resolve_position_direction(signal_direction: str, is_reverse: bool) -> str:
+    """Resolve the actual position side ("long"/"short") after the reverse knob.
+
+    AI-CONTEXT: this is the trend-path direction recorded in state.position_directions
+    (used by correlation/exposure checks). It was previously inlined as the same
+    doubly-nested ternary at three call sites — a change to reverse semantics needed
+    three synchronized edits. ``signal_direction`` is the raw scan direction; with
+    ``is_reverse`` (config direction == "reverse") the long/short sense is flipped.
+    NOTE: the mean-reversion (mr_fade) path does NOT use this — its side is the fade
+    side, unrelated to the signal/reverse knob, and stays inline at its call site.
+
+    Args:
+        signal_direction: Raw scan direction ("buy"/"long" or "sell"/"short").
+        is_reverse: True when the config trades the reverse of the signal.
+
+    Returns:
+        "long" or "short" — the side the position is actually opened on.
+    """
+    sig = "short" if signal_direction in ("short", "sell") else "long"
+    if is_reverse:
+        return "long" if sig == "short" else "short"
+    return sig
+
+
 def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     bad = ("key", "secret", "token", "password")
     return {k: v for k, v in cfg.items() if not any(b in k.lower() for b in bad)}
@@ -31,6 +60,8 @@ def _sanitize_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 @dataclass
 class TradeExecution:
+    """Outcome record for one attempted auto-trade (account, symbol, side, status, order id/error)."""
+
     account_id: str
     symbol: str
     side: str
@@ -49,6 +80,10 @@ class AutoTradeExecutor:
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
         self._state: Dict[str, _AccountState] = {}
+        # Per-scan MR caches; created lazily (annotation-only here, so getattr-based
+        # lazy init still sees the attribute as absent until first use).
+        self._mr_mean_cache: Dict[tuple[str, int, str], Optional[float]]
+        self._mr_price_cache: Dict[str, Optional[float]]
         self._lock = asyncio.Lock()
         # Shared per-(account,symbol) lock registry — guards placement against the
         # AI manager / close loop acting on the same position concurrently.
@@ -62,6 +97,7 @@ class AutoTradeExecutor:
         self._scan_context: ScanContext = ScanContext.empty(degraded=False)
 
     def set_scan_context(self, ctx: ScanContext) -> None:
+        """Set the frozen per-scan context used by the regime/strategy gates."""
         self._scan_context = ctx
 
     def set_mean_fetcher(self, fetcher) -> None:
@@ -131,6 +167,7 @@ class AutoTradeExecutor:
         )
 
     def init_configs(self, configs: List[Dict[str, Any]]) -> None:
+        """Initialize per-account executor state from the auto-trade configs and reset per-scan caches."""
         self._state.clear()
         self._mr_mean_cache = {}   # reset the per-scan MR mean cache (IR1)
         self._mr_price_cache = {}  # reset the per-scan MR mark-price cache (P2)
@@ -162,6 +199,52 @@ class AutoTradeExecutor:
             state.trades_executed = account_success.get(aid, 0)
             state.trades_failed = account_failed.get(aid, 0)
             state.executions = list(account_executions.get(aid, []))
+
+    async def _is_account_paused(self, account_id: str) -> bool:
+        """Return True if the account has an ACTIVE, unexpired AI PAUSE_TRADING rule.
+
+        AI-CONTEXT: position-safety gate shared by init_balances and
+        post_scan_recheck (previously duplicated). Iterates the account's rules; for
+        the active PAUSE_TRADING rule it compares elapsed time against
+        ``threshold_value`` hours. An expired pause rule is deleted (so it stops
+        gating) and treated as not-paused. A rule whose ``reference_value`` cannot be
+        parsed is treated as PAUSED — fail-closed: we never resume auto-trading on an
+        ambiguous pause signal (safety over availability for a money path). A failure
+        to even list the rules is logged at debug and treated as not-paused (the
+        caller's surrounding logic still applies other gates).
+
+        Args:
+            account_id: The account to check.
+
+        Returns:
+            True if trading is currently paused for this account, else False.
+        """
+        if not self._close_svc:
+            return False
+        try:
+            active_rules = await self._close_svc.list_rules(account_id)
+            for rule in active_rules:
+                if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
+                    ref_str = rule.get("reference_value", "")
+                    hours = float(rule.get("threshold_value", 0))
+                    try:
+                        ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                        if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
+                            return True
+                        await self._close_svc.delete_rule(account_id, rule["id"])
+                    except (ValueError, TypeError):
+                        # Fail-closed: unparseable pause rule = stay paused (safety).
+                        logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id, "ref": ref_str[:50]})
+                        return True
+        except Exception as e:
+            # AI-CONTEXT: fail-OPEN (return False → not paused) on a rules-fetch error,
+            # but log at WARNING not debug: a degraded pause-gate (e.g. DB down) would
+            # otherwise let an account that should be paused resume trading with no
+            # visible signal in production. Warning makes that state alertable. We do
+            # NOT fail-closed here (unlike the unparseable-rule branch) because a
+            # transient list_rules blip should not halt ALL accounts' trading.
+            logger.warning("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+        return False
 
     async def init_balances(self) -> None:
         """Pre-fetch wallet balances and check positions for all configured accounts."""
@@ -232,7 +315,7 @@ class AutoTradeExecutor:
 
         account_valid_cache: Dict[str, bool] = {}
 
-        for key, state in self._state.items():
+        for state in self._state.values():
             if state.stopped:
                 continue
             account_id = state.config["account_id"]
@@ -254,29 +337,9 @@ class AutoTradeExecutor:
                 logger.warning("auto_trade_account_deleted", extra={"account_id": account_id})
                 continue
             # Check for AI PAUSE_TRADING rule
-            if self._close_svc:
-                try:
-                    active_rules = await self._close_svc.list_rules(account_id)
-                    for rule in active_rules:
-                        if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
-                            ref_str = rule.get("reference_value", "")
-                            hours = float(rule.get("threshold_value", 0))
-                            try:
-                                ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-                                if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
-                                    state.stopped = True
-                                    state.stopped_reason = "ai_paused_trading"
-                                    break
-                                else:
-                                    await self._close_svc.delete_rule(account_id, rule["id"])
-                            except (ValueError, TypeError):
-                                # Fail-closed: unparseable pause rule = stay paused (safety)
-                                state.stopped = True
-                                state.stopped_reason = "ai_paused_trading"
-                                logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id, "ref": ref_str[:50]})
-                                break
-                except Exception as e:
-                    logger.debug("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+            if await self._is_account_paused(account_id):
+                state.stopped = True
+                state.stopped_reason = "ai_paused_trading"
             if state.stopped:
                 continue
             # Check positions if skip_if_positions_open is enabled
@@ -321,8 +384,18 @@ class AutoTradeExecutor:
                 if account_id not in positions_cache:
                     try:
                         positions_cache[account_id] = await self._accounts.get_positions(account_id)
-                    except Exception:
-                        positions_cache[account_id] = []
+                    except Exception as e:
+                        # AI-CONTEXT: fail-CLOSED. existing_symbols (built below) is the
+                        # guard at line ~1243 that blocks opening a SECOND position on an
+                        # already-held symbol. A swallowed fetch failure → empty set →
+                        # guard bypassed → possible duplicate position (doubled exposure)
+                        # on a live money path. So we log and skip the account this cycle,
+                        # matching the wallet-fetch sibling above — never trade blind to
+                        # current positions. (Previously this silently set [] and traded.)
+                        state.stopped = True
+                        state.stopped_reason = f"positions_fetch_failed: {str(e)[:200]}"
+                        logger.warning("auto_trade_existing_symbols_fetch_failed", extra={"account_id": account_id, "error": str(e)[:512]})
+                        continue
                 state.existing_symbols = {p.get("symbol", "") for p in positions_cache[account_id]}
                 state.position_directions = {
                     p.get("symbol", ""): ("short" if p.get("side", "").lower() == "sell" else "long")
@@ -379,7 +452,8 @@ class AutoTradeExecutor:
                 # Breakeven timeout rule (move TP to breakeven after X hours)
                 breakeven_hours = state.config.get("breakeven_timeout_hours")
                 if breakeven_hours and breakeven_hours > 0 and self._close_svc:
-                    from datetime import datetime, timezone as tz
+                    from datetime import datetime
+                    from datetime import timezone as tz
                     try:
                         rule = await self._close_svc.create_rule(
                             account_id=account_id,
@@ -396,7 +470,8 @@ class AutoTradeExecutor:
                 # Max trade duration rule (force close all after X hours)
                 max_duration_hours = state.config.get("max_trade_duration_hours")
                 if max_duration_hours and max_duration_hours > 0 and self._close_svc:
-                    from datetime import datetime, timezone as tz
+                    from datetime import datetime
+                    from datetime import timezone as tz
                     try:
                         rule = await self._close_svc.create_rule(
                             account_id=account_id,
@@ -475,7 +550,7 @@ class AutoTradeExecutor:
         async with self._lock:
             executions: List[TradeExecution] = []
             traded_accounts: set = set()
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "immediate":
                     continue
                 if state.stopped:
@@ -501,14 +576,14 @@ class AutoTradeExecutor:
                 if ticker:
                     seen[ticker] = r
             unique_results = sorted(
-                list(seen.values()),
+                seen.values(),
                 key=lambda r: (abs(r.get("score", 0)), r.get("completed_at", "")),
                 reverse=True,
             )
 
             executions: List[TradeExecution] = []
             traded: set = set()  # (account_id, ticker) pairs already traded
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "batch":
                     continue
                 account_id = state.config.get("account_id", "")
@@ -528,7 +603,7 @@ class AutoTradeExecutor:
 
             # Fill pass: if fill_to_max_trades is enabled and max_trades not reached,
             # retry with relaxed filters using best remaining signals by score
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "batch":
                     continue
                 if not state.config.get("fill_to_max_trades"):
@@ -593,7 +668,7 @@ class AutoTradeExecutor:
                     if e.status == "success":
                         traded.add((aid, e.symbol))
 
-            for key, state in self._state.items():
+            for state in self._state.values():
                 if state.config.get("execution_mode") != "immediate":
                     continue
                 if not state.config.get("fill_to_max_trades"):
@@ -638,9 +713,9 @@ class AutoTradeExecutor:
             return executions
 
     def get_summaries(self) -> List[Dict[str, Any]]:
-        summaries = []
-        for key, state in self._state.items():
-            summaries.append({
+        """Return per-account execution summaries (counts, stop reason, rule ids, executions)."""
+        return [
+            {
                 "account_id": state.config["account_id"],
                 "trades_executed": state.trades_executed,
                 "trades_failed": state.trades_failed,
@@ -653,8 +728,9 @@ class AutoTradeExecutor:
                      "order_id": e.order_id, "error": e.error}
                     for e in state.executions
                 ],
-            })
-        return summaries
+            }
+            for state in self._state.values()
+        ]
 
     async def emit_account_summaries(self) -> int:
         """Emit one account-trace per state. Returns the distinct account count.
@@ -749,7 +825,7 @@ class AutoTradeExecutor:
             if ticker:
                 seen[ticker] = r
         unique_results = sorted(
-            list(seen.values()),
+            seen.values(),
             key=lambda r: abs(r.get("score", 0)),
             reverse=True,
         )
@@ -860,27 +936,7 @@ class AutoTradeExecutor:
                     continue
 
                 # Check for AI PAUSE_TRADING rule before deleting rules
-                paused = False
-                if self._close_svc:
-                    try:
-                        active_rules = await self._close_svc.list_rules(account_id)
-                        for rule in active_rules:
-                            if rule.get("trigger_type") == "PAUSE_TRADING" and rule.get("status") == "active":
-                                ref_str = rule.get("reference_value", "")
-                                hours = float(rule.get("threshold_value", 0))
-                                try:
-                                    ref_time = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-                                    if (datetime.now(timezone.utc) - ref_time).total_seconds() < hours * 3600:
-                                        paused = True
-                                        break
-                                    else:
-                                        await self._close_svc.delete_rule(account_id, rule["id"])
-                                except (ValueError, TypeError):
-                                    paused = True
-                                    logger.warning("pause_rule_unparseable_fail_closed", extra={"account_id": account_id})
-                                    break
-                    except Exception:
-                        pass
+                paused = await self._is_account_paused(account_id)
                 if paused:
                     async with self._lock:
                         for state in states:
@@ -964,7 +1020,8 @@ class AutoTradeExecutor:
                         # Breakeven timeout rule
                         breakeven_hours = state.config.get("breakeven_timeout_hours")
                         if breakeven_hours and breakeven_hours > 0:
-                            from datetime import datetime, timezone as tz
+                            from datetime import datetime
+                            from datetime import timezone as tz
                             try:
                                 rule = await self._close_svc.create_rule(
                                     account_id=account_id,
@@ -982,7 +1039,8 @@ class AutoTradeExecutor:
                         # Max trade duration rule
                         max_duration_hours = state.config.get("max_trade_duration_hours")
                         if max_duration_hours and max_duration_hours > 0:
-                            from datetime import datetime, timezone as tz
+                            from datetime import datetime
+                            from datetime import timezone as tz
                             try:
                                 rule = await self._close_svc.create_rule(
                                     account_id=account_id,
@@ -1067,8 +1125,8 @@ class AutoTradeExecutor:
         Fail-closed: missing/stale regime, missing mean/price, geometry guards, and
         the long-ack gate all skip the trade. Uses the pure mean_reversion_math fns.
         """
-        from backend.services import mean_reversion_math as _mr
         from backend.services import f2_long_ack as _ack
+        from backend.services import mean_reversion_math as _mr
         account_id = cfg.get("account_id", "")
         now = datetime.now(timezone.utc)
 
@@ -1325,12 +1383,11 @@ class AutoTradeExecutor:
         # Check target goal
         goal_type = cfg.get("target_goal_type")
         goal_value = cfg.get("target_goal_value")
-        if goal_type and goal_value:
-            if goal_type == "trade_count" and state.trades_executed >= goal_value:
-                self._emit_decision(account_id, phase, symbol, "skipped", "target_goal_reached", result)
-                state.stopped = True
-                state.stopped_reason = "target_goal_reached"
-                return None
+        if goal_type and goal_value and goal_type == "trade_count" and state.trades_executed >= goal_value:
+            self._emit_decision(account_id, phase, symbol, "skipped", "target_goal_reached", result)
+            state.stopped = True
+            state.stopped_reason = "target_goal_reached"
+            return None
 
         account_id = cfg["account_id"]
 
@@ -1411,10 +1468,10 @@ class AutoTradeExecutor:
         cohort = cfg.get("strategy_cohort") or "trend"
         place_signal_direction = direction
         place_trade_direction = cfg.get("direction", "straight")
-        place_leverage = cfg.get("leverage", 20)
-        place_tp = cfg.get("take_profit_pct", 150)
-        place_sl = cfg.get("stop_loss_pct", 100)
-        place_capital = cfg.get("capital_pct", 5)
+        place_leverage = cfg.get("leverage", DEFAULT_LEVERAGE)
+        place_tp = cfg.get("take_profit_pct", DEFAULT_TAKE_PROFIT_PCT)
+        place_sl = cfg.get("stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
+        place_capital = cfg.get("capital_pct", DEFAULT_CAPITAL_PCT)
         strategy_kind = "trend"
         if mr_fade:
             mr = await self._compute_mr_params(state, cfg, result, symbol, direction, ctx, phase)
@@ -1496,7 +1553,8 @@ class AutoTradeExecutor:
                 # correct for an MR cohort: every position on the account is MR (the
                 # `both` cohort was cut, so there's no trend position to clobber). Created
                 # once per account per scan (flag-guarded), like the trend duration rule.
-                from datetime import datetime as _dt, timezone as _tz
+                from datetime import datetime as _dt
+                from datetime import timezone as _tz
                 try:
                     _mins = float(cfg.get("mr_time_stop_minutes", 120))
                     _rule = await self._close_svc.create_rule(
@@ -1530,8 +1588,7 @@ class AutoTradeExecutor:
                 state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
             else:
                 _is_rev = cfg.get("direction") == "reverse"
-                _sig_dir = "short" if direction in ("short", "sell") else "long"
-                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                state.position_directions[symbol] = _resolve_position_direction(direction, _is_rev)
             logger.info("auto_trade_executed", extra={
                 "account_id": account_id, "symbol": symbol,
                 "side": execution.side, "order_id": execution.order_id,
@@ -1574,8 +1631,7 @@ class AutoTradeExecutor:
                 state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
             else:
                 _is_rev = cfg.get("direction") == "reverse"
-                _sig_dir = "short" if direction in ("short", "sell") else "long"
-                state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                state.position_directions[symbol] = _resolve_position_direction(direction, _is_rev)
             execution = TradeExecution(
                 account_id=account_id,
                 symbol=symbol,
@@ -1613,8 +1669,7 @@ class AutoTradeExecutor:
                     state.position_directions[symbol] = "long" if place_signal_direction == "long" else "short"
                 else:
                     _is_rev = cfg.get("direction") == "reverse"
-                    _sig_dir = "short" if direction in ("short", "sell") else "long"
-                    state.position_directions[symbol] = ("long" if _sig_dir == "short" else "short") if _is_rev else _sig_dir
+                    state.position_directions[symbol] = _resolve_position_direction(direction, _is_rev)
                 logger.error("auto_trade_ambiguous_phantom_risk", extra={
                     "account_id": account_id, "symbol": symbol,
                     "error": err_str[:512],

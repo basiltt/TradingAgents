@@ -52,6 +52,7 @@ class RunContext:
     _truncated_marked: set = field(default_factory=set)
 
     def next_seq(self, account_id: str) -> int:
+        """Return the next monotonic sequence number for an account and advance it."""
         n = self._seq[account_id]
         self._seq[account_id] = n + 1
         return n
@@ -74,10 +75,10 @@ class DebugTraceRecorder:
         self._enabled = True
         self._symbol_decision_cap = 200
         self._retention_days = 60
-        self._drainer_task = None
-        self._cleanup_task = None
+        self._drainer_task: Optional[asyncio.Task] = None
+        self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
-        self._drain_lock = None          # lazily created asyncio.Lock (no loop at __init__)
+        self._drain_lock: Optional[asyncio.Lock] = None  # lazily created (no loop at __init__)
         self._drain_count = 0            # drains since last config refresh (cadence control)
 
     @property
@@ -88,15 +89,18 @@ class DebugTraceRecorder:
 
     # ── introspection (used by tests) ─────────────────────────
     def buffered_count(self) -> int:
+        """Return the number of records currently buffered (test introspection)."""
         return len(self._buffer)
 
     def snapshot_buffer(self) -> list[dict]:
+        """Return a shallow copy of the current buffer (test introspection)."""
         return list(self._buffer)
 
     # ── run context ───────────────────────────────────────────
     def new_run_context(self, *, scan_id: str, trigger_source: str = "unknown",
                         schedule_id: Optional[str] = None,
                         schedule_execution_id: Optional[int] = None) -> RunContext:
+        """Create a fresh per-run accumulator for one scan/trade run."""
         return RunContext(
             scan_id=scan_id, trigger_source=trigger_source,
             schedule_id=schedule_id, schedule_execution_id=schedule_execution_id,
@@ -112,6 +116,7 @@ class DebugTraceRecorder:
     # ── emit methods (sync, fail-open) ────────────────────────
     def emit_lifecycle(self, ctx: RunContext, *, account_id: str, phase: str,
                        event_type: str, detail: Optional[dict] = None) -> None:
+        """Buffer a lifecycle event for a run phase. No-op if disabled/unopened; never raises."""
         if not self._enabled or ctx.run_id is None:
             return
         try:
@@ -130,6 +135,12 @@ class DebugTraceRecorder:
                              reason_detail: Optional[dict] = None,
                              scan_score=None, scan_confidence=None,
                              scan_direction=None, order_id=None) -> None:
+        """Buffer a per-symbol decision, capping rows per (account, phase).
+
+        Once the symbol-decision cap is hit for a key, emits a single
+        "truncated" marker and drops further decisions for that key. No-op if
+        disabled or the run is unopened; never raises.
+        """
         if not self._enabled or ctx.run_id is None:
             return
         try:
@@ -164,6 +175,11 @@ class DebugTraceRecorder:
     def emit_exchange_snapshot(self, ctx: RunContext, *, account_id: str, gate: str,
                                positions: Optional[list] = None,
                                wallet: Optional[dict] = None, equity=None) -> None:
+        """Buffer an exchange snapshot (positions + sanitized wallet) at a gate.
+
+        Wallet payloads are reduced to the known balance fields. No-op if
+        disabled or the run is unopened; never raises.
+        """
         if not self._enabled or ctx.run_id is None:
             return
         try:
@@ -179,6 +195,10 @@ class DebugTraceRecorder:
             logger.debug("emit_exchange_snapshot_failed", exc_info=True)
 
     def emit_account_trace(self, ctx: RunContext, *, account_id: str, **fields: Any) -> None:
+        """Buffer an account-level trace record with arbitrary extra fields.
+
+        No-op if disabled or the run is unopened; never raises.
+        """
         if not self._enabled or ctx.run_id is None:
             return
         try:
@@ -191,6 +211,12 @@ class DebugTraceRecorder:
     # ── run open/close (async — called off the hot path) ──────
     async def open_run(self, ctx: RunContext, *, config_snapshot: Optional[dict] = None,
                        scan_started_at=None, scan_completed_at=None) -> None:
+        """Create the DB run row and store its id on the context.
+
+        Awaited on the trade-leading path, so it is bounded by a timeout: if
+        tracing is disabled or row creation fails/times out, run_id stays None
+        (fail open — every emit and close_run becomes a no-op, trading proceeds).
+        """
         # Kill-switch: when tracing is disabled, do NOT create a run row at all.
         # Leaving ctx.run_id = None makes every emit AND close_run a no-op, so a
         # disabled recorder writes nothing to the DB (not even empty run shells).
@@ -219,6 +245,10 @@ class DebugTraceRecorder:
     async def close_run(self, ctx: RunContext, *, phase_reached: str,
                         total_symbols: int = 0, completed_symbols: int = 0,
                         failed_symbols: int = 0, num_accounts: int = 0) -> None:
+        """Flush buffered events and finalize the run row with summary counts.
+
+        No-op for the finalize step if run_id is None. Fail-open: never raises.
+        """
         try:
             await self.drain_once()
             if ctx.run_id is not None:
@@ -233,6 +263,13 @@ class DebugTraceRecorder:
 
     # ── drainer ───────────────────────────────────────────────
     async def drain_once(self) -> None:
+        """Flush the buffer to the DB, grouped and bulk-inserted per table.
+
+        Serialized by a lazily-created lock. Snapshots and clears the buffer,
+        then inserts each table independently so one table's failure does not
+        discard the others. Failed batches are logged and dropped; trading is
+        unaffected.
+        """
         # Serialize drains: drain_once is called from the periodic loop, close_run,
         # and shutdown. Without this lock, two drains could run overlapping bulk
         # inserts on the pool. The lock is created lazily (no event loop at __init__).
@@ -264,6 +301,10 @@ class DebugTraceRecorder:
                     logger.warning("debug_drain_table_failed", extra={"table": table, "count": len(rows)}, exc_info=True)
 
     async def refresh_config(self) -> None:
+        """Reload tracing enabled flag, retention days, and symbol cap from the repo.
+
+        Fail-open: keeps existing settings and logs on error.
+        """
         try:
             cfg = await self._repo.get_config()
             self._enabled = bool(cfg.get("tracing_enabled", True))
@@ -275,6 +316,12 @@ class DebugTraceRecorder:
     # ── lifecycle (lifespan-managed) ──────────────────────────
     async def start(self, *, drain_interval_s: float = 3.0, cleanup_interval_s: float = 86400.0,
                     initial_cleanup_delay_s: float = 300.0) -> None:
+        """Start the recorder: load config, recover orphaned runs, launch background loops.
+
+        Creates the drain lock on the running loop, reconciles runs orphaned by
+        a prior crash, then spawns the periodic drain and retention-cleanup tasks.
+        Intended to be called from the app lifespan.
+        """
         import asyncio
         if self._drain_lock is None:
             self._drain_lock = asyncio.Lock()   # create on the running loop (not __init__)
@@ -292,6 +339,7 @@ class DebugTraceRecorder:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop(cleanup_interval_s, initial_cleanup_delay_s))
 
     async def shutdown(self) -> None:
+        """Stop background loops, cancel their tasks, and perform a final buffer flush."""
         import asyncio
         self._running = False
         for t in (self._drainer_task, self._cleanup_task):

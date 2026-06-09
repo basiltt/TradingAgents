@@ -10,7 +10,6 @@ from decimal import Decimal
 from typing import Any
 
 from backend.async_persistence import AsyncAnalysisDB
-from backend.utils import serialize_trade as _serialize_trade_shared
 from backend.services.signal_performance_service import SignalPerformanceMaterializer
 from backend.services.trade_repository import (
     ConcurrentModification,
@@ -18,6 +17,7 @@ from backend.services.trade_repository import (
     TradeNotFound,
     TradeRepository,
 )
+from backend.utils import serialize_trade as _serialize_trade_shared
 
 logger = logging.getLogger(__name__)
 
@@ -82,19 +82,18 @@ class TradeService:
         close_reason: str,
     ) -> dict | None:
         """Force-close a trade via reconciliation and broadcast the event."""
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                closed = await self._repo.reconcile_close(
-                    conn,
-                    trade_id=trade_id,
-                    account_id=account_id,
-                    exit_price=exit_price,
-                    realized_pnl=realized_pnl,
-                    realized_pnl_pct=realized_pnl_pct,
-                    fees=fees,
-                    net_pnl=net_pnl,
-                    close_reason=close_reason,
-                )
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            closed = await self._repo.reconcile_close(
+                conn,
+                trade_id=trade_id,
+                account_id=account_id,
+                exit_price=exit_price,
+                realized_pnl=realized_pnl,
+                realized_pnl_pct=realized_pnl_pct,
+                fees=fees,
+                net_pnl=net_pnl,
+                close_reason=close_reason,
+            )
         self.invalidate_stats_cache(account_id)
         if closed:
             await self._broadcast_trade_event("trade.closed", closed)
@@ -202,23 +201,22 @@ class TradeService:
         }
 
         version = trade["version"]
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                await self._repo.update_trade_status(
-                    conn, trade_id=str(trade["id"]), account_id=account_id,
-                    expected_version=version, new_status="closing",
-                    event_type="close_requested", actor="system",
-                )
-                closed = await self._repo.close_trade(
-                    conn, trade_id=str(trade["id"]), account_id=account_id,
-                    expected_version=version + 1, close_reason=close_reason,
-                    close_rule_id=close_rule_id,
-                    exit_price=pnl_data["exit_price"],
-                    realized_pnl=pnl_data["realized_pnl"],
-                    realized_pnl_pct=pnl_data["realized_pnl_pct"],
-                    fees=pnl_data["fees"],
-                    net_pnl=pnl_data["net_pnl"],
-                )
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            await self._repo.update_trade_status(
+                conn, trade_id=str(trade["id"]), account_id=account_id,
+                expected_version=version, new_status="closing",
+                event_type="close_requested", actor="system",
+            )
+            closed = await self._repo.close_trade(
+                conn, trade_id=str(trade["id"]), account_id=account_id,
+                expected_version=version + 1, close_reason=close_reason,
+                close_rule_id=close_rule_id,
+                exit_price=pnl_data["exit_price"],
+                realized_pnl=pnl_data["realized_pnl"],
+                realized_pnl_pct=pnl_data["realized_pnl_pct"],
+                fees=pnl_data["fees"],
+                net_pnl=pnl_data["net_pnl"],
+            )
 
         self.invalidate_stats_cache(account_id)
         if closed is None:
@@ -239,13 +237,12 @@ class TradeService:
         version = trade["version"]
         close_qty = float(trade["qty"]) - float(trade.get("filled_qty") or 0)
 
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                await self._repo.update_trade_status(
-                    conn, trade_id=trade_id, account_id=account_id,
-                    expected_version=version, new_status="closing",
-                    event_type="close_requested", actor="system",
-                )
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            await self._repo.update_trade_status(
+                conn, trade_id=trade_id, account_id=account_id,
+                expected_version=version, new_status="closing",
+                event_type="close_requested", actor="system",
+            )
         version += 1
 
         try:
@@ -262,6 +259,23 @@ class TradeService:
             await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
             raise
 
+        # AI-CONTEXT: fill confirmation. A submitted market-close whose fill poll
+        # exhausted returns cumExecQty None/0 — the order may NOT have actually
+        # filled, so the position can still be LIVE on the exchange. Do NOT fabricate
+        # a mark-price exit and record `closed` in that case (that diverges the DB
+        # from the exchange and stops lifecycle management of a real position).
+        # Instead route to _handle_close_failure, which checks the live position and
+        # either records closed (if the position is genuinely gone) or reverts to
+        # open for the reconciler. Mirrors close_positions_service._close_single_position.
+        cum_qty = float(result.get("cumExecQty") or 0)
+        if cum_qty <= 0:
+            logger.warning("close_full_unconfirmed_fill", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
+                "order_id": result.get("orderId", ""),
+            })
+            await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
+            raise InvalidStatusTransition("Close order submitted but fill not confirmed")
+
         if not result.get("avgPrice"):
             try:
                 mark = await client.get_mark_price(trade["symbol"])
@@ -271,13 +285,12 @@ class TradeService:
                 pass
 
         pnl_data = self._extract_pnl(result, trade, close_qty)
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                closed = await self._repo.close_trade(
-                    conn, trade_id=trade_id, account_id=account_id,
-                    expected_version=version, close_reason=close_reason,
-                    close_rule_id=close_rule_id, **pnl_data,
-                )
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            closed = await self._repo.close_trade(
+                conn, trade_id=trade_id, account_id=account_id,
+                expected_version=version, close_reason=close_reason,
+                close_rule_id=close_rule_id, **pnl_data,
+            )
 
         self.invalidate_stats_cache(account_id)
         if closed is None:
@@ -302,13 +315,12 @@ class TradeService:
         trade_id = str(trade["id"])
         version = trade["version"]
 
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                await self._repo.update_trade_status(
-                    conn, trade_id=trade_id, account_id=account_id,
-                    expected_version=version, new_status="closing",
-                    event_type="close_requested", actor="system",
-                )
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            await self._repo.update_trade_status(
+                conn, trade_id=trade_id, account_id=account_id,
+                expected_version=version, new_status="closing",
+                event_type="close_requested", actor="system",
+            )
         version += 1
 
         try:
@@ -326,6 +338,19 @@ class TradeService:
             await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
             raise
 
+        # AI-CONTEXT: fill confirmation (see _close_full). An unconfirmed partial
+        # close (cumExecQty None/0 — poll exhausted) must NOT be recorded as a
+        # partial fill against a possibly-still-live position. Route to
+        # _handle_close_failure for live-position resolution instead.
+        cum_qty = float(result.get("cumExecQty") or 0)
+        if cum_qty <= 0:
+            logger.warning("close_partial_unconfirmed_fill", extra={
+                "trade_id": trade_id, "symbol": trade["symbol"], "side": trade["side"],
+                "qty": qty, "order_id": result.get("orderId", ""),
+            })
+            await self._handle_close_failure(client, trade, version, close_reason, close_rule_id)
+            raise InvalidStatusTransition("Partial close order submitted but fill not confirmed")
+
         if not result.get("avgPrice"):
             try:
                 mark = await client.get_mark_price(trade["symbol"])
@@ -336,24 +361,23 @@ class TradeService:
 
         pnl_data = self._extract_pnl(result, trade, qty)
         previously_filled = float(trade.get("filled_qty") or 0)
-        async with self._db.pool.acquire() as conn:
-            async with conn.transaction():
-                child = await self._repo.create_child_trade(
-                    conn, parent_trade=trade, closed_qty=qty,
-                    exit_price=pnl_data["exit_price"],
-                    realized_pnl=pnl_data["realized_pnl"],
-                    realized_pnl_pct=pnl_data["realized_pnl_pct"],
-                    fees=pnl_data["fees"],
-                    net_pnl=pnl_data["net_pnl"],
-                    close_reason=close_reason,
-                    close_rule_id=close_rule_id,
-                )
-                updated_trade = await self._repo.update_trade_status(
-                    conn, trade_id=trade_id, account_id=account_id,
-                    expected_version=version, new_status="partially_closed",
-                    event_type="closed", actor="system",
-                    updates={"filled_qty": previously_filled + qty},
-                )
+        async with self._db.pool.acquire() as conn, conn.transaction():
+            child = await self._repo.create_child_trade(
+                conn, parent_trade=trade, closed_qty=qty,
+                exit_price=pnl_data["exit_price"],
+                realized_pnl=pnl_data["realized_pnl"],
+                realized_pnl_pct=pnl_data["realized_pnl_pct"],
+                fees=pnl_data["fees"],
+                net_pnl=pnl_data["net_pnl"],
+                close_reason=close_reason,
+                close_rule_id=close_rule_id,
+            )
+            updated_trade = await self._repo.update_trade_status(
+                conn, trade_id=trade_id, account_id=account_id,
+                expected_version=version, new_status="partially_closed",
+                event_type="closed", actor="system",
+                updates={"filled_qty": previously_filled + qty},
+            )
 
         self.invalidate_stats_cache(account_id)
         logger.info("close_partial_done", extra={
@@ -420,14 +444,13 @@ class TradeService:
             # PnL history afterward, preserving this reason.
             resolved_reason = close_reason or "external"
             try:
-                async with self._db.pool.acquire() as conn:
-                    async with conn.transaction():
-                        await self._repo.reconcile_close(
-                            conn, trade_id=trade_id, account_id=account_id,
-                            exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
-                            fees=0.0, net_pnl=0.0, close_reason=resolved_reason,
-                            close_rule_id=close_rule_id,
-                        )
+                async with self._db.pool.acquire() as conn, conn.transaction():
+                    await self._repo.reconcile_close(
+                        conn, trade_id=trade_id, account_id=account_id,
+                        exit_price=0.0, realized_pnl=0.0, realized_pnl_pct=0.0,
+                        fees=0.0, net_pnl=0.0, close_reason=resolved_reason,
+                        close_rule_id=close_rule_id,
+                    )
                 self.invalidate_stats_cache(account_id)
                 return
             except Exception:
@@ -435,14 +458,13 @@ class TradeService:
 
         reverted_version = None
         try:
-            async with self._db.pool.acquire() as conn:
-                async with conn.transaction():
-                    updated = await self._repo.update_trade_status(
-                        conn, trade_id=trade_id, account_id=account_id,
-                        expected_version=version, new_status="open",
-                        event_type="failed", actor="system",
-                    )
-                    reverted_version = updated.get("version") if updated else version + 1
+            async with self._db.pool.acquire() as conn, conn.transaction():
+                updated = await self._repo.update_trade_status(
+                    conn, trade_id=trade_id, account_id=account_id,
+                    expected_version=version, new_status="open",
+                    event_type="failed", actor="system",
+                )
+                reverted_version = updated.get("version") if updated else version + 1
         except ConcurrentModification:
             logger.warning("revert_concurrent_modification", extra={"trade_id": trade_id})
             return
@@ -477,27 +499,25 @@ class TradeService:
                     await client.cancel_order(symbol=trade["symbol"], order_id=trade["order_id"])
                 except Exception:
                     logger.warning("bybit_cancel_failed", extra={"trade_id": trade_id})
-            async with self._db.pool.acquire() as conn:
-                async with conn.transaction():
-                    updated = await self._repo.update_trade_status(
-                        conn, trade_id=trade_id, account_id=account_id,
-                        expected_version=version, new_status="cancelled",
-                        event_type="cancelled", actor="user",
-                    )
+            async with self._db.pool.acquire() as conn, conn.transaction():
+                updated = await self._repo.update_trade_status(
+                    conn, trade_id=trade_id, account_id=account_id,
+                    expected_version=version, new_status="cancelled",
+                    event_type="cancelled", actor="user",
+                )
         else:
             if trade.get("order_id"):
                 try:
                     await client.cancel_order(symbol=trade["symbol"], order_id=trade["order_id"])
                 except Exception:
                     logger.warning("bybit_cancel_partial_failed", extra={"trade_id": trade_id})
-            async with self._db.pool.acquire() as conn:
-                async with conn.transaction():
-                    updated = await self._repo.update_trade_status(
-                        conn, trade_id=trade_id, account_id=account_id,
-                        expected_version=version, new_status="open",
-                        event_type="filled", actor="system",
-                        updates={"filled_qty": trade.get("filled_qty")},
-                    )
+            async with self._db.pool.acquire() as conn, conn.transaction():
+                updated = await self._repo.update_trade_status(
+                    conn, trade_id=trade_id, account_id=account_id,
+                    expected_version=version, new_status="open",
+                    event_type="filled", actor="system",
+                    updates={"filled_qty": trade.get("filled_qty")},
+                )
 
         self.invalidate_stats_cache(account_id)
         if updated is None:
@@ -547,8 +567,12 @@ class TradeService:
                     "account_id": trade["account_id"],
                     "symbol": trade["symbol"],
                     "close_reason": trade.get("close_reason"),
-                    "realized_pnl": float(trade["realized_pnl"]) if trade.get("realized_pnl") else None,
-                    "net_pnl": float(trade["net_pnl"]) if trade.get("net_pnl") else None,
+                    # AI-CONTEXT: explicit `is not None` check, NOT truthiness — a
+                    # breakeven close has realized_pnl == 0.0, which is falsy. Using
+                    # `if trade.get("realized_pnl")` would broadcast a real 0 PnL as
+                    # null, corrupting the client's running PnL tally.
+                    "realized_pnl": float(trade["realized_pnl"]) if trade.get("realized_pnl") is not None else None,
+                    "net_pnl": float(trade["net_pnl"]) if trade.get("net_pnl") is not None else None,
                 }
             elif event_type == "trade.opened":
                 payload = {

@@ -61,7 +61,7 @@ def _validate_account_ids(raw: str | None) -> list[str] | None:
         try:
             _uuid.UUID(aid)
         except (ValueError, AttributeError):
-            raise ValueError(f"Invalid account ID: {aid}")
+            raise ValueError(f"Invalid account ID: {aid}") from None
     return ids
 
 
@@ -83,7 +83,7 @@ def _validate_date(raw: str | None, name: str) -> datetime | None:
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid {name}: expected ISO 8601 datetime")
+        raise ValueError(f"Invalid {name}: expected ISO 8601 datetime") from None
 
 
 @router.get("/trades")
@@ -129,7 +129,7 @@ async def list_trades_cross_account(
                 cursor_last_sort_value = parts[0] if parts[0] != "NULL" else None
                 cursor_last_id = str(_uuid.UUID(parts[1]))
             except Exception:
-                raise ValueError("Invalid cursor format")
+                raise ValueError("Invalid cursor format") from None
 
     except ValueError as e:
         logger.warning("list_trades_validation_error", extra={"error": str(e)[:200]})
@@ -178,7 +178,7 @@ async def list_trades_cross_account(
             *(accounts_svc.get_positions(aid) for aid in active_account_ids),
             return_exceptions=True,
         )
-        for aid, positions in zip(active_account_ids, positions_by_account):
+        for aid, positions in zip(active_account_ids, positions_by_account, strict=True):
             if isinstance(positions, BaseException):
                 logger.warning("position_fetch_failed", extra={"account_id": aid, "error": str(positions)[:200]})
                 continue
@@ -186,7 +186,14 @@ async def list_trades_cross_account(
                 if float(pos.get("size", 0)) == 0:
                     continue
                 key = (aid, pos["symbol"], pos["side"], int(pos.get("positionIdx", 0)))
-                pnl_lookup[key] = float(pos.get("unrealisedPnl", 0))
+                # AI-CONTEXT: dual-key + `or 0` guard (codebase-wide form). A WS/exchange
+                # frame may carry unrealisedPnl as "" or None (key present, value empty);
+                # a bare float(get(...,0)) would raise ValueError on "" and fail the whole
+                # enrichment. Default/coerce to 0.0 instead.
+                try:
+                    pnl_lookup[key] = float(pos.get("unrealisedPnl", pos.get("unrealized_pnl", 0)) or 0)
+                except (TypeError, ValueError):
+                    pnl_lookup[key] = 0.0
 
     def enrich(trade: dict) -> dict:
         """Serialize trade and attach unrealized_pnl from position lookup."""

@@ -6,8 +6,8 @@ import asyncio
 import logging
 from typing import Any, Callable, Coroutine, Dict, Set
 
-from backend.crypto import decrypt_value
 from backend.async_persistence import AsyncAnalysisDB
+from backend.crypto import decrypt_value
 from backend.services.bybit_ws_client import BybitWSClient
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ class AccountWSManager:
             return
 
         async def on_event(event: dict[str, Any]) -> None:
+            """Tag a WS event with its account_id, broadcast it, and notify wallet listeners."""
             event["account_id"] = account_id
             await self._broadcast(event)
             event_type = event.get("type")
@@ -181,7 +182,9 @@ class AccountWSManager:
             logger.exception("Wallet listener failed for account %s", account_id)
 
     async def broadcast_event(self, event: dict[str, Any]) -> None:
+        """Broadcast a pre-built event dict to all connected WebSocket clients."""
         await self._broadcast(event)
 
     async def broadcast_to_account(self, account_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        """Broadcast an event of the given type for a specific account to all clients."""
         await self._broadcast({"type": event_type, "account_id": account_id, **payload})

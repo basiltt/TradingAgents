@@ -59,7 +59,7 @@ export const TradeRow = memo(function TradeRow({
       </td>
       <td className="px-4 py-3"><TradeStatusBadge status={trade.status} /></td>
       <td className="px-4 py-3 text-[11px] font-mono tabular-nums text-muted-foreground">
-        {formatQty(trade.filled_qty ?? (isActive ? trade.qty : null))}<span className="text-muted-foreground/40">/{formatQty(trade.qty)}</span>
+        {formatQty(trade.remaining_qty ?? (isActive ? trade.qty : null))}<span className="text-muted-foreground/40">/{formatQty(trade.qty)}</span>
       </td>
       <td className="px-4 py-3 text-[11px] font-mono tabular-nums">{formatPrice(trade.entry_price)}</td>
       <td className="px-4 py-3 text-[11px] font-mono tabular-nums text-muted-foreground">{trade.leverage}×</td>

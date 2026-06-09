@@ -77,7 +77,7 @@ def generate_combos(
         seen: set[str] = set()
         for values in itertools.product(*(space[k] for k in keys)):
             cfg = dict(base)
-            cfg.update(dict(zip(keys, values)))
+            cfg.update(dict(zip(keys, values, strict=True)))
             cfg = _canonical(cfg)
             h = config_hash(cfg)
             if h in seen:
