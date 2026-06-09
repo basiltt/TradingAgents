@@ -37,6 +37,7 @@ export function mcpErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Query the persisted MCP config; polls every 8s for the live bind/exposure signal, stops on 503. */
 export function useMCPConfig() {
   return useQuery({
     queryKey: KEYS.config,
@@ -51,6 +52,7 @@ export function useMCPConfig() {
   });
 }
 
+/** Query the live MCP server status; polls every 8s, halting both polling and retries on 503 (module absent). */
 export function useMCPStatus() {
   return useQuery({
     queryKey: KEYS.status,
@@ -64,6 +66,7 @@ export function useMCPStatus() {
   });
 }
 
+/** Query the tool/group registry (available + enabled state); retries once unless the module is absent (503). */
 export function useMCPRegistry() {
   return useQuery({
     queryKey: KEYS.registry,
@@ -73,6 +76,11 @@ export function useMCPRegistry() {
   });
 }
 
+/**
+ * Query the agent-proposal queue, optionally filtered by status; polls every 8s so
+ * background-created proposals surface without a manual refresh. Stops polling on 503.
+ * @param status - Optional proposal status filter; omitted keys the query as "all".
+ */
 export function useMCPProposals(status?: string) {
   return useQuery({
     queryKey: KEYS.proposals(status),

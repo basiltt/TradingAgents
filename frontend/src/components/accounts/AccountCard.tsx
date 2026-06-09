@@ -122,7 +122,10 @@ function formatCountdown(ms: number): string {
 }
 
 function CountdownTimers({ targets }: { targets: Array<{ trigger_type: string; threshold_value: string | null; reference_value: string | null }> }) {
-  const [now, setNow] = useState(Date.now());
+  // AI-CONTEXT: Lazy initializer so the impure Date.now() read happens once on mount
+  // rather than on every render (react-hooks/purity). The 1Hz interval below is the
+  // sole driver of subsequent `now` updates.
+  const [now, setNow] = useState(() => Date.now());
   const timeRules = resolveTimeRules(targets, now);
   const allExpired = timeRules.length > 0 && timeRules.every((r) => r.expired);
 

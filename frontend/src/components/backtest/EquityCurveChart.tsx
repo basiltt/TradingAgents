@@ -11,88 +11,17 @@ import {
 } from "recharts";
 import { useId, useMemo } from "react";
 import type { EquityPoint } from "./types";
+import {
+  prepareEquitySeries,
+  equityDomain,
+  buildBuyHoldSeries,
+} from "./equityCurveData";
 
-export interface EquityChartDatum {
-  label: string;
-  equity: number;
-  drawdown: number; // negative or zero, percent
-}
-
-/** Format an ISO timestamp into a compact axis label (M/D or M/D HH:mm). */
-export function formatTsLabel(ts: string | null): string {
-  if (!ts) return "";
-  const [datePart, timePart] = ts.replace("T", " ").split(" ");
-  const [, m, d] = datePart.split("-");
-  if (!m || !d) return ts;
-  const base = `${parseInt(m, 10)}/${parseInt(d, 10)}`;
-  if (timePart && timePart !== "00:00:00" && !timePart.startsWith("00:00")) {
-    return `${base} ${timePart.slice(0, 5)}`;
-  }
-  return base;
-}
-
-/** Round to 2 decimals and normalize -0 → 0 (avoids Object.is(-0,0) surprises). */
-function round2(value: number): number {
-  const r = Math.round(value * 100) / 100;
-  return r === 0 ? 0 : r;
-}
-
-/**
- * Prepare the equity-curve series for charting. Derives a drawdown-from-peak
- * percent series if the points don't already carry drawdown_pct.
- */
-export function prepareEquitySeries(points: EquityPoint[]): EquityChartDatum[] {
-  let peak = -Infinity;
-  return points.map((p) => {
-    const equity = Number.isFinite(p.equity) ? p.equity : 0;
-    if (equity > peak) peak = equity;
-    const dd =
-      p.drawdown_pct != null && Number.isFinite(p.drawdown_pct)
-        ? -Math.abs(p.drawdown_pct)
-        : peak > 0
-          ? -Math.abs(((peak - equity) / peak) * 100)
-          : 0;
-    return {
-      label: formatTsLabel(p.ts),
-      equity: round2(equity),
-      drawdown: round2(dd),
-    };
-  });
-}
-
-/** Compute a padded y-domain for the equity axis. */
-export function equityDomain(data: EquityChartDatum[]): [number, number] {
-  if (data.length === 0) return [0, 1];
-  let min = data[0].equity;
-  let max = data[0].equity;
-  for (const d of data) {
-    if (d.equity < min) min = d.equity;
-    if (d.equity > max) max = d.equity;
-  }
-  const pad = Math.max(Math.abs(max - min) * 0.02, 1);
-  return [min - pad, max + pad];
-}
-
-/**
- * Linearly interpolate a buy & hold benchmark series from the first equity point
- * to `finalValue`, returning a new array with a `buyHold` key on each row. If the
- * benchmark is unavailable (null/non-finite) or there are <2 points, returns the
- * input unchanged (no `buyHold` key).
- */
-export function buildBuyHoldSeries(
-  data: EquityChartDatum[],
-  finalValue: number | null | undefined,
-): Array<EquityChartDatum & { buyHold?: number }> {
-  if (finalValue == null || !Number.isFinite(finalValue) || data.length < 2) {
-    return data;
-  }
-  const start = data[0].equity;
-  const n = data.length - 1;
-  return data.map((d, i) => ({
-    ...d,
-    buyHold: round2(start + ((finalValue - start) * i) / n),
-  }));
-}
+// AI-CONTEXT: Pure data-shaping helpers (formatTsLabel, prepareEquitySeries,
+// equityDomain, buildBuyHoldSeries, EquityChartDatum) live in ./equityCurveData
+// so this file exports only the component — a requirement for React Fast Refresh
+// (react-refresh/only-export-components). Import only the helpers this component
+// uses; tests import the rest (e.g. formatTsLabel) from ./equityCurveData directly.
 
 export interface EquityCurveChartProps {
   equityCurve: EquityPoint[];

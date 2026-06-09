@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { EquityOverlayChart } from "../EquityOverlayChart";
 import {
-  EquityOverlayChart,
   mergeEquityDatasets,
   OVERLAY_COLORS,
   type EquityDataset,
-} from "../EquityOverlayChart";
+} from "../equityOverlayData";
 
 function ds(label: string, equities: number[]): EquityDataset {
   return {

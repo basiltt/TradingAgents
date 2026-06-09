@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { FleetCohortView, computeConcentration } from "../FleetCohortView";
+import { FleetCohortView } from "../FleetCohortView";
+import { computeConcentration } from "../cohortConcentration";
 import type { TradingAccount } from "../../../api/client";
 
 function acct(id: string, cohort?: "trend" | "mean_reversion"): TradingAccount {

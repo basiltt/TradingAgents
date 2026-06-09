@@ -140,6 +140,18 @@ const AI_MGR_STATE = { SLEEPING: "sleeping", PAUSED: "paused", MONITORING: "moni
 // Decisions arrive via polling; logs via polling with cursor. Both append-only.
 const MAX_DECISIONS = 500;
 const MAX_LOGS = 1000;
+/**
+ * Cap for the per-account LLM-call feed (newest-first, unlike the append-only
+ * decisions/logs buffers).
+ *
+ * AI-CONTEXT: Sized generously (not the ~200 of a single page) because the feed is
+ * fed from BOTH ends: realtime `onLLMCompleted` unshifts newest entries to the
+ * front, while "Load more" paginates OLDER entries onto the tail via cursor. If this
+ * were ~200, the pagination `slice(0, MAX)` would keep only the newest 200 and
+ * silently discard every older page (Load more would be a no-op). 1000 lets history
+ * accumulate while still bounding memory growth.
+ */
+const MAX_LLM_CALLS = 1000;
 
 function isHttpError(e: unknown, status: number): boolean {
   return !!e && typeof e === "object" && "status" in e && (e as { status: number }).status === status;
@@ -384,7 +396,7 @@ const aiManagerSlice = createSlice({
       state.inFlightCalls[account_id] = (state.inFlightCalls[account_id] || []).filter(id => id !== entry.call_id);
       if (!state.llmCallsByAccount[account_id]) state.llmCallsByAccount[account_id] = [];
       state.llmCallsByAccount[account_id].unshift(entry);
-      if (state.llmCallsByAccount[account_id].length > 200) {
+      if (state.llmCallsByAccount[account_id].length > MAX_LLM_CALLS) {
         state.llmCallsByAccount[account_id].pop();
       }
     },
@@ -568,10 +580,13 @@ const aiManagerSlice = createSlice({
         state.loading["llmCalls"] = false;
         const { accountId, calls, nextCursor, append } = action.payload;
         if (append) {
+          // Appended entries are OLDER (pagination via cursor); keep the newest
+          // MAX_LLM_CALLS so "Load more" actually accumulates history
+          // instead of being capped away at MAX_LLM_CALLS.
           const combined = [...(state.llmCallsByAccount[accountId] || []), ...calls];
-          state.llmCallsByAccount[accountId] = combined.slice(0, 200);
+          state.llmCallsByAccount[accountId] = combined.slice(0, MAX_LLM_CALLS);
         } else {
-          state.llmCallsByAccount[accountId] = calls.slice(0, 200);
+          state.llmCallsByAccount[accountId] = calls.slice(0, MAX_LLM_CALLS);
         }
         state.llmCallCursors[accountId] = nextCursor;
       })

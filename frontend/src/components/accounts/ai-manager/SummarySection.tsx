@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppSelector } from "@/store";
 import { makeSelectInsights } from "@/store/ai-manager-selectors";
 import { Activity } from "lucide-react";
@@ -26,10 +26,22 @@ export default function SummarySection({ accountId }: SummarySectionProps) {
   const insights = useAppSelector(selectInsights);
   const status = useAppSelector(s => s.aiManager.statusByAccount[accountId]);
 
+  // AI-CONTEXT: A 1Hz ticking clock so the heartbeat age (and its color) decays in
+  // real time. Previously Date.now() was read inside the heartbeatAge useMemo keyed
+  // only on last_analysis_at, so the displayed age froze until a new analysis
+  // arrived (react-hooks/purity flagged the impure render-time read). Driving `now`
+  // from an interval makes the age advance every second and keeps render pure.
+  // Lazy initializer reads the clock once on mount.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const heartbeatAge = useMemo(() => {
     if (!status?.last_analysis_at) return null;
-    return Math.floor((Date.now() - new Date(status.last_analysis_at).getTime()) / 1000);
-  }, [status?.last_analysis_at]);
+    return Math.floor((nowMs - new Date(status.last_analysis_at).getTime()) / 1000);
+  }, [status?.last_analysis_at, nowMs]);
 
   const heartbeatColor = heartbeatAge == null ? "bg-zinc-500" : heartbeatAge < 30 ? "bg-emerald-400" : heartbeatAge < 60 ? "bg-amber-400" : "bg-red-400";
 

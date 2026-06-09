@@ -27,12 +27,26 @@ import {
   updateUnrealizedPnl,
 } from "@/store/trades-slice";
 import { fetchAllActiveTrades } from "@/components/trades/hooks/useTradePolling";
+import { tradeQueryKeys } from "@/components/trades/queryKeys";
 import { accountsApi } from "@/api/client";
 
 const WS_BASE = import.meta.env.VITE_WS_BASE_URL || `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 const WS_URL = `${WS_BASE}/ws/v1/accounts`;
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX = 30000;
+/** Debounce window for coalescing rapid dashboard-update messages into one fetch. */
+const DASHBOARD_DEBOUNCE_MS = 1500;
+/** Minimum gap between full active-trades refetches triggered by WS events (throttle). */
+const MIN_REFETCH_INTERVAL_MS = 5000;
+/** If no message/pong arrives within this window, assume the socket is dead and reconnect. */
+const PING_WATCHDOG_MS = 45000;
+/**
+ * Reconnect backoff jitter band: the computed delay is multiplied by a random factor
+ * in [JITTER_MIN, JITTER_MIN + JITTER_SPREAD] = [0.75, 1.25] (±25%) so many clients
+ * reconnecting after a server blip don't stampede in lockstep (thundering herd).
+ */
+const JITTER_MIN = 0.75;
+const JITTER_SPREAD = 0.5;
 
 export function useAccountWebSocket() {
   const dispatch = useAppDispatch();
@@ -59,7 +73,7 @@ export function useAccountWebSocket() {
         const cards = await accountsApi.getDashboard();
         if (mounted.current) dispatch(setDashboard(cards));
       } catch { /* polling will catch up */ }
-    }, 1500);
+    }, DASHBOARD_DEBOUNCE_MS);
   }, [dispatch]);
 
   useEffect(() => { queryClientRef.current = queryClient; });
@@ -78,10 +92,10 @@ export function useAccountWebSocket() {
       reconnectDelay.current = RECONNECT_BASE;
       dispatch(setWsConnected(true));
       const now = Date.now();
-      if (now - lastFetchRef.current > 5000) {
+      if (now - lastFetchRef.current > MIN_REFETCH_INTERVAL_MS) {
         lastFetchRef.current = now;
         fetchAllActiveTrades(dispatch).catch(() => {});
-        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+        queryClientRef.current.invalidateQueries({ queryKey: tradeQueryKeys.stats() });
       }
       refreshDashboard();
     };
@@ -98,7 +112,7 @@ export function useAccountWebSocket() {
         clearTimeout(pingWatchdog.current);
         pingWatchdog.current = setTimeout(() => {
           ws.close();
-        }, 45000);
+        }, PING_WATCHDOG_MS);
         return;
       }
       if (msg.account_id && msg.type === "wallet_update") {
@@ -127,14 +141,14 @@ export function useAccountWebSocket() {
 
       if (msg.type === "trade.opened" && msg.data) {
         dispatch(addActiveTrade(msg.data as Trade));
-        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+        queryClientRef.current.invalidateQueries({ queryKey: tradeQueryKeys.stats() });
         refreshDashboard();
       }
       if (msg.type === "trade.closed" && msg.trade_id) {
         dispatch(removeActiveTrade(msg.trade_id as string));
         dispatch(clearPendingAction(msg.trade_id as string));
-        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "history"] });
-        queryClientRef.current.invalidateQueries({ queryKey: ["trades", "stats"] });
+        queryClientRef.current.invalidateQueries({ queryKey: tradeQueryKeys.history() });
+        queryClientRef.current.invalidateQueries({ queryKey: tradeQueryKeys.stats() });
         refreshDashboard();
       }
       if (msg.type === "trade.partially_closed" && msg.trade_id) {
@@ -200,7 +214,7 @@ export function useAccountWebSocket() {
       if (!mounted.current) return;
       if (suppressReconnect.current) return;
       reconnectTimer.current = setTimeout(() => {
-        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX) * (0.75 + Math.random() * 0.5);
+        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX) * (JITTER_MIN + Math.random() * JITTER_SPREAD);
         connectRef.current?.();
       }, reconnectDelay.current);
     };

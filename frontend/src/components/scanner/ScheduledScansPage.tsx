@@ -21,6 +21,8 @@ import { getModelOptions } from "@/lib/model-catalog";
 import { ConnBadge } from "@/components/ui/conn-badge";
 import { loadEndpoints, saveEndpoint, removeEndpoint, type EndpointProfile } from "@/lib/endpoints";
 import { cn } from "@/lib/utils";
+import { clampNumber } from "@/lib/number";
+import { formatDateTimeLabel } from "@/lib/format";
 import { exportSingle, exportAll, parseImportFile } from "./scheduled-scan-io";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
@@ -47,17 +49,14 @@ import {
 } from "@/components/ui/select";
 
 function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
+  // No year (compact schedule timestamps); see formatDateTimeLabel default for the
+  // year-included variant used elsewhere.
+  return formatDateTimeLabel(iso, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function relativeTime(iso: string | null | undefined): string {
@@ -1334,7 +1333,7 @@ function ScheduleFormDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs font-semibold text-[var(--neu-text-muted)] uppercase tracking-wider">Max Parallel Analyses</Label>
-              <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(Math.min(25, Math.max(1, Number(e.target.value))))} className="w-32" />
+              <Input type="number" min={1} max={25} value={maxParallel} onChange={(e) => setMaxParallel(clampNumber(e.target.value, 1, 25, 1))} className="w-32" />
             </div>
             <NeuSwitch
               checked={checkpointEnabled}

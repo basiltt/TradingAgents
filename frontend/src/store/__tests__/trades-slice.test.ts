@@ -214,6 +214,53 @@ describe("trades-slice", () => {
     });
   });
 
+  describe("updateUnrealizedPnl", () => {
+    const payload = (over = {}) => ({
+      account_id: "acc1",
+      symbol: "BTCUSD",
+      side: "long",
+      unrealized_pnl: 100,
+      ...over,
+    });
+
+    it("distributes pnl pro-rata by qty across matching trades", () => {
+      const t1 = makeTrade({ id: "a", qty: 3 });
+      const t2 = makeTrade({ id: "b", qty: 1 });
+      let state = reducer(initialState, setActiveTrades([t1, t2]));
+      state = reducer(state, updateUnrealizedPnl(payload()));
+      // total qty 4 → 100 split 75/25
+      expect(state.activeTrades["a"].unrealized_pnl).toBeCloseTo(75);
+      expect(state.activeTrades["b"].unrealized_pnl).toBeCloseTo(25);
+    });
+
+    it("treats a non-numeric qty as 0 so it doesn't poison the whole distribution", () => {
+      // BUG GUARD: previously a NaN qty made totalQty NaN, forcing an equal split for
+      // ALL trades. Now the bad qty counts as 0 and the valid one keeps the full pnl.
+      const good = makeTrade({ id: "good", qty: 2 });
+      const bad = makeTrade({ id: "bad", qty: "abc" as unknown as number });
+      let state = reducer(initialState, setActiveTrades([good, bad]));
+      state = reducer(state, updateUnrealizedPnl(payload()));
+      expect(state.activeTrades["good"].unrealized_pnl).toBeCloseTo(100); // 2/2 of total
+      expect(state.activeTrades["bad"].unrealized_pnl).toBeCloseTo(0);    // 0/2 of total
+    });
+
+    it("falls back to an equal split when all qtys are zero", () => {
+      const t1 = makeTrade({ id: "a", qty: 0 });
+      const t2 = makeTrade({ id: "b", qty: 0 });
+      let state = reducer(initialState, setActiveTrades([t1, t2]));
+      state = reducer(state, updateUnrealizedPnl(payload()));
+      expect(state.activeTrades["a"].unrealized_pnl).toBeCloseTo(50);
+      expect(state.activeTrades["b"].unrealized_pnl).toBeCloseTo(50);
+    });
+
+    it("is a no-op when no trades match", () => {
+      const t1 = makeTrade({ id: "a", qty: 1 });
+      let state = reducer(initialState, setActiveTrades([t1]));
+      state = reducer(state, updateUnrealizedPnl(payload({ symbol: "ETHUSD" })));
+      expect(state.activeTrades["a"].unrealized_pnl).toBeNull();
+    });
+  });
+
   describe("pending actions & optimistic updates", () => {
     it("startPendingAction sets optimistic status and snapshot", () => {
       const t = makeTrade({ id: "t1", status: "open" });

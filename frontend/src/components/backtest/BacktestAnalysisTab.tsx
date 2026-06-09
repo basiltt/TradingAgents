@@ -14,12 +14,19 @@ import { formatUsd, pnlColorClass } from "./format";
 
 /* ------------------------------ monthly heatmap ------------------------------ */
 
+// AI-CONTEXT: Heatmap fill colors as raw "R, G, B" triples (composed into rgba()
+// with a computed alpha). Emerald = positive PnL, rose = negative — the same
+// semantic palette as the text-emerald-500 / text-rose-500 utility classes used
+// elsewhere; kept as RGB strings here because the alpha is dynamic per cell.
+const HEAT_POSITIVE_RGB = "16, 185, 129"; // emerald-500
+const HEAT_NEGATIVE_RGB = "244, 63, 94"; // rose-500
+
 /** Background color for a heat cell, scaled by |pnl| relative to the max. */
 function heatStyle(pnl: number, maxAbs: number): React.CSSProperties {
   if (maxAbs === 0) return {};
   const intensity = Math.min(1, Math.abs(pnl) / maxAbs);
   const alpha = 0.12 + intensity * 0.5;
-  const color = pnl >= 0 ? `16, 185, 129` : `244, 63, 94`; // emerald / rose RGB
+  const color = pnl >= 0 ? HEAT_POSITIVE_RGB : HEAT_NEGATIVE_RGB;
   return { backgroundColor: `rgba(${color}, ${alpha.toFixed(2)})` };
 }
 

@@ -16,8 +16,21 @@ import { updateRunStatus } from "@/store/analysis-slice";
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY = 1000;
 const MAX_DELAY = 30000;
+/** ±25% reconnect-backoff jitter band — see the delay calc in onclose for rationale. */
+const RECONNECT_JITTER_MIN = 0.75;
+const RECONNECT_JITTER_SPREAD = 0.5;
 // AI-CONTEXT: Ring-buffer cap — prevents memory growth on long-running analyses.
 const MAX_MESSAGES = 500;
+
+/**
+ * WebSocket close codes that must NOT trigger a reconnect (the failure is permanent
+ * or client-caused). Hoisted to module scope so it is allocated once, named, and the
+ * meaning of each code is self-documenting:
+ * - 1000 NORMAL: clean server-initiated close
+ * - 1008 POLICY_VIOLATION / 1009 MESSAGE_TOO_BIG: protocol-level rejections
+ * - 4400 BAD_REQUEST / 4403 FORBIDDEN / 4404 RUN_NOT_FOUND: app-level rejections
+ */
+const NON_RETRIABLE_CLOSE_CODES = [1000, 4400, 4403, 4404, 1008, 1009] as const;
 
 /** Accumulated real-time state from the WebSocket stream, stored in React Query cache. */
 export interface WsState {
@@ -301,10 +314,8 @@ export function useAnalysisWebSocket(runId: string) {
       if (ws !== wsRef.current && wsRef.current !== null) return;
       wsRef.current = null;
 
-      // AI-CONTEXT: Non-retriable close codes — 1000=normal, 4400=bad request,
-      // 4403=forbidden, 4404=run not found, 1008=policy violation, 1009=too large.
-      const NON_RETRIABLE = [1000, 4400, 4403, 4404, 1008, 1009];
-      if (NON_RETRIABLE.includes(ev.code)) {
+      // AI-CONTEXT: see NON_RETRIABLE_CLOSE_CODES (module scope) for code meanings.
+      if (NON_RETRIABLE_CLOSE_CODES.includes(ev.code as (typeof NON_RETRIABLE_CLOSE_CODES)[number])) {
         setStatus("disconnected");
         return;
       }
@@ -315,7 +326,12 @@ export function useAnalysisWebSocket(runId: string) {
       }
 
       setStatus("reconnecting");
-      const delay = Math.min(BASE_DELAY * 2 ** attemptRef.current, MAX_DELAY);
+      // AI-CONTEXT: ±25% jitter on the backoff (matching useAccountWebSocket) so that
+      // after a server restart, every client viewing an analysis does NOT reconnect in
+      // lockstep at 1s/2s/4s… — synchronized retries can re-trip a recovering backend
+      // (thundering herd). The random factor spreads them out.
+      const base = Math.min(BASE_DELAY * 2 ** attemptRef.current, MAX_DELAY);
+      const delay = base * (RECONNECT_JITTER_MIN + Math.random() * RECONNECT_JITTER_SPREAD);
       attemptRef.current += 1;
       setAttempt(attemptRef.current);
       reconnectTimerRef.current = setTimeout(() => connectRef.current?.(), delay);

@@ -1,41 +1,13 @@
 import { memo, useMemo, useState } from "react";
 import type { TradingAccount } from "../../api/client";
+import { type Cohort, computeConcentration } from "./cohortConcentration";
 
-export type Cohort = "trend" | "mean_reversion";
-
-/** SD22 server-side constant: warn when one cohort exceeds this fraction of the fleet. */
-export const COHORT_CONCENTRATION_PCT = 0.7;
-
-export interface CohortConcentration {
-  trend: number;
-  mean_reversion: number;
-  dominant: Cohort | null;
-  fraction: number;
-  warn: boolean;
-}
-
-/**
- * Pure concentration calculator (AC-014). Returns per-cohort counts plus whether a
- * single cohort dominates beyond COHORT_CONCENTRATION_PCT — the F3 decorrelation
- * guard (21 accounts all in one cohort = correlated drawdowns, not diversification).
- */
-export function computeConcentration(
-  accounts: Pick<TradingAccount, "strategy_cohort">[],
-): CohortConcentration {
-  const counts = { trend: 0, mean_reversion: 0 };
-  for (const a of accounts) {
-    const c: Cohort = a.strategy_cohort === "mean_reversion" ? "mean_reversion" : "trend";
-    counts[c] += 1;
-  }
-  const total = accounts.length;
-  let dominant: Cohort | null = null;
-  let fraction = 0;
-  if (total > 0) {
-    dominant = counts.trend >= counts.mean_reversion ? "trend" : "mean_reversion";
-    fraction = counts[dominant] / total;
-  }
-  return { ...counts, dominant, fraction, warn: total > 0 && fraction > COHORT_CONCENTRATION_PCT };
-}
+// AI-CONTEXT: Cohort, COHORT_CONCENTRATION_PCT, CohortConcentration, and
+// computeConcentration live in ./cohortConcentration so this file exports only the
+// component (React Fast Refresh / react-refresh/only-export-components). Re-export
+// the Cohort type because FleetCohortPanel imports it from this module; a type-only
+// re-export does not trip the rule (it erases at build time).
+export type { Cohort };
 
 interface FleetCohortViewProps {
   accounts: TradingAccount[];
@@ -63,7 +35,14 @@ export const FleetCohortView = memo(function FleetCohortView({ accounts, onAssig
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      // AI-CONTEXT: explicit if/else rather than a ternary-as-statement — Set.delete/add
+      // are called for their side effect; a ternary expression-statement trips
+      // @typescript-eslint/no-unused-expressions and reads as a returned value.
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   }

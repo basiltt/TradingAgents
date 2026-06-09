@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -7,7 +7,8 @@ import { CalibrationChart, type CalibrationRow } from "./CalibrationChart";
 import { RollingWinRateChart, type WinRateRow } from "./RollingWinRateChart";
 import { BenchmarkChart, type BenchmarkRow } from "./BenchmarkChart";
 import { RegimeBreakdownChart, type RegimeRow } from "./RegimeBreakdownChart";
-import { DecayAlertBanner, type DecayAlert, acknowledgeAlert } from "./DecayAlertBanner";
+import { DecayAlertBanner } from "./DecayAlertBanner";
+import { type DecayAlert, acknowledgeAlert } from "./decayAlerts";
 import { TradeTable, type TradeRow } from "./TradeTable";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -59,39 +60,51 @@ async function fetchAll(signal: AbortSignal): Promise<PageData> {
   };
 }
 
+/**
+ * Signal Analytics dashboard page.
+ *
+ * Fetches the full analytics bundle (summary, win-rate, calibration, benchmarks,
+ * regime breakdown, decay alerts, recent trades) via a single React Query so the
+ * request is abortable, retried, and cached like every other page. Decay-alert
+ * acknowledgements optimistically prune the cached `alerts` array.
+ *
+ * @returns The analytics page (skeletons while loading, error card on failure).
+ */
 export function SignalAnalyticsPage() {
-  const [data, setData] = useState<PageData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    fetchAll(controller.signal)
-      .then((d) => {
-        setData(d);
-        setLoading(false);
-      })
-      .catch((e) => {
-        if (e?.name === "AbortError") return;
-        setError(e?.message ?? "Failed to load signal analytics");
-        setLoading(false);
-      });
-    return () => controller.abort();
-  }, [retryCount]);
+  // AI-CONTEXT: Single useQuery replaces the previous fetch-in-useEffect. This
+  // removes the synchronous setState-in-effect (react-hooks/set-state-in-effect),
+  // and delegates loading/error/retry/abort to React Query — matching the rest of
+  // the app. The query key is the stable cache identity; `refetch()` powers Retry.
+  const SIGNAL_ANALYTICS_KEY = ["signal-analytics", "dashboard"] as const;
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: SIGNAL_ANALYTICS_KEY,
+    queryFn: ({ signal }) => fetchAll(signal),
+  });
+  const error = queryError
+    ? (queryError instanceof Error ? queryError.message : "Failed to load signal analytics")
+    : null;
 
   const handleAcknowledge = async (id: number) => {
     try {
       await acknowledgeAlert(id);
-      setData((prev) =>
+      // Optimistically drop the acknowledged alert from the cached page data so the
+      // banner updates without a full refetch.
+      queryClient.setQueryData<PageData>(SIGNAL_ANALYTICS_KEY, (prev) =>
         prev
           ? { ...prev, alerts: prev.alerts.filter((a) => a.id !== id) }
           : prev,
       );
     } catch {
-      // silently ignore
+      // AI-CONTEXT: Acknowledge is best-effort. On failure the alert simply
+      // remains visible (the cache is unchanged), so the user can retry — no need
+      // to surface an error toast for a non-destructive dismiss.
     }
   };
 
@@ -117,7 +130,7 @@ export function SignalAnalyticsPage() {
           <CardContent className="p-6 text-center">
             <p className="text-destructive font-semibold">{error}</p>
             <button
-              onClick={() => setRetryCount((c) => c + 1)}
+              onClick={() => refetch()}
               className="mt-3 px-4 py-1.5 rounded bg-destructive text-destructive-foreground text-sm"
             >
               Retry

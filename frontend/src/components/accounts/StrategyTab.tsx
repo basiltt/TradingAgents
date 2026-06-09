@@ -15,10 +15,22 @@ export function StrategyTab({ accountId }: { accountId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  useEffect(() => {
-    const ctrl = new AbortController();
+  // AI-CONTEXT: Reset to the loading state when the account changes using React's
+  // "adjust state during render when a prop changes" pattern, NOT a synchronous
+  // setState in the effect body (which trips react-hooks/set-state-in-effect). The
+  // effect below only performs the fetch and writes state from async callbacks
+  // (microtask-deferred, so not flagged). Tracking the previous accountId ensures
+  // the spinner shows immediately on switch, before the new request resolves.
+  const [seenAccountId, setSeenAccountId] = useState(accountId);
+  if (accountId !== seenAccountId) {
+    setSeenAccountId(accountId);
+    setRows(undefined);
     setLoading(true);
     setError(false);
+  }
+
+  useEffect(() => {
+    const ctrl = new AbortController();
     (async () => {
       try {
         const res = await tradesApi.getStats([accountId], true, ctrl.signal);

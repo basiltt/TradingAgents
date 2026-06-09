@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { EquityCurveChart } from "../EquityCurveChart";
 import {
-  EquityCurveChart,
   prepareEquitySeries,
   equityDomain,
   formatTsLabel,
   buildBuyHoldSeries,
-} from "../EquityCurveChart";
+} from "../equityCurveData";
 import type { EquityPoint } from "../types";
 
 describe("formatTsLabel", () => {
@@ -51,6 +51,19 @@ describe("prepareEquitySeries", () => {
   it("handles non-finite equity defensively", () => {
     const series = prepareEquitySeries([{ ts: null, equity: Infinity }]);
     expect(series[0].equity).toBe(0);
+  });
+
+  it("carries forward the last finite equity for a non-finite middle sample (no phantom -100% drawdown)", () => {
+    // A NaN in the middle previously became 0, forging a plunge to $0 / -100% dd.
+    // It should instead hold the prior equity flat across the gap.
+    const series = prepareEquitySeries([
+      { ts: "2026-01-01T00:00:00Z", equity: 100 },
+      { ts: "2026-01-02T00:00:00Z", equity: NaN },
+      { ts: "2026-01-03T00:00:00Z", equity: 120 },
+    ]);
+    expect(series[1].equity).toBe(100); // carried forward, not 0
+    expect(series[1].drawdown).toBe(0); // no fake drawdown spike
+    expect(series[2].equity).toBe(120);
   });
 
   it("reports zero drawdown when the account never has positive peak equity", () => {

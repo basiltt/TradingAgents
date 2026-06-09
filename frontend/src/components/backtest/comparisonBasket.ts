@@ -9,6 +9,7 @@ const STORAGE_KEY = "backtest_comparison_basket";
  * NOTE: EquityOverlayChart.OVERLAY_COLORS must have at least this many entries
  * (it currently has exactly 4); if you raise this, extend that palette too. */
 export const MAX_COMPARE_RUNS = 4;
+/** Alias of {@link MAX_COMPARE_RUNS} used by the basket internals; the basket never grows beyond this. */
 export const MAX_BASKET = MAX_COMPARE_RUNS;
 
 function read(): string[] {
@@ -30,6 +31,7 @@ function write(ids: string[]): void {
   }
 }
 
+/** Current basket contents (run ids) read from sessionStorage; empty array if unset or unreadable. */
 export function getBasket(): string[] {
   return read();
 }
@@ -43,16 +45,19 @@ export function addToBasket(id: string): string[] {
   return next;
 }
 
+/** Remove an id from the basket (no-op if absent). Returns the new basket. */
 export function removeFromBasket(id: string): string[] {
   const next = read().filter((x) => x !== id);
   write(next);
   return next;
 }
 
+/** Empty the basket entirely. */
 export function clearBasket(): void {
   write([]);
 }
 
+/** Whether `id` is currently in the basket — drives the per-run "in compare" toggle state. */
 export function isInBasket(id: string): boolean {
   return read().includes(id);
 }

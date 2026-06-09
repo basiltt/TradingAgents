@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { RegimeStrategyFields, RECOMMENDED_PRESET } from "../RegimeStrategyFields";
+import { RegimeStrategyFields } from "../RegimeStrategyFields";
+import { RECOMMENDED_PRESET } from "../regimeStrategyPreset";
 import type { AutoTradeConfig } from "@/api/client";
 
 describe("RECOMMENDED_PRESET", () => {

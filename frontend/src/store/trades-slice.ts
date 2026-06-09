@@ -20,6 +20,13 @@ interface PendingAction {
 /** Auto-expire stale pending actions after 60s. */
 const PENDING_ACTION_TTL_MS = 60_000;
 
+/**
+ * Minimum unrealized-PnL delta (in quote currency) required to write a new value.
+ * Sub-cent churn is ignored so a stream of near-identical position updates doesn't
+ * trigger needless re-renders of every trade row.
+ */
+const UNREALIZED_PNL_EPSILON = 0.0001;
+
 interface TradesState {
   activeTrades: Record<string, Trade>;
   activeTab: "active" | "history";
@@ -64,6 +71,35 @@ const initialState: TradesState = {
   wsConnected: false,
   lastUpdated: null,
 };
+
+/**
+ * Remove a set of trades from the draft state and clean up all references to them.
+ *
+ * Shared by `removeActiveTrade`, `bulkRemoveActiveTrades`, and
+ * `removeActiveTradesByAccount` so the cleanup rules (drop the trade + its
+ * optimistic snapshot, clear the selection if it pointed at a removed trade, close
+ * the confirm modal if it targeted a removed trade, bump `lastUpdated`) live in
+ * exactly one place and cannot drift between the single/bulk/by-account paths.
+ *
+ * @param state - The Immer draft of the trades slice state (mutated in place).
+ * @param ids - The set of trade IDs to purge.
+ *
+ * @remarks Mutates `state` directly (valid inside an RTK reducer's Immer draft).
+ */
+function purgeTradesFromState(state: TradesState, ids: Set<string>): void {
+  for (const id of ids) {
+    delete state.activeTrades[id];
+    delete state.optimisticSnapshots[id];
+  }
+  if (state.selectedTradeId && ids.has(state.selectedTradeId)) {
+    state.selectedTradeId = null;
+    state.selectedTrade = null;
+  }
+  if (state.closeModalTradeId && ids.has(state.closeModalTradeId)) {
+    state.closeModalTradeId = null;
+  }
+  state.lastUpdated = Date.now();
+}
 
 const tradesSlice = createSlice({
   name: "trades",
@@ -132,14 +168,7 @@ const tradesSlice = createSlice({
     },
     /** Remove a trade and clean up related selection/modal/snapshot state. */
     removeActiveTrade(state, action: PayloadAction<string>) {
-      delete state.activeTrades[action.payload];
-      delete state.optimisticSnapshots[action.payload];
-      if (state.selectedTradeId === action.payload) {
-        state.selectedTradeId = null;
-        state.selectedTrade = null;
-      }
-      if (state.closeModalTradeId === action.payload) state.closeModalTradeId = null;
-      state.lastUpdated = Date.now();
+      purgeTradesFromState(state, new Set([action.payload]));
     },
     /** Switch between active and history tabs. */
     setActiveTab(state, action: PayloadAction<"active" | "history">) {
@@ -211,54 +240,43 @@ const tradesSlice = createSlice({
     },
     /** Remove multiple trades by ID array (e.g., after close-all completes). */
     bulkRemoveActiveTrades(state, action: PayloadAction<string[]>) {
-      const ids = new Set(action.payload);
-      for (const id of ids) {
-        delete state.activeTrades[id];
-        delete state.optimisticSnapshots[id];
-      }
-      if (state.selectedTradeId && ids.has(state.selectedTradeId)) {
-        state.selectedTradeId = null;
-        state.selectedTrade = null;
-      }
-      if (state.closeModalTradeId && ids.has(state.closeModalTradeId)) state.closeModalTradeId = null;
-      state.lastUpdated = Date.now();
+      purgeTradesFromState(state, new Set(action.payload));
     },
     /** Remove all trades belonging to a specific account. */
     removeActiveTradesByAccount(state, action: PayloadAction<string>) {
       const accountId = action.payload;
-      const idsToRemove: string[] = [];
+      const idsToRemove = new Set<string>();
       for (const [id, trade] of Object.entries(state.activeTrades)) {
-        if (trade.account_id === accountId) idsToRemove.push(id);
+        if (trade.account_id === accountId) idsToRemove.add(id);
       }
-      for (const id of idsToRemove) {
-        delete state.activeTrades[id];
-        delete state.optimisticSnapshots[id];
-      }
-      if (state.selectedTradeId && idsToRemove.includes(state.selectedTradeId)) {
-        state.selectedTradeId = null;
-        state.selectedTrade = null;
-      }
-      if (state.closeModalTradeId && idsToRemove.includes(state.closeModalTradeId)) state.closeModalTradeId = null;
-      state.lastUpdated = Date.now();
+      purgeTradesFromState(state, idsToRemove);
     },
     /** Update unrealized PnL for all trades matching account/symbol/side from position data, distributed pro-rata by qty. */
     updateUnrealizedPnl(state, action: PayloadAction<{ account_id: string; symbol: string; side: string; unrealized_pnl: number }>) {
       const { account_id, symbol, side, unrealized_pnl } = action.payload;
       const matchIds: string[] = [];
       let totalQty = 0;
+      // AI-CONTEXT: A non-numeric qty (blank/garbage) would make parseFloat NaN and
+      // poison totalQty (NaN), forcing the `totalQty > 0` branch false so EVERY match
+      // falls back to an equal split — wrong for unequal positions. Coerce each qty to
+      // a finite number (bad → 0) so the pro-rata stays correct for the valid trades.
+      const qtyOf = (id: string): number => {
+        const q = parseFloat(String(state.activeTrades[id]?.qty ?? 0));
+        return Number.isFinite(q) ? q : 0;
+      };
       for (const [id, trade] of Object.entries(state.activeTrades)) {
         if (trade.account_id === account_id && trade.symbol === symbol && trade.side === side) {
           matchIds.push(id);
-          totalQty += parseFloat(String(trade.qty ?? 0));
+          totalQty += qtyOf(id);
         }
       }
       if (matchIds.length === 0) return;
       for (const id of matchIds) {
         const trade = state.activeTrades[id];
         const newPnl = totalQty > 0
-          ? unrealized_pnl * (parseFloat(String(trade.qty ?? 0)) / totalQty)
+          ? unrealized_pnl * (qtyOf(id) / totalQty)
           : unrealized_pnl / matchIds.length;
-        if (Math.abs((trade.unrealized_pnl ?? 0) - newPnl) > 0.0001) {
+        if (Math.abs((trade.unrealized_pnl ?? 0) - newPnl) > UNREALIZED_PNL_EPSILON) {
           trade.unrealized_pnl = newPnl;
         }
       }

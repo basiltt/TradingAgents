@@ -183,7 +183,9 @@ describe("useAnalysisWebSocket", () => {
     act(() => ws.simulateOpen());
     act(() => ws.simulateClose(1006));
     expect(MockWebSocket.instances).toHaveLength(1);
-    act(() => { vi.advanceTimersByTime(1000); });
+    // Advance past the MAX jittered first-attempt delay (BASE_DELAY 1000 * 2^0 * 1.25
+    // = 1250ms); 2000ms safely covers the ±25% jitter band so the reconnect has fired.
+    act(() => { vi.advanceTimersByTime(2000); });
     expect(MockWebSocket.instances).toHaveLength(2);
   });
 
@@ -435,7 +437,7 @@ describe("useAnalysisWebSocket", () => {
     act(() => MockWebSocket.instances[0].simulateClose(1006));
     // After first unexpected close, attempt becomes 1
     expect(result.current.attempt).toBe(1);
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => { vi.advanceTimersByTime(2000); }); // past max jittered first-attempt delay (1250ms)
     // After reconnect opens, attemptRef resets to 0 internally
     act(() => MockWebSocket.instances[1].simulateOpen());
     // A second unexpected close starts counting from 0 again → attempt becomes 1

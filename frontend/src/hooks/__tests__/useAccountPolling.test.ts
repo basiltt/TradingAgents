@@ -85,4 +85,31 @@ describe("useAccountPolling", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(accountsApi.getDashboard).not.toHaveBeenCalled();
   });
+
+  it("does not start a second poll while one is in flight (in-flight guard)", async () => {
+    // BUG GUARD: previously each tick aborted the prior in-flight request, so under a
+    // slow backend the dashboard never updated. Now a manual refresh while the initial
+    // mount poll is still pending must NOT issue a second getDashboard call.
+    vi.useRealTimers();
+    Object.defineProperty(document, "hidden", { value: false, writable: true });
+    vi.mocked(accountsApi.getDashboard).mockClear();
+
+    // First call never resolves → simulates a slow/in-flight request.
+    let resolveFirst: (v: never[]) => void = () => {};
+    vi.mocked(accountsApi.getDashboard).mockImplementationOnce(
+      () => new Promise((res) => { resolveFirst = res as (v: never[]) => void; }),
+    );
+
+    const { result } = renderHook(() => useAccountPolling(), { wrapper: createWrapper() });
+    // Let the mount-time poll start (and stay pending).
+    await act(async () => { await Promise.resolve(); });
+    expect(accountsApi.getDashboard).toHaveBeenCalledTimes(1);
+
+    // A manual refresh while the first is still in flight must be skipped by the guard.
+    await act(async () => { await result.current.refresh(); });
+    expect(accountsApi.getDashboard).toHaveBeenCalledTimes(1);
+
+    // Once the in-flight request resolves, the guard clears for future polls.
+    await act(async () => { resolveFirst([]); await Promise.resolve(); });
+  });
 });

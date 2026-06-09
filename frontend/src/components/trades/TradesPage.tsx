@@ -167,7 +167,10 @@ export default function TradesPage() {
   useTradeFilters();
 
   useEffect(() => {
-    fetchAllActiveTrades(dispatch);
+    // AI-CONTEXT: .catch to avoid an unhandled promise rejection if the initial
+    // fetch fails (network down / API 500 on first load). Polling + WS recovery will
+    // refill state; the error is swallowed here to match the other call sites.
+    fetchAllActiveTrades(dispatch).catch(() => {});
   }, [dispatch]);
 
   const openPositions = activeTrades.filter((trade) =>

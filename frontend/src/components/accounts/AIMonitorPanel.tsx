@@ -64,14 +64,18 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch, accountId]);
 
-  // Dashboard enhancement fetches — only when AI Manager is confirmed active
+  // Dashboard enhancement fetches — only when AI Manager is confirmed active.
+  // AI-CONTEXT: Depend on the derived boolean (not the whole `status` object) so the
+  // dependency array is exhaustive AND the fetches only re-run when enabled actually
+  // flips — not on every unrelated status field change (e.g. token budget ticks).
+  const aiEnabled = !!status?.enabled;
   useEffect(() => {
-    if (status && status.enabled) {
+    if (aiEnabled) {
       dispatch(fetchLLMCalls({ accountId, limit: 50 }));
       dispatch(fetchCapabilities(accountId));
       dispatch(fetchInsights(accountId));
     }
-  }, [dispatch, accountId, status?.enabled]);
+  }, [dispatch, accountId, aiEnabled]);
 
   // Periodic live refresh for status (so panel stays current without relying only on WS)
   useEffect(() => {
