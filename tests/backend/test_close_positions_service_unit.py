@@ -37,7 +37,10 @@ def mock_accounts_service():
     svc = AsyncMock()
     client = AsyncMock()
     client.get_positions = AsyncMock(return_value=[])
-    client.place_market_close_order = AsyncMock(return_value={"orderId": "ord-1", "avgPrice": "100.0"})
+    # cumExecQty reflects a CONFIRMED fill: _close_single_position treats a close as
+    # "closed" only when cumExecQty > 0 (else "failed — fill not confirmed"). The mock
+    # must supply it or every close in these tests reports failed.
+    client.place_market_close_order = AsyncMock(return_value={"orderId": "ord-1", "avgPrice": "100.0", "cumExecQty": "0.1"})
     svc.get_client = AsyncMock(return_value=client)
     svc.get_wallet = AsyncMock(return_value={"totalEquity": "10000"})
     svc.invalidate_cache = MagicMock()
@@ -107,7 +110,7 @@ async def test_close_all_partial_failure(service, mock_accounts_service, mock_db
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return {"orderId": "ord-1"}
+            return {"orderId": "ord-1", "cumExecQty": "0.1"}  # confirmed fill
         raise BybitAPIError(10001, "Insufficient balance")
 
     client.place_market_close_order.side_effect = side_effect

@@ -1,4 +1,10 @@
-"""Tests for BybitClient rate limiting and retry logic."""
+"""Tests for BybitClient rate limiting and retry logic.
+
+Rate-limiting state moved out of BybitClient into the shared, IP-level
+``BybitRateGate`` (backend/services/bybit_rate_gate.py); the window-tracking /
+pruning / at-max-sleep tests below exercise that gate directly, while the retry
+and semaphore tests still target BybitClient._request.
+"""
 
 import asyncio
 import time
@@ -7,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.services.bybit_client import BybitAPIError, BybitClient
+from backend.services.bybit_rate_gate import BybitRateGate
 
 
 @pytest.fixture
@@ -14,20 +21,55 @@ def client():
     return BybitClient("test_key_12345", "test_secret_12345", "demo")
 
 
-@pytest.mark.asyncio
-async def test_rate_limit_window_tracks_requests(client):
-    assert len(client._request_timestamps) == 0
-    client._request_timestamps.append(time.monotonic())
-    assert len(client._request_timestamps) == 1
+@pytest.fixture
+def gate():
+    """A fresh, small-budget rate gate (window=10s) isolated from the singleton."""
+    return BybitRateGate(public_budget=5, private_budget=5, ws_connect_budget=5, window=10.0)
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_prunes_old_timestamps(client):
-    old = time.monotonic() - 10
-    client._request_timestamps.append(old)
-    client._request_timestamps.append(old - 1)
-    await client._wait_for_rate_limit()
-    assert all(t > time.monotonic() - 6 for t in client._request_timestamps)
+async def test_rate_gate_tracks_requests(gate):
+    """Each acquire appends one timestamp to the channel's rolling window."""
+    assert gate.current_usage["public"] == 0
+    await gate.acquire_async(channel="public")
+    assert gate.current_usage["public"] == 1
+    await gate.acquire_async(channel="public")
+    assert gate.current_usage["public"] == 2
+
+
+@pytest.mark.asyncio
+async def test_rate_gate_prunes_old_timestamps(gate):
+    """Timestamps older than the window are pruned on the next acquire, so they
+    don't count against the budget."""
+    now = time.monotonic()
+    # Seed two timestamps older than the 10s window directly on the channel deque.
+    gate._public_timestamps.append(now - 30)
+    gate._public_timestamps.append(now - 20)
+    await gate.acquire_async(channel="public")
+    # Stale entries pruned; only the just-acquired one remains within the window.
+    assert gate.current_usage["public"] == 1
+    assert all(t > time.monotonic() - 10 for t in gate._public_timestamps)
+
+
+@pytest.mark.asyncio
+async def test_rate_gate_sleeps_when_at_max(gate):
+    """When the channel is at budget, acquire sleeps until the oldest slot ages out."""
+    now = time.monotonic()
+    # Fill the private channel to its effective budget with recent timestamps.
+    for i in range(5):
+        gate._private_timestamps.append(now - 0.001 * i)
+
+    slept = []
+
+    async def fake_sleep(duration):
+        slept.append(duration)
+        gate._private_timestamps.clear()  # let the next loop iteration proceed
+
+    with patch("asyncio.sleep", side_effect=fake_sleep):
+        # 'order' lane uses the full budget; it must still wait because we're at max.
+        await gate.acquire_async(channel="private", lane="order")
+    assert len(slept) >= 1
+    assert slept[0] > 0
 
 
 def _make_mock_resp(return_value):
@@ -58,21 +100,6 @@ def _make_mock_session(request_side_effect=None, request_return_value=None):
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_sleeps_when_at_max(client):
-    now = time.monotonic()
-    for i in range(560):
-        client._request_timestamps.append(now - 2 + i * 0.003)
-
-    async def fake_sleep(duration):
-        client._request_timestamps.clear()
-
-    with patch("asyncio.sleep", side_effect=fake_sleep) as mock_sleep:
-        await client._wait_for_rate_limit()
-        assert mock_sleep.call_count >= 1
-        assert mock_sleep.call_args[0][0] > 0
-
-
-@pytest.mark.asyncio
 async def test_retry_on_rate_limit_error(client):
     client._time_synced = True
 
@@ -100,9 +127,8 @@ async def test_retry_exhaustion_raises(client):
     mock_session = _make_mock_session(request_return_value=rate_ctx)
     client._session = mock_session
 
-    with patch("asyncio.sleep", new_callable=AsyncMock):
-        with pytest.raises(BybitAPIError) as exc_info:
-            await client._request("GET", "/v5/test", {})
+    with patch("asyncio.sleep", new_callable=AsyncMock), pytest.raises(BybitAPIError) as exc_info:
+        await client._request("GET", "/v5/test", {})
     assert exc_info.value.ret_code == 10006
 
 
