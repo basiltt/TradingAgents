@@ -111,7 +111,7 @@ Confirmed by single-proc reruns. All are STALE TESTS referencing old internal AP
 | 2.5 | Documentation | 22 | DONE | — | ~487 docstrings (DB/repo/service/router/MCP); schema validators skipped |
 | 2.75 | Maintainability | 20 | DONE | R1 | money-guard fail-closed, parity defaults, named consts, 3x dedup |
 | 3 | Logging | 20 | DONE | R1 | logging already prod-grade; fixed pause fail-open visibility |
-| 4 | Testing | 36 | IN_PROGRESS | 0 | — |
+| 4 | Testing | 36 | IN_PROGRESS | R1 | ALL 19 real pre-existing failures FIXED + TQ-1 env-leak root cause |
 | 2.5 | Documentation | 22 | PENDING | 0 | — |
 | 2.75 | Maintainability | 20 | PENDING | 0 | — |
 | 3 | Logging | 20 | PENDING | 0 | — |
@@ -180,6 +180,18 @@ Plus 76 B904 exception-chain losses.
 - TQ-1: `tests/backend/test_validators.py` + `test_security.py` leak global env state (`ALLOW_LOCAL_LLM_BACKEND`) without cleanup → order-dependent failures (validators 25/25 alone, 14 fail when co-run after security). Fix in Phase 4: monkeypatch.delenv or autouse cleanup fixture. This is THE cause of the "14 validator failures" seen under xdist and batched runs — NOT a code bug.
 - TQ-2: `tests/backend/test_cycle_repository.py` — 15 ERRORS at fixture setup: `asyncpg.create_pool` path hits `TypeError: Expected str, got function` (py3.14 asyncpg compat) before the `pytest.skip("PostgreSQL not available")` fires. The skip guard runs a query that errors first. Fix: guard the DSN/connection earlier so it skips cleanly without Postgres.
 - TQ-3: Full-suite + some multi-file single-proc runs abort with a pytest-timeout on `concurrent.futures` `_global_shutdown_lock` during interpreter teardown (test_analysis_service thread executors). Fix: ensure executors are shut down in fixtures/teardown; or mark those tests to run isolated.
+  STATUS: deferred — it's a pytest-timeout × module-level ThreadPoolExecutor interaction (test-runner artifact, NOT a prod bug; prod keeps the executor for process lifetime intentionally). Mitigated by batched per-module runs. Changing the prod executor lifecycle risks real analysis runs — not worth it for a harness quirk.
+
+## Phase 4 RESULT — all 19 real pre-existing failures FIXED (+ 3 infra root causes)
+- 11 close_positions (cumExecQty fill-confirmation drift) — mocks updated
+- 3 bybit_rate_limiting (BybitRateGate refactor) — tests rewritten to new API
+- 4 engine_filter_chain (stale signal_time before kline window) — signal_time=base
+- 1 persistence schema-migration (sync now tolerates newer schema, doesn't raise) — rewritten
+- 1 close_rule_ws debounce (equity-dedup added) — vary equity to isolate debounce
+- 1 security SSRF (ALLOW_LOCAL_LLM_BACKEND env leak + MCP teardown) — delenv + mcp stub
+- TQ-1: test_validators 14 order-dependent fails → autouse delenv fixture (deterministic)
+- TQ-2: test_cycle_repository 15 errors (callable migrations) → mirror prod runner
+Verified: 117 + 184 + 107(security) + 42(persistence) + 15(cycle) targeted tests pass.
 
 ## Activity Log
 - 2026-06-09: Step 0 started. Worktree created from local HEAD (verified 17 backtest commits present). ruff installed. Baseline lint = 36 errors incl. 5 F821 real bugs. Backend test baseline running in bg.
