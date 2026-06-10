@@ -361,6 +361,24 @@ class BacktestService:
         await self._db.pool.execute("DELETE FROM backtest_runs WHERE id = $1", run_id)
         return True
 
+    async def delete_all_backtests(self) -> int:
+        """Delete ALL terminal backtest runs (completed/failed/cancelled), cascading
+        to their results+trades. Running/pending runs are LEFT INTACT so an in-flight
+        backtest is never yanked out from under its executor — the user must cancel
+        those first. Returns the number of runs deleted.
+
+        One statement, transactionally atomic on the DB side. The WHERE clause is the
+        safety boundary: a status NOT IN the active set is terminal and safe to drop.
+        """
+        result = await self._db.pool.execute(
+            "DELETE FROM backtest_runs WHERE status NOT IN ('running', 'pending')"
+        )
+        # asyncpg returns e.g. "DELETE 17" — parse the affected-row count defensively.
+        try:
+            return int(str(result).split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
     async def compare_backtests(self, run_ids: list[str]) -> dict[str, Any]:
         """Compare 2-4 completed runs side by side.
 

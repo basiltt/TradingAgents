@@ -1659,6 +1659,11 @@ export const backtestApi = {
   remove: (runId: string, signal?: AbortSignal) =>
     mutate<void>("DELETE", `/api/v1/backtest/${encodeURIComponent(runId)}`, undefined, signal),
 
+  /** DELETE /api/v1/backtest — delete ALL terminal runs (completed/failed/cancelled).
+   * Running/pending runs are preserved. Returns the number deleted. */
+  removeAll: (signal?: AbortSignal) =>
+    mutate<{ deleted: number }>("DELETE", "/api/v1/backtest", undefined, signal),
+
   /** GET /api/v1/backtest/compare?run_ids=… — compare 2-4 completed runs. */
   compare: (runIds: string[], signal?: AbortSignal) => {
     return request<BacktestCompareResponse>(

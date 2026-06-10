@@ -341,6 +341,26 @@ class TestDeleteBacktest:
         result = await service.delete_backtest("00000000-0000-0000-0000-000000000000")
         assert result is False
 
+    @pytest.mark.asyncio
+    async def test_delete_all_returns_count_and_skips_active(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+        service = BacktestService(db=mock_db)
+        mock_db.pool.execute = AsyncMock(return_value="DELETE 7")
+        deleted = await service.delete_all_backtests()
+        assert deleted == 7
+        # The DELETE must EXCLUDE running/pending (preserve in-flight runs).
+        sql = str(mock_db.pool.execute.call_args[0][0])
+        assert "DELETE FROM backtest_runs" in sql
+        assert "NOT IN ('running', 'pending')" in sql
+
+    @pytest.mark.asyncio
+    async def test_delete_all_handles_unparseable_result(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+        service = BacktestService(db=mock_db)
+        mock_db.pool.execute = AsyncMock(return_value="DELETE")  # no count token
+        assert await service.delete_all_backtests() == 0
+
+
 
 class TestCompareBacktests:
     @pytest.mark.asyncio

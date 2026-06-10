@@ -79,6 +79,18 @@ async def list_backtests(
     return _jsonable(runs)
 
 
+@router.delete("/backtest")
+async def delete_all_backtests(request: Request):
+    """Delete ALL terminal backtest runs (completed/failed/cancelled). Running and
+    pending runs are preserved (cancel those first). Returns the deleted count.
+
+    Defined BEFORE the `/backtest/{run_id}` delete so the static path matches first.
+    """
+    svc = _get_service(request)
+    deleted = await svc.delete_all_backtests()
+    return {"deleted": deleted}
+
+
 @router.get("/backtest/compare")
 async def compare_backtests(
     request: Request,

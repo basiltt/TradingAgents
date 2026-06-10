@@ -197,4 +197,40 @@ describe("BacktestListPage", () => {
     fireEvent.click(screen.getByLabelText("Delete run-1"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Compare/ })).not.toBeInTheDocument());
   });
+
+  it("filters the list by status", async () => {
+    server.use(
+      http.get("/api/v1/backtest", () =>
+        HttpResponse.json([
+          run({ id: "run-ok", status: "completed" }),
+          run({ id: "run-bad", status: "failed", results: null }),
+        ]),
+      ),
+    );
+    renderWithClient(<BacktestListPage />);
+    await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
+    expect(screen.getAllByTestId("run-row").length).toBe(2);
+    // Filter to Failed → only the failed run remains.
+    fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "failed" } });
+    await waitFor(() => expect(screen.getAllByTestId("run-row").length).toBe(1));
+  });
+
+  it("Clear all calls the bulk-delete endpoint and refreshes", async () => {
+    let deleteAllCalled = false;
+    server.use(
+      http.get("/api/v1/backtest", () =>
+        HttpResponse.json(deleteAllCalled ? [] : [run({ id: "run-1" }), run({ id: "run-2" })]),
+      ),
+      http.delete("/api/v1/backtest", () => {
+        deleteAllCalled = true;
+        return HttpResponse.json({ deleted: 2 });
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderWithClient(<BacktestListPage />);
+    await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Clear all/ }));
+    await waitFor(() => expect(deleteAllCalled).toBe(true));
+    await waitFor(() => expect(screen.getByText(/No backtests yet/i)).toBeInTheDocument());
+  });
 });
