@@ -210,6 +210,19 @@ def create_app() -> FastAPI:
                 force=True,
             )
 
+        # The `websockets` library logs every connection lifecycle event at INFO
+        # ("connection open" / "connection closed"). With the frontend opening many
+        # short-lived sockets (the per-run backtest-progress stream + the accounts
+        # feed, each reconnecting), that floods the console with low-value chatter.
+        # Demote those loggers to WARNING so the lifecycle lines are effectively
+        # DEBUG-level (only surface real problems), while keeping our own app logs at
+        # the configured level. Honors WEBSOCKETS_LOG_LEVEL for an explicit override.
+        _ws_log_level = os.environ.get("WEBSOCKETS_LOG_LEVEL", "WARNING").upper()
+        for _ws_logger in ("websockets", "websockets.server", "websockets.legacy.server"):
+            logging.getLogger(_ws_logger).setLevel(
+                getattr(logging, _ws_log_level, logging.WARNING)
+            )
+
         loop = asyncio.get_running_loop()
 
         _default_executor = concurrent.futures.ThreadPoolExecutor(
