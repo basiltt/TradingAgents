@@ -16,10 +16,12 @@ const isoDate = z.string().min(1, "Required");
 
 export const scanSourceSchema = z
   .object({
-    mode: z.enum(["schedule", "date_range", "explicit"]),
+    mode: z.enum(["schedule", "date_range", "explicit", "replay"]),
     schedule_id: z.string().optional(),
     // Backend caps scan_ids at 500 (backtest_schemas.py).
     scan_ids: z.array(z.string()).max(500, "Maximum 500 scans").optional(),
+    // Replay mode: account whose actual live trades are replayed for validation.
+    replay_account_id: z.string().optional(),
   })
   .refine(
     (s) => s.mode !== "schedule" || !!s.schedule_id,
@@ -28,6 +30,10 @@ export const scanSourceSchema = z
   .refine(
     (s) => s.mode !== "explicit" || (s.scan_ids != null && s.scan_ids.length > 0),
     { message: "Select at least one scan", path: ["scan_ids"] },
+  )
+  .refine(
+    (s) => s.mode !== "replay" || !!s.replay_account_id,
+    { message: "Select an account to replay", path: ["replay_account_id"] },
   );
 
 export const backtestConfigSchema = z
