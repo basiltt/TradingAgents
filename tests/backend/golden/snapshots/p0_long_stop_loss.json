@@ -1,0 +1,62 @@
+{
+  "equity_curve": {
+    "len": 2,
+    "money": [
+      10000.0,
+      9489.275
+    ]
+  },
+  "metrics": {
+    "discrete": {
+      "losers": 1,
+      "max_consecutive_losses": 1,
+      "max_consecutive_wins": 0,
+      "total_trades": 1,
+      "winners": 0
+    },
+    "money": {
+      "avg_trade": -510.725,
+      "avg_win": null,
+      "expectancy": -510.725,
+      "final_equity": 9489.275,
+      "gross_loss": -510.725,
+      "gross_profit": 0,
+      "max_dd_pct": 5.10725,
+      "max_run_up_pct": 0.0,
+      "net_profit": -510.725,
+      "net_profit_pct": -5.10725,
+      "total_commission": 10.725,
+      "win_rate": 0.0
+    }
+  },
+  "n_trades": 1,
+  "trades": [
+    {
+      "discrete": {
+        "close_reason": "sl",
+        "leverage": 10,
+        "scan_id": "s1",
+        "side": "Buy",
+        "signal_confidence": "high",
+        "signal_score": 8,
+        "strategy_kind": "trend",
+        "symbol": "BTCUSDT"
+      },
+      "money": {
+        "entry_price": 50000.0,
+        "exit_price": 47500.0,
+        "fees_paid": 10.725,
+        "funding_paid": null,
+        "mae_pct": 50.0,
+        "mfe_pct": 0.0,
+        "pnl": -510.725,
+        "pnl_pct": -51.0725,
+        "qty": 0.2
+      },
+      "time": {
+        "entry_time": 1767225600,
+        "exit_time": 1767232500
+      }
+    }
+  ]
+}

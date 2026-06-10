@@ -1,0 +1,90 @@
+{
+  "equity_curve": {
+    "len": 3,
+    "money": [
+      10000.0,
+      10033.47305,
+      10077.941103
+    ]
+  },
+  "metrics": {
+    "discrete": {
+      "losers": 0,
+      "max_consecutive_losses": 0,
+      "max_consecutive_wins": 2,
+      "total_trades": 2,
+      "winners": 2
+    },
+    "money": {
+      "avg_trade": 38.970551,
+      "avg_win": 38.970551,
+      "expectancy": 38.970551,
+      "final_equity": 10077.941103,
+      "gross_loss": 0,
+      "gross_profit": 77.941103,
+      "max_dd_pct": 0.0,
+      "max_run_up_pct": 0.779411,
+      "net_profit": 77.941103,
+      "net_profit_pct": 0.779411,
+      "total_commission": 22.053897,
+      "win_rate": 100.0
+    }
+  },
+  "n_trades": 2,
+  "trades": [
+    {
+      "discrete": {
+        "close_reason": "tp",
+        "leverage": 10,
+        "scan_id": "s1",
+        "side": "Buy",
+        "signal_confidence": "high",
+        "signal_score": 8,
+        "strategy_kind": "trend",
+        "symbol": "BTCUSDT"
+      },
+      "money": {
+        "entry_price": 50000.0,
+        "exit_price": 50250.0,
+        "fees_paid": 11.0275,
+        "funding_paid": null,
+        "mae_pct": 0.0,
+        "mfe_pct": 6.0,
+        "pnl": 38.9725,
+        "pnl_pct": 3.89725,
+        "qty": 0.2
+      },
+      "time": {
+        "entry_time": 1767225600,
+        "exit_time": 1767225900
+      }
+    },
+    {
+      "discrete": {
+        "close_reason": "tp",
+        "leverage": 10,
+        "scan_id": "s1",
+        "side": "Buy",
+        "signal_confidence": "high",
+        "signal_score": 8,
+        "strategy_kind": "trend",
+        "symbol": "ETHUSDT"
+      },
+      "money": {
+        "entry_price": 3000.0,
+        "exit_price": 3015.0,
+        "fees_paid": 11.026397,
+        "funding_paid": null,
+        "mae_pct": 13.333333,
+        "mfe_pct": 70.0,
+        "pnl": 38.968603,
+        "pnl_pct": 3.89725,
+        "qty": 3.333
+      },
+      "time": {
+        "entry_time": 1767225600,
+        "exit_time": 1767225900
+      }
+    }
+  ]
+}
