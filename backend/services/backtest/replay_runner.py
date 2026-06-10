@@ -97,22 +97,26 @@ async def run_replay(
     cfg = dict(base_config)
     cfg.update({"date_range_start": start, "date_range_end": end})
 
-    # SCOPED 1m drill-down: per cycle, fetch 1m ONLY around each trade's entry+exit
-    # bars (build_fine_klines_scoped) — NOT the whole multi-hour cycle window — so a
-    # many-cycle replay doesn't issue an unbounded number of full-window exchange
-    # fetches. Skipped when no cache (engine falls back to 5m exits).
+    # CONTIGUOUS per-cycle 1m drill-down over each cycle's ACTIVE span
+    # [first signal .. synchronized close], with small padding. Contiguous coverage
+    # (not just isolated entry/exit bars) is required so the engine's book-wide equity
+    # walk (drawdown / target-goal) has 1m for EVERY open position at the firing bar —
+    # the portfolio close can fire on an INTERMEDIATE bar that an entry/exit-only scope
+    # leaves at 5m, costing parity (validated: scoped -13% vs contiguous -8%). The fetch
+    # stays bounded because cycles are short (minutes–hours) and _MAX_CYCLES caps the
+    # count; the 24h max-duration cycles are the only long ones. Skipped without a cache.
     fine_by_scan: dict[str, Any] | None = None
-    if drilldown and kline_cache is not None and hasattr(data_access, "build_fine_klines_scoped"):
+    if drilldown and kline_cache is not None and hasattr(data_access, "build_fine_klines"):
+        from datetime import timedelta
         fine_by_scan = {}
         for c in cycles:
-            windows = [
-                (t.symbol, t.opened_at, t.closed_at)
-                for t in c.live_trades if t.closed_at is not None
-            ]
-            if not windows:
+            csyms = sorted({t.symbol for t in c.live_trades})
+            closes = [t.closed_at for t in c.live_trades if t.closed_at is not None]
+            if not csyms or not closes:
                 continue
-            fine_by_scan[c.scan_id] = await data_access.build_fine_klines_scoped(
-                kline_cache, windows, sim_interval_seconds=300, neighbour_bars=1)
+            fine_by_scan[c.scan_id] = await data_access.build_fine_klines(
+                kline_cache, csyms, c.signal_time - timedelta(hours=1),
+                max(closes) + timedelta(hours=1), sim_interval_seconds=300)
 
     # Run the synchronous per-cycle engine replay OFF the event loop when a run_sync
     # wrapper is supplied (the service passes loop.run_in_executor). The engine is
