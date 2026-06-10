@@ -628,6 +628,13 @@
     animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
+  /* Indeterminate progress sweep — a highlight band slides across the track so a
+     long-running task (e.g. a backtest sitting at 0% during cache warm-up) always
+     looks ALIVE, never frozen. Pair with a determinate fill underneath. */
+  .animate-progress-sweep {
+    animation: progressSweep 1.4s ease-in-out infinite;
+  }
+
   .animate-flash {
     animation: flash 0.55s ease-out;
   }
@@ -755,6 +762,18 @@
   }
   100% {
     background-position: 0% 50%;
+  }
+}
+
+/* Indeterminate sweep: a band travels left→right across the track. translateX is
+   GPU-composited (cheap) and loops forever, so the bar reads as "working" even
+   when the determinate value hasn't moved. */
+@keyframes progressSweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
   }
 }
 

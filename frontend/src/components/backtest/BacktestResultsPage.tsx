@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -108,24 +109,56 @@ const TRADES_PAGE_LIMIT = 500;
 
 function RunningState({ progress }: { progress: number }) {
   const pct = Math.min(100, Math.max(0, progress));
+  // Phase-aware label so a run sitting at low % reads as "doing something
+  // specific" rather than stuck. The backend reserves the first ~10% band for the
+  // pre-simulation kline cache warm-up, then the engine fills [10, 100].
+  const phase =
+    pct < 10
+      ? "Warming up price-data cache…"
+      : pct < 100
+        ? "Simulating trades…"
+        : "Finalizing results…";
   return (
-    <div className="flex flex-col items-center gap-4 py-16" data-testid="backtest-running">
+    <div
+      className="flex flex-col items-center gap-5 py-16"
+      data-testid="backtest-running"
+      aria-live="polite"
+    >
+      <Loader2
+        className="size-7 animate-spin text-[var(--neu-accent)]"
+        aria-hidden="true"
+      />
       <div
-        className="h-2 w-64 overflow-hidden rounded-full bg-[var(--neu-surface-inset)]"
+        className="relative h-2 w-64 overflow-hidden rounded-full bg-[var(--neu-surface-inset)]"
         role="progressbar"
         aria-valuenow={Math.round(pct)}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label="Backtest progress"
       >
+        {/* Determinate fill — reflects real progress_pct. */}
         <div
           className="h-full rounded-full bg-[var(--neu-accent)] transition-all duration-500"
           style={{ width: `${Math.max(2, pct)}%` }}
         />
+        {/* Indeterminate sweep — a translucent band that always travels across the
+            track, so the bar looks alive even while the determinate value is
+            stuck (e.g. at 0% during a slow cache warm-up). */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-progress-sweep rounded-full bg-gradient-to-r from-transparent via-[var(--neu-accent)]/60 to-transparent" />
       </div>
-      <p className="text-sm text-[var(--neu-text-muted)]">
-        Running backtest… {Math.round(pct)}%
-      </p>
+      <div className="flex flex-col items-center gap-1">
+        <p className="text-sm font-medium text-[var(--neu-text)]">
+          {phase}
+          <span className="ml-0.5 inline-flex">
+            <span className="animate-bounce [animation-delay:-0.3s]">.</span>
+            <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+            <span className="animate-bounce">.</span>
+          </span>
+        </p>
+        <p className="text-xs tabular-nums text-[var(--neu-text-muted)]">
+          {Math.round(pct)}% complete
+        </p>
+      </div>
     </div>
   );
 }
