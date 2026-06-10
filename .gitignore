@@ -240,3 +240,4 @@ node_modules/
 
 # MCP server config (contains bearer token) — never commit
 .mcp.json
+_tick_cache/

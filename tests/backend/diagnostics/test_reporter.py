@@ -90,3 +90,36 @@ def test_run_cycles_isolated_passes_per_cycle_fine_klines():
     run_cycles_isolated(eng, [c1], signals_by_scan, klines={}, base_config={},
                         fine_klines_by_scan=fine_by_scan)
     assert eng.seen_fine == [fine_by_scan["s1"]]
+
+
+def test_refine_cycle_exit_with_ticks_recomputes_pnl_at_crossing():
+    """Given an engine cycle's positions + a threshold, the tick refiner closes ALL
+    positions at the exact crossing tick price and recomputes PnL."""
+    from backend.diagnostics.parity.reporter import refine_cycle_exit_with_ticks
+    from backend.diagnostics.parity.tick_cache import TickSeries
+
+    # One short pos: entry 100, qty 10. Ticks drop so uPnL rises; target +80 abs.
+    engine_trades = [
+        {"symbol": "A", "side": "Sell", "entry_price": 100.0, "qty": 10.0,
+         "leverage": 10, "pnl": 30.0, "exit_price": 97.0, "close_reason": "equity_rise"},
+    ]
+    ticks = {"A": TickSeries([1.0, 2.0, 3.0], [100.0, 99.0, 91.0])}  # uPnL 0,10,90
+    # target threshold +80 abs; fee_rate 0.0 for a clean assert
+    out = refine_cycle_exit_with_ticks(
+        engine_trades, ticks, threshold=80.0, direction="rise", fee_rate_pct=0.0)
+    assert out is not None
+    a = out[0]
+    assert a["exit_price"] == 91.0           # crossing tick price
+    assert round(a["pnl"], 2) == 90.0        # (100-91)*10, no fees
+    assert a["close_reason"] == "equity_rise"  # preserved
+
+
+def test_refine_cycle_exit_returns_none_when_no_crossing():
+    from backend.diagnostics.parity.reporter import refine_cycle_exit_with_ticks
+    from backend.diagnostics.parity.tick_cache import TickSeries
+    engine_trades = [{"symbol": "A", "side": "Sell", "entry_price": 100.0, "qty": 10.0,
+                      "leverage": 10, "pnl": 5.0, "exit_price": 99.5, "close_reason": "equity_rise"}]
+    ticks = {"A": TickSeries([1.0, 2.0], [100.0, 99.5])}  # uPnL max 5, never hits 80
+    out = refine_cycle_exit_with_ticks(engine_trades, ticks, threshold=80.0,
+                                       direction="rise", fee_rate_pct=0.0)
+    assert out is None

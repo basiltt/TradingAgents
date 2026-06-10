@@ -3,6 +3,63 @@ from __future__ import annotations
 from typing import Any, Mapping
 from backend.diagnostics.parity.models import Cycle, CycleComparison, ParityReport
 from backend.diagnostics.parity.extractor import live_final_equity
+from backend.diagnostics.parity.tick_cache import merged_upnl_crossing, price_at
+
+
+def refine_cycle_exit_with_ticks(
+    engine_trades: list[Mapping[str, Any]],
+    ticks_by_symbol: Mapping[str, Any],
+    threshold: float,
+    direction: str,
+    fee_rate_pct: float = 0.055,
+) -> list[dict[str, Any]] | None:
+    """Recompute a cycle's exits at TRUE tick resolution.
+
+    The engine decides the cycle's positions (entry price, qty, side) and WHICH
+    portfolio rule fires; this resolves the exact crossing INSTANT and exit PRICE from
+    the merged tick stream — eliminating the bar-vs-tick exit-timing error.
+
+    engine_trades: the cycle's closed-trade dicts (need symbol/side/entry_price/qty).
+    ticks_by_symbol: {symbol: TickSeries} covering the cycle window.
+    threshold/direction: absolute book uPnL threshold + "rise" (target-goal) or
+        "drop" (drawdown, threshold<0).
+    Returns refined trade dicts (exit_price/pnl/exit_time updated) or None if the
+    threshold never crosses in the ticks (caller keeps the engine's bar exit).
+    """
+    positions = []
+    for t in engine_trades:
+        sym = t["symbol"]
+        ts = ticks_by_symbol.get(sym)
+        if ts is None or not getattr(ts, "timestamps", None):
+            return None  # missing ticks for a position → cannot refine the book
+        positions.append({
+            "symbol": sym, "side": t["side"],
+            "entry_price": float(t["entry_price"]), "qty": float(t["qty"]),
+            "ticks": ts,
+        })
+
+    crossing = merged_upnl_crossing(positions, threshold=threshold, direction=direction)
+    if crossing is None:
+        return None
+
+    exit_prices = crossing["exit_prices"]
+    out: list[dict[str, Any]] = []
+    for t in engine_trades:
+        sym = t["symbol"]
+        ep = exit_prices.get(sym)
+        if ep is None:
+            return None
+        entry = float(t["entry_price"]); qty = float(t["qty"]); side = t["side"]
+        gross = (entry - ep) * qty if side == "Sell" else (ep - entry) * qty
+        # Taker fee both legs, matching the engine's fee model (rate is a percent).
+        fee = (entry * qty + ep * qty) * (fee_rate_pct / 100.0)
+        rec = dict(t)
+        rec["exit_price"] = ep
+        rec["pnl"] = gross - fee
+        rec["fees_paid"] = fee
+        rec["exit_tick_time"] = crossing["time"]
+        out.append(rec)
+    return out
 
 
 def run_cycles_isolated(
