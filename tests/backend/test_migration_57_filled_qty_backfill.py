@@ -31,16 +31,17 @@ def _normalize(sql: str) -> str:
 # ── Registry wiring ────────────────────────────────────────────────────────
 
 
-def test_migration_57_registered_as_last_callable() -> None:
+def test_migration_57_registered_as_callable() -> None:
     versions = [v for v, _ in _MIGRATIONS]
     assert versions == sorted(versions), "migration versions must be ascending"
     assert len(versions) == len(set(versions)), "no duplicate migration versions"
-    assert versions[-1] == 57, "v57 must be the newest migration"
-
-    last_version, last_fn = _MIGRATIONS[-1]
-    assert last_version == 57
-    assert callable(last_fn), "v57 must be a callable migration"
-    assert last_fn is _backfill_open_trade_filled_qty
+    # v57 is registered as a callable migration. (It is no longer the newest entry —
+    # v58 sealed-day manifest follows it — so we assert its registration directly
+    # rather than that it is the list head.)
+    by_ver = dict(_MIGRATIONS)
+    assert 57 in by_ver, "v57 must be registered"
+    assert callable(by_ver[57]), "v57 must be a callable migration"
+    assert by_ver[57] is _backfill_open_trade_filled_qty
 
 
 # ── Behavioral contract of the backfill SQL ────────────────────────────────
