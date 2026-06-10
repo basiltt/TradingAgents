@@ -45,10 +45,15 @@ class TestComputeTpSl:
 
     def test_100x_leverage_small_moves(self):
         from backend.services.trading_rules import compute_tp_sl
-        # tp_pct=150% at 100x → 1.5% price move
+        # tp_pct=150% at 100x → 1.5% price move (TP is not clamped).
         tp, sl = compute_tp_sl(entry=1000.0, side="Buy", tp_pct=150.0, sl_pct=100.0, leverage=100)
         assert abs(tp - 1015.0) < 0.01   # 1000 * 1.015
-        assert abs(sl - 990.0) < 0.01    # 1000 * 0.99
+        # sl_pct=100% at 100x is a RAW 1.0% price-move SL — but at 100x the liquidation
+        # distance is only ~0.5% (1/lev − maintenance-margin), so the SL is CLAMPED to
+        # fire before liquidation: 0.45% = 0.5% liq-distance × 0.9 safety. This matches
+        # live place_trade (clamp added in 6f7d6ab for live↔backtest parity) and the
+        # golden test_golden_sl_clamped_before_liquidation. SL price = 1000*(1-0.0045).
+        assert abs(sl - 995.5) < 0.01    # clamped to 0.45% move, NOT the raw 990.0
 
 
 class TestComputePositionSize:
