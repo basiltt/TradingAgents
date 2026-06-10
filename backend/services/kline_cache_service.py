@@ -16,8 +16,18 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
-_PAGE_SIZE = 200
-_MAX_PAGES = 5
+# Bybit's kline endpoint accepts up to 1000 candles per page; using the max cuts
+# request count 5x vs the old 200. _MAX_PAGES bounds a single fetch call as a
+# runaway guard, but ensure_coverage now pages until the requested `start` is
+# reached (see _fetch_klines_from_bybit) so a multi-day backfill is COMPLETE in
+# one call rather than truncated at the newest ~1000 candles (the truncation that,
+# combined with sealing, could permanently freeze a partial boundary day).
+_PAGE_SIZE = 1000
+# Safety cap on pages per fetch call. 60 × 1000 = 60k candles ≈ 208 days at 5m,
+# comfortably above any single-symbol gap-run a backtest warms. A fetch needing
+# more simply returns what it got; the unfetched tail stays an unsealed gap and is
+# completed on a subsequent run (never wrongly sealed — see _seal_closed_days).
+_MAX_PAGES = 60
 _MAX_RETRIES = 3
 
 
@@ -305,15 +315,18 @@ class KlineCacheService:
         stats["symbols_with_gaps"] = still_missing
         stats["cached"] = len(symbols) - len(still_missing)
 
-        # SEAL every closed day in the window (RC-3 fix): once a day is below the
-        # completion frontier it is immutable, so mark it sealed and never re-evaluate
-        # its candle_count again. This is what makes a closed day fetched exactly once,
-        # ever — including legitimately-short days the count heuristic would otherwise
-        # flag as a perpetual gap. Forming (current) days are excluded so they keep
-        # refreshing until they close. Best-effort: a seal failure must not fail the
-        # warm-up (worst case the day refetches next run, the pre-v58 behavior).
+        # SEAL fully-covered closed days in the window (RC-3 fix): once a day is below
+        # the completion frontier AND has its full candle count, it is immutable — mark
+        # it sealed so its candle_count is never re-evaluated again. Forming (current)
+        # days are excluded (they keep refreshing until they close); PARTIAL days are
+        # excluded by the candle_count guard inside _seal_closed_days (they stay gaps
+        # and refetch). Seal ONLY symbols that did not still-miss this run, so a symbol
+        # whose fetch failed/returned empty can't have its pre-existing partial rows
+        # frozen (review SM-1). Best-effort: a seal failure must not fail the warm-up.
+        sealable_symbols = [s for s in symbols if s not in set(still_missing)]
         try:
-            await self._seal_closed_days(symbols, interval, start, end)
+            if sealable_symbols:
+                await self._seal_closed_days(sealable_symbols, interval, start, end)
             stats["sealed"] = True
         except Exception:  # noqa: BLE001 — sealing is an optimization, never fatal
             logger.warning("kline_seal_failed", extra={"interval": interval}, exc_info=False)
@@ -328,13 +341,22 @@ class KlineCacheService:
         start: datetime,
         end: datetime,
     ) -> int:
-        """Mark every CLOSED day in [start, end] as sealed for these symbols.
+        """Mark every FULLY-COVERED CLOSED day in [start, end] as sealed.
 
         A day is closed (immutable) when its end is at/below the completion frontier
-        floor(now/T)*T. Sealing sets `sealed=true` on the kline_cache_coverage rows so
-        get_coverage_gaps stops re-checking their candle_count — the RC-3 fix. Only
-        days that already have a coverage row are sealed (a row exists iff we've
-        stored candles for that day), so this never fabricates coverage.
+        floor(now/T)*T. Sealing sets `sealed=true` so get_coverage_gaps stops
+        re-checking that day's candle_count — the RC-3 fix.
+
+        CRITICAL provenance guard (review SM-1): a day is sealed ONLY if its stored
+        candle_count has reached the expected FULL-day count for the interval. This
+        prevents permanently freezing a PARTIAL day — e.g. when a large backfill's
+        oldest touched day stored only part of its candles. A still-partial day stays
+        unsealed, remains a gap, and is completed on a later run (the same self-healing
+        the pre-sealing code had), so the engine never silently walks fewer klines
+        than a correct fetch would supply. (A genuinely short exchange day will not
+        reach the full count and simply re-attempts until the fetch is authoritative;
+        because _fetch_klines_from_bybit now pages to `start`, a day that stays short
+        after a complete fetch is real no-data, and re-attempting it is cheap + bounded.)
 
         Returns the number of (symbol,date) cells sealed.
         """
@@ -354,15 +376,22 @@ class KlineCacheService:
         if not closed_days:
             return 0
 
-        # Seal only existing, not-yet-sealed coverage rows for these closed days.
+        # Expected FULL-day candle count for this interval (288 for 5m). A day must
+        # have at least this many stored candles to be sealed — the provenance guard.
+        interval_min = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 5)
+        per_day_full = max(1, 1440 // interval_min)
+
+        # Seal only existing, not-yet-sealed, FULLY-COVERED coverage rows for these
+        # closed days. The candle_count >= per_day_full guard is the SM-1 fix.
         result = await self._db.pool.execute(
             """
             UPDATE kline_cache_coverage
             SET sealed = true, sealed_at = now()
             WHERE symbol = ANY($1) AND interval = $2
               AND date = ANY($3) AND sealed = false
+              AND candle_count >= $4
             """,
-            symbols, interval, closed_days,
+            symbols, interval, closed_days, per_day_full,
         )
         # asyncpg returns e.g. "UPDATE 12"; parse the affected-row count defensively.
         try:
