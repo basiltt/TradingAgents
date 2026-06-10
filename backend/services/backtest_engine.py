@@ -445,6 +445,34 @@ class BacktestEngine:
 
     # --- Filter chain implementation ---
 
+    @staticmethod
+    def _rank_key(s: dict[str, Any]) -> tuple:
+        """Selection rank that matches live's auto_trade_service.execute_batch ORDER:
+        (abs(score), analysis_completed_at, id), all DESC under reverse=True.
+
+        analysis_completed_at breaks score-ties (latest-analyzed first, matching live's
+        `completed_at` DESC). A NULL completed_at must sort LAST within a tie (live's SQL
+        uses NULLS LAST), so under reverse=True it needs the SMALLEST sort value — use a
+        (has_ts, ts_epoch) pair where has_ts=0 for NULL. `id` is the final deterministic
+        tiebreak.
+
+        CAVEAT (not byte-identical to live, but the closest the engine can get):
+        - Live ranks on `result["completed_at"]` from the scan-result payload; the engine
+          ranks on `analysis_runs.completed_at` (per-ticker analysis finish). These are
+          usually the same instant but may differ — see _load_signals' docstring.
+        - Live compares ISO strings lexicographically; this compares epoch floats. They
+          agree for uniform UTC ISO timestamps.
+        - Live has no final `id` tiebreak (relies on stable dedup order); the engine adds
+          `id` DESC for full determinism. On the two fill-pass sites (relaxed/immediate)
+          live sorts by abs(score) ONLY — applying _rank_key there is harmless
+          determinism hardening (signals already arrive pre-sorted from _load_signals'
+          `ORDER BY ABS(score) DESC, ar.completed_at DESC NULLS LAST, sr.id`).
+        """
+        ca = s.get("analysis_completed_at")
+        has_ts = 1 if ca is not None else 0
+        ts = ca.timestamp() if ca is not None else 0.0
+        return (abs(s.get("score", 0)), has_ts, ts, s.get("id", 0))
+
     def _process_batch_signals(
         self,
         config: dict[str, Any],
@@ -460,8 +488,9 @@ class BacktestEngine:
             deduped[sig["ticker"]] = sig
         unique_signals = list(deduped.values())
 
-        # Step 2: Rank by abs(score) descending
-        unique_signals.sort(key=lambda s: abs(s.get("score", 0)), reverse=True)
+        # Step 2: Rank by abs(score) descending, ties broken by analysis_completed_at
+        # then id (matches live execute_batch selection order — see _rank_key).
+        unique_signals.sort(key=self._rank_key, reverse=True)
 
         # Step 3: Apply filter chain (strict pass)
         entered = 0
@@ -476,7 +505,7 @@ class BacktestEngine:
         if config.get("fill_to_max_trades") and entered < config.get("max_trades", 999):
             remaining = [s for s in unique_signals if s["ticker"] not in
                          {p.symbol for p in state.open_positions}]
-            remaining.sort(key=lambda s: abs(s.get("score", 0)), reverse=True)
+            remaining.sort(key=self._rank_key, reverse=True)
             for sig in remaining:
                 if entered >= config.get("max_trades", 999):
                     break
@@ -516,7 +545,7 @@ class BacktestEngine:
                 s for s in scan_signals
                 if s.get("ticker") not in open_syms and s.get("direction", "hold") != "hold"
             ]
-            remaining.sort(key=lambda s: abs(s.get("score", 0)), reverse=True)
+            remaining.sort(key=self._rank_key, reverse=True)
             for sig in remaining:
                 if state.scan_entered >= config.get("max_trades", 999):
                     break
