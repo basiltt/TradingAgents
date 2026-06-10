@@ -480,10 +480,13 @@ class BacktestService:
         LTTB-downsampled for the UI; JSONB columns are coerced from str/object.
         """
         equity = self._coerce_json(row["equity_curve"]) or []
+        summary_obj = self._coerce_json(row["summary"]) or {}
         return {
             "metrics": self._coerce_json(row["metrics"]) or {},
             "equity_curve": self._downsample_equity(equity),
-            "summary": self._coerce_json(row["summary"]) or {},
+            "summary": summary_obj,
+            # Present only for replay-mode runs (nested in summary); None otherwise.
+            "replay_comparison": summary_obj.get("replay_comparison"),
             "warnings": self._coerce_json(row["warnings"]) or [],
         }
 
@@ -700,6 +703,40 @@ class BacktestService:
                 return
 
             await self._mark_status(run_id, "running", started=True)
+
+            # --- REPLAY MODE ---
+            # Validate the engine against an account's ACTUAL live trades (selection
+            # pinned from ground truth; simulation only). Branch here, INSIDE the try,
+            # so the method's finally still releases the concurrency slot + cancel event.
+            # Known v1 limitation: this path bypasses the wall-clock timeout/cancel wiring
+            # below — a replay over a bounded window (one account, days) completes in
+            # seconds, so this is acceptable.
+            scan_source = config.get("scan_source", {})
+            if scan_source.get("mode") == "replay":
+                from backend.diagnostics.parity.data_access import ParityDataAccess
+                from backend.services.backtest.replay_runner import run_replay
+                from backend.services.backtest_metrics import compute_all_metrics
+                from backend.schemas.backtest_schemas import SimulationResult
+                account_id = scan_source.get("replay_account_id")
+                result_dict, comparison = await run_replay(
+                    ParityDataAccess(self._db), self._kline_cache, account_id,
+                    config["date_range_start"], config["date_range_end"], config)
+                # Anchor metrics to the SAME compounding basis the replay used (the
+                # account's first-cycle base_capital), NOT the user's starting_capital
+                # field — otherwise net_profit_pct/cagr degenerate.
+                metrics_config = {**config,
+                                  "starting_capital": result_dict.get("starting_capital")
+                                  or config.get("starting_capital") or 0.0}
+                metrics = compute_all_metrics(
+                    result_dict["trades"], result_dict["equity_curve"], metrics_config)
+                sim = SimulationResult(
+                    trades=result_dict["trades"], equity_curve=result_dict["equity_curve"],
+                    metrics=metrics, warnings=[f"replay_mode_account_{account_id}"],
+                    filter_stats={"signals_total": comparison["pinned_trades"],
+                                  "signals_entered": len(result_dict["trades"]),
+                                  "signals_filtered": 0, "signals_no_kline": 0})
+                await self._persist_results(run_id, sim, replay_comparison=comparison)
+                return
 
             # Progress plumbing — defined up-front so the cache warm-up (below) can
             # report into the reserved warm-up band. `loop` is the running event loop
@@ -1459,7 +1496,8 @@ class BacktestService:
                 f"(GET /backtest-cache/status to check coverage)."
             )
 
-    async def _persist_results(self, run_id: str, result: Any) -> None:
+    async def _persist_results(self, run_id: str, result: Any,
+                               replay_comparison: Optional[dict[str, Any]] = None) -> None:
         """Persist the simulation output atomically: results row + per-trade rows.
 
         Wrapped in a single transaction so a trade-insert failure can never leave
@@ -1503,7 +1541,12 @@ class BacktestService:
         from backend.services.backtest_metrics import _json_safe
         equity_curve = _json_safe(result.equity_curve or [])
         warnings = result.warnings or []
-        summary = result.filter_stats or {}
+        # summary carries filter_stats; in replay mode we NEST the live-vs-backtest
+        # comparison under "replay_comparison" so we never clobber filter_stats (the
+        # normal path passes replay_comparison=None → unchanged).
+        summary = dict(result.filter_stats or {})
+        if replay_comparison is not None:
+            summary["replay_comparison"] = replay_comparison
         trades = result.trades or []
 
         records = [
