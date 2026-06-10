@@ -76,6 +76,12 @@ export function useBacktestProgressWS(
   const mounted = React.useRef(false);
   // Coalesce by stage: stage -> step, plus first-seen order.
   const byStage = React.useRef<Map<string, BacktestStep>>(new Map());
+  // Ref mirror of `terminal` so the WS onclose handler reads the latest value
+  // without re-creating the connect effect (declared BEFORE the effect that uses it).
+  const terminalRef = React.useRef(terminal);
+  React.useEffect(() => {
+    terminalRef.current = terminal;
+  }, [terminal]);
 
   // Reset accumulated state whenever the run changes.
   React.useEffect(() => {
@@ -187,9 +193,30 @@ export function useBacktestProgressWS(
       clearTimeout(reconnectTimer.current);
       const ws = wsRef.current;
       wsRef.current = null;
-      if (ws) {
+      if (!ws) return;
+      // Detach handlers FIRST so this teardown can't trigger a reconnect.
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      // CRITICAL (React StrictMode): calling close() on a socket that is still
+      // CONNECTING aborts the handshake with "WebSocket is closed before the
+      // connection is established" and churns reconnects. StrictMode mounts →
+      // effect opens the WS → immediately unmounts → this cleanup runs while the
+      // socket is mid-handshake. So if it's still CONNECTING, defer the close to
+      // onopen (which fires once the handshake completes); only close immediately
+      // when already OPEN.
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.onopen = () => {
+          try {
+            ws.close(1000, "unmount");
+          } catch {
+            /* noop */
+          }
+        };
+      } else if (ws.readyState === WebSocket.OPEN) {
         try {
-          ws.close();
+          ws.close(1000, "unmount");
         } catch {
           /* noop */
         }
@@ -197,12 +224,6 @@ export function useBacktestProgressWS(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, active]);
-
-  // Keep a ref of `terminal` so the onclose handler reads the latest value.
-  const terminalRef = React.useRef(terminal);
-  React.useEffect(() => {
-    terminalRef.current = terminal;
-  }, [terminal]);
 
   return { steps, pct, connected, terminal };
 }
