@@ -10,6 +10,7 @@ and an optional progress callback.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -25,6 +26,53 @@ from backend.services.trading_rules import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _MarkIndex:
+    """Per-run cache of per-symbol open_time arrays for O(log N) mark lookups.
+
+    Phase P3 (RC-2 fix): the engine repeatedly needs "the close of the last candle
+    with open_time <= t" to mark a carried position. The original code did a linear
+    scan from index 0 with an early break — O(k) per call, O(positions × scans × T)
+    overall (quadratic in the timeline). Because each symbol's kline list is sorted
+    by open_time, that lookup is a binary search: bisect_right(open_times, t) - 1.
+
+    This is PARITY-EXACT — it returns the close of exactly the same candle the linear
+    scan would land on (the last one at/before t), so every downstream value
+    (carried uPnL, sizing capital, equity reference) is byte-identical. Only the
+    cost changes (O(log N) vs O(T)). The per-symbol open_time list + close list are
+    built once per run and reused across all three call sites.
+    """
+
+    __slots__ = ("_open_times", "_closes")
+
+    def __init__(self, klines: dict[str, list[dict[str, Any]]]):
+        self._open_times: dict[str, list[datetime]] = {}
+        self._closes: dict[str, list[float]] = {}
+        for sym, series in klines.items():
+            # series is sorted by open_time (cache returns ORDER BY open_time ASC).
+            self._open_times[sym] = [k["open_time"] for k in series]
+            self._closes[sym] = [k["close"] for k in series]
+
+    def mark_at_or_before(self, symbol: str, t: datetime, default: float) -> float:
+        """Close of the last candle with open_time <= t, or `default` if none.
+
+        Equivalent to the legacy loop:
+            mark = default
+            for k in klines[symbol]:
+                if k["open_time"] <= t: mark = k["close"]
+                else: break
+            return mark
+        """
+        ots = self._open_times.get(symbol)
+        if not ots:
+            return default
+        # bisect_right finds the insertion point AFTER any equal element, so
+        # idx-1 is the last index with open_time <= t (matches the <= comparison).
+        idx = bisect.bisect_right(ots, t) - 1
+        if idx < 0:
+            return default
+        return self._closes[symbol][idx]
 
 
 class BacktestCancelled(Exception):
@@ -172,6 +220,11 @@ class BacktestEngine:
         # actual trades (two-phase). The engine branches solely on the PRESENCE of a
         # window here — never on any config flag.
         self._fine_klines: dict[str, dict[int, list[dict[str, Any]]]] = fine_klines or {}
+
+        # Phase P3: per-symbol open_time index for O(log N) "mark at/before t" lookups,
+        # built ONCE per run and reused at every carried-position marking site. Replaces
+        # the O(T) linear prefix scans (RC-2). Parity-exact (same candle, same close).
+        self._mark_index = _MarkIndex(klines)
 
         # Initialize state
         starting_capital = config["starting_capital"]
@@ -989,12 +1042,9 @@ class BacktestEngine:
         carried_upnl = 0.0
         for _p in state.open_positions:
             _ref = _p.equity_ref_entry or _p.entry_price
-            _mark = _ref
-            for _k in klines.get(_p.symbol, []):
-                if _k["open_time"] <= current_time:
-                    _mark = _k["close"]
-                else:
-                    break
+            # P3: O(log N) mark lookup (was a linear prefix scan). Parity-exact —
+            # same candle close the loop would land on (last open_time <= current_time).
+            _mark = self._mark_index.mark_at_or_before(_p.symbol, current_time, _ref)
             carried_upnl += _cu_avail(_ref, _mark, _p.qty, _p.side)
         available = state.wallet_balance + carried_upnl - locked
 
@@ -1153,14 +1203,9 @@ class BacktestEngine:
         state.smart_drawdown_fired = False
         carried_upnl = 0.0
         for _p in state.open_positions:
-            _ks = klines.get(_p.symbol, [])
             _ref = _p.equity_ref_entry or _p.entry_price
-            _mark = _ref
-            for _k in _ks:
-                if _k["open_time"] <= current_time:
-                    _mark = _k["close"]
-                else:
-                    break
+            # P3: O(log N) mark lookup (was a linear prefix scan). Parity-exact.
+            _mark = self._mark_index.mark_at_or_before(_p.symbol, current_time, _ref)
             carried_upnl += _cu(_ref, _mark, _p.qty, _p.side)
         locked_margin = sum(p.locked_margin for p in state.open_positions)
         available_balance = max(0.0, state.wallet_balance + carried_upnl - locked_margin)
@@ -1226,13 +1271,13 @@ class BacktestEngine:
         # agree. No look-ahead: only candles with open_time <= start_time are used.
         latest_prices: dict[str, float] = {}
         for p in state.open_positions:
-            mark = p.entry_price
-            for k in klines.get(p.symbol, []):
-                if k["open_time"] <= start_time:
-                    mark = k["close"]
-                else:
-                    break
-            latest_prices[p.symbol] = mark
+            # P3: O(log N) seed of each carried position's mark at/just-before the
+            # window start (was a linear prefix scan from index 0). Parity-exact —
+            # same candle close, so the equity-rule reference on the first timestamp
+            # is byte-identical. This kills the O(positions × T) seeding (RC-2).
+            latest_prices[p.symbol] = self._mark_index.mark_at_or_before(
+                p.symbol, start_time, p.entry_price
+            )
         candle_count = 0
 
         # Process timestamps chronologically — unified timeline
@@ -1876,7 +1921,7 @@ class BacktestEngine:
             time_stop_minutes (F2's strategy-critical fast exit), independent of the
             account-level MAX_DURATION.
         """
-        from backend.services.trading_rules import compute_unrealized_pnl
+        from backend.services.trading_rules import compute_fee, compute_unrealized_pnl
 
         breakeven_hours = config.get("breakeven_timeout_hours")
         max_duration_hours = config.get("max_trade_duration_hours")
@@ -1924,7 +1969,7 @@ class BacktestEngine:
                         mark = latest_prices.get(p.symbol, p.entry_price)
                         ref = p.equity_ref_entry or p.entry_price
                         total_upnl += compute_unrealized_pnl(ref, mark, p.qty, p.side)
-                        total_buffer += p.qty * mark * (fee_rate / 100.0) * 1.5
+                        total_buffer += compute_fee(p.qty, mark, fee_rate) * 1.5
                     if total_upnl >= total_buffer:
                         for p in remaining:
                             positions_to_close.append((p, "breakeven"))
