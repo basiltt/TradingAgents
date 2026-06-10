@@ -88,13 +88,20 @@ class BacktestService:
         kline_cache: Optional KlineCacheService for warming/reading kline data.
     """
 
-    def __init__(self, db: Any, kline_cache: Any = None, instrument_cache: Any = None) -> None:
+    def __init__(self, db: Any, kline_cache: Any = None, instrument_cache: Any = None,
+                 progress_manager: Any = None) -> None:
         self._db = db
         self._kline_cache = kline_cache
         # Per-symbol instrument parameters (qty_step/min_qty/tick_size/max_leverage)
         # used to make sizing/leverage/TP-SL rounding match the live exchange. Lazily
         # created if not injected; refreshed best-effort before each run.
         self._instrument_cache = instrument_cache
+        # Optional BacktestProgressManager — when set, the run path emits structured
+        # per-stage events (loading signals, warming cache, simulating, …) that the
+        # /ws/v1/backtest/{run_id} endpoint streams to the UI for step-by-step
+        # progress. None ⇒ the run still works (and still writes progress_pct), just
+        # without the live step stream. Decoupled so tests + the MCP path need no WS.
+        self._progress = progress_manager
         self._running_tasks: set[asyncio.Task] = set()
         # run_id -> threading.Event (cooperative cancel signal to the engine).
         # Registered synchronously at create time (before the background task is
@@ -709,6 +716,7 @@ class BacktestService:
             loop = asyncio.get_running_loop()
             progress_state = {"last": 0}
 
+            self._emit_stage(run_id, "loading_signals", "Loading scan signals", pct=0)
             signals = await self._load_signals(
                 config.get("scan_source", {}),
                 (config["date_range_start"], config["date_range_end"]),
@@ -716,6 +724,12 @@ class BacktestService:
             # Bound total kline memory BEFORE loading (symbols × candles-per-symbol)
             # so a many-symbol long-range backtest can't OOM the process.
             self._check_total_kline_budget(config, signals)
+            n_symbols_needed = len({s["ticker"] for s in signals})
+            self._emit_stage(
+                run_id, "loading_signals", "Loaded scan signals",
+                detail=f"{len(signals)} signals · {n_symbols_needed} symbols",
+                pct=2, status="done",
+            )
 
             # WARM the cache before reading it. Without this, a run reads whatever
             # candles happen to be cached — and a partially-warmed symbol (e.g. 73 of
@@ -731,6 +745,10 @@ class BacktestService:
                 try:
                     symbols = sorted({s["ticker"] for s in signals})
                     interval = config.get("simulation_interval", "5m")
+                    self._emit_stage(
+                        run_id, "warming_cache", "Warming price-data cache",
+                        detail=f"{len(symbols)} symbols", pct=2,
+                    )
                     # Warm-up owns the first WARMUP_BAND% of the progress bar so the bar
                     # ADVANCES during the (potentially slow) fetch instead of freezing at
                     # 0%. ensure_coverage calls back with 0-100 of warm-up; we scale it
@@ -748,10 +766,24 @@ class BacktestService:
                         on_progress=_warm_progress,
                     )
                     logger.info("backtest_cache_warmed", extra={"run_id": run_id, **(cov or {})})
+                    _fetched = (cov or {}).get("fetched", 0)
+                    self._emit_stage(
+                        run_id, "warming_cache", "Price-data cache ready",
+                        detail=(f"{_fetched} symbols fetched from exchange" if _fetched
+                                else "all data already cached"),
+                        pct=_WARMUP_BAND, status="done",
+                    )
                 except Exception:  # noqa: BLE001 — warming is best-effort, never fatal
                     logger.warning("backtest_cache_warm_failed", extra={"run_id": run_id}, exc_info=False)
+                    self._emit_stage(run_id, "warming_cache", "Cache warm-up skipped",
+                                     detail="proceeding with cached data", pct=_WARMUP_BAND, status="done")
 
+            self._emit_stage(run_id, "loading_klines", "Loading price data into memory", pct=_WARMUP_BAND)
             klines = await self._load_klines(config, signals)
+            self._emit_stage(
+                run_id, "loading_klines", "Price data loaded",
+                detail=f"{len(klines)} symbols", pct=_WARMUP_BAND, status="done",
+            )
             logger.info("backtest_started", extra={
                 "run_id": run_id, "n_signals": len(signals), "n_symbols": len(klines),
             })
@@ -825,15 +857,23 @@ class BacktestService:
             if drilldown_on:
                 _mid = _WARMUP_BAND + (100 - _WARMUP_BAND) // 2
                 phase_a_cb = _make_progress_cb(_WARMUP_BAND, _mid)
+                self._emit_stage(run_id, "simulating", "Simulating trades (pass 1/2)",
+                                 detail="resolving entry/exit bars", pct=_WARMUP_BAND)
                 phase_a = await loop.run_in_executor(
                     self._executor,
                     lambda: engine.run(config, signals, klines, cancel_event, phase_a_cb, instrument_info, scan_contexts),
                 )
                 if not (cancel_event.is_set() or timed_out.is_set()):
+                    self._emit_stage(run_id, "drilldown", "Refining fills (1-minute drill-down)",
+                                     detail=f"{len(phase_a.trades or [])} trades", pct=_mid)
                     fine_klines = await self._build_fine_klines(config, phase_a.trades or [])
                 phase_b_cb = _make_progress_cb(_mid, 100)
+                self._emit_stage(run_id, "simulating", "Simulating trades (pass 2/2)",
+                                 detail="applying drilled fills", pct=_mid)
             else:
                 phase_b_cb = _make_progress_cb(_WARMUP_BAND, 100)
+                self._emit_stage(run_id, "simulating", "Simulating trades",
+                                 detail="candle-by-candle replay", pct=_WARMUP_BAND)
 
             result = await loop.run_in_executor(
                 self._executor,
@@ -875,6 +915,8 @@ class BacktestService:
 
             # Buy & Hold benchmark + excess return (Phase 4 carry-forward):
             # compare the strategy against simply holding BTC over the same window.
+            self._emit_stage(run_id, "computing_metrics", "Computing metrics",
+                             detail=f"{len(result.trades or [])} trades", pct=98)
             await self._attach_buy_hold(config, result)
 
             # Persist with one retry. _persist_results is idempotent (upsert +
@@ -899,17 +941,25 @@ class BacktestService:
                 "n_trades": len(result.trades or []),
                 "n_warnings": len(result.warnings or []),
             })
+            self._emit_stage(
+                run_id, "complete", "Backtest complete",
+                detail=f"{len(result.trades or [])} trades simulated",
+                pct=100, status="done",
+            )
 
         except BacktestCancelled:
             if timed_out.is_set():
                 logger.warning("backtest_timed_out",
                                extra={"run_id": run_id, "timeout_s": _TIMEOUT_SECONDS})
+                self._emit_stage(run_id, "failed", "Timed out",
+                                 detail=f"exceeded {_TIMEOUT_SECONDS}s limit", pct=100, status="failed")
                 await self._mark_status(
                     run_id, "failed", completed=True, guard_cancel=False,
                     error=f"Backtest exceeded the {_TIMEOUT_SECONDS}s time limit.",
                 )
             else:
                 logger.info("backtest_cancelled", extra={"run_id": run_id})
+                self._emit_stage(run_id, "failed", "Cancelled", pct=100, status="failed")
                 await self._mark_status(run_id, "cancelled", completed=True, guard_cancel=False)
         except BacktestValidationError as exc:
             # A pre-flight validation failure (e.g. insufficient kline coverage) —
@@ -917,6 +967,8 @@ class BacktestService:
             # the generic "simulation error: ..." path.
             logger.info("backtest_validation_failed",
                         extra={"run_id": run_id, "reason": str(exc)[:200]})
+            self._emit_stage(run_id, "failed", "Validation failed",
+                             detail=str(exc)[:120], pct=100, status="failed")
             await self._mark_status(run_id, "failed", completed=True, error=str(exc)[:480])
         except Exception:  # noqa: BLE001 — must never crash the service
             # Distinguish a SIMULATION failure from a POST-simulation persistence
@@ -926,6 +978,7 @@ class BacktestService:
             # disclosure-safe message in the user-visible error_message column.
             logger.exception("backtest_execution_failed",
                              extra={"run_id": run_id, "phase": phase})
+            self._emit_stage(run_id, "failed", f"Failed during {phase}", pct=100, status="failed")
             try:
                 await self._mark_status(
                     run_id, "failed", completed=True,
@@ -963,6 +1016,19 @@ class BacktestService:
         task = asyncio.ensure_future(self._update_progress(run_id, pct))
         self._running_tasks.add(task)
         task.add_done_callback(self._running_tasks.discard)
+
+    def _emit_stage(
+        self, run_id: str, stage: str, label: str, *,
+        detail: str = "", pct: Optional[int] = None, status: str = "active",
+    ) -> None:
+        """Emit a real-time stage event to the progress manager (best-effort, no-op
+        when no manager is wired). Never raises into the run path."""
+        if self._progress is None:
+            return
+        try:
+            self._progress.emit(run_id, stage, label, detail=detail, pct=pct, status=status)
+        except Exception:  # noqa: BLE001 — progress streaming must never fail a run
+            logger.debug("backtest_stage_emit_failed", extra={"run_id": run_id, "stage": stage})
 
 
     async def _load_klines(

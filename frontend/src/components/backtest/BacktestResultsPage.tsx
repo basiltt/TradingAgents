@@ -1,12 +1,13 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { backtestApi } from "@/api/client";
 import { useBacktestPolling } from "@/hooks/useBacktestPolling";
+import { useBacktestProgressWS } from "@/hooks/useBacktestProgressWS";
 import { isTerminalStatus } from "./types";
 import { BacktestStatusBadge } from "./BacktestStatusBadge";
 import { MetricsGrid } from "./MetricsGrid";
@@ -107,58 +108,112 @@ function HeroMetrics({
  * `total`, so when a run exceeds this we warn the user the table shows a subset. */
 const TRADES_PAGE_LIMIT = 500;
 
-function RunningState({ progress }: { progress: number }) {
-  const pct = Math.min(100, Math.max(0, progress));
-  // Phase-aware label so a run sitting at low % reads as "doing something
-  // specific" rather than stuck. The backend reserves the first ~10% band for the
-  // pre-simulation kline cache warm-up, then the engine fills [10, 100].
+function StepRow({
+  label,
+  detail,
+  status,
+}: {
+  label: string;
+  detail: string;
+  status: "active" | "done" | "failed";
+}) {
+  return (
+    <li className="flex items-start gap-3 py-1.5">
+      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
+        {status === "done" ? (
+          <Check className="size-4 text-[var(--neu-success)]" aria-hidden="true" />
+        ) : status === "failed" ? (
+          <X className="size-4 text-[var(--neu-danger)]" aria-hidden="true" />
+        ) : (
+          <Loader2 className="size-4 animate-spin text-[var(--neu-accent)]" aria-hidden="true" />
+        )}
+      </span>
+      <span className="flex flex-col">
+        <span
+          className={
+            status === "active"
+              ? "text-sm font-medium text-[var(--neu-text)]"
+              : "text-sm text-[var(--neu-text-muted)]"
+          }
+        >
+          {label}
+        </span>
+        {detail ? (
+          <span className="text-xs tabular-nums text-[var(--neu-text-muted)]">{detail}</span>
+        ) : null}
+      </span>
+    </li>
+  );
+}
+
+function RunningState({
+  runId,
+  progress,
+  active,
+}: {
+  runId: string | undefined;
+  progress: number;
+  active: boolean;
+}) {
+  const { steps, pct: wsPct } = useBacktestProgressWS(runId, active);
+  // Prefer the WS pct when present (finer-grained), else the polled progress_pct.
+  const pct = Math.min(100, Math.max(0, wsPct ?? progress));
+  // Phase label is a fallback shown only until the first WS step arrives, so the
+  // view is never blank during the WS handshake.
   const phase =
     pct < 10
       ? "Warming up price-data cache…"
       : pct < 100
         ? "Simulating trades…"
         : "Finalizing results…";
+
   return (
     <div
-      className="flex flex-col items-center gap-5 py-16"
+      className="mx-auto flex w-full max-w-md flex-col gap-5 py-12"
       data-testid="backtest-running"
       aria-live="polite"
     >
-      <Loader2
-        className="size-7 animate-spin text-[var(--neu-accent)]"
-        aria-hidden="true"
-      />
+      {/* Progress bar — determinate fill + indeterminate sweep so it always moves. */}
       <div
-        className="relative h-2 w-64 overflow-hidden rounded-full bg-[var(--neu-surface-inset)]"
+        className="relative h-2 w-full overflow-hidden rounded-full bg-[var(--neu-surface-inset)]"
         role="progressbar"
         aria-valuenow={Math.round(pct)}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label="Backtest progress"
       >
-        {/* Determinate fill — reflects real progress_pct. */}
         <div
           className="h-full rounded-full bg-[var(--neu-accent)] transition-all duration-500"
           style={{ width: `${Math.max(2, pct)}%` }}
         />
-        {/* Indeterminate sweep — a translucent band that always travels across the
-            track, so the bar looks alive even while the determinate value is
-            stuck (e.g. at 0% during a slow cache warm-up). */}
         <div className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-progress-sweep rounded-full bg-gradient-to-r from-transparent via-[var(--neu-accent)]/60 to-transparent" />
       </div>
-      <div className="flex flex-col items-center gap-1">
-        <p className="text-sm font-medium text-[var(--neu-text)]">
-          {phase}
-          <span className="ml-0.5 inline-flex">
-            <span className="animate-bounce [animation-delay:-0.3s]">.</span>
-            <span className="animate-bounce [animation-delay:-0.15s]">.</span>
-            <span className="animate-bounce">.</span>
-          </span>
-        </p>
-        <p className="text-xs tabular-nums text-[var(--neu-text-muted)]">
-          {Math.round(pct)}% complete
-        </p>
-      </div>
+
+      {steps.length > 0 ? (
+        // Live step-by-step list streamed over the WebSocket.
+        <ul className="flex flex-col rounded-[var(--neu-radius-lg)] bg-[var(--neu-surface-inset)]/40 px-4 py-3">
+          {steps.map((s) => (
+            <StepRow key={s.stage} label={s.label} detail={s.detail} status={s.status} />
+          ))}
+        </ul>
+      ) : (
+        // Fallback until the first WS event arrives (or if WS is unavailable).
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="size-6 animate-spin text-[var(--neu-accent)]" aria-hidden="true" />
+          <p className="text-sm font-medium text-[var(--neu-text)]">
+            {phase}
+            <span className="ml-0.5 inline-flex">
+              <span className="animate-bounce [animation-delay:-0.3s]">.</span>
+              <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+              <span className="animate-bounce">.</span>
+            </span>
+          </p>
+        </div>
+      )}
+
+      <p className="text-center text-xs tabular-nums text-[var(--neu-text-muted)]">
+        {Math.round(pct)}% complete
+      </p>
     </div>
   );
 }
@@ -375,7 +430,11 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
 
       {/* Body by status */}
       {run.status === "pending" || run.status === "running" ? (
-        <RunningState progress={run.progress_pct} />
+        <RunningState
+          runId={runId}
+          progress={run.progress_pct}
+          active={run.status === "pending" || run.status === "running"}
+        />
       ) : null}
 
       {run.status === "failed" ? (

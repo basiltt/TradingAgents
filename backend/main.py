@@ -292,9 +292,14 @@ def create_app() -> FastAPI:
         # Backtesting service (always-on, no credentials needed)
         from backend.services.backtest_service import BacktestService
         from backend.services.kline_cache_service import KlineCacheService
+        from backend.services.backtest_progress_manager import BacktestProgressManager
         app.state.kline_cache_service = KlineCacheService(db=db)
+        # Real-time per-stage progress stream for the backtest UI (load → warm →
+        # simulate → metrics → complete), served over /ws/v1/backtest/{run_id}.
+        app.state.backtest_progress_manager = BacktestProgressManager()
         app.state.backtest_service = BacktestService(
             db=db, kline_cache=app.state.kline_cache_service,
+            progress_manager=app.state.backtest_progress_manager,
         )
         # Wire the kline cache into the scanner for the Regime Multi-Strategy
         # feature (BTC regime + MR-mean fetches). The scanner is constructed
@@ -678,6 +683,7 @@ def create_app() -> FastAPI:
     from backend.routers.trades import router as trades_router
     from backend.routers.ws import router as ws_router
     from backend.routers.ws_accounts import router as ws_accounts_router
+    from backend.routers.ws_backtest import router as ws_backtest_router
 
     app.include_router(portfolio_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
@@ -704,6 +710,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(ws_router)
     app.include_router(ws_accounts_router)
+    app.include_router(ws_backtest_router)
 
     # MCP server (AI agent integration) — single integration seam. Installs the
     # permanent /mcp/rpc indirection mount (503 gate until enabled) + the
