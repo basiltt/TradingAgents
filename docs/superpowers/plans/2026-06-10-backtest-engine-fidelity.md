@@ -38,10 +38,9 @@
 
 **Change 3 (replay mode):**
 - Modify: `backend/schemas/backtest_schemas.py` — `ScanSource` gains `"replay"` + `replay_account_id`.
-- Modify: `backend/services/backtest_service.py` — `replay` branch in `_execute_backtest`; persist `replay_comparison`.
-- Create: `backend/services/backtest/replay_runner.py` — thin orchestrator that calls the harness units (keeps the service method small).
-- Modify: results payload (`get` / `_persist_results`) to carry `replay_comparison`.
-- Frontend: `frontend/src/components/backtest/BacktestConfigForm.tsx` (account picker for replay), `BacktestResultsPage.tsx` (replay-vs-live section), `types.ts`.
+- Modify: `backend/services/backtest_service.py` — `replay` branch in `_execute_backtest` (inside the `try`); nest comparison into the existing `summary` JSONB in `_persist_results`; surface it in `_build_results`.
+- Create: `backend/services/backtest/__init__.py`, `backend/services/backtest/replay_runner.py` — thin orchestrator over the harness units.
+- Frontend (verified): `types.ts` (ScanSource mode union + `BacktestResults.replay_comparison`), `configSchema.ts` (zod enum + refine — **easy to miss**), `BacktestConfigForm.tsx` (option + picker + `accounts` prop), `BacktestNewForm.tsx` (parent fetches accounts via `accountsApi.getDashboard()`), `BacktestResultsPage.tsx` (replay card at `run.results.replay_comparison`).
 - Test: `tests/backend/test_replay_mode.py` (schema + runner unit), `tests/backend/test_replay_e2e.py` (DB-gated, skipped without `PARITY_DB_SMOKE`).
 
 ---
@@ -79,31 +78,39 @@ def test_drift_uses_5m_open_when_no_fine_window():
     from backend.services.backtest_engine import SimulationState
     state = SimulationState(wallet_balance=1000, sizing_capital=1000, slippage_bps=0)
     state.cycle_start_equity = 1000
-    t = _dt("2026-06-08T00:08:15")
+    t = _dt("2026-06-08T00:08:00")              # bar-aligned to a 1m boundary
     sig = _signal("BLESSUSDT", "sell", -7, 0.00855, t)
-    klines = {"BLESSUSDT": [_5m(_dt("2026-06-08T00:10:00"), 0.009015)]}
+    # Entry-bar 5m candle (00:05) so _drift_reference_price can resolve bar_open;
+    # next-bar-open (00:10) is the 5m reference price the gate reads.
+    klines = {"BLESSUSDT": [_5m(_dt("2026-06-08T00:05:00"), 0.00860),
+                            _5m(_dt("2026-06-08T00:10:00"), 0.009015)]}
     cfg = {"max_price_drift_pct": 3, "min_score": 0, "confidence_filter": "any"}
     # A sell with price UP is admitted by the gate (drift_pct +5.4% is not < -3)
     assert eng._apply_filter_chain(cfg, sig, state, t, klines, relaxed=False) is True
 
 def test_drift_uses_1m_open_when_fine_window_present():
-    """Same sell, but a BUY-equivalent rejection case: construct a BUY whose 5m
-    next-bar-open trips the cap (+5.4% > 3) yet whose 1m open at the signal instant
-    (+1.0%) does NOT. With a fine window the 1m price is used → admitted."""
+    """A BUY whose 5m next-bar-open trips the cap (+5.4% > 3) yet whose 1m open AT the
+    signal instant (+1.0%) does NOT. With a fine window the 1m price is used → admitted.
+
+    NOTE: `_drift_reference_price` returns the 1m candle with open_time >= current_time,
+    so the signal instant MUST be a 1m boundary (00:08:00) for the 101.0 candle (its
+    open_time == current_time) to be the one selected."""
     eng = BacktestEngine()
     eng._instrument_info = {}
     eng._scan_contexts = {}; eng._ctx = None; eng._mr_mean = None
     from backend.services.backtest_engine import SimulationState
     state = SimulationState(wallet_balance=1000, sizing_capital=1000, slippage_bps=0)
     state.cycle_start_equity = 1000
-    t = _dt("2026-06-08T00:08:15")
+    t = _dt("2026-06-08T00:08:00")              # 1m-aligned signal instant
     sig = _signal("FOOUSDT", "buy", 7, 100.0, t)
-    bar_open = _dt("2026-06-08T00:05:00")       # the 5m bar covering 00:08:15
-    klines = {"FOOUSDT": [_5m(_dt("2026-06-08T00:10:00"), 105.4)]}   # +5.4% next-bar-open
-    # 1m window for the entry bar: open at the signal minute is 101.0 (+1.0%)
+    bar_open = _dt("2026-06-08T00:05:00")       # the 5m bar covering 00:08:00
+    # Entry-bar 5m candle (so bar_open resolves) + next-bar-open at +5.4%.
+    klines = {"FOOUSDT": [_5m(_dt("2026-06-08T00:05:00"), 100.0),
+                          _5m(_dt("2026-06-08T00:10:00"), 105.4)]}
+    # 1m window for the entry bar: the 00:08:00 candle (== current_time) opens at 101.0.
     eng._fine_klines = {"FOOUSDT": {int(bar_open.timestamp()): [
         _1m(_dt("2026-06-08T00:05:00"), 100.5),
-        _1m(_dt("2026-06-08T00:08:00"), 101.0),   # the minute of the signal
+        _1m(_dt("2026-06-08T00:08:00"), 101.0),   # open_time == current_time → selected
         _1m(_dt("2026-06-08T00:09:00"), 101.2),
     ]}}
     cfg = {"max_price_drift_pct": 3, "min_score": 0, "confidence_filter": "any"}
@@ -118,10 +125,11 @@ def test_drift_1m_still_rejects_genuine_drift():
     from backend.services.backtest_engine import SimulationState
     state = SimulationState(wallet_balance=1000, sizing_capital=1000, slippage_bps=0)
     state.cycle_start_equity = 1000
-    t = _dt("2026-06-08T00:08:15")
+    t = _dt("2026-06-08T00:08:00")              # 1m-aligned signal instant
     sig = _signal("FOOUSDT", "buy", 7, 100.0, t)
     bar_open = _dt("2026-06-08T00:05:00")
-    klines = {"FOOUSDT": [_5m(_dt("2026-06-08T00:10:00"), 105.4)]}
+    klines = {"FOOUSDT": [_5m(_dt("2026-06-08T00:05:00"), 100.0),
+                          _5m(_dt("2026-06-08T00:10:00"), 105.4)]}
     eng._fine_klines = {"FOOUSDT": {int(bar_open.timestamp()): [
         _1m(_dt("2026-06-08T00:08:00"), 104.0),   # +4.0% > 3 cap
     ]}}
@@ -268,7 +276,7 @@ Add to `BacktestEngine` (near `_process_batch_signals`, ~line 446):
 ```python
     @staticmethod
     def _rank_key(s: dict[str, Any]) -> tuple:
-        """Selection rank, byte-identical to live's auto_trade_service.execute_batch:
+        """Selection rank that matches live's auto_trade_service.execute_batch ORDER:
         (abs(score), analysis_completed_at, id), all DESC under reverse=True.
 
         analysis_completed_at breaks score-ties (latest-analyzed first, matching live's
@@ -276,6 +284,18 @@ Add to `BacktestEngine` (near `_process_batch_signals`, ~line 446):
         uses NULLS LAST), so under reverse=True it needs the SMALLEST sort value — use a
         (has_ts, ts_epoch) pair where has_ts=0 for NULL. `id` is the final deterministic
         tiebreak.
+
+        CAVEAT (not byte-identical to live, but the closest the engine can get):
+        - Live ranks on `result["completed_at"]` from the scan-result payload; the engine
+          ranks on `analysis_runs.completed_at` (per-ticker analysis finish). These are
+          usually the same instant but may differ — see _load_signals' docstring.
+        - Live compares ISO strings lexicographically; this compares epoch floats. They
+          agree for uniform UTC ISO timestamps.
+        - Live has no final `id` tiebreak (relies on stable dedup order); the engine adds
+          `id` DESC for full determinism. On the two fill-pass sites (relaxed/immediate)
+          live sorts by abs(score) ONLY — applying _rank_key there is harmless
+          determinism hardening (signals already arrive pre-sorted from _load_signals'
+          `ORDER BY ABS(score) DESC, ar.completed_at DESC NULLS LAST, sr.id`).
         """
         ca = s.get("analysis_completed_at")
         has_ts = 1 if ca is not None else 0
@@ -312,11 +332,27 @@ recapture it. Then **manually inspect** the git diff:
 ```bash
 git diff tests/backend/golden/snapshots/
 ```
-Confirm every change only REORDERS entries that share the same `abs(score)` (different
-symbols selected from a tied pool). **Any change to a non-tied selection, a price, or a
-PnL is a red flag — stop and investigate.** (Most golden fixtures use distinct scores
-and will NOT change at all; only fixtures with an explicit score-tie + more eligible
-signals than max_trades are affected — e.g. `p0_multi_symbol_batch` if it has ties.)
+
+**Expected: exactly ONE snapshot changes — `p0_multi_symbol_batch.json`.** It is the
+only golden fixture with an in-scan score-tie + more eligible signals than trade slots
+(BTC id=1, ETH id=2, both score 8, same scan). The new `_rank_key` orders them by
+`id` DESC (the golden `_signal()` builder omits `analysis_completed_at`, so `id` is the
+only tiebreaker), swapping ETH ahead of BTC. **No other fixture has an in-scan tie**
+(the rest are single-signal-per-scan, distinct scores, or separate scans).
+
+**How to verify the diff is the correct reorder — NOT a regression:** the fingerprint
+is ORDER-SENSITIVE (`golden/__init__.py` builds `trades` positionally + an
+order-dependent `equity_curve`). So a tie-reorder legitimately shows POSITIONAL money
+diffs (e.g. `trades[0].symbol BTC→ETH`, `trades[0].entry_price`, `.qty`, `.pnl` all
+change, and possibly one intermediate `equity_curve` point). That is the reorder, not a
+bug. Confirm correctness by checking the INVARIANTS that must hold:
+- The trade MULTISET keyed by `symbol` is unchanged (same symbols traded, same count).
+- Aggregate metrics are IDENTICAL: `net_profit`, `total_trades`, `winners`/`losers`,
+  `final_equity`, `max_drawdown`.
+If those invariants hold, the diff is the intended selection reorder. **A change in the
+SET of symbols traded, the trade COUNT, or any aggregate metric IS a red flag — stop and
+investigate.** (Run `git diff` and read the `summary`/`metrics` block of the snapshot to
+confirm aggregates match.)
 
 - [ ] **Step 7: Re-run golden suite green with regenerated snapshots**
 
@@ -329,8 +365,9 @@ Expected: all PASS.
 git add backend/services/backtest_engine.py tests/backend/test_engine_tiebreaker.py tests/backend/golden/snapshots/
 git commit -m "fix(backtest-engine): break score-ties by (completed_at, id) to match live selection
 
-Regenerated golden snapshots: diffs only reorder equal-abs(score) selections
-(the intended fidelity change); no price/PnL/non-tie changes."
+Regenerated golden: only p0_multi_symbol_batch changes (id-desc swap of two
+score-8 trades). Trade multiset by symbol + all aggregate metrics unchanged;
+positional diffs are the intended selection reorder, not a regression."
 ```
 
 ---
@@ -514,7 +551,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from backend.services.backtest_engine import BacktestEngine
-from backend.diagnostics.parity.extractor import build_cycles, live_final_equity
+from backend.diagnostics.parity.extractor import build_cycles
 from backend.diagnostics.parity.shim import pin_signals
 from backend.diagnostics.parity.reporter import run_cycles_isolated, build_report
 
@@ -546,7 +583,7 @@ async def run_replay(
     trade_rows = await data_access.fetch_live_trades(account_id, start, end)
     cycles = build_cycles(trade_rows)
     if not cycles:
-        return ({"trades": [], "equity_curve": []},
+        return ({"trades": [], "equity_curve": [], "starting_capital": 0.0},
                 {"n_cycles": 0, "pinned_trades": 0, "cycles": [],
                  "final_equity_delta_pct": 0.0, "pnl_correlation": 0.0,
                  "directional_agreement": 0, "note": "no closed cycles in range"})
@@ -604,9 +641,17 @@ async def run_replay(
         ],
     }
     # equity_curve for the normal dashboard: compounded backtest equity per cycle.
-    equity_curve = [{"ts": cc.signal_time, "equity": cc.backtest_equity_after}
-                    for cc in report.cycles]
-    result = {"trades": engine_trades, "equity_curve": equity_curve}
+    # Emit drawdown_pct so the shape matches the engine's points (the service's
+    # _downsample_equity reads .get("drawdown_pct") — present here for clarity/parity).
+    _peak = float("-inf")
+    equity_curve = []
+    for cc in report.cycles:
+        eq = cc.backtest_equity_after
+        _peak = max(_peak, eq)
+        dd = round(((eq - _peak) / _peak) * 100.0, 4) if _peak > 0 else 0.0
+        equity_curve.append({"ts": cc.signal_time, "equity": eq, "drawdown_pct": dd})
+    result = {"trades": engine_trades, "equity_curve": equity_curve,
+              "starting_capital": starting_capital}
     return result, comparison
 ```
 
@@ -684,7 +729,9 @@ Expected: SKIPPED (1).
 
 In `backend/services/backtest_service.py`, near the top of `_execute_backtest` after
 `_mark_status(run_id, "running", started=True)` (~line 702), branch BEFORE the normal
-`_load_signals` path:
+`_load_signals` path. **The branch MUST stay INSIDE the method's `try` block** so the
+existing `finally` (which pops `_cancel_events` and decrements `_active_slots`) still
+runs — do not place it before the `try`.
 
 ```python
             scan_source = config.get("scan_source", {})
@@ -695,10 +742,15 @@ In `backend/services/backtest_service.py`, near the top of `_execute_backtest` a
                 result_dict, comparison = await run_replay(
                     ParityDataAccess(self._db), self._kline_cache, account_id,
                     config["date_range_start"], config["date_range_end"], config)
-                # Reuse the standard metrics + persistence on the replay's engine trades.
+                # Anchor metrics to the SAME compounding basis the replay used (the
+                # account's first-cycle base_capital), NOT the user's starting_capital
+                # field — otherwise net_profit_pct/cagr degenerate. run_replay returns it.
                 from backend.services.backtest_metrics import compute_all_metrics
+                metrics_config = {**config,
+                                  "starting_capital": result_dict.get("starting_capital")
+                                  or config.get("starting_capital") or 0.0}
                 metrics = compute_all_metrics(
-                    result_dict["trades"], result_dict["equity_curve"], config)
+                    result_dict["trades"], result_dict["equity_curve"], metrics_config)
                 from backend.schemas.backtest_schemas import SimulationResult
                 sim = SimulationResult(
                     trades=result_dict["trades"], equity_curve=result_dict["equity_curve"],
@@ -710,31 +762,62 @@ In `backend/services/backtest_service.py`, near the top of `_execute_backtest` a
                 return
 ```
 
-- [ ] **Step 4: Thread `replay_comparison` through `_persist_results` via the `summary` column**
+(`run_replay` must return `starting_capital` in `result_dict` — add `"starting_capital":
+starting_capital` to the runner's returned `result` dict in Task 3b, and emit
+`"drawdown_pct": 0.0` on each equity point so the curve shape matches the engine's.)
 
-`backtest_results` already has a `summary JSONB NOT NULL DEFAULT '{}'` column
-(`async_persistence.py:690`) — store the comparison there; **no migration needed.**
+**Known limitation (acceptable for v1):** the replay branch returns before the normal
+path's `threading.Timer` wall-clock timeout (`_TIMEOUT_SECONDS`) and `cancel_event`
+wiring, so a replay run is not cancellable and has no hard timeout. Cleanup is still
+safe — the branch is inside the method `try`, so the existing `finally` pops
+`_cancel_events` and releases the `_active_slots` slot, and `_persist_results` flips
+status→completed in its own transaction (no slot leak, no stuck 'running'). A replay
+over a bounded window (one account, days) completes in seconds, so this is acceptable;
+note it as a follow-up if replay is ever opened to long ranges.
+
+- [ ] **Step 4: Thread `replay_comparison` through `_persist_results` by NESTING in `summary`**
+
+⚠️ **CRITICAL — `summary` is ALREADY used.** `_persist_results` currently writes
+`summary = result.filter_stats or {}` (`backtest_service.py:1506`) into the
+`backtest_results.summary` JSONB (`INSERT ... summary ...` at `:1526`), and
+`_build_results` reads it back (`:486 "summary": self._coerce_json(row["summary"]) or {}`).
+So we must **NEST** the comparison inside `summary`, never overwrite it — overwriting
+would clobber filter_stats on every run.
+
 Modify `_persist_results` (~line 1462):
 
 ```python
     async def _persist_results(self, run_id: str, result: Any,
                                replay_comparison: Optional[dict[str, Any]] = None) -> None:
 ```
-In its results-row UPSERT, set `summary` to `json.dumps(replay_comparison, default=str)`
-when `replay_comparison` is not None, else keep the existing default `'{}'`. (Find the
-`INSERT INTO backtest_results (... )` in this method and add `summary` to the column
-list + values; the normal path passes None → `'{}'`.) Use the same `_json_safe`/default=str
-pattern the method already uses for `metrics`/`equity_curve` so datetimes serialize.
+Find the existing `summary = result.filter_stats or {}` line (~1506) and make it carry
+the comparison when present (normal path: `replay_comparison=None` → unchanged dict):
 
-- [ ] **Step 5: Return `replay_comparison` in the run GET payload**
+```python
+        summary = dict(result.filter_stats or {})
+        if replay_comparison is not None:
+            summary["replay_comparison"] = replay_comparison
+```
+The existing `json.dumps(_json_safe(summary), default=str)` at the INSERT (~1535) then
+serializes it correctly — no other change to the INSERT needed.
 
-The results read already selects from `backtest_results`. Add `summary` to that SELECT
-(if not already) and surface it: in the result-assembly dict add
-`"replay_comparison": self._coerce_json(row["summary"]) or None`. When `summary` is the
-default `{}`, this yields an empty dict the UI treats as "no replay comparison"; a
-populated replay run yields the full comparison. (If `summary` is already selected and
-used for something else, nest the comparison under `summary["replay_comparison"]`
-instead and read that key.)
+- [ ] **Step 5: Surface `replay_comparison` from the nested `summary` in the GET payload**
+
+`_build_results` already selects + returns `summary` (`:276`, `:486`). Add the nested
+key alongside it so the UI can read it directly:
+
+```python
+        summary_obj = self._coerce_json(row["summary"]) or {}
+        return {
+            "metrics": ...,                      # unchanged
+            "equity_curve": self._downsample_equity(equity),
+            "summary": summary_obj,              # unchanged (still carries filter_stats)
+            "replay_comparison": summary_obj.get("replay_comparison"),  # None for normal runs
+            "warnings": ...,
+        }
+```
+(Match the exact existing return-dict shape in `_build_results` ~line 477–488; just add
+the one `replay_comparison` key reading from the already-fetched `summary_obj`.)
 
 - [ ] **Step 6: Run the E2E with the DB flag**
 
@@ -758,18 +841,26 @@ git commit -m "feat(backtest): wire replay mode into the service + persist live-
 
 ## Task 3d: Frontend — replay account picker + comparison section
 
-**Files:**
-- Modify: `frontend/src/components/backtest/types.ts` (ScanSource type + ReplayComparison type)
-- Modify: `frontend/src/components/backtest/BacktestConfigForm.tsx` (Replay source option + account picker)
-- Modify: `frontend/src/components/backtest/BacktestResultsPage.tsx` (replay comparison section)
+**Files (verified names/paths):**
+- Modify: `frontend/src/components/backtest/types.ts` — `ScanSource` (line 35, inline mode union) + `BacktestResults` (line 208).
+- Modify: `frontend/src/components/backtest/configSchema.ts` — `scanSourceSchema` (line 17, `z.enum` at 19). **The plan previously missed this file — without it RHF/zod strips `replay_account_id` and rejects `mode:"replay"`.**
+- Modify: `frontend/src/components/backtest/BacktestConfigForm.tsx` — scan-source `SelectField` options (line ~449) + `scanMode` conditional (line ~361/458) + `BacktestConfigFormProps` (line 301).
+- Modify: `frontend/src/components/backtest/BacktestNewForm.tsx` (line 42) — the PARENT that renders the form; add the accounts query here and pass it as a prop (the form is presentational — it takes `schedules` as a prop, no query inside).
+- Modify: `frontend/src/components/backtest/BacktestResultsPage.tsx` — replay card; result is `run.results` (`BacktestRun.results`, types.ts:226), NOT a `result` var.
 
-- [ ] **Step 1: Add types**
+- [ ] **Step 1: Add types (types.ts)**
 
-In `frontend/src/components/backtest/types.ts`, extend the scan-source mode union and
-add the comparison shape:
+Extend the inline `ScanSource.mode` union (line 36) and add the comparison shape +
+result field:
 
 ```typescript
-export type ScanSourceMode = "schedule" | "date_range" | "explicit" | "replay";
+// types.ts — change ScanSource (line 35):
+export interface ScanSource {
+  mode: "schedule" | "date_range" | "explicit" | "replay";
+  schedule_id?: string | null;
+  scan_ids?: string[] | null;
+  replay_account_id?: string | null;   // NEW
+}
 
 export interface ReplayCycle {
   scan_id: string;
@@ -792,37 +883,85 @@ export interface ReplayComparison {
   cycles: ReplayCycle[];
 }
 ```
-And add `replay_account_id?: string` to the ScanSource type and `replay_comparison?: ReplayComparison` to the backtest result type.
+Add `replay_comparison?: ReplayComparison | null;` to the **`BacktestResults`** interface
+(line 208) — that's the object at `run.results` the page reads.
 
-- [ ] **Step 2: Config form — Replay option + account picker**
+- [ ] **Step 2: Extend the zod schema (configSchema.ts) — REQUIRED**
 
-In `BacktestConfigForm.tsx`, add "Replay (validate vs live)" to the scan-source選択 and,
-when selected, render an account dropdown (reuse the accounts query the app already
-uses for the accounts page) bound to `scan_source.replay_account_id`. Hide the
-schedule/scan-id inputs in replay mode. When the chosen account has
-`ai_manager_enabled`, show an inline note: "This account uses the AI Manager, which the
-backtest excludes — replay fidelity is most meaningful for non-AI-Manager accounts."
+In `configSchema.ts`, change `scanSourceSchema` (line 17–): add `"replay"` to the enum,
+add the optional field, and a refine requiring it in replay mode (mirrors backend
+`backtest_schemas.py` validator):
 
-- [ ] **Step 3: Results page — comparison section**
+```typescript
+export const scanSourceSchema = z
+  .object({
+    mode: z.enum(["schedule", "date_range", "explicit", "replay"]),
+    schedule_id: z.string().nullish(),
+    scan_ids: z.array(z.string()).nullish(),
+    replay_account_id: z.string().nullish(),   // NEW
+  })
+  // ...keep existing schedule/explicit refines...
+  .refine((s) => s.mode !== "replay" || !!s.replay_account_id, {
+    message: "Select an account to replay",
+    path: ["replay_account_id"],
+  });
+```
 
-In `BacktestResultsPage.tsx`, when `result.replay_comparison` is present, render a
-"Replay vs Live" card above the normal charts:
-- Headline stats: `final_equity_delta_pct` (formatted `+/-X.X%`), `pnl_correlation`
-  (e.g. `0.99`), `directional_agreement` as `N/total cycles`, framed as fidelity (NOT a
-  pass/fail vs ±1%). Add a caption: "Backtest is typically a few % conservative vs live
-  due to live execution latency."
-- A per-cycle table from `cycles`: columns scan (short), live PnL, backtest PnL, live
-  equity, backtest equity, delta %.
+- [ ] **Step 3: Parent fetches accounts (BacktestNewForm.tsx)**
 
-- [ ] **Step 4: Type-check + build**
+The form is presentational (takes `schedules` as a prop). In `BacktestNewForm.tsx`, fetch
+accounts the way the rest of the app does and pass them down. Use
+`accountsApi.getDashboard()` (queryKey `["accounts","dashboard"]` per
+`AccountsDashboard.tsx:126`) because its `DashboardCard` carries `id`, `label`, AND
+`ai_manager_state` (client.ts:841) — needed for the warning note. (`accountsApi.list()`
+returns `TradingAccount`, which does NOT include any AI-manager field, so it can't drive
+the note.)
 
-Run: `cd frontend && npx tsc --noEmit && npm run build`
-Expected: no type errors; build succeeds.
+```typescript
+const { data: accounts = [] } = useQuery({
+  queryKey: ["accounts", "dashboard"],
+  queryFn: () => accountsApi.getDashboard(),
+});
+// ...
+<BacktestConfigForm /* existing props */ accounts={accounts} />
+```
+Add `accounts?: DashboardCard[]` to `BacktestConfigFormProps` (BacktestConfigForm.tsx:301)
+and default `accounts = []` in the destructure (line ~314).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Config form — Replay option + account picker (BacktestConfigForm.tsx)**
+
+Add a third option to the scan-source `SelectField` (line ~449): `{ value: "replay",
+label: "Replay (validate vs live)" }`. Add a `scanMode === "replay"` branch next to the
+existing `scanMode === "schedule"` block (line ~458) that renders an account
+`<select>` bound to `scan_source.replay_account_id` (options from the `accounts` prop:
+`value={a.id}` / label `a.label`), and hides the schedule/scan-id inputs. When the
+selected account's `ai_manager_state` is non-null, show an inline note: "This account
+uses the AI Manager, which the backtest excludes — replay fidelity is most meaningful for
+non-AI-Manager accounts."
+
+- [ ] **Step 5: Results page — comparison section (BacktestResultsPage.tsx)**
+
+The page gets the run via its polling hook (`run: BacktestRun`). Read
+`const replay = run.results?.replay_comparison;`. When present, render a "Replay vs Live"
+card above the normal charts, following the existing `HeroMetrics`/`neu-surface-base
+neu-surface-inset` card pattern:
+- Headline: `final_equity_delta_pct` (`+/-X.X%`), `pnl_correlation` (2dp, e.g. `0.99`),
+  `directional_agreement` as `N/${replay.n_cycles}`, framed as fidelity (NOT pass/fail
+  vs ±1%). Caption: "Backtest is typically a few % conservative vs live due to live
+  execution latency."
+- A per-cycle table from `replay.cycles`: columns scan (short id), live PnL, backtest
+  PnL, live equity, backtest equity, delta %.
+
+- [ ] **Step 6: Type-check + build**
+
+Run: `cd frontend && npx tsc -b --noEmit && npm run build`
+(package.json `build` = `tsc -b && vite build`; `tsc -b` is the project-references-correct
+typecheck.) Expected: no type errors; build succeeds.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add frontend/src/components/backtest/types.ts frontend/src/components/backtest/BacktestConfigForm.tsx frontend/src/components/backtest/BacktestResultsPage.tsx
+git add frontend/src/components/backtest/types.ts frontend/src/components/backtest/configSchema.ts frontend/src/components/backtest/BacktestConfigForm.tsx frontend/src/components/backtest/BacktestNewForm.tsx frontend/src/components/backtest/BacktestResultsPage.tsx
 git commit -m "feat(backtest-ui): replay account picker + live-vs-backtest comparison section"
 ```
 
@@ -833,14 +972,39 @@ git commit -m "feat(backtest-ui): replay account picker + live-vs-backtest compa
 - **Spec coverage:** §2 drift → Task 1. §3 tiebreaker → Task 2 (+ golden regen). §4
   replay → Tasks 3a (schema), 3b (runner), 3c (service+persist), 3d (UI). §5 order
   (drift→tiebreaker→replay) → task order. §6 testing (golden gate per change, replay
-  E2E) → Task 1.6, 2.6–2.7, 3c.7. §7 risks (tie-only golden diff, NULL completed_at,
-  no look-ahead, UI framing) → Task 2.6, 2.3 test, 1.3 helper, 3d.3.
+  E2E) → Task 1.6, 2.6–2.7, 3c.7. §7 risks → Task 2.6, 2.3 test, 1.3 helper, 3d.4.
 - **Breakeven explicitly excluded** — no task touches it (correct per spec §1 non-goal).
-- **Type/name consistency:** `_rank_key`, `_drift_reference_price`, `run_replay`,
-  `ReplayComparison`, `replay_account_id`, `replay_comparison` used consistently across
-  backend tasks and the TS types.
-- **No placeholders:** every code step shows full code; every run step has a command +
-  expected result. The only non-literal step is Task 3c.4/3.5 persistence, which depends
-  on whether results are a JSON blob or a column — both branches are specified.
-- **Golden safety:** Tasks 1 & 3 assert byte-identical golden; only Task 2 regenerates,
-  with a mandatory manual tie-only diff review.
+- **Golden safety:** Tasks 1 & 3 assert byte-identical golden; only Task 2 regenerates
+  (`p0_multi_symbol_batch` only), with a mandatory invariant-based diff review.
+
+### Review pass (2026-06-10, 4 parallel verifiers vs the codebase) — issues fixed
+
+- **[CRITICAL] `summary` column collision** — `_persist_results` already stores
+  `filter_stats` in `backtest_results.summary` and `_build_results` returns it.
+  Overwriting it would clobber filter_stats on EVERY run and render a garbage replay
+  card on normal runs. **Fixed:** Task 3c now NESTS `replay_comparison` inside `summary`
+  and reads `summary_obj.get("replay_comparison")`.
+- **[CRITICAL] Task 1 drift tests broken** — tests used a non-bar-aligned instant
+  (00:08:15) and omitted the entry-bar 5m candle, so the 1m path was never exercised and
+  the asserts passed/failed for the wrong reason. **Fixed:** bar-aligned `t=00:08:00` +
+  entry-bar 5m candle added to all three tests.
+- **[CRITICAL] Frontend access path / schema / account field** — result is
+  `run.results.replay_comparison` (not `result.replay_comparison`); `configSchema.ts`
+  zod enum was omitted (would strip the field); `ai_manager_enabled` is NOT on the
+  accounts list type. **Fixed:** Task 3d rewritten with verified names — `BacktestResults`
+  field, `configSchema.ts` step added, accounts via `getDashboard()` using
+  `ai_manager_state`, and the parent (`BacktestNewForm`) fetches + passes `accounts`.
+- **[HIGH] Golden-regen guidance would wrongly block the correct change** — the
+  fingerprint is order-sensitive, so a benign tie-reorder shows positional money diffs.
+  **Fixed:** Task 2 Step 6 now verifies INVARIANTS (trade multiset by symbol + aggregate
+  metrics unchanged) instead of "no money diffs."
+- **[MEDIUM] metrics baseline** — `compute_all_metrics` needs `starting_capital`; the
+  replay config omitted it. **Fixed:** runner returns `starting_capital`; the branch
+  anchors metrics to it. Replay equity points now emit `drawdown_pct`.
+- **[MEDIUM] "byte-identical to live" overstated** — **Fixed:** `_rank_key` docstring now
+  documents the 3 semantic caveats (analysis-runs vs payload timestamp, float vs string
+  compare, added `id` tiebreak); claim downgraded to "matches live's selection order in
+  the common case."
+- **[MEDIUM] replay timeout/cancel** — documented as an accepted v1 limitation (cleanup
+  is safe; bounded window completes in seconds).
+- **[LOW] dropped** unused `live_final_equity` import from the runner.
