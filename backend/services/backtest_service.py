@@ -968,17 +968,25 @@ class BacktestService:
     async def _load_klines(
         self, config: dict[str, Any], signals: list[dict[str, Any]]
     ) -> dict[str, list[dict[str, Any]]]:
-        """Load cached klines for every symbol referenced by the signals."""
+        """Load cached klines for every symbol referenced by the signals.
+
+        Reads run CONCURRENTLY (asyncio.gather) instead of a sequential per-symbol
+        await loop — the old N+1 pattern serialized one DB round-trip per symbol, so
+        a 50-symbol backtest paid 50 sequential latencies before the sim could start.
+        Results are byte-identical to the serial load (same get_klines call per
+        symbol, same args); only the wall-clock overlaps. Order is restored by
+        zipping back to the sorted symbol list, so the returned dict is deterministic.
+        """
         if self._kline_cache is None:
             return {}
         symbols = sorted({s["ticker"] for s in signals})
         interval = config.get("simulation_interval", "5m")
         start = config["date_range_start"]
         end = config["date_range_end"]
-        klines: dict[str, list[dict[str, Any]]] = {}
-        for symbol in symbols:
-            klines[symbol] = await self._kline_cache.get_klines(symbol, interval, start, end)
-        return klines
+        results = await asyncio.gather(
+            *(self._kline_cache.get_klines(symbol, interval, start, end) for symbol in symbols)
+        )
+        return {symbol: series for symbol, series in zip(symbols, results)}
 
     @staticmethod
     def _interval_minutes(interval: str) -> int:
@@ -1063,15 +1071,30 @@ class BacktestService:
         if not wanted:
             return {}
 
-        out: dict[str, dict[int, list[dict[str, Any]]]] = {}
-        for sym, epochs in wanted.items():
+        # Fetch every symbol's 1m window CONCURRENTLY (was a sequential per-symbol
+        # await — each drill symbol paid a full Bybit round-trip in series). The
+        # bucketing below is pure CPU and stays identical, so the output is the same;
+        # only the network latency overlaps. return_exceptions=True keeps one symbol's
+        # fetch failure from cancelling the rest (matches the old per-symbol try/except
+        # fail-soft: a failed/empty symbol is simply omitted → engine falls back to 5m).
+        sym_list = list(wanted.keys())
+        windows = []
+        for sym in sym_list:
+            epochs = wanted[sym]
             lo = min(epochs)
             hi = max(epochs) + bar_s  # cover the last bar fully
-            win_start = datetime.fromtimestamp(lo, tz=timezone.utc)
-            win_end = datetime.fromtimestamp(hi, tz=timezone.utc)
-            try:
-                ones = await self._kline_cache._fetch_klines_from_bybit(sym, "1m", win_start, win_end)
-            except Exception:
+            windows.append((datetime.fromtimestamp(lo, tz=timezone.utc),
+                            datetime.fromtimestamp(hi, tz=timezone.utc)))
+        fetched = await asyncio.gather(
+            *(self._kline_cache._fetch_klines_from_bybit(sym, "1m", ws, we)
+              for sym, (ws, we) in zip(sym_list, windows)),
+            return_exceptions=True,
+        )
+
+        out: dict[str, dict[int, list[dict[str, Any]]]] = {}
+        for sym, ones in zip(sym_list, fetched):
+            epochs = wanted[sym]
+            if isinstance(ones, Exception):
                 logger.warning("backtest_drilldown_fetch_failed", extra={"symbol": sym}, exc_info=False)
                 continue
             if not ones:
