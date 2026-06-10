@@ -5,6 +5,41 @@ from backend.diagnostics.parity.models import Cycle, CycleComparison, ParityRepo
 from backend.diagnostics.parity.extractor import live_final_equity
 
 
+def run_cycles_isolated(
+    engine: Any,
+    cycles: list[Cycle],
+    signals_by_scan: Mapping[str, list[Mapping[str, Any]]],
+    klines: Mapping[str, list[dict]],
+    base_config: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Run each pinned cycle in ISOLATION and return scan-stamped engine trades.
+
+    Live operated each scheduled-scan cycle independently: a cycle opens, closes by
+    its own rules, and the next scan trades against a fresh book with a freshly
+    compounded base_capital. The production engine instead replays all scans on one
+    carried timeline, so a mistimed close + skip_if_positions_open cascades into
+    wholly-skipped cycles. For a SELECTIVE replay (membership already pinned from
+    ground truth) the faithful model is per-cycle isolation.
+
+    Each cycle runs with its OWN live base_capital as starting_capital and a fresh
+    engine state. Returned engine-trade dicts are stamped with their cycle's scan_id
+    so build_report() can compound per-cycle PnL against the live oracle.
+    """
+    out: list[dict[str, Any]] = []
+    for c in cycles:
+        sigs = list(signals_by_scan.get(c.scan_id, []))
+        if not sigs:
+            continue
+        cfg = dict(base_config)
+        cfg["starting_capital"] = c.base_capital
+        result = engine.run(cfg, sigs, klines)
+        for t in result.trades:
+            rec = dict(t)
+            rec["scan_id"] = c.scan_id          # stamp for build_report compounding
+            out.append(rec)
+    return out
+
+
 def build_report(
     cycles: list[Cycle],
     engine_trades: list[Mapping[str, Any]],
