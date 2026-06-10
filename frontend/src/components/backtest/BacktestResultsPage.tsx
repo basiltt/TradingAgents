@@ -68,6 +68,13 @@ function TradesFetchError({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/** Null/NaN-safe fixed-decimal formatter — "—" when a value isn't finite, so a
+ *  missing/NaN metric never crashes the whole results page via `.toFixed()`. */
+function fmtNum(v: number | null | undefined, digits: number, sign = false): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${sign && v >= 0 ? "+" : ""}${v.toFixed(digits)}`;
+}
+
 /** Sticky strip of the 4 headline metrics shown above the tabs. */
 function HeroMetrics({
   netProfit,
@@ -343,6 +350,7 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
     rawMetrics && rawMetrics.total_trades != null ? rawMetrics : undefined;
   const equityCurve = run.results?.equity_curve ?? [];
   const resultWarnings = run.results?.warnings ?? [];
+  const replay = run.results?.replay_comparison ?? null;
 
   // Retry/Re-run must reproduce the ORIGINAL run faithfully. The backend stores
   // scan_source in a separate column from config, so run.config alone omits it —
@@ -407,6 +415,70 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
           profitFactor={metrics.profit_factor}
           maxDdPct={metrics.max_dd_pct}
         />
+      ) : null}
+
+      {/* Replay vs Live — only for replay-mode runs. Framed as fidelity, NOT a
+          pass/fail vs an unrealistic ±1% (live has execution-latency slippage). */}
+      {completed && replay && replay.n_cycles > 0 ? (
+        <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4">
+          <div className="mb-3 flex flex-wrap items-baseline gap-2">
+            <h2 className="text-base font-semibold text-[var(--neu-text-strong)]">Replay vs Live</h2>
+            <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
+              {replay.pinned_trades} pinned trades · {replay.n_cycles} cycles
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
+              <div className="text-[0.72rem] text-[var(--neu-text-muted)]">Final equity delta</div>
+              <div className="text-lg font-semibold tabular-nums text-[var(--neu-text-strong)]">
+                {fmtNum(replay.final_equity_delta_pct, 1, true)}%
+              </div>
+            </div>
+            <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
+              <div className="text-[0.72rem] text-[var(--neu-text-muted)]">Per-cycle PnL correlation</div>
+              <div className="text-lg font-semibold tabular-nums text-[var(--neu-text-strong)]">
+                {fmtNum(replay.pnl_correlation, 2)}
+              </div>
+            </div>
+            <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
+              <div className="text-[0.72rem] text-[var(--neu-text-muted)]">Directional agreement</div>
+              <div className="text-lg font-semibold tabular-nums text-[var(--neu-text-strong)]">
+                {replay.directional_agreement}/{replay.n_cycles}
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 text-[0.72rem] text-[var(--neu-text-muted)]">
+            Backtest is typically a few % conservative vs live due to live execution latency.
+          </p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-[0.78rem] tabular-nums">
+              <thead>
+                <tr className="text-left text-[var(--neu-text-muted)]">
+                  <th className="px-2 py-1 font-medium">Cycle</th>
+                  <th className="px-2 py-1 text-right font-medium">Live PnL</th>
+                  <th className="px-2 py-1 text-right font-medium">Backtest PnL</th>
+                  <th className="px-2 py-1 text-right font-medium">Live equity</th>
+                  <th className="px-2 py-1 text-right font-medium">BT equity</th>
+                  <th className="px-2 py-1 text-right font-medium">Δ%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {replay.cycles.map((c) => (
+                  <tr key={c.scan_id} className="border-t border-[var(--neu-surface-inset)]">
+                    <td className="px-2 py-1 font-mono">{c.scan_id.slice(0, 8)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.live_net_pnl, 2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.backtest_net_pnl, 2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.live_equity_after, 2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.backtest_equity_after, 2)}</td>
+                    <td className="px-2 py-1 text-right">
+                      {fmtNum(c.delta_pct, 1, true)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : null}
 
       {/* Result warnings banner — surfaced for ANY completed run with metrics so

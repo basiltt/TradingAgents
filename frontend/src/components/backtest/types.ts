@@ -33,9 +33,11 @@ export function isActiveStatus(status: string | null | undefined): boolean {
 
 /** Scan source — which historical scan results feed the backtest. */
 export interface ScanSource {
-  mode: "schedule" | "date_range" | "explicit";
+  mode: "schedule" | "date_range" | "explicit" | "replay";
   schedule_id?: string;
   scan_ids?: string[];
+  /** Replay mode: the account whose actual live trades are replayed for validation. */
+  replay_account_id?: string;
 }
 
 /** Request body for creating a backtest (mirrors BacktestCreateRequest). */
@@ -204,11 +206,37 @@ export interface EquityPoint {
   drawdown_pct?: number;
 }
 
+/** Per-cycle live-vs-backtest row (replay mode). */
+export interface ReplayCycle {
+  scan_id: string;
+  signal_time: string;
+  live_net_pnl: number;
+  backtest_net_pnl: number;
+  live_equity_after: number;
+  backtest_equity_after: number;
+  delta_pct: number;
+}
+
+/** Replay-mode comparison block (present only on replay runs). */
+export interface ReplayComparison {
+  n_cycles: number;
+  pinned_trades: number;
+  live_final_equity: number;
+  backtest_final_equity: number;
+  final_equity_delta_pct: number;
+  pnl_correlation: number;
+  directional_agreement: number;
+  cycles: ReplayCycle[];
+  note?: string;
+}
+
 /** The results bundle attached to a completed run. */
 export interface BacktestResults {
   metrics: BacktestMetrics;
   equity_curve: EquityPoint[];
   summary: Record<string, unknown>;
+  /** Present only for replay-mode runs; null/undefined for normal backtests. */
+  replay_comparison?: ReplayComparison | null;
   warnings: string[];
 }
 

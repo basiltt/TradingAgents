@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import type { DashboardCard } from "@/api/client";
 import type { BacktestCreateRequest } from "./types";
 import {
   backtestConfigSchema,
@@ -303,6 +304,8 @@ export interface BacktestConfigFormProps {
   seed?: Partial<BacktestCreateRequest>;
   /** Available schedules for the scan-source picker. */
   schedules?: ScheduleOption[];
+  /** Accounts for the Replay source picker (carries ai_manager_state for the note). */
+  accounts?: DashboardCard[];
   /** Called with the validated, API-ready request body. */
   onSubmit: (request: BacktestCreateRequest) => void;
   isSubmitting?: boolean;
@@ -312,6 +315,7 @@ export interface BacktestConfigFormProps {
 export function BacktestConfigForm({
   seed,
   schedules = [],
+  accounts = [],
   onSubmit,
   isSubmitting = false,
   className,
@@ -359,6 +363,7 @@ export function BacktestConfigForm({
   }, [watch]);
 
   const scanMode = watch("scan_source.mode");
+  const replayAccountId = watch("scan_source.replay_account_id");
   const mrLongEnabled = watch("mr_long_enabled");
   const formRef = React.useRef<HTMLFormElement>(null);
 
@@ -453,6 +458,7 @@ export function BacktestConfigForm({
             options={[
               { value: "date_range", label: "All scans in date range" },
               { value: "schedule", label: "Specific schedule" },
+              { value: "replay", label: "Replay (validate vs live)" },
             ]}
           />
           {scanMode === "schedule" ? (
@@ -485,6 +491,48 @@ export function BacktestConfigForm({
                   No schedules available — create one in Scheduled Scans, or use “All scans in date range”.
                 </span>
               ) : null}
+            </div>
+          ) : null}
+          {scanMode === "replay" ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="scan_source.replay_account_id">Replay Account</Label>
+              <Controller
+                control={control}
+                name="scan_source.replay_account_id"
+                render={({ field }) => (
+                  <select
+                    id="scan_source.replay_account_id"
+                    value={String(field.value ?? "")}
+                    onChange={field.onChange}
+                    className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.label} ({a.account_type})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              />
+              {fieldError("scan_source.replay_account_id") ? (
+                <span className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.replay_account_id")}</span>
+              ) : null}
+              <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
+                Replays this account's actual scanner trades through the engine and
+                compares per-cycle results — selection is pinned, so it validates the
+                simulation. The Date Range below bounds which trades are replayed;
+                AI-Manager-closed and non-scanner trades are excluded.
+              </span>
+              {(() => {
+                const acct = accounts.find((a) => a.id === replayAccountId);
+                return acct?.ai_manager_state != null ? (
+                  <span className="text-[0.72rem] text-[var(--neu-warning,#b45309)]">
+                    This account uses the AI Manager, which the backtest excludes — replay
+                    fidelity is most meaningful for non-AI-Manager accounts.
+                  </span>
+                ) : null;
+              })()}
             </div>
           ) : null}
         </div>

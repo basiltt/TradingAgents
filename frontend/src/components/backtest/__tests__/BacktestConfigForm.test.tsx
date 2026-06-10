@@ -122,11 +122,11 @@ describe("BacktestConfigForm", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("does not offer the unsupported 'Explicit scan IDs' source mode", () => {
+  it("offers date_range, schedule, and replay source modes (not the unsupported 'explicit')", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
     const modeSelect = screen.getByLabelText("Source Mode") as HTMLSelectElement;
     const values = Array.from(modeSelect.options).map((o) => o.value);
-    expect(values).toEqual(["date_range", "schedule"]);
+    expect(values).toEqual(["date_range", "schedule", "replay"]);
   });
 
   it("parses a comma-separated symbol blacklist into an uppercased array", async () => {

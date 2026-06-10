@@ -12,9 +12,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ScanSource(BaseModel):
     """Defines which historical scan results to use for backtesting."""
 
-    mode: Literal["schedule", "date_range", "explicit"]
+    mode: Literal["schedule", "date_range", "explicit", "replay"]
     schedule_id: Optional[str] = None
     scan_ids: Optional[list[str]] = None
+    # Replay mode: validate the engine against this account's ACTUAL live trades over
+    # the request's date range (selection pinned from ground truth; simulation only).
+    replay_account_id: Optional[str] = None
 
     @field_validator("scan_ids")
     @classmethod
@@ -29,6 +32,8 @@ class ScanSource(BaseModel):
             raise ValueError("schedule_id is required when mode='schedule'")
         if self.mode == "explicit" and not self.scan_ids:
             raise ValueError("scan_ids is required when mode='explicit'")
+        if self.mode == "replay" and not self.replay_account_id:
+            raise ValueError("replay_account_id is required when mode='replay'")
         return self
 
 

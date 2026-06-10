@@ -16,10 +16,12 @@ const isoDate = z.string().min(1, "Required");
 
 export const scanSourceSchema = z
   .object({
-    mode: z.enum(["schedule", "date_range", "explicit"]),
+    mode: z.enum(["schedule", "date_range", "explicit", "replay"]),
     schedule_id: z.string().optional(),
     // Backend caps scan_ids at 500 (backtest_schemas.py).
     scan_ids: z.array(z.string()).max(500, "Maximum 500 scans").optional(),
+    // Replay mode: account whose actual live trades are replayed for validation.
+    replay_account_id: z.string().optional(),
   })
   .refine(
     (s) => s.mode !== "schedule" || !!s.schedule_id,
@@ -28,6 +30,10 @@ export const scanSourceSchema = z
   .refine(
     (s) => s.mode !== "explicit" || (s.scan_ids != null && s.scan_ids.length > 0),
     { message: "Select at least one scan", path: ["scan_ids"] },
+  )
+  .refine(
+    (s) => s.mode !== "replay" || !!s.replay_account_id,
+    { message: "Select an account to replay", path: ["replay_account_id"] },
   );
 
 export const backtestConfigSchema = z
@@ -284,8 +290,21 @@ export function buildDefaults(
 
 /** Convert a parsed form value into the API request body (ISO-normalizes dates). */
 export function toCreateRequest(parsed: BacktestConfigParsed): BacktestCreateRequest {
+  // Whitelist scan_source fields by mode so a stale sibling (e.g. a schedule_id left
+  // over from switching modes) can never leak into the payload and mis-route the
+  // backend. Each mode keeps ONLY the field it uses.
+  const src = parsed.scan_source;
+  const scan_source =
+    src.mode === "schedule"
+      ? { mode: src.mode, schedule_id: src.schedule_id }
+      : src.mode === "explicit"
+        ? { mode: src.mode, scan_ids: src.scan_ids }
+        : src.mode === "replay"
+          ? { mode: src.mode, replay_account_id: src.replay_account_id }
+          : { mode: src.mode };
   return {
     ...parsed,
+    scan_source,
     date_range_start: new Date(parsed.date_range_start).toISOString(),
     date_range_end: new Date(parsed.date_range_end).toISOString(),
   };
