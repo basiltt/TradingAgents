@@ -160,6 +160,14 @@ def ratchet_frontier(prev: Optional[datetime], computed: datetime) -> datetime:
 
     AC-009a — if the system clock steps backward, `computed` could regress and
     un-close a day. Clamp to max(prev, computed) so the frontier only advances.
+
+    NOTE (review): the current seal path (KlineCacheService._seal_closed_days) is
+    already monotonic by construction — sealing is append-only (the UPDATE sets
+    sealed=true only WHERE sealed=false and never clears it), so a backward clock
+    cannot UN-seal an already-sealed day. This helper is therefore not yet wired
+    into that path; it is kept as the tested SSOT for callers that DO persist and
+    advance a frontier value (e.g. a future SealBackfillRunner that records the
+    last-sealed boundary). Intentional, not dead code.
     """
     if prev is None:
         return computed
