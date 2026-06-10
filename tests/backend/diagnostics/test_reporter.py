@@ -66,3 +66,27 @@ def test_run_cycles_isolated_uses_own_base_capital_and_fresh_book():
     for t in engine_trades:
         by_scan[t["scan_id"]] = by_scan.get(t["scan_id"], 0) + 1
     assert by_scan == {"s1": 2, "s2": 1}
+
+
+def test_run_cycles_isolated_passes_per_cycle_fine_klines():
+    """When fine_klines_by_scan is supplied, each cycle's 1m drill-down windows are
+    passed to the engine via the fine_klines kwarg (5m primary + 1m exit refinement)."""
+    from backend.diagnostics.parity.reporter import run_cycles_isolated
+
+    c1 = _cycle("s1", 200.0, [10.0], _dt("2026-06-05T01:28:00"))
+    signals_by_scan = {"s1": [{"scan_id": "s1", "ticker": "S0"}]}
+    fine_by_scan = {"s1": {"S0": {123: [{"open_time": _dt("2026-06-05T01:28:00")}]}}}
+
+    class FakeResult:
+        def __init__(self, trades): self.trades = trades
+
+    class FakeEngine:
+        def __init__(self): self.seen_fine = []
+        def run(self, config, signals, klines, **kw):
+            self.seen_fine.append(kw.get("fine_klines"))
+            return FakeResult([{"pnl": 1.0}])
+
+    eng = FakeEngine()
+    run_cycles_isolated(eng, [c1], signals_by_scan, klines={}, base_config={},
+                        fine_klines_by_scan=fine_by_scan)
+    assert eng.seen_fine == [fine_by_scan["s1"]]

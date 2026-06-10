@@ -11,6 +11,7 @@ def run_cycles_isolated(
     signals_by_scan: Mapping[str, list[Mapping[str, Any]]],
     klines: Mapping[str, list[dict]],
     base_config: Mapping[str, Any],
+    fine_klines_by_scan: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Run each pinned cycle in ISOLATION and return scan-stamped engine trades.
 
@@ -24,6 +25,12 @@ def run_cycles_isolated(
     Each cycle runs with its OWN live base_capital as starting_capital and a fresh
     engine state. Returned engine-trade dicts are stamped with their cycle's scan_id
     so build_report() can compound per-cycle PnL against the live oracle.
+
+    When fine_klines_by_scan is supplied, each cycle's 1m drill-down windows
+    ({symbol: {bar_open_epoch: [1m candles]}}) are passed to the engine so its
+    close-rule EXIT prices refine to 1m granularity while the 5m primary timeline
+    keeps entry selection/fills stable (matches how live fired its ~60s-poll closes
+    without shifting which bar a trade entered on).
     """
     out: list[dict[str, Any]] = []
     for c in cycles:
@@ -32,7 +39,12 @@ def run_cycles_isolated(
             continue
         cfg = dict(base_config)
         cfg["starting_capital"] = c.base_capital
-        result = engine.run(cfg, sigs, klines)
+        kwargs: dict[str, Any] = {}
+        if fine_klines_by_scan is not None:
+            fine = fine_klines_by_scan.get(c.scan_id)
+            if fine:
+                kwargs["fine_klines"] = fine
+        result = engine.run(cfg, sigs, klines, **kwargs)
         for t in result.trades:
             rec = dict(t)
             rec["scan_id"] = c.scan_id          # stamp for build_report compounding

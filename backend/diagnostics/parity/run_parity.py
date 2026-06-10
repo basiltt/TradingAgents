@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from backend.async_persistence import AsyncAnalysisDB
 from backend.services.kline_cache_service import KlineCacheService
@@ -61,6 +61,8 @@ async def main() -> None:
     ap.add_argument("--start", required=True)
     ap.add_argument("--end", required=True)
     ap.add_argument("--tolerance", type=float, default=1.0)
+    ap.add_argument("--drilldown", action="store_true",
+                    help="refine close-rule exits with 1m drill-down (5m primary timeline)")
     args = ap.parse_args()
 
     start, end = _dt(args.start), _dt(args.end)
@@ -95,12 +97,33 @@ async def main() -> None:
         signals_by_scan: dict[str, list] = {}
         for s in pinned:
             signals_by_scan.setdefault(s["scan_id"], []).append(s)
+
+        # Optional 1m drill-down: refine close-rule exit prices to 1m within each 5m
+        # bar (5m primary timeline keeps entry selection/fills stable). Built per cycle
+        # over that cycle's lifetime window so the 1m fetch volume stays bounded.
+        fine_by_scan: dict[str, Any] | None = None
+        if args.drilldown:
+            fine_by_scan = {}
+            for c in cycles:
+                csyms = sorted({s["ticker"] for s in signals_by_scan.get(c.scan_id, [])})
+                if not csyms or not c.live_trades:
+                    continue
+                last_close = max((t.closed_at for t in c.live_trades if t.closed_at), default=None)
+                if last_close is None:
+                    continue
+                w_start = c.signal_time - timedelta(hours=1)
+                w_end = last_close + timedelta(hours=1)
+                fine_by_scan[c.scan_id] = await da.build_fine_klines(
+                    kline_cache, csyms, w_start, w_end, sim_interval_seconds=300)
+
         engine_trades = run_cycles_isolated(
-            BacktestEngine(), cycles, signals_by_scan, klines, base_config)
+            BacktestEngine(), cycles, signals_by_scan, klines, base_config,
+            fine_klines_by_scan=fine_by_scan)
 
         report = build_report(cycles, engine_trades, starting_capital, args.tolerance)
         print(format_report(report))
-        print(f"\nLive cycles: {len(cycles)} | pinned signals: {len(pinned)} | "
+        mode = "5m+1m drill-down" if args.drilldown else "5m"
+        print(f"\nMode: {mode} | Live cycles: {len(cycles)} | pinned signals: {len(pinned)} | "
               f"engine closed trades: {len(engine_trades)}")
     finally:
         await db.close()

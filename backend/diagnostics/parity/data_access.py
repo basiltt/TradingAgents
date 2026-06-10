@@ -72,3 +72,40 @@ class ParityDataAccess:
             *(kline_cache.get_klines(sym, interval, start, end) for sym in symbols)
         )
         return {sym: series for sym, series in zip(symbols, results)}
+
+    async def build_fine_klines(
+        self, kline_cache: Any, symbols: list[str], window_start: datetime,
+        window_end: datetime, sim_interval_seconds: int = 300,
+    ) -> dict[str, dict[int, list[dict]]]:
+        """Warm + bucket 1m candles into the engine's drill-down shape.
+
+        Returns {symbol: {bar_open_epoch: [1m candles asc]}} for the given window —
+        the structure BacktestEngine.run accepts as `fine_klines`. The engine then
+        refines TP/SL/equity-rule exit prices to 1m within each 5m bar, WITHOUT
+        shifting the 5m entry/selection timeline. Mirrors BacktestService's
+        _build_fine_klines bucketing (key = floor(open_time / sim_bar) * sim_bar).
+
+        Best-effort: warms coverage first so the 1m candles exist locally; a symbol
+        with no 1m data is simply omitted (engine falls back to 5m for it).
+        """
+        symbols = sorted(set(symbols))
+        # Warm 1m coverage for the window (fetches from Bybit if missing).
+        try:
+            await kline_cache.ensure_coverage(symbols, "1m", window_start, window_end)
+        except Exception:
+            pass  # fail-soft: bucket whatever is cached; engine falls back to 5m
+
+        out: dict[str, dict[int, list[dict]]] = {}
+        for sym in symbols:
+            ones = await kline_cache.get_klines(sym, "1m", window_start, window_end)
+            if not ones:
+                continue
+            buckets: dict[int, list[dict]] = {}
+            for c in ones:
+                ot = c["open_time"]
+                key = (int(ot.timestamp()) // sim_interval_seconds) * sim_interval_seconds
+                buckets.setdefault(key, []).append(c)
+            for key in buckets:
+                buckets[key].sort(key=lambda c: c["open_time"])
+            out[sym] = buckets
+        return out
