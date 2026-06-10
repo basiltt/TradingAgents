@@ -133,9 +133,14 @@ class KlineCacheService:
         Returns:
             Dict mapping symbol → list of missing dates.
         """
-        # Get all coverage records for the symbols + interval + date range
+        # Get all coverage records for the symbols + interval + date range.
+        # `sealed` (v58) marks a closed day immutable: once sealed, its candle_count
+        # is a FACT, never a refetch trigger — this is the RC-3 fix. We read it
+        # defensively (COALESCE false) so the query also works pre-v58 / on a DB
+        # where the column hasn't been added yet.
         query = """
-            SELECT symbol, date, candle_count
+            SELECT symbol, date, candle_count,
+                   COALESCE(sealed, false) AS sealed
             FROM kline_cache_coverage
             WHERE symbol = ANY($1) AND interval = $2
               AND date >= $3 AND date <= $4
@@ -145,10 +150,21 @@ class KlineCacheService:
 
         rows = await self._db.pool.fetch(query, symbols, interval, start_date, end_date)
 
-        # Map (symbol, date) → cached candle_count. A date absent from the table has 0.
+        # Map (symbol, date) → cached candle_count, and the set of SEALED days.
+        # A date absent from the table has 0 count and is not sealed. Access `sealed`
+        # defensively: a real pre-v58 DB (or a fake pool in older tests) may return a
+        # row without the column — treat missing as not-sealed (the pre-fix behavior),
+        # so the manifest is purely additive and never KeyErrors.
         counts: dict[str, dict[date, int]] = {}
+        sealed: dict[str, set[date]] = {}
         for row in rows:
             counts.setdefault(row["symbol"], {})[row["date"]] = int(row["candle_count"] or 0)
+            try:
+                is_sealed = row["sealed"]
+            except (KeyError, IndexError):
+                is_sealed = False
+            if is_sealed:
+                sealed.setdefault(row["symbol"], set()).add(row["date"])
 
         # Candles per full day for this interval (1440 minutes / interval). Unknown
         # intervals fall back to 5m's 288 so a typo can't make every day look "complete".
@@ -183,13 +199,20 @@ class KlineCacheService:
             current += timedelta(days=1)
 
         # A date is a GAP when its cached candle_count is below the expected count for
-        # that day (clipped to the requested window). This replaces the old "covered if
-        # the date appears at all" check, which let a partially-warmed day (e.g. 73/288)
-        # masquerade as complete and never refetch — the root of the stale-fill bug.
+        # that day (clipped to the requested window) AND it is not SEALED. Sealing
+        # (v58) makes a closed day's count immutable: a sealed day with 144/288
+        # candles is COMPLETE (the exchange had 144 bars), not a perpetual gap — this
+        # is the RC-3 fix that stops re-downloading a fully-cached closed day on every
+        # rerun. Unsealed days still use the count check (so a genuinely partial
+        # forming day, or a pre-v58 short day, refetches once and then seals).
         gaps: dict[str, list[date]] = {}
         for sym in symbols:
             sym_counts = counts.get(sym, {})
-            sym_gaps = [d for d in expected_dates if sym_counts.get(d, 0) < _expected_for(d)]
+            sym_sealed = sealed.get(sym, set())
+            sym_gaps = [
+                d for d in expected_dates
+                if d not in sym_sealed and sym_counts.get(d, 0) < _expected_for(d)
+            ]
             if sym_gaps:
                 gaps[sym] = sym_gaps
 
@@ -281,7 +304,71 @@ class KlineCacheService:
         # state rather than the pre-fetch gap list.
         stats["symbols_with_gaps"] = still_missing
         stats["cached"] = len(symbols) - len(still_missing)
+
+        # SEAL every closed day in the window (RC-3 fix): once a day is below the
+        # completion frontier it is immutable, so mark it sealed and never re-evaluate
+        # its candle_count again. This is what makes a closed day fetched exactly once,
+        # ever — including legitimately-short days the count heuristic would otherwise
+        # flag as a perpetual gap. Forming (current) days are excluded so they keep
+        # refreshing until they close. Best-effort: a seal failure must not fail the
+        # warm-up (worst case the day refetches next run, the pre-v58 behavior).
+        try:
+            await self._seal_closed_days(symbols, interval, start, end)
+            stats["sealed"] = True
+        except Exception:  # noqa: BLE001 — sealing is an optimization, never fatal
+            logger.warning("kline_seal_failed", extra={"interval": interval}, exc_info=False)
+            stats["sealed"] = False
+
         return stats
+
+    async def _seal_closed_days(
+        self,
+        symbols: list[str],
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> int:
+        """Mark every CLOSED day in [start, end] as sealed for these symbols.
+
+        A day is closed (immutable) when its end is at/below the completion frontier
+        floor(now/T)*T. Sealing sets `sealed=true` on the kline_cache_coverage rows so
+        get_coverage_gaps stops re-checking their candle_count — the RC-3 fix. Only
+        days that already have a coverage row are sealed (a row exists iff we've
+        stored candles for that day), so this never fabricates coverage.
+
+        Returns the number of (symbol,date) cells sealed.
+        """
+        from backend.services.sealed_manifest import completion_frontier, day_is_closed
+
+        frontier = completion_frontier(datetime.now(tz=timezone.utc), interval)
+        start_date = start.date() if isinstance(start, datetime) else start
+        end_date = end.date() if isinstance(end, datetime) else end
+
+        # Enumerate closed days in the window.
+        closed_days: list[date] = []
+        cur = start_date
+        while cur <= end_date:
+            if day_is_closed(cur, frontier):
+                closed_days.append(cur)
+            cur += timedelta(days=1)
+        if not closed_days:
+            return 0
+
+        # Seal only existing, not-yet-sealed coverage rows for these closed days.
+        result = await self._db.pool.execute(
+            """
+            UPDATE kline_cache_coverage
+            SET sealed = true, sealed_at = now()
+            WHERE symbol = ANY($1) AND interval = $2
+              AND date = ANY($3) AND sealed = false
+            """,
+            symbols, interval, closed_days,
+        )
+        # asyncpg returns e.g. "UPDATE 12"; parse the affected-row count defensively.
+        try:
+            return int(str(result).split()[-1])
+        except (ValueError, IndexError):
+            return 0
 
     async def _update_coverage(
         self,

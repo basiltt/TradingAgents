@@ -989,6 +989,41 @@ async def _migrate_mcp_v43(conn) -> None:
     )
 
 
+async def _add_sealed_manifest_columns(conn) -> None:
+    """v58 — sealed-day manifest columns on kline_cache_coverage (Phase P1).
+
+    Adds the immutability provenance that kills RC-3 (re-download every rerun):
+      * sealed     — once true, the day's candle_count is a FACT, never a refetch
+                     trigger. A closed day with few candles is COMPLETE, not a gap.
+      * sealed_at  — when the day was sealed (audit / debugging).
+
+    CALLABLE (not a ';'-split string) per the project rule for multi-statement DDL
+    (N4). ADD COLUMN IF NOT EXISTS with constant defaults is metadata-only on
+    PG11+ (existing rows backfill instantly — sub-second on any table size), so
+    this is additive, idempotent, and atomic under the runner's per-version
+    transaction. The non-concurrent partial index is safe to build in-txn because
+    the column is brand new (no rows match `sealed = true` yet → instant).
+
+    Backward-compat: existing coverage rows default to sealed=false, so they take
+    the lazy-seal path (fetched once to seal) on first post-migration access —
+    never a behavior change to WHICH klines are used, only WHETHER they refetch.
+    """
+    await conn.execute(
+        "ALTER TABLE kline_cache_coverage "
+        "ADD COLUMN IF NOT EXISTS sealed BOOLEAN NOT NULL DEFAULT false"
+    )
+    await conn.execute(
+        "ALTER TABLE kline_cache_coverage "
+        "ADD COLUMN IF NOT EXISTS sealed_at TIMESTAMPTZ"
+    )
+    # Partial index: gap detection filters to NOT sealed; this keeps the scan to
+    # the small unsealed working set as the table grows with sealed history.
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_kline_coverage_unsealed "
+        "ON kline_cache_coverage (symbol, interval, date) WHERE sealed = false"
+    )
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -1520,6 +1555,12 @@ ALTER TABLE high_freq_snapshots ALTER COLUMN balance TYPE NUMERIC(30,12) USING b
     # _backfill_open_trade_filled_qty for the full rationale and the deliberate
     # exclusion of partially_closed rows. Idempotent (guarded on filled_qty > 0).
     (57, _backfill_open_trade_filled_qty),
+    # v58 — sealed-day manifest columns on kline_cache_coverage (Phase P1 backtest
+    # perf): `sealed`/`sealed_at` make a closed day's candle_count immutable, so a
+    # legitimately-short closed day is never re-fetched from Bybit on rerun (kills
+    # RC-3). Callable (multi-statement DDL must not be ';'-split). Additive +
+    # idempotent; existing rows default sealed=false → lazy-seal on first access.
+    (58, _add_sealed_manifest_columns),
 ]
 
 
