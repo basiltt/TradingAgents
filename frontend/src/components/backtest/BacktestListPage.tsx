@@ -3,6 +3,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { backtestApi } from "@/api/client";
 import { BACKTEST_POLL_INTERVAL_MS } from "@/hooks/useBacktestPolling";
@@ -136,24 +144,6 @@ export function BacktestListPage({ onOpen, onCreate, onCompare }: BacktestListPa
 
   const runs = visibleRuns;
 
-  const handleClearAll = () => {
-    const terminalCount = allRuns.filter((r) => isTerminalStatus(r.status)).length;
-    if (terminalCount === 0) {
-      toast.info("No finished backtests to clear.");
-      return;
-    }
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Delete all ${terminalCount} finished backtest${terminalCount === 1 ? "" : "s"}? This cannot be undone. (Running backtests are kept.)`,
-      )
-    ) {
-      return;
-    }
-    clearAllMutation.mutate();
-  };
-
-
   const toggleSelect = (runId: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -164,13 +154,44 @@ export function BacktestListPage({ onOpen, onCreate, onCompare }: BacktestListPa
   };
 
   const handleDelete = (runId: string) => {
-    // Permanent removal — guard against accidental clicks like Cancel does.
-    if (typeof window !== "undefined" && !window.confirm("Delete this backtest? This cannot be undone.")) {
+    // In-app confirm (replaces the native window.confirm) — guard against accidental
+    // clicks, matching the app's dialog style.
+    setConfirm({ kind: "single", runId });
+  };
+
+  const handleClearAll = () => {
+    const terminalCount = allRuns.filter((r) => isTerminalStatus(r.status)).length;
+    if (terminalCount === 0) {
+      toast.info("No finished backtests to clear.");
       return;
     }
-    setDeletingId(runId);
-    removeMutation.mutate(runId, { onSettled: () => setDeletingId(null) });
+    setConfirm({ kind: "all", count: terminalCount });
   };
+
+  // Pending confirmation (null when no dialog is open).
+  type Confirm =
+    | { kind: "single"; runId: string }
+    | { kind: "all"; count: number }
+    | null;
+  const [confirm, setConfirm] = React.useState<Confirm>(null);
+
+  const confirmInFlight =
+    confirm?.kind === "single" ? deletingId === confirm.runId : clearAllMutation.isPending;
+
+  const runConfirm = () => {
+    if (!confirm) return;
+    if (confirm.kind === "single") {
+      const runId = confirm.runId;
+      setDeletingId(runId);
+      removeMutation.mutate(runId, {
+        onSettled: () => setDeletingId(null),
+        onSuccess: () => setConfirm(null),
+      });
+    } else {
+      clearAllMutation.mutate(undefined, { onSuccess: () => setConfirm(null) });
+    }
+  };
+
 
   if (isLoading) {
     return (
@@ -336,6 +357,47 @@ export function BacktestListPage({ onOpen, onCreate, onCompare }: BacktestListPa
           </table>
         </div>
       )}
+
+      {/* In-app confirm dialog (replaces native window.confirm) for delete + clear-all. */}
+      <Dialog open={confirm !== null} onOpenChange={(o) => !o && !confirmInFlight && setConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {confirm?.kind === "all" ? "Clear all backtests" : "Delete backtest"}
+            </DialogTitle>
+            <DialogDescription>
+              {confirm?.kind === "all"
+                ? `Delete all ${confirm.count} finished backtest${confirm.count === 1 ? "" : "s"}? Running backtests are kept.`
+                : "Delete this backtest run and its results?"}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-[var(--neu-text-muted)]">This action cannot be undone.</p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              onClick={() => setConfirm(null)}
+              disabled={confirmInFlight}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="cursor-pointer"
+              onClick={runConfirm}
+              disabled={confirmInFlight}
+            >
+              {confirmInFlight
+                ? confirm?.kind === "all"
+                  ? "Clearing…"
+                  : "Deleting…"
+                : confirm?.kind === "all"
+                  ? `Delete ${confirm.count}`
+                  : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

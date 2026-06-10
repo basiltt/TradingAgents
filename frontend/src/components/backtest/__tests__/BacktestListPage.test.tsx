@@ -100,11 +100,11 @@ describe("BacktestListPage", () => {
     renderWithClient(<BacktestListPage />);
     await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText("Delete run-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
     await waitFor(() => expect(screen.queryByTestId("runs-table")).not.toBeInTheDocument());
   });
 
-  it("does not delete when the confirm dialog is dismissed", async () => {
-    window.confirm = vi.fn(() => false);
+  it("does not delete when the confirm dialog is cancelled", async () => {
     let deleteHit = false;
     server.use(
       http.get("/api/v1/backtest", () => HttpResponse.json([run({ id: "run-1" })])),
@@ -116,6 +116,8 @@ describe("BacktestListPage", () => {
     renderWithClient(<BacktestListPage />);
     await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText("Delete run-1"));
+    // Dialog appears — cancel it; no delete request fires.
+    fireEvent.click(await screen.findByRole("button", { name: /Cancel/ }));
     await new Promise((r) => setTimeout(r, 50));
     expect(deleteHit).toBe(false);
     expect(screen.getByTestId("runs-table")).toBeInTheDocument();
@@ -151,6 +153,7 @@ describe("BacktestListPage", () => {
     renderWithClient(<BacktestListPage />);
     await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
     fireEvent.click(screen.getByLabelText("Delete run-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
     await waitFor(() => {
       const basket = JSON.parse(sessionStorage.getItem("backtest_comparison_basket") ?? "[]");
       expect(basket).toEqual(["run-2"]);
@@ -193,8 +196,9 @@ describe("BacktestListPage", () => {
     fireEvent.click(screen.getByLabelText("Select run-1"));
     fireEvent.click(screen.getByLabelText("Select run-2"));
     expect(await screen.findByRole("button", { name: /Compare \(2\)/ })).toBeInTheDocument();
-    // Delete run-1 → selection should drop to just run-2 → Compare hidden (needs >=2).
+    // Delete run-1 → confirm in the dialog → selection drops to run-2 → Compare hidden.
     fireEvent.click(screen.getByLabelText("Delete run-1"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete$/ }));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Compare/ })).not.toBeInTheDocument());
   });
 
@@ -215,7 +219,7 @@ describe("BacktestListPage", () => {
     await waitFor(() => expect(screen.getAllByTestId("run-row").length).toBe(1));
   });
 
-  it("Clear all calls the bulk-delete endpoint and refreshes", async () => {
+  it("Clear all opens a confirm dialog, then calls the bulk-delete endpoint", async () => {
     let deleteAllCalled = false;
     server.use(
       http.get("/api/v1/backtest", () =>
@@ -226,11 +230,34 @@ describe("BacktestListPage", () => {
         return HttpResponse.json({ deleted: 2 });
       }),
     );
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderWithClient(<BacktestListPage />);
     await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
+    // Click "Clear all" → in-app confirm dialog appears (no native confirm).
     fireEvent.click(screen.getByRole("button", { name: /Clear all/ }));
+    expect(await screen.findByText(/Delete all 2 finished backtests/i)).toBeInTheDocument();
+    // Confirm in the dialog.
+    fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
     await waitFor(() => expect(deleteAllCalled).toBe(true));
     await waitFor(() => expect(screen.getByText(/No backtests yet/i)).toBeInTheDocument());
+  });
+
+  it("delete row opens a confirm dialog before removing", async () => {
+    let deleted = false;
+    server.use(
+      http.get("/api/v1/backtest", () =>
+        HttpResponse.json(deleted ? [] : [run({ id: "run-1" })]),
+      ),
+      http.delete("/api/v1/backtest/run-1", () => {
+        deleted = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderWithClient(<BacktestListPage />);
+    await waitFor(() => expect(screen.getByTestId("runs-table")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText("Delete run-1"));
+    // Dialog appears; confirm.
+    expect(await screen.findByText(/Delete this backtest run/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(deleted).toBe(true));
   });
 });
