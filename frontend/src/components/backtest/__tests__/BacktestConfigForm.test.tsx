@@ -12,9 +12,9 @@ describe("BacktestConfigForm", () => {
 
   it("renders the major sections", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
-    expect(screen.getByText("Capital & Time Range")).toBeInTheDocument();
-    expect(screen.getByText("Signal Source")).toBeInTheDocument();
-    expect(screen.getByText("Execution Model")).toBeInTheDocument();
+    expect(screen.getByText("Backtest Setup (backtest-only)")).toBeInTheDocument();
+    expect(screen.getByText("Signal Source (backtest-only)")).toBeInTheDocument();
+    expect(screen.getByText("Execution Model (backtest-only)")).toBeInTheDocument();
     expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
   });
 
@@ -52,7 +52,7 @@ describe("BacktestConfigForm", () => {
 
   it("seeds values from the seed prop", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} seed={{ starting_capital: 25000, leverage: 5 }} />);
-    expect((screen.getByLabelText("Starting Capital ($)") as HTMLInputElement).value).toBe("25000");
+    expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("25000");
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("5");
   });
 
@@ -90,7 +90,7 @@ describe("BacktestConfigForm", () => {
     render(<BacktestConfigForm onSubmit={onSubmit} />);
     // Open the collapsed Close Rules section.
     fireEvent.click(screen.getByText("Close Rules"));
-    const field = screen.getByLabelText("Trailing Profit (%)") as HTMLInputElement;
+    const field = screen.getByLabelText("Trailing profit %") as HTMLInputElement;
     fireEvent.change(field, { target: { value: "15" } });
     fireEvent.change(field, { target: { value: "" } }); // clear it again
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
@@ -112,13 +112,13 @@ describe("BacktestConfigForm", () => {
     render(<BacktestConfigForm onSubmit={onSubmit} />);
     // Close Rules starts collapsed; put an out-of-range value in it, then submit.
     fireEvent.click(screen.getByText("Close Rules")); // open
-    const dd = screen.getByLabelText("Max Drawdown (%)") as HTMLInputElement;
+    const dd = screen.getByLabelText("Max drawdown %") as HTMLInputElement;
     fireEvent.change(dd, { target: { value: "500" } }); // > max 100
     fireEvent.click(screen.getByText("Close Rules")); // collapse again
-    expect(screen.queryByLabelText("Max Drawdown (%)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Max drawdown %")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
     // The section should auto-reveal so the error is visible.
-    await waitFor(() => expect(screen.getByLabelText("Max Drawdown (%)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Max drawdown %")).toBeInTheDocument());
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -165,9 +165,9 @@ describe("BacktestConfigForm", () => {
     expect(screen.getByText("Target Goal")).toBeInTheDocument();
     // Expand adaptive section and confirm its fields exist.
     fireEvent.click(screen.getByText("Adaptive Blacklist"));
-    expect(screen.getByLabelText("Min Trades")).toBeInTheDocument();
-    expect(screen.getByLabelText("Max Win Rate (%)")).toBeInTheDocument();
-    expect(screen.getByLabelText("Lookback (h)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Min trades")).toBeInTheDocument();
+    expect(screen.getByLabelText("Max win rate %")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lookback (hours)")).toBeInTheDocument();
   });
 
   it("exposes the regime section and shows the F2-long danger note when enabled", () => {
@@ -185,7 +185,7 @@ describe("BacktestConfigForm", () => {
   it("restores entered values after the form is remounted (draft persistence)", async () => {
     // Reproduces the bug: navigating away and back lost everything the user typed.
     const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
-    const capital = screen.getByLabelText("Starting Capital ($)") as HTMLInputElement;
+    const capital = screen.getByLabelText("Initial Balance ($)") as HTMLInputElement;
     fireEvent.change(capital, { target: { value: "73210" } });
     const leverage = screen.getByLabelText("Leverage") as HTMLInputElement;
     fireEvent.change(leverage, { target: { value: "11" } });
@@ -195,7 +195,7 @@ describe("BacktestConfigForm", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
 
     await waitFor(() =>
-      expect((screen.getByLabelText("Starting Capital ($)") as HTMLInputElement).value).toBe("73210"),
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("73210"),
     );
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("11");
   });
@@ -213,12 +213,12 @@ describe("BacktestConfigForm", () => {
   it("an explicit seed wins over a saved draft", async () => {
     // A user types a draft...
     const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Starting Capital ($)"), { target: { value: "500" } });
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "500" } });
     unmount();
     // ...but a "Backtest these settings"/Retry seed must take precedence over it.
     render(<BacktestConfigForm onSubmit={vi.fn()} seed={{ starting_capital: 25000 }} />);
     await waitFor(() =>
-      expect((screen.getByLabelText("Starting Capital ($)") as HTMLInputElement).value).toBe("25000"),
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("25000"),
     );
   });
 });

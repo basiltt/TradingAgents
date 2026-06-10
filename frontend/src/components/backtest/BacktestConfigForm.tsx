@@ -26,9 +26,17 @@ interface NumFieldProps {
   placeholder?: string;
   nullable?: boolean;
   error?: string;
+  /** Small grey help line under the field (e.g. what it maps to in the scanner config). */
+  hint?: string;
 }
 
-function NumberField({ control, name, label, step, placeholder, nullable, error }: NumFieldProps) {
+/** A grey one-line help text rendered under a field's input. */
+function Hint({ text }: { text?: string }) {
+  if (!text) return null;
+  return <span className="text-[0.68rem] leading-tight text-[var(--neu-text-muted)]">{text}</span>;
+}
+
+function NumberField({ control, name, label, step, placeholder, nullable, error, hint }: NumFieldProps) {
   const errorId = `${name}-error`;
   return (
     <div className="flex flex-col gap-1.5">
@@ -59,6 +67,7 @@ function NumberField({ control, name, label, step, placeholder, nullable, error 
           />
         )}
       />
+      <Hint text={hint} />
       {error ? (
         <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
           {error}
@@ -75,9 +84,10 @@ interface SelectFieldProps {
   options: Array<{ value: string; label: string }>;
   /** Map the empty-string option to null on change (for nullable enum fields). */
   emptyToNull?: boolean;
+  hint?: string;
 }
 
-function SelectField({ control, name, label, options, emptyToNull }: SelectFieldProps) {
+function SelectField({ control, name, label, options, emptyToNull, hint }: SelectFieldProps) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={name}>{label}</Label>
@@ -103,6 +113,7 @@ function SelectField({ control, name, label, options, emptyToNull }: SelectField
           </select>
         )}
       />
+      <Hint text={hint} />
     </div>
   );
 }
@@ -111,20 +122,25 @@ interface CheckFieldProps {
   control: Control<BacktestConfigFormValues>;
   name: FieldPath<BacktestConfigFormValues>;
   label: string;
+  hint?: string;
 }
 
-function CheckField({ control, name, label }: CheckFieldProps) {
+function CheckField({ control, name, label, hint }: CheckFieldProps) {
   return (
     <Controller
       control={control}
       name={name}
       render={({ field }) => (
-        <label className="flex cursor-pointer items-center gap-2.5 py-1 text-[0.85rem] text-[var(--neu-text-strong)]">
+        <label className="flex cursor-pointer items-start gap-2.5 py-1 text-[0.85rem] text-[var(--neu-text-strong)]">
           <Checkbox
             checked={!!field.value}
             onCheckedChange={(checked) => field.onChange(checked === true)}
+            className="mt-0.5"
           />
-          {label}
+          <span className="flex flex-col">
+            {label}
+            <Hint text={hint} />
+          </span>
         </label>
       )}
     />
@@ -196,12 +212,14 @@ function SymbolListField({
   label,
   placeholder,
   error,
+  hint,
 }: {
   control: Control<BacktestConfigFormValues>;
   name: FieldPath<BacktestConfigFormValues>;
   label: string;
   placeholder?: string;
   error?: string;
+  hint?: string;
 }) {
   const errorId = `${name}-error`;
   return (
@@ -238,6 +256,7 @@ function SymbolListField({
           );
         }}
       />
+      <Hint text={hint} />
       {error ? (
         <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
           {error}
@@ -249,11 +268,14 @@ function SymbolListField({
 
 function Section({
   title,
+  subtitle,
   children,
   defaultOpen = true,
   forceOpen = false,
 }: {
   title: string;
+  /** Optional one-line description shown under the section title when expanded. */
+  subtitle?: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
   /** When true (e.g. the section contains a validation error), force it open. */
@@ -285,7 +307,14 @@ function Section({
         <span className={cn("transition-transform", open ? "rotate-90" : "")}>›</span>
         {title}
       </button>
-      {open ? <div className="mt-4">{children}</div> : null}
+      {open ? (
+        <div className="mt-4">
+          {subtitle ? (
+            <p className="mb-4 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">{subtitle}</p>
+          ) : null}
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -417,9 +446,28 @@ export function BacktestConfigForm({
 
   return (
     <form ref={formRef} onSubmit={submit} className={cn("flex flex-col gap-4", className)} aria-label="Backtest configuration">
-      <Section title="Capital & Time Range">
+      <div className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)]/50 bg-[var(--neu-surface-inset)]/30 px-4 py-3">
+        <p className="text-[0.78rem] leading-snug text-[var(--neu-text-muted)]">
+          These settings mirror your <span className="font-semibold text-[var(--neu-text)]">Scheduled Market Scan</span> auto-trade
+          config (same trade-decision, close-rule, risk and strategy fields), plus
+          <span className="font-semibold text-[var(--neu-text)]"> backtest-only</span> settings the live account would normally
+          provide — initial balance, date range, fees, slippage and funding. Each field
+          notes its equivalent. Fields marked <em>not simulated</em> have no effect here.
+        </p>
+      </div>
+
+      <Section
+        title="Backtest Setup (backtest-only)"
+        subtitle="These exist only for backtesting — in live trading the account supplies the balance and the scanner runs continuously."
+      >
         <div className={GRID}>
-          <NumberField control={control} name="starting_capital" label="Starting Capital ($)" error={fieldError("starting_capital")} />
+          <NumberField
+            control={control}
+            name="starting_capital"
+            label="Initial Balance ($)"
+            error={fieldError("starting_capital")}
+            hint="Backtest-only · the starting wallet, like a live account's balance"
+          />
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="date_range_start">Start</Label>
             <Controller
@@ -429,6 +477,7 @@ export function BacktestConfigForm({
                 <Input id="date_range_start" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_start")} aria-describedby={fieldError("date_range_start") ? "date_range_start-error" : undefined} />
               )}
             />
+            <Hint text="Backtest-only · which historical scans to replay (from)" />
             {fieldError("date_range_start") ? (
               <span id="date_range_start-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("date_range_start")}</span>
             ) : null}
@@ -442,6 +491,7 @@ export function BacktestConfigForm({
                 <Input id="date_range_end" type="datetime-local" value={String(field.value ?? "")} onChange={field.onChange} onBlur={field.onBlur} aria-invalid={!!fieldError("date_range_end")} aria-describedby={fieldError("date_range_end") ? "date_range_end-error" : undefined} />
               )}
             />
+            <Hint text="Backtest-only · which historical scans to replay (to)" />
             {fieldError("date_range_end") ? (
               <span id="date_range_end-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("date_range_end")}</span>
             ) : null}
@@ -449,12 +499,13 @@ export function BacktestConfigForm({
         </div>
       </Section>
 
-      <Section title="Signal Source">
+      <Section title="Signal Source (backtest-only)" subtitle="Which stored scan results feed the simulation — live trading always uses the running scanner.">
         <div className={GRID}>
           <SelectField
             control={control}
             name="scan_source.mode"
             label="Source Mode"
+            hint="Backtest-only · where signals come from"
             options={[
               { value: "date_range", label: "All scans in date range" },
               { value: "schedule", label: "Specific schedule" },
@@ -538,106 +589,112 @@ export function BacktestConfigForm({
         </div>
       </Section>
 
-      <Section title="Execution Model">
+      <Section
+        title="Execution Model (backtest-only)"
+        subtitle="Cost + granularity assumptions the simulator uses — live trading gets these from the exchange."
+      >
         <div className={GRID}>
-          <SelectField control={control} name="simulation_interval" label="Simulation Interval" options={[
+          <SelectField control={control} name="simulation_interval" label="Simulation Interval" hint="Backtest-only · candle size the sim steps through" options={[
             { value: "5m", label: "5 minutes" },
             { value: "15m", label: "15 minutes" },
             { value: "1h", label: "1 hour" },
             { value: "4h", label: "4 hours" },
           ]} />
-          <NumberField control={control} name="fee_rate_pct" label="Fee Rate (%)" error={fieldError("fee_rate_pct")} />
-          <NumberField control={control} name="slippage_bps" label="Slippage (bps)" error={fieldError("slippage_bps")} />
-          <SelectField control={control} name="funding_rate_model" label="Funding Model" options={[
+          <NumberField control={control} name="fee_rate_pct" label="Fee Rate (%)" hint="Backtest-only · taker fee per side (Bybit ≈ 0.055)" error={fieldError("fee_rate_pct")} />
+          <NumberField control={control} name="slippage_bps" label="Slippage (bps)" hint="Backtest-only · adverse fill slippage, basis points" error={fieldError("slippage_bps")} />
+          <SelectField control={control} name="funding_rate_model" label="Funding Model" hint="Backtest-only · perpetual funding cost model" options={[
             { value: "none", label: "None" },
             { value: "fixed_8h", label: "Fixed (8h)" },
           ]} />
-          <NumberField control={control} name="funding_rate_fixed_pct" label="Funding Rate (%/8h)" error={fieldError("funding_rate_fixed_pct")} />
+          <NumberField control={control} name="funding_rate_fixed_pct" label="Funding Rate (%/8h)" hint="Backtest-only · used when Funding Model = Fixed" error={fieldError("funding_rate_fixed_pct")} />
         </div>
       </Section>
 
-      <Section title="Trade Decisions">
+      <Section
+        title="Trade Decisions"
+        subtitle="Mirrors the scanner's auto-trade config — same field names, same meaning."
+      >
         <div className={GRID}>
-          <SelectField control={control} name="direction" label="Direction" options={[
+          <SelectField control={control} name="direction" label="Direction" hint="Scanner: Direction" options={[
             { value: "straight", label: "Straight (follow signal)" },
             { value: "reverse", label: "Reverse (invert signal)" },
           ]} />
-          <NumberField control={control} name="leverage" label="Leverage" error={fieldError("leverage")} />
-          <NumberField control={control} name="capital_pct" label="Capital per Trade (%)" error={fieldError("capital_pct")} />
-          <NumberField control={control} name="take_profit_pct" label="Take Profit (%)" error={fieldError("take_profit_pct")} />
-          <NumberField control={control} name="stop_loss_pct" label="Stop Loss (%)" error={fieldError("stop_loss_pct")} />
-          <NumberField control={control} name="min_score" label="Min Signal Score" error={fieldError("min_score")} />
-          <SelectField control={control} name="confidence_filter" label="Confidence Filter" options={[
+          <NumberField control={control} name="leverage" label="Leverage" hint="Scanner: Leverage" error={fieldError("leverage")} />
+          <NumberField control={control} name="capital_pct" label="Capital %" hint="Scanner: Capital % · margin per trade" error={fieldError("capital_pct")} />
+          <NumberField control={control} name="take_profit_pct" label="Take profit %" hint="Scanner: Take profit %" error={fieldError("take_profit_pct")} />
+          <NumberField control={control} name="stop_loss_pct" label="Stop loss %" hint="Scanner: Stop loss %" error={fieldError("stop_loss_pct")} />
+          <NumberField control={control} name="min_score" label="Min score" hint="Scanner: Min score" error={fieldError("min_score")} />
+          <SelectField control={control} name="confidence_filter" label="Min confidence" hint="Scanner: Min confidence" options={[
             { value: "any", label: "Any" },
             { value: "high", label: "High only" },
             { value: "moderate", label: "Moderate+" },
             { value: "low", label: "Low+" },
           ]} />
-          <SelectField control={control} name="signal_sides" label="Signal Sides" options={[
+          <SelectField control={control} name="signal_sides" label="Signal sides" hint="Scanner: Signal sides" options={[
             { value: "both", label: "Both" },
             { value: "buy", label: "Buy only" },
             { value: "sell", label: "Sell only" },
           ]} />
-          <NumberField control={control} name="max_trades" label="Max Trades / Cycle" error={fieldError("max_trades")} />
-          <SelectField control={control} name="execution_mode" label="Execution Mode" options={[
+          <NumberField control={control} name="max_trades" label="Max trades" hint="Scanner: Max trades · per scan cycle" error={fieldError("max_trades")} />
+          <SelectField control={control} name="execution_mode" label="Execution mode" hint="Scanner: Execution mode" options={[
             { value: "immediate", label: "Immediate" },
             { value: "batch", label: "Batch" },
           ]} />
         </div>
-        <div className="mt-3 flex flex-wrap gap-x-6">
-          <CheckField control={control} name="fill_to_max_trades" label="Fill to max trades" />
-          <CheckField control={control} name="skip_if_positions_open" label="Skip if positions open" />
+        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+          <CheckField control={control} name="fill_to_max_trades" label="Fill to max trades" hint="Scanner: Fill to max trades" />
+          <CheckField control={control} name="skip_if_positions_open" label="Skip if positions open" hint="Scanner: Skip if positions open" />
         </div>
       </Section>
 
       <Section title="Close Rules" defaultOpen={false} forceOpen={closeRulesHasError}>
         <div className={GRID}>
-          <NumberField control={control} name="max_drawdown_pct" label="Max Drawdown (%)" error={fieldError("max_drawdown_pct")} />
-          <NumberField control={control} name="breakeven_timeout_hours" label="Breakeven Timeout (h)" nullable error={fieldError("breakeven_timeout_hours")} />
-          <NumberField control={control} name="max_trade_duration_hours" label="Max Duration (h)" nullable error={fieldError("max_trade_duration_hours")} />
-          <NumberField control={control} name="trailing_profit_pct" label="Trailing Profit (%)" nullable error={fieldError("trailing_profit_pct")} />
-          <NumberField control={control} name="close_on_profit_pct" label="Close on Profit (%)" nullable error={fieldError("close_on_profit_pct")} />
+          <NumberField control={control} name="max_drawdown_pct" label="Max drawdown %" hint="Scanner: Max drawdown % · close cycle on equity drop" error={fieldError("max_drawdown_pct")} />
+          <NumberField control={control} name="breakeven_timeout_hours" label="Close all at breakeven after (hours)" nullable hint="Scanner: Close all at breakeven after (hours)" error={fieldError("breakeven_timeout_hours")} />
+          <NumberField control={control} name="max_trade_duration_hours" label="Force close after (hours)" nullable hint="Scanner: Force close after (hours) · max trade duration" error={fieldError("max_trade_duration_hours")} />
+          <NumberField control={control} name="trailing_profit_pct" label="Trailing profit %" nullable hint="Scanner: Trailing profit %" error={fieldError("trailing_profit_pct")} />
+          <NumberField control={control} name="close_on_profit_pct" label="Close on profit %" nullable hint="Scanner: Close on profit % · equity-rise target" error={fieldError("close_on_profit_pct")} />
         </div>
         <div className="mt-3">
-          <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown close" />
+          <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown close" hint="Scanner: Smart drawdown close" />
         </div>
       </Section>
 
       <Section title="Risk Limits" defaultOpen={false} forceOpen={riskLimitsHasError}>
         <div className={GRID}>
-          <NumberField control={control} name="max_same_direction" label="Max Same Direction" nullable error={fieldError("max_same_direction")} />
-          <NumberField control={control} name="max_same_sector" label="Max Same Sector (not simulated)" nullable error={fieldError("max_same_sector")} />
-          <NumberField control={control} name="max_signal_age_minutes" label="Max Signal Age (min)" nullable error={fieldError("max_signal_age_minutes")} />
-          <NumberField control={control} name="max_price_drift_pct" label="Max Price Drift (%)" nullable error={fieldError("max_price_drift_pct")} />
+          <NumberField control={control} name="max_same_direction" label="Max positions same direction" nullable hint="Scanner: Max positions same direction" error={fieldError("max_same_direction")} />
+          <NumberField control={control} name="max_same_sector" label="Max positions same sector" nullable hint="Not simulated · sector data is live-only, no effect on results" error={fieldError("max_same_sector")} />
+          <NumberField control={control} name="max_signal_age_minutes" label="Max signal age (min)" nullable hint="Scanner: Max signal age (minutes)" error={fieldError("max_signal_age_minutes")} />
+          <NumberField control={control} name="max_price_drift_pct" label="Max price drift %" nullable hint="Scanner: Max price drift % · skip if price moved since scan" error={fieldError("max_price_drift_pct")} />
         </div>
       </Section>
 
       <Section title="Symbol Filters" defaultOpen={false} forceOpen={anyError("symbol_whitelist", "symbol_blacklist")}>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SymbolListField control={control} name="symbol_whitelist" label="Whitelist (only these)" error={fieldError("symbol_whitelist")} />
-          <SymbolListField control={control} name="symbol_blacklist" label="Blacklist (never these)" error={fieldError("symbol_blacklist")} />
+          <SymbolListField control={control} name="symbol_whitelist" label="Whitelist (only these)" hint="Scanner: Symbol whitelist · trade only these" error={fieldError("symbol_whitelist")} />
+          <SymbolListField control={control} name="symbol_blacklist" label="Blacklist (never these)" hint="Scanner: Symbol blacklist · never trade these" error={fieldError("symbol_blacklist")} />
         </div>
       </Section>
 
       <Section title="Target Goal" defaultOpen={false}>
         <div className={GRID}>
-          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull options={[
+          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull hint="Scanner: Target goal · stop the cycle when reached" options={[
             { value: "", label: "None" },
             { value: "trade_count", label: "Trade count" },
             { value: "profit_pct", label: "Profit %" },
           ]} />
-          <NumberField control={control} name="target_goal_value" label="Goal Value" nullable error={fieldError("target_goal_value")} />
+          <NumberField control={control} name="target_goal_value" label="Goal Value" nullable hint="Scanner: Target goal value" error={fieldError("target_goal_value")} />
         </div>
       </Section>
 
-      <Section title="Adaptive Blacklist" defaultOpen={false}>
+      <Section title="Adaptive Blacklist" defaultOpen={false} subtitle="Mirrors the scanner — auto-skip symbols whose recent win rate is poor.">
         <div className="mb-3">
-          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" />
+          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" hint="Scanner: Adaptive blacklist" />
         </div>
         <div className={GRID}>
-          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min Trades" error={fieldError("adaptive_blacklist_min_trades")} />
-          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max Win Rate (%)" error={fieldError("adaptive_blacklist_max_win_rate")} />
-          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (h)" error={fieldError("adaptive_blacklist_lookback_hours")} />
+          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Scanner: Min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
+          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Scanner: Blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
+          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Scanner: Win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />
         </div>
       </Section>
 
