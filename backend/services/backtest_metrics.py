@@ -14,8 +14,18 @@ from typing import Any, Optional
 
 # Annualization factor for crypto (trades 365 days/year, no market close)
 ANNUALIZATION_DAYS = 365
-# Hard cap on CAGR % to keep the value finite/JSON-safe under extreme short-span growth
-CAGR_CAP_PCT = 1.0e9
+# A run must span at least this many days before an ANNUALIZED return (CAGR /
+# Calmar) is meaningful. Annualizing a multi-day backtest projects its gain over
+# 365/days — a +50% move over 2 days becomes a multi-billion-% "growth rate" that
+# is mathematically real but financially nonsense. Below this span CAGR/Calmar are
+# reported as None ("—" in the UI) rather than a fabricated number.
+CAGR_MIN_SPAN_DAYS = 7.0
+# Hard cap on CAGR % to keep the value finite/JSON-safe AND sane on a UI. A run
+# just over CAGR_MIN_SPAN_DAYS with a large gain still annualizes aggressively
+# (a +50% week → billions of %); 10,000% (a 100× year) is the highest figure
+# worth showing — anything above it reads as "off the chart", so we clamp there
+# rather than the old 1e9 JSON-safety value that leaked to the dashboard.
+CAGR_CAP_PCT = 10_000.0
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -578,11 +588,11 @@ def _compute_cagr(
     extreme short-span growth can never overflow to Infinity. Result is clamped
     to [-100, CAGR_CAP_PCT] to stay JSON-safe.
 
-    Returns None for spans under one day. Annualizing a sub-day run (e.g. a +5%
-    move over 2 hours) would project it over 365/(<1) days and report a nonsensical
-    multi-million-percent CAGR. CAGR is only meaningful over multi-day horizons, so
-    below a day we report N/A rather than a fabricated number the UI would show as
-    a real growth rate.
+    Returns None for spans under CAGR_MIN_SPAN_DAYS (7 days). Annualizing a short
+    run (e.g. a +50% move over 2 days) would project it over 365/(<7) days and
+    report a nonsensical multi-million/billion-percent CAGR. CAGR is only
+    meaningful over multi-week+ horizons, so below the threshold we report N/A
+    rather than a fabricated number the UI would show as a real growth rate.
     """
     if len(equity_curve) < 2 or starting_capital <= 0 or final_equity <= 0:
         return None
@@ -592,8 +602,8 @@ def _compute_cagr(
     if hours is None:
         return None
     days = hours / 24.0
-    if days < 1.0:
-        return None  # sub-day span — annualized CAGR is not meaningful
+    if days < CAGR_MIN_SPAN_DAYS:
+        return None  # span too short — annualized CAGR is not meaningful
     ratio = final_equity / starting_capital
     try:
         cagr = math.expm1((ANNUALIZATION_DAYS / days) * math.log(ratio)) * 100

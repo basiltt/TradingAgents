@@ -120,9 +120,9 @@ export function AppMarketBar() {
       {
         id: "portfolio-equity",
         icon: <Wallet className="size-4.5" />,
-        label: "Portfolio equity",
+        label: "Live equity",
         value: formatCurrencyCompact(portfolioEquity),
-        detail: `${activeAccounts}/${totalAccounts} accounts active`,
+        detail: `${activeAccounts}/${totalAccounts} live accounts`,
         tone: portfolioEquity != null && portfolioEquity > 0 ? "success" : "neutral",
       },
       {

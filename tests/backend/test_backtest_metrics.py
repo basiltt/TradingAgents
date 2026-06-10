@@ -348,11 +348,11 @@ class TestRound2Hardening:
         self._assert_json_safe(m)
 
     def test_cagr_huge_but_finite_engages_cap(self):
-        """A finite-but-enormous CAGR (>1e9%) must be clamped to CAGR_CAP_PCT, not inf."""
+        """A finite-but-enormous CAGR must be clamped to CAGR_CAP_PCT, not inf or 1e9."""
         from backend.services.backtest_metrics import compute_all_metrics, CAGR_CAP_PCT
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         end = start + timedelta(days=365)
-        # 1e8x over exactly 1 year: expm1(ln(1e8))*100 ≈ 1e10% > 1e9 cap → clamped
+        # 1e8x over exactly 1 year: expm1(ln(1e8))*100 ≈ 1e10% > cap → clamped
         equity = [
             {"ts": start, "equity": 1.0, "drawdown_pct": 0.0},
             {"ts": end, "equity": 1.0e8, "drawdown_pct": 0.0},
@@ -360,6 +360,7 @@ class TestRound2Hardening:
         trades = [_make_trade(pnl=1.0e8, entry_time=start, exit_time=end)]
         m = compute_all_metrics(trades, equity, {"starting_capital": 1.0})
         assert m["cagr"] == CAGR_CAP_PCT
+        assert CAGR_CAP_PCT == 10_000.0  # sane UI ceiling, not the old 1e9 JSON clamp
         self._assert_json_safe(m)
 
     def test_nan_inf_pnl_sanitized(self):
@@ -609,8 +610,8 @@ class TestRound4Metrics:
         """A modest gain over a sub-day span must report CAGR=None, NOT a giant
         annualized number. Annualizing a +5% move over 6 hours would project it over
         365/0.25 days → a multi-million-percent 'growth rate' that misleads. CAGR is
-        only meaningful over multi-day horizons; below a day it is N/A. (calmar, which
-        divides by CAGR, must then also be None.)"""
+        only meaningful over multi-week horizons; below the threshold it is N/A.
+        (calmar, which divides by CAGR, must then also be None.)"""
         from backend.services.backtest_metrics import compute_all_metrics
         start = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
         end = start + timedelta(hours=6)
@@ -622,6 +623,25 @@ class TestRound4Metrics:
         m = compute_all_metrics(trades, equity, {"starting_capital": 10000.0})
         assert m["cagr"] is None, "sub-day CAGR must be N/A, not an annualized fabrication"
         assert m["calmar"] is None
+
+    def test_cagr_short_multiday_span_is_none(self):
+        """The real-world bug: a big gain over a FEW DAYS (e.g. +53% in 2 days, a
+        live-trading result) annualized to +1,000,000,000% and made the whole panel
+        look broken. Any span under CAGR_MIN_SPAN_DAYS (7d) must now report CAGR and
+        Calmar as None ('—'), while net_profit_pct still shows the real +53%."""
+        from backend.services.backtest_metrics import compute_all_metrics
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = start + timedelta(days=2)
+        equity = [
+            {"ts": start, "equity": 100.0, "drawdown_pct": 0.0},
+            {"ts": end, "equity": 153.35, "drawdown_pct": 0.0},  # +53.35% in 2 days
+        ]
+        trades = [_make_trade(pnl=53.35, entry_time=start, exit_time=end)]
+        m = compute_all_metrics(trades, equity, {"starting_capital": 100.0})
+        assert m["cagr"] is None, "a 2-day span must suppress CAGR, not annualize to billions"
+        assert m["calmar"] is None
+        # The real return is still surfaced — only the annualized projection is hidden.
+        assert m["net_profit_pct"] is not None and abs(m["net_profit_pct"] - 53.35) < 0.1
 
     def test_max_run_up(self):
         from backend.services.backtest_metrics import compute_run_up
