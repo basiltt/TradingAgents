@@ -82,7 +82,7 @@ const CLOSE_REASON_LABELS: Record<string, string> = {
   max_duration: "Max Duration",
   mr_time_stop: "MR Time Stop",
   trailing_profit: "Trailing Profit",
-  breakeven_timeout: "Breakeven Timeout",
+  breakeven: "Closed at Breakeven",
   equity_drop: "Equity Drop",
   equity_rise: "Equity Rise",
   backtest_end: "Backtest End",

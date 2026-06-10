@@ -76,7 +76,7 @@ const TRIGGER_CONFIG: Record<TriggerType, { label: string; description: string; 
   },
   BREAKEVEN_TIMEOUT: {
     label: "Breakeven Timeout",
-    description: "Close positions if P&L hasn't moved past breakeven within the time window.",
+    description: "After the time window, close all positions once total open P&L recovers to breakeven (covering fees).",
     icon: Timer,
     tone: "text-[var(--neu-warning)]",
     chip: "border-transparent bg-[color-mix(in_oklch,var(--neu-warning)_12%,var(--neu-surface-raised))] text-[var(--neu-warning)] shadow-[var(--neu-shadow-pill)]",

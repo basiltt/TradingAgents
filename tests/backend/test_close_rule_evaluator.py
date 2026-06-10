@@ -151,6 +151,12 @@ class TestUnknownTrigger:
         rule = _make_rule("NONSENSE", "100")
         assert evaluator._check_condition(rule, Decimal("0"), Decimal("0"), Decimal("0")) is False
 
+    def test_unknown_trigger_with_timestamp_reference_does_not_crash(self, evaluator: CloseRuleEvaluator) -> None:
+        from datetime import datetime, timezone
+        rule = {"trigger_type": "SOME_FUTURE_TIMEOUT", "threshold_value": "5",
+                "reference_value": datetime.now(timezone.utc).isoformat()}
+        assert evaluator._check_condition(rule, Decimal("1000"), Decimal("0"), Decimal("0")) is False
+
 
 # ---------------------------------------------------------------------------
 # BREAKEVEN_TIMEOUT & MAX_DURATION — time-based rules

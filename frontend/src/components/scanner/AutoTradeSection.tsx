@@ -785,8 +785,8 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
           {((config.breakeven_timeout_hours != null && config.breakeven_timeout_hours > 0) || (config.max_trade_duration_hours != null && config.max_trade_duration_hours > 0)) && (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Move to breakeven after (hours)</Label>
-                <p className="mt-1 text-[11px] text-[var(--neu-text-muted)]">Change target to 1% unrealised PnL (covers fees) after this time</p>
+                <Label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--neu-text-muted)]">Close all at breakeven after (hours)</Label>
+                <p className="mt-1 text-[11px] text-[var(--neu-text-muted)]">After this time, watch the account and close all positions once total open PnL recovers enough to cover fees</p>
                 <Input
                   type="number"
                   min={0.5}

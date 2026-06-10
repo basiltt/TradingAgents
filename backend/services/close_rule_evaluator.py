@@ -467,8 +467,12 @@ class CloseRuleEvaluator:
         if trigger_type == "TRAILING_PROFIT":
             return False
 
-        threshold = Decimal(rule["threshold_value"])
-        reference = Decimal(rule["reference_value"]) if rule.get("reference_value") else None
+        try:
+            threshold = Decimal(rule["threshold_value"])
+            reference = Decimal(rule["reference_value"]) if rule.get("reference_value") else None
+        except (InvalidOperation, ValueError, TypeError):
+            logger.warning("unparseable_rule_values", extra={"trigger_type": trigger_type, "rule_id": rule.get("id")})
+            return False
 
         # Backstop: an equity-based rule must never fire on a non-positive equity
         # reading (a bad/partial wallet frame). Callers already skip equity<=0,

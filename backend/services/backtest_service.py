@@ -1040,7 +1040,7 @@ class BacktestService:
         # too. For each Phase-A trade closed by a portfolio rule, add its exit bar (±1
         # neighbour) to every OTHER trade that was open at that time. Bounded by the
         # number of portfolio closes; still only the bars that can actually fire.
-        _PORTFOLIO_REASONS = {"equity_drop", "equity_drop_smart", "equity_rise", "close_on_profit"}
+        _PORTFOLIO_REASONS = {"equity_drop", "equity_drop_smart", "equity_rise", "close_on_profit", "breakeven"}
         portfolio_exits: list[tuple[int, datetime]] = [
             (_bar_open_epoch(t["exit_time"]), t["exit_time"])
             for t in trades

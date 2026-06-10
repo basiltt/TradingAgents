@@ -74,7 +74,7 @@ class BacktestCreateRequest(BaseModel):
     # Close rules
     max_drawdown_pct: float = Field(default=100.0, gt=0, le=100)
     smart_drawdown_close: bool = False
-    breakeven_timeout_hours: Optional[float] = Field(default=None, ge=0.1, le=720)
+    breakeven_timeout_hours: Optional[float] = Field(default=None, ge=0.1, le=720, description="Hours after entry to begin a breakeven watch; once total open PnL covers fees, close all positions.")
     max_trade_duration_hours: Optional[float] = Field(default=None, ge=0.1, le=720)
     trailing_profit_pct: Optional[float] = Field(default=None, ge=0.1, le=50)
     close_on_profit_pct: Optional[float] = Field(default=None, ge=0.1, le=100)

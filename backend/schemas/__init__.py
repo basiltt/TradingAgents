@@ -463,7 +463,7 @@ class AutoTradeConfig(BaseModel):
     skip_if_positions_open: bool = False
     fill_to_max_trades: bool = False
     close_on_profit_pct: Optional[float] = Field(None, gt=0, le=100)
-    breakeven_timeout_hours: Optional[float] = Field(None, gt=0, le=720)
+    breakeven_timeout_hours: Optional[float] = Field(None, gt=0, le=720, description="Hours after entry to begin a breakeven watch; once total open PnL covers fees, close all positions.")
     max_trade_duration_hours: Optional[float] = Field(None, gt=0, le=720)
     ai_manager_enabled: bool = False
     symbol_blacklist: Optional[List[str]] = None
