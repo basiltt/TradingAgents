@@ -43,7 +43,11 @@ def test_migration_versions_contiguous_and_unique():
     by_ver = dict(_MIGRATIONS)
     assert 52 in by_ver and callable(by_ver[52])
     assert 53 in by_ver and isinstance(by_ver[53], str)
-    assert max(versions) == 55
+    # v58 — sealed-day manifest columns on kline_cache_coverage (backtest perf
+    # RC-3 fix). Callable (multi-statement DDL must not be ';'-split); the current
+    # head of the migration list.
+    assert 58 in by_ver and callable(by_ver[58])
+    assert max(versions) == 58
 
 
 async def _apply_all(conn):
