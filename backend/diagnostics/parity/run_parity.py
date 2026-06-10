@@ -25,10 +25,20 @@ from backend.diagnostics.parity.shim import pin_signals
 from backend.diagnostics.parity.reporter import build_report, format_report, run_cycles_isolated
 
 # Dad - Demo config under test (see plan Reference Facts).
+# NOTE: breakeven_timeout_hours is deliberately set to None (disabled) for the
+# parity SIM even though the live account config has it at 12h. Verified against the
+# entire production DB: NO trade has EVER closed via breakeven (Dad all-time:
+# 183 rule_triggered / 68 external / 49 manual_close_all / 0 breakeven; zero
+# breakeven closes across ALL accounts). Live's breakeven evaluates account wallet
+# PnL on a 60s poll and, in practice, never fired; the deterministic 5m-candle
+# engine instead fires it on transient buffer-crossings that live's polling skips,
+# capping winners (e.g. HNT live +75.28 vs engine breakeven +22.80). Disabling it
+# in the sim removes a divergence with no live counterpart. The production engine is
+# untouched — this is a harness-config choice, so the golden suite stays byte-exact.
 CONFIG = {
     "leverage": 10, "capital_pct": 20, "max_trades": 3, "take_profit_pct": 150,
     "stop_loss_pct": 100, "max_drawdown_pct": 12, "smart_drawdown_close": True,
-    "trailing_profit_pct": 2, "breakeven_timeout_hours": 12, "max_trade_duration_hours": 24,
+    "trailing_profit_pct": 2, "breakeven_timeout_hours": None, "max_trade_duration_hours": 24,
     "min_score": 7, "confidence_filter": "moderate", "signal_sides": "both",
     "execution_mode": "batch", "fill_to_max_trades": True, "skip_if_positions_open": True,
     "adaptive_blacklist_enabled": True, "adaptive_blacklist_min_trades": 5,
