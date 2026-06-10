@@ -708,19 +708,32 @@ class BacktestService:
             # Validate the engine against an account's ACTUAL live trades (selection
             # pinned from ground truth; simulation only). Branch here, INSIDE the try,
             # so the method's finally still releases the concurrency slot + cancel event.
-            # Known v1 limitation: this path bypasses the wall-clock timeout/cancel wiring
-            # below — a replay over a bounded window (one account, days) completes in
-            # seconds, so this is acceptable.
+            # The CPU-bound engine replay is offloaded to the executor (run_sync) so it
+            # never blocks the event loop. run_replay enforces cycle/symbol bounds and
+            # raises ReplayError (→ failed run with a clear message) for empty/oversized
+            # windows. A bounded replay (one account, days) completes in seconds, so the
+            # wall-clock timeout wiring below is not applied to this path.
             scan_source = config.get("scan_source", {})
             if scan_source.get("mode") == "replay":
                 from backend.diagnostics.parity.data_access import ParityDataAccess
-                from backend.services.backtest.replay_runner import run_replay
+                from backend.services.backtest.replay_runner import run_replay, ReplayError
                 from backend.services.backtest_metrics import compute_all_metrics
                 from backend.schemas.backtest_schemas import SimulationResult
                 account_id = scan_source.get("replay_account_id")
-                result_dict, comparison = await run_replay(
-                    ParityDataAccess(self._db), self._kline_cache, account_id,
-                    config["date_range_start"], config["date_range_end"], config)
+                replay_loop = asyncio.get_running_loop()
+
+                async def _run_in_executor(fn):
+                    return await replay_loop.run_in_executor(self._executor, fn)
+
+                try:
+                    result_dict, comparison = await run_replay(
+                        ParityDataAccess(self._db), self._kline_cache, account_id,
+                        config["date_range_start"], config["date_range_end"], config,
+                        run_sync=_run_in_executor)
+                except ReplayError as exc:
+                    await self._mark_status(run_id, "failed", completed=True,
+                                            error=str(exc)[:480], guard_cancel=False)
+                    return
                 # Anchor metrics to the SAME compounding basis the replay used (the
                 # account's first-cycle base_capital), NOT the user's starting_capital
                 # field — otherwise net_profit_pct/cagr degenerate.
@@ -729,9 +742,20 @@ class BacktestService:
                                   or config.get("starting_capital") or 0.0}
                 metrics = compute_all_metrics(
                     result_dict["trades"], result_dict["equity_curve"], metrics_config)
+                # Surface any excluded/missing trades so a truncated comparison is never
+                # silent (AI-Manager/non-scanner trades and unresolved scan rows).
+                warnings = [f"replay_mode_account_{account_id}"]
+                exc_counts = comparison.get("excluded_trades") or {}
+                n_excluded = sum(int(v) for v in exc_counts.values())
+                if n_excluded:
+                    warnings.append(f"replay_excluded_{n_excluded}_non_scanner_or_ai_trades")
+                if comparison.get("missing_pins"):
+                    warnings.append(f"replay_{comparison['missing_pins']}_pins_without_signal")
+                if comparison.get("symbols_no_kline"):
+                    warnings.append(f"replay_{comparison['symbols_no_kline']}_symbols_no_kline_data")
                 sim = SimulationResult(
                     trades=result_dict["trades"], equity_curve=result_dict["equity_curve"],
-                    metrics=metrics, warnings=[f"replay_mode_account_{account_id}"],
+                    metrics=metrics, warnings=warnings,
                     filter_stats={"signals_total": comparison["pinned_trades"],
                                   "signals_entered": len(result_dict["trades"]),
                                   "signals_filtered": 0, "signals_no_kline": 0})

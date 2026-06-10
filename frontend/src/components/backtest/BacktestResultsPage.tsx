@@ -67,6 +67,13 @@ function TradesFetchError({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/** Null/NaN-safe fixed-decimal formatter — "—" when a value isn't finite, so a
+ *  missing/NaN metric never crashes the whole results page via `.toFixed()`. */
+function fmtNum(v: number | null | undefined, digits: number, sign = false): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${sign && v >= 0 ? "+" : ""}${v.toFixed(digits)}`;
+}
+
 /** Sticky strip of the 4 headline metrics shown above the tabs. */
 function HeroMetrics({
   netProfit,
@@ -369,14 +376,13 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
             <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
               <div className="text-[0.72rem] text-[var(--neu-text-muted)]">Final equity delta</div>
               <div className="text-lg font-semibold tabular-nums text-[var(--neu-text-strong)]">
-                {replay.final_equity_delta_pct >= 0 ? "+" : ""}
-                {replay.final_equity_delta_pct.toFixed(1)}%
+                {fmtNum(replay.final_equity_delta_pct, 1, true)}%
               </div>
             </div>
             <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
               <div className="text-[0.72rem] text-[var(--neu-text-muted)]">Per-cycle PnL correlation</div>
               <div className="text-lg font-semibold tabular-nums text-[var(--neu-text-strong)]">
-                {replay.pnl_correlation.toFixed(2)}
+                {fmtNum(replay.pnl_correlation, 2)}
               </div>
             </div>
             <div className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
@@ -405,13 +411,12 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
                 {replay.cycles.map((c) => (
                   <tr key={c.scan_id} className="border-t border-[var(--neu-surface-inset)]">
                     <td className="px-2 py-1 font-mono">{c.scan_id.slice(0, 8)}</td>
-                    <td className="px-2 py-1 text-right">{c.live_net_pnl.toFixed(2)}</td>
-                    <td className="px-2 py-1 text-right">{c.backtest_net_pnl.toFixed(2)}</td>
-                    <td className="px-2 py-1 text-right">{c.live_equity_after.toFixed(2)}</td>
-                    <td className="px-2 py-1 text-right">{c.backtest_equity_after.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.live_net_pnl, 2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.backtest_net_pnl, 2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.live_equity_after, 2)}</td>
+                    <td className="px-2 py-1 text-right">{fmtNum(c.backtest_equity_after, 2)}</td>
                     <td className="px-2 py-1 text-right">
-                      {c.delta_pct >= 0 ? "+" : ""}
-                      {c.delta_pct.toFixed(1)}%
+                      {fmtNum(c.delta_pct, 1, true)}%
                     </td>
                   </tr>
                 ))}

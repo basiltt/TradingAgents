@@ -509,7 +509,7 @@ export function BacktestConfigForm({
                     <option value="">Select…</option>
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.label}
+                        {a.label} ({a.account_type})
                       </option>
                     ))}
                   </select>
@@ -519,8 +519,10 @@ export function BacktestConfigForm({
                 <span className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.replay_account_id")}</span>
               ) : null}
               <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
-                Replays this account's actual live trades through the engine and compares
-                per-cycle results — selection is pinned, so it validates the simulation.
+                Replays this account's actual scanner trades through the engine and
+                compares per-cycle results — selection is pinned, so it validates the
+                simulation. The Date Range below bounds which trades are replayed;
+                AI-Manager-closed and non-scanner trades are excluded.
               </span>
               {(() => {
                 const acct = accounts.find((a) => a.id === replayAccountId);

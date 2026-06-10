@@ -290,8 +290,21 @@ export function buildDefaults(
 
 /** Convert a parsed form value into the API request body (ISO-normalizes dates). */
 export function toCreateRequest(parsed: BacktestConfigParsed): BacktestCreateRequest {
+  // Whitelist scan_source fields by mode so a stale sibling (e.g. a schedule_id left
+  // over from switching modes) can never leak into the payload and mis-route the
+  // backend. Each mode keeps ONLY the field it uses.
+  const src = parsed.scan_source;
+  const scan_source =
+    src.mode === "schedule"
+      ? { mode: src.mode, schedule_id: src.schedule_id }
+      : src.mode === "explicit"
+        ? { mode: src.mode, scan_ids: src.scan_ids }
+        : src.mode === "replay"
+          ? { mode: src.mode, replay_account_id: src.replay_account_id }
+          : { mode: src.mode };
   return {
     ...parsed,
+    scan_source,
     date_range_start: new Date(parsed.date_range_start).toISOString(),
     date_range_end: new Date(parsed.date_range_end).toISOString(),
   };

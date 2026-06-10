@@ -279,6 +279,29 @@ describe("toCreateRequest", () => {
     expect(req.date_range_start).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
     expect(req.date_range_end).toMatch(/Z$/);
   });
+
+  it("whitelists scan_source fields by mode (no stale sibling leaks)", () => {
+    // A replay request must carry ONLY mode + replay_account_id — a stale schedule_id
+    // left over from a prior selection must not reach the backend.
+    const parsed = backtestConfigSchema.parse(buildDefaults({
+      scan_source: {
+        mode: "replay",
+        replay_account_id: "acct-1",
+        schedule_id: "stale-sched",   // simulate a leftover from switching modes
+      } as never,
+    }));
+    const req = toCreateRequest(parsed);
+    expect(req.scan_source).toEqual({ mode: "replay", replay_account_id: "acct-1" });
+    expect((req.scan_source as unknown as Record<string, unknown>).schedule_id).toBeUndefined();
+  });
+
+  it("keeps only schedule_id in schedule mode", () => {
+    const parsed = backtestConfigSchema.parse(buildDefaults({
+      scan_source: { mode: "schedule", schedule_id: "s1", scan_ids: ["x"] } as never,
+    }));
+    const req = toCreateRequest(parsed);
+    expect(req.scan_source).toEqual({ mode: "schedule", schedule_id: "s1" });
+  });
 });
 
 describe("regime multi-strategy (F1/F2/F3) config", () => {

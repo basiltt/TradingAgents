@@ -6,18 +6,52 @@ from typing import Any
 # Reuse the production signal/kline loaders' query shape so the engine gets
 # byte-identical inputs to a real backtest. Window params are datetime objects
 # (asyncpg requires real datetimes for timestamptz comparisons).
+# Pinnable live trades = scanner-opened, NOT AI-Manager-closed (the backtest engine
+# excludes the AI Manager, so an AI-closed trade's exit can't be reproduced and would
+# depress the fidelity comparison). LEFT JOIN scan_results/scans so a scanner trade
+# whose scan row is archived/missing still surfaces (scan_id NULL) rather than being
+# silently dropped by an inner join — the caller groups only rows with a scan_id and
+# can report the remainder. Window is on opened_at (trade entry).
 _TRADES_SQL = """
     SELECT t.symbol, t.side, t.net_pnl, t.close_reason, t.entry_price, t.exit_price,
            t.scan_result_id, t.status, t.base_capital, t.opened_at, t.closed_at,
+           t.source, t.ai_closed,
            COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
            sr.scan_id AS scan_id
     FROM trades t
-    JOIN scan_results sr ON sr.id = t.scan_result_id
-    JOIN scans s ON s.scan_id = sr.scan_id
+    LEFT JOIN scan_results sr ON sr.id = t.scan_result_id
+    LEFT JOIN scans s ON s.scan_id = sr.scan_id
     WHERE t.account_id = $1
       AND t.opened_at >= $2
       AND t.opened_at <  $3
+      AND t.source = 'scanner'
+      AND t.ai_closed IS NOT TRUE
     ORDER BY t.opened_at
+"""
+
+# Count of trades in-window EXCLUDED from the pinned set (non-scanner OR AI-closed),
+# so the comparison can disclose what it left out instead of silently under-counting.
+_EXCLUDED_TRADES_SQL = """
+    SELECT count(*) AS n
+    FROM trades t
+    WHERE t.account_id = $1
+      AND t.opened_at >= $2
+      AND t.opened_at <  $3
+      AND (t.source <> 'scanner' OR t.ai_closed IS TRUE)
+"""
+
+# Scanner, non-AI trades that WOULD be pinned but whose scan_results row didn't
+# resolve (archived/deleted) — reported separately so a coverage gap is visible.
+_UNJOINED_TRADES_SQL = """
+    SELECT count(*) AS n
+    FROM trades t
+    LEFT JOIN scan_results sr ON sr.id = t.scan_result_id
+    WHERE t.account_id = $1
+      AND t.opened_at >= $2
+      AND t.opened_at <  $3
+      AND t.source = 'scanner'
+      AND t.ai_closed IS NOT TRUE
+      AND sr.id IS NULL
 """
 
 # Same SELECT/ORDER BY as BacktestService._load_signals "explicit" mode.
@@ -45,8 +79,25 @@ class ParityDataAccess:
     async def fetch_live_trades(
         self, account_id: str, start: datetime, end: datetime
     ) -> list[dict[str, Any]]:
+        """Pinnable scanner trades for the window (non-scanner / AI-closed excluded).
+
+        Rows whose scan row didn't resolve (scan_id NULL) are dropped here but counted
+        via fetch_excluded_counts so the caller can disclose them — never a silent drop.
+        """
         rows = await self._db.pool.fetch(_TRADES_SQL, account_id, start, end)
-        return [dict(r) for r in rows]
+        return [dict(r) for r in rows if r["scan_id"] is not None]
+
+    async def fetch_excluded_counts(
+        self, account_id: str, start: datetime, end: datetime
+    ) -> dict[str, int]:
+        """How many in-window trades were left out of the pinned set, by reason —
+        surfaced in the replay comparison so fidelity is never computed over a silently
+        truncated trade set."""
+        excluded = await self._db.pool.fetchval(_EXCLUDED_TRADES_SQL, account_id, start, end)
+        # Scanner trades whose scan_results/scans row didn't resolve (archived/missing):
+        unjoined = await self._db.pool.fetchval(_UNJOINED_TRADES_SQL, account_id, start, end)
+        return {"excluded_non_scanner_or_ai": int(excluded or 0),
+                "scanner_without_scan_row": int(unjoined or 0)}
 
     async def fetch_signals(self, scan_ids: list[str]) -> list[dict[str, Any]]:
         rows = await self._db.pool.fetch(_SIGNALS_SQL, scan_ids)
