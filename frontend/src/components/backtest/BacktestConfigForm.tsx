@@ -147,6 +147,78 @@ function CheckField({ control, name, label, hint }: CheckFieldProps) {
   );
 }
 
+/** A scanner-style ON/OFF toggle that reveals a number input only when enabled.
+ * Mirrors the Scheduled Market Scan auto-trade "ToggleRow" pattern: turning the
+ * switch off sets the field to null (disabled); turning it on seeds `enabledValue`
+ * and shows the input. Keeps the backtest form visually 1:1 with the scanner. */
+function ToggleNumberField({
+  control,
+  name,
+  title,
+  description,
+  enabledValue,
+  unit,
+  min,
+  max,
+  step,
+}: {
+  control: Control<BacktestConfigFormValues>;
+  name: FieldPath<BacktestConfigFormValues>;
+  title: string;
+  description?: string;
+  /** Value written when the toggle is switched on (the scanner's default). */
+  enabledValue: number;
+  unit?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  return (
+    <Controller
+      control={control}
+      name={name}
+      render={({ field }) => {
+        const enabled = field.value != null && Number(field.value) > 0;
+        return (
+          <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
+                <Checkbox
+                  checked={enabled}
+                  onCheckedChange={(checked) => field.onChange(checked === true ? enabledValue : null)}
+                  className="mt-0.5"
+                />
+                <span className="flex flex-col">
+                  {title}
+                  {description ? <Hint text={description} /> : null}
+                </span>
+              </label>
+              {enabled ? (
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Input
+                    type="number"
+                    min={min}
+                    max={max}
+                    step={step ?? "any"}
+                    value={field.value == null ? "" : String(field.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      field.onChange(v === "" ? enabledValue : v);
+                    }}
+                    onBlur={field.onBlur}
+                    className="h-10 w-20 text-center"
+                  />
+                  {unit ? <span className="text-[0.72rem] text-[var(--neu-text-muted)]">{unit}</span> : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        );
+      }}
+    />
+  );
+}
+
 /** A comma/space-separated text field that maps to a number[] | null form value of
  * UTC hours (0-23) — for the F1 session blocked/allowed hours. Empty → null. */
 function HoursListField({
@@ -366,6 +438,7 @@ export function BacktestConfigForm({
     control,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<BacktestConfigFormValues>({
     // zod v4 resolver: cast to keep RHF's generic happy across input/output types.
@@ -394,6 +467,13 @@ export function BacktestConfigForm({
   const scanMode = watch("scan_source.mode");
   const replayAccountId = watch("scan_source.replay_account_id");
   const mrLongEnabled = watch("mr_long_enabled");
+  // "Trade duration limits" is a single scanner toggle that drives BOTH the
+  // breakeven-timeout and force-close fields together (scanner seeds 4h / 8h).
+  const breakevenHours = watch("breakeven_timeout_hours");
+  const maxDurationHours = watch("max_trade_duration_hours");
+  const durationLimitsOn =
+    (breakevenHours != null && Number(breakevenHours) > 0) ||
+    (maxDurationHours != null && Number(maxDurationHours) > 0);
   const formRef = React.useRef<HTMLFormElement>(null);
 
   const submit = handleSubmit(
@@ -437,22 +517,19 @@ export function BacktestConfigForm({
     "trailing_profit_pct",
     "close_on_profit_pct",
   );
-  const riskLimitsHasError = anyError(
-    "max_same_direction",
-    "max_same_sector",
-    "max_signal_age_minutes",
-    "max_price_drift_pct",
-  );
+  const riskLimitsHasError = anyError("max_same_direction", "max_signal_age_minutes");
+  const advancedHasError = anyError("max_same_sector", "max_price_drift_pct");
 
   return (
     <form ref={formRef} onSubmit={submit} className={cn("flex flex-col gap-4", className)} aria-label="Backtest configuration">
       <div className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)]/50 bg-[var(--neu-surface-inset)]/30 px-4 py-3">
         <p className="text-[0.78rem] leading-snug text-[var(--neu-text-muted)]">
-          These settings mirror your <span className="font-semibold text-[var(--neu-text)]">Scheduled Market Scan</span> auto-trade
-          config (same trade-decision, close-rule, risk and strategy fields), plus
-          <span className="font-semibold text-[var(--neu-text)]"> backtest-only</span> settings the live account would normally
-          provide — initial balance, date range, fees, slippage and funding. Each field
-          notes its equivalent. Fields marked <em>not simulated</em> have no effect here.
+          Most settings mirror your <span className="font-semibold text-[var(--neu-text)]">Scheduled Market Scan</span> auto-trade
+          config — those fields are tagged <span className="font-semibold text-[var(--neu-text)]">Scanner:</span> with the exact
+          name you&rsquo;ll find there. <span className="font-semibold text-[var(--neu-text)]">Backtest-only</span> fields (initial
+          balance, date range, fees, slippage, funding) replace what a live account normally provides.
+          <span className="font-semibold text-[var(--neu-text)]"> Engine-level</span> fields under Advanced are auto-trade features
+          that don&rsquo;t appear in the scanner form. Fields marked <em>not simulated</em> have no effect here.
         </p>
       </div>
 
@@ -648,24 +725,47 @@ export function BacktestConfigForm({
       </Section>
 
       <Section title="Close Rules" defaultOpen={false} forceOpen={closeRulesHasError}>
-        <div className={GRID}>
-          <NumberField control={control} name="max_drawdown_pct" label="Max drawdown %" hint="Scanner: Max drawdown % · close cycle on equity drop" error={fieldError("max_drawdown_pct")} />
-          <NumberField control={control} name="breakeven_timeout_hours" label="Close all at breakeven after (hours)" nullable hint="Scanner: Close all at breakeven after (hours)" error={fieldError("breakeven_timeout_hours")} />
-          <NumberField control={control} name="max_trade_duration_hours" label="Force close after (hours)" nullable hint="Scanner: Force close after (hours) · max trade duration" error={fieldError("max_trade_duration_hours")} />
-          <NumberField control={control} name="trailing_profit_pct" label="Trailing profit %" nullable hint="Scanner: Trailing profit %" error={fieldError("trailing_profit_pct")} />
-          <NumberField control={control} name="close_on_profit_pct" label="Close on profit %" nullable hint="Scanner: Close on profit % · equity-rise target" error={fieldError("close_on_profit_pct")} />
+        <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
+          Same close automation as the scanner. Each switch reveals its input when turned on; off means the rule is disabled.
+        </p>
+        <div className="mb-4 sm:w-1/2 lg:w-1/3">
+          <NumberField control={control} name="max_drawdown_pct" label="Max drawdown %" hint="Scanner: Max drawdown % · close all if equity falls this far" error={fieldError("max_drawdown_pct")} />
         </div>
-        <div className="mt-3">
-          <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown close" hint="Scanner: Smart drawdown close" />
+        <div className="space-y-3">
+          <CheckField control={control} name="smart_drawdown_close" label="Smart drawdown (close only losers)" hint="Scanner: when drawdown triggers, keep winners running" />
+          <ToggleNumberField control={control} name="close_on_profit_pct" title="Close and re-trade on profit" description="Scanner: close all once open equity rises this %, then re-trade" enabledValue={50} unit="%" min={1} max={100} step={5} />
+          {/* Trade duration limits — ONE scanner switch driving TWO fields (4h / 8h). */}
+          <div className="rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
+            <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
+              <Checkbox
+                checked={durationLimitsOn}
+                onCheckedChange={(checked) => {
+                  const on = checked === true;
+                  setValue("breakeven_timeout_hours", on ? 4 : null, { shouldDirty: true, shouldValidate: true });
+                  setValue("max_trade_duration_hours", on ? 8 : null, { shouldDirty: true, shouldValidate: true });
+                }}
+                className="mt-0.5"
+              />
+              <span className="flex flex-col">
+                Trade duration limits
+                <Hint text="Scanner: auto-close trades based on how long they've been open" />
+              </span>
+            </label>
+            {durationLimitsOn ? (
+              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <NumberField control={control} name="breakeven_timeout_hours" label="Close all at breakeven after (hours)" nullable hint="Scanner: then close once open PnL covers fees" error={fieldError("breakeven_timeout_hours")} />
+                <NumberField control={control} name="max_trade_duration_hours" label="Force close after (hours)" nullable hint="Scanner: close all even at a loss after this time" error={fieldError("max_trade_duration_hours")} />
+              </div>
+            ) : null}
+          </div>
+          <ToggleNumberField control={control} name="trailing_profit_pct" title="Trailing profit stop" description="Scanner: after gaining this %, close if profit drops 50% from peak" enabledValue={2.0} unit="%" min={0.5} max={50} step={0.5} />
         </div>
       </Section>
 
       <Section title="Risk Limits" defaultOpen={false} forceOpen={riskLimitsHasError}>
         <div className={GRID}>
           <NumberField control={control} name="max_same_direction" label="Max positions same direction" nullable hint="Scanner: Max positions same direction" error={fieldError("max_same_direction")} />
-          <NumberField control={control} name="max_same_sector" label="Max positions same sector" nullable hint="Not simulated · sector data is live-only, no effect on results" error={fieldError("max_same_sector")} />
           <NumberField control={control} name="max_signal_age_minutes" label="Max signal age (min)" nullable hint="Scanner: Max signal age (minutes)" error={fieldError("max_signal_age_minutes")} />
-          <NumberField control={control} name="max_price_drift_pct" label="Max price drift %" nullable hint="Scanner: Max price drift % · skip if price moved since scan" error={fieldError("max_price_drift_pct")} />
         </div>
       </Section>
 
@@ -677,24 +777,36 @@ export function BacktestConfigForm({
       </Section>
 
       <Section title="Target Goal" defaultOpen={false}>
+        <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
+          Scanner: Target goal — stops the whole cycle once reached. Different from &ldquo;Close and re-trade on profit&rdquo; in Close Rules, which closes mid-cycle and keeps trading.
+        </p>
         <div className={GRID}>
-          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull hint="Scanner: Target goal · stop the cycle when reached" options={[
+          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull hint="Scanner: Target goal type" options={[
             { value: "", label: "None" },
             { value: "trade_count", label: "Trade count" },
             { value: "profit_pct", label: "Profit %" },
           ]} />
-          <NumberField control={control} name="target_goal_value" label="Goal Value" nullable hint="Scanner: Target goal value" error={fieldError("target_goal_value")} />
+          <NumberField control={control} name="target_goal_value" label="Goal Value" nullable hint="Scanner: target trade count or profit %, per Goal Type" error={fieldError("target_goal_value")} />
         </div>
       </Section>
 
-      <Section title="Adaptive Blacklist" defaultOpen={false} subtitle="Mirrors the scanner — auto-skip symbols whose recent win rate is poor.">
-        <div className="mb-3">
-          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" hint="Scanner: Adaptive blacklist" />
+      <Section
+        title="Advanced (engine-level)"
+        defaultOpen={false}
+        forceOpen={advancedHasError}
+        subtitle="Auto-trade engine features that are NOT shown in the scanner's config form. They still affect the backtest unless marked not-simulated."
+      >
+        <div className={GRID}>
+          <NumberField control={control} name="max_price_drift_pct" label="Max price drift %" nullable hint="Engine-level · skip a signal if price moved this % since the scan" error={fieldError("max_price_drift_pct")} />
+          <NumberField control={control} name="max_same_sector" label="Max positions same sector" nullable hint="Not simulated · sector data is live-only, no effect on results" error={fieldError("max_same_sector")} />
+        </div>
+        <div className="mb-2 mt-4">
+          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" hint="Engine-level · auto-skip symbols whose recent win rate is poor" />
         </div>
         <div className={GRID}>
-          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Scanner: Min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
-          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Scanner: Blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
-          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Scanner: Win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />
+          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Engine-level · min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
+          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Engine-level · blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
+          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Engine-level · win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />
         </div>
       </Section>
 

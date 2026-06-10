@@ -85,14 +85,15 @@ describe("BacktestConfigForm", () => {
     expect(screen.getByRole("button", { name: /running/i })).toBeDisabled();
   });
 
-  it("submits null (not 0 or '') for a cleared nullable close-rule field", async () => {
+  it("toggling a close-rule switch off submits null (not 0) for its field", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
     // Open the collapsed Close Rules section.
     fireEvent.click(screen.getByText("Close Rules"));
-    const field = screen.getByLabelText("Trailing profit %") as HTMLInputElement;
-    fireEvent.change(field, { target: { value: "15" } });
-    fireEvent.change(field, { target: { value: "" } }); // clear it again
+    // The "Trailing profit stop" toggle seeds 2.0 when on, then null when off.
+    const toggle = screen.getByText("Trailing profit stop");
+    fireEvent.click(toggle); // on -> 2.0
+    fireEvent.click(toggle); // off -> null
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].trailing_profit_pct).toBeNull();
@@ -159,12 +160,12 @@ describe("BacktestConfigForm", () => {
     expect(onSubmit.mock.calls[0][0].symbol_blacklist).toEqual(["BTC", "ETH"]);
   });
 
-  it("exposes the adaptive-blacklist and target-goal config sections", () => {
+  it("exposes the advanced engine-level and target-goal config sections", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
-    expect(screen.getByText("Adaptive Blacklist")).toBeInTheDocument();
+    expect(screen.getByText("Advanced (engine-level)")).toBeInTheDocument();
     expect(screen.getByText("Target Goal")).toBeInTheDocument();
-    // Expand adaptive section and confirm its fields exist.
-    fireEvent.click(screen.getByText("Adaptive Blacklist"));
+    // Expand advanced section and confirm its fields exist.
+    fireEvent.click(screen.getByText("Advanced (engine-level)"));
     expect(screen.getByLabelText("Min trades")).toBeInTheDocument();
     expect(screen.getByLabelText("Max win rate %")).toBeInTheDocument();
     expect(screen.getByLabelText("Lookback (hours)")).toBeInTheDocument();
