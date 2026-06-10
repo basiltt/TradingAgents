@@ -163,6 +163,21 @@ describe("BacktestResultsPage", () => {
     expect(await screen.findByTestId("hero-metrics")).toBeInTheDocument();
   });
 
+  it("shows the start→final equity progression (compounded growth)", async () => {
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({ trades: [], total: 0, page: 1 }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    const prog = await screen.findByTestId("equity-progression");
+    // starting balance = final_equity (10500) − net_profit (500) = 10000
+    expect(prog).toHaveTextContent("$10,000.00");
+    expect(prog).toHaveTextContent("$10,500.00");
+    expect(prog).toHaveTextContent(/start → final/);
+  });
+
   it("adds the run to the comparison basket", async () => {
     sessionStorage.clear();
     server.use(

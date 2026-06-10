@@ -82,14 +82,20 @@ function HeroMetrics({
   winRate,
   profitFactor,
   maxDdPct,
+  finalEquity,
 }: {
   netProfit: number;
   netProfitPct: number | null;
   winRate: number | null;
   profitFactor: number | null;
   maxDdPct: number;
+  finalEquity: number;
 }) {
   const cls = netProfit >= 0 ? "text-emerald-500" : "text-rose-500";
+  // Starting balance is the compounding anchor: final equity minus all net PnL.
+  // Derived from metrics (not run.config) so it is always internally consistent
+  // with the Net Profit shown alongside it.
+  const startingBalance = finalEquity - netProfit;
   const tiles = [
     { label: "Net Profit", value: formatUsd(netProfit, { sign: true }), sub: formatPct(netProfitPct, { sign: true }), color: cls },
     { label: "Win Rate", value: formatPct(winRate) },
@@ -97,14 +103,39 @@ function HeroMetrics({
     { label: "Max Drawdown", value: formatPct(maxDdPct), color: "text-rose-500" },
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="hero-metrics">
-      {tiles.map((t) => (
-        <div key={t.label} className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
-          <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-[var(--neu-text-muted)]">{t.label}</p>
-          <p className={`mt-1 text-lg font-bold tabular-nums ${t.color ?? "text-[var(--neu-text-strong)]"}`}>{t.value}</p>
-          {t.sub ? <p className="text-[0.7rem] text-[var(--neu-text-muted)]">{t.sub}</p> : null}
-        </div>
-      ))}
+    <div className="flex flex-col gap-3" data-testid="hero-metrics">
+      {/* Equity progression — makes the compounded start→end growth obvious at a
+          glance (the dashboard otherwise only shows the % delta). */}
+      <div
+        data-testid="equity-progression"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--neu-radius-md)] neu-surface-base neu-surface-inset px-4 py-3"
+      >
+        <span className="text-[0.68rem] font-semibold uppercase tracking-wide text-[var(--neu-text-muted)]">
+          Equity
+        </span>
+        <span className="text-lg font-bold tabular-nums text-[var(--neu-text-muted)]">
+          {formatUsd(startingBalance)}
+        </span>
+        <span className="text-[var(--neu-text-muted)]" aria-hidden="true">→</span>
+        <span className={`text-lg font-bold tabular-nums ${cls}`}>
+          {formatUsd(finalEquity)}
+        </span>
+        <span className={`text-[0.78rem] font-semibold tabular-nums ${cls}`}>
+          ({formatUsd(netProfit, { sign: true })} · {formatPct(netProfitPct, { sign: true })})
+        </span>
+        <span className="text-[0.68rem] text-[var(--neu-text-muted)]">
+          start → final
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {tiles.map((t) => (
+          <div key={t.label} className="neu-surface-base neu-surface-inset rounded-[var(--neu-radius-md)] px-4 py-3">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-[var(--neu-text-muted)]">{t.label}</p>
+            <p className={`mt-1 text-lg font-bold tabular-nums ${t.color ?? "text-[var(--neu-text-strong)]"}`}>{t.value}</p>
+            {t.sub ? <p className="text-[0.7rem] text-[var(--neu-text-muted)]">{t.sub}</p> : null}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -414,6 +445,7 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
           winRate={metrics.win_rate}
           profitFactor={metrics.profit_factor}
           maxDdPct={metrics.max_dd_pct}
+          finalEquity={metrics.final_equity}
         />
       ) : null}
 
