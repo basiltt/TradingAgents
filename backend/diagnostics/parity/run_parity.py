@@ -70,8 +70,10 @@ async def main() -> None:
     ap.add_argument("--start", required=True)
     ap.add_argument("--end", required=True)
     ap.add_argument("--tolerance", type=float, default=1.0)
-    ap.add_argument("--drilldown", action="store_true",
-                    help="refine close-rule exits with 1m drill-down (5m primary timeline)")
+    ap.add_argument("--drilldown", dest="drilldown", action="store_true", default=True,
+                    help="refine close-rule exits with 1m drill-down (default ON)")
+    ap.add_argument("--no-drilldown", dest="drilldown", action="store_false",
+                    help="disable 1m drill-down (pure 5m exits)")
     args = ap.parse_args()
 
     start, end = _dt(args.start), _dt(args.end)
