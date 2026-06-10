@@ -789,16 +789,12 @@ class BacktestEngine:
         if max_drift is not None and not is_mr:
             analysis_price = signal.get("analysis_price")
             if analysis_price and analysis_price > 0:
-                # Compare analysis_price against the price the trade would FILL at —
-                # the next bar's OPEN (same next-bar-open basis as _open_position, no
-                # look-ahead). Using the bar's close here would drift-check against a
-                # price ~one candle in the future AND disagree with the actual fill.
-                symbol_klines = klines.get(ticker, [])
-                current_price = None
-                for k in symbol_klines:
-                    if k["open_time"] >= current_time:
-                        current_price = k["open"]
-                        break
+                # Drift vs the closest-to-live-mark price: the 1m open at the signal
+                # instant when a drill-down window exists, else the 5m next-bar-open.
+                # Live checks drift against get_mark_price() (a continuous tick mark);
+                # a transient 5m bar-open spike can trip the cap when the live mark
+                # never moved. The 1m reference (when available) is far closer.
+                current_price = self._drift_reference_price(ticker, current_time, klines)
                 if current_price is not None:
                     drift_pct = (current_price - analysis_price) / analysis_price * 100
                     if direction in ("buy", "long") and drift_pct > max_drift:
@@ -825,6 +821,41 @@ class BacktestEngine:
         if not per_symbol:
             return None
         return per_symbol.get(int(bar_open_time.timestamp()))
+
+    def _drift_reference_price(
+        self, ticker: str, current_time: datetime,
+        klines: dict[str, list[dict[str, Any]]],
+    ) -> Optional[float]:
+        """Price to drift-check a signal against — as close to live's real-time mark
+        as the available data allows.
+
+        Live checks drift vs get_mark_price() (a continuous tick mark). The 5m
+        next-bar-open is a coarse proxy that a transient bar-open spike can push past
+        the cap when the live mark never moved. When a 1m drill-down window covers the
+        signal's entry bar, use the 1m OPEN at/just-after the signal instant instead —
+        far closer to the live mark, no look-ahead (only candles with open_time >=
+        current_time within the entry bar). Falls back to the 5m next-bar-open.
+        """
+        symbol_klines = klines.get(ticker, [])
+        # The 5m bar that COVERS current_time (its own open is <= current_time < next).
+        bar_open = None
+        for k in symbol_klines:
+            ot = k["open_time"]
+            if ot <= current_time:
+                bar_open = ot
+            else:
+                break
+        if bar_open is not None:
+            window = self._fine_window(ticker, bar_open)
+            if window:
+                for m in window:
+                    if m["open_time"] >= current_time:
+                        return m["open"]
+        # Fallback: 5m next-bar-open (the original basis).
+        for k in symbol_klines:
+            if k["open_time"] >= current_time:
+                return k["open"]
+        return None
 
     @staticmethod
     def _sim_bar_seconds(symbol_klines: list[dict[str, Any]]) -> int:
