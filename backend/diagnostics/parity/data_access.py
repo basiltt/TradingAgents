@@ -1,6 +1,6 @@
 """Async DB reads for the parity harness (local DB, read-only)."""
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 # Reuse the production signal/kline loaders' query shape so the engine gets
@@ -108,4 +108,73 @@ class ParityDataAccess:
             for key in buckets:
                 buckets[key].sort(key=lambda c: c["open_time"])
             out[sym] = buckets
+        return out
+
+    async def build_fine_klines_scoped(
+        self, kline_cache: Any, trade_windows: list[tuple[str, datetime, datetime]],
+        sim_interval_seconds: int = 300, neighbour_bars: int = 1,
+    ) -> dict[str, dict[int, list[dict]]]:
+        """Scoped drill-down: 1m candles ONLY around each trade's entry + exit bars.
+
+        High performance + high accuracy: instead of warming 1m for whole multi-hour
+        cycles, fetch a narrow 1m window around each trade's ENTRY bar and EXIT bar
+        (±neighbour_bars), mirroring BacktestService._build_fine_klines. Returns the
+        engine's fine_klines shape {symbol: {bar_open_epoch: [1m candles asc]}}.
+
+        trade_windows: (symbol, entry_time, exit_time) per pinned live trade — ALL
+        trades of ONE cycle (they share ~one entry instant and close together).
+
+        FULL-BOOK coverage for portfolio-equity closes: the engine's 1m equity walk
+        (drawdown / smart / target-goal / close_on_profit) only engages on a bar when
+        EVERY open position has a 1m window there — equity is a book-wide sum. Because
+        a cycle's positions can exit on slightly different bars, each trade's exit bar
+        (±neighbour) is added to EVERY symbol in the cycle, so the firing bar is 1m for
+        the whole book (mirrors BacktestService._build_fine_klines portfolio coverage).
+        """
+        bar_s = sim_interval_seconds
+
+        def _bar_epoch(dt: datetime) -> int:
+            return (int(dt.timestamp()) // bar_s) * bar_s
+
+        all_symbols = sorted({sym for sym, _, _ in trade_windows})
+
+        # Cross-position exit epochs: every trade's exit bar (±neighbour) must be 1m
+        # for ALL symbols so a book-wide equity close fires at 1m, not 5m.
+        shared_exit_epochs: set[int] = set()
+        for _sym, _et, xt in trade_windows:
+            if isinstance(xt, datetime):
+                xe = _bar_epoch(xt)
+                for n in range(-neighbour_bars, neighbour_bars + 1):
+                    shared_exit_epochs.add(xe + n * bar_s)
+
+        wanted: dict[str, set[int]] = {s: set(shared_exit_epochs) for s in all_symbols}
+        for sym, et, xt in trade_windows:
+            if isinstance(et, datetime):
+                ee = _bar_epoch(et)
+                # entry fills at next bar open when not bar-aligned → cover ee..ee+1+neighbour
+                for n in range(0, neighbour_bars + 2):
+                    wanted[sym].add(ee + n * bar_s)
+
+        out: dict[str, dict[int, list[dict]]] = {}
+        for sym, epochs in wanted.items():
+            if not epochs:
+                continue
+            lo = datetime.fromtimestamp(min(epochs), tz=timezone.utc)
+            hi = datetime.fromtimestamp(max(epochs) + bar_s, tz=timezone.utc)
+            try:
+                await kline_cache.ensure_coverage([sym], "1m", lo, hi)
+            except Exception:
+                pass
+            ones = await kline_cache.get_klines(sym, "1m", lo, hi)
+            if not ones:
+                continue
+            buckets: dict[int, list[dict]] = {}
+            for c in ones:
+                key = (int(c["open_time"].timestamp()) // bar_s) * bar_s
+                if key in epochs:
+                    buckets.setdefault(key, []).append(c)
+            for key in buckets:
+                buckets[key].sort(key=lambda c: c["open_time"])
+            if buckets:
+                out[sym] = buckets
         return out
