@@ -368,19 +368,9 @@ export function buildDefaults(
  * This is a complete account-free reference backtest config: it includes the
  * schedule and date range from the verified local reference run, but no account id. */
 export function buildDadDemoReferenceDefaults(
-  current?: Partial<BacktestCreateRequest>,
+  _current?: Partial<BacktestCreateRequest>,
 ): Required<BacktestConfigFormValues> {
-  return buildDefaults({
-    date_range_start: current?.date_range_start,
-    date_range_end: current?.date_range_end,
-    scan_source: current?.scan_source,
-    simulation_interval: current?.simulation_interval,
-    fee_rate_pct: current?.fee_rate_pct,
-    slippage_bps: current?.slippage_bps,
-    funding_rate_model: current?.funding_rate_model,
-    funding_rate_fixed_pct: current?.funding_rate_fixed_pct,
-    ...DAD_DEMO_REFERENCE_CONFIG,
-  });
+  return buildDefaults(DAD_DEMO_REFERENCE_CONFIG);
 }
 
 /** Convert a parsed form value into the API request body (ISO-normalizes dates). */
