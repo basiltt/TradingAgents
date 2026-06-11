@@ -28,3 +28,38 @@ describe("allCapabilitiesOn", () => {
     }
   });
 });
+
+import { render, screen, fireEvent } from "@testing-library/react";
+import { vi } from "vitest";
+import { AICapabilityPanel } from "../AICapabilityPanel";
+
+describe("AICapabilityPanel", () => {
+  it("renders a toggle for each of the 8 capabilities", () => {
+    render(<AICapabilityPanel value={allCapabilitiesOn()} onChange={vi.fn()} />);
+    // NeuSwitch renders role="switch" (not checkbox).
+    const switches = screen.getAllByRole("switch");
+    expect(switches).toHaveLength(8);
+  });
+
+  it("flips a single capability without touching the others", () => {
+    const onChange = vi.fn();
+    render(<AICapabilityPanel value={allCapabilitiesOn()} onChange={onChange} />);
+    // Each row wraps its switch in a data-testid container (NeuSwitch does not
+    // forward arbitrary props). Click the switch inside the mtf row.
+    const mtfRow = screen.getByTestId("ai-cap-row-mtf");
+    fireEvent.click(mtfRow.querySelector('[role="switch"]')!);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const payload = onChange.mock.calls[0][0];
+    expect(payload.mtf).toBe(false);
+    expect(payload.orderbook).toBe(true);
+  });
+
+  it("reset button restores all-on", () => {
+    const onChange = vi.fn();
+    const partial = { ...allCapabilitiesOn(), mtf: false, trailing: false };
+    render(<AICapabilityPanel value={partial} onChange={onChange} />);
+    fireEvent.click(screen.getByTestId("ai-cap-reset"));
+    expect(onChange).toHaveBeenCalledWith(allCapabilitiesOn());
+  });
+});
+
