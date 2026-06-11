@@ -279,6 +279,54 @@ describe("BacktestConfigForm", () => {
     expect("account_id" in req).toBe(false);
   });
 
+  it("applies the optimized reference config as a separate preset", async () => {
+    const referenceScheduleId = "d9c5f14f-a71f-4907-9449-dab3b75a52cb";
+    const onSubmit = vi.fn();
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        schedules={[{ value: referenceScheduleId, label: "Every 2 Hour Scan" }]}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "999" } });
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "99" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /optimized reference/i }));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234.02"),
+    );
+    expect((screen.getByLabelText("Source Mode") as HTMLSelectElement).value).toBe("schedule");
+    expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe(referenceScheduleId);
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("7");
+    expect((screen.getByLabelText("Capital %") as HTMLInputElement).value).toBe("30");
+    expect((screen.getByLabelText("Min score") as HTMLInputElement).value).toBe("9");
+    expect((screen.getByLabelText("Min confidence") as HTMLSelectElement).value).toBe("low");
+    expect((screen.getByLabelText("Max trades") as HTMLInputElement).value).toBe("6");
+
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.scan_source).toEqual({ mode: "schedule", schedule_id: referenceScheduleId });
+    expect(req.starting_capital).toBe(234.02);
+    expect(req.leverage).toBe(7);
+    expect(req.capital_pct).toBe(30);
+    expect(req.min_score).toBe(9);
+    expect(req.confidence_filter).toBe("low");
+    expect(req.max_trades).toBe(6);
+    expect(req.max_signal_age_minutes).toBe(90);
+    expect(req.max_price_drift_pct).toBe(5);
+    expect(req.max_drawdown_pct).toBe(15);
+    expect(req.breakeven_timeout_hours).toBeNull();
+    expect(req.max_trade_duration_hours).toBe(12);
+    expect(req.trailing_profit_pct).toBe(3);
+    expect(req.target_goal_type).toBe("profit_pct");
+    expect(req.target_goal_value).toBe(18);
+    expect("account_id" in req).toBe(false);
+  });
+
   it("reset clears edited values and prevents stale draft restore", async () => {
     const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "999" } });

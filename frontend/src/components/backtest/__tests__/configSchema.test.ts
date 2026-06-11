@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   backtestConfigSchema,
   DAD_DEMO_REFERENCE_CONFIG,
+  OPTIMIZED_REFERENCE_CONFIG,
   scanSourceSchema,
   buildDefaults,
   buildDadDemoReferenceDefaults,
+  buildOptimizedReferenceDefaults,
   toCreateRequest,
 } from "../configSchema";
 
@@ -192,6 +194,34 @@ describe("buildDefaults", () => {
       schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
     });
     expect("account_id" in DAD_DEMO_REFERENCE_CONFIG).toBe(false);
+    expect(backtestConfigSchema.safeParse(defaults).success).toBe(true);
+  });
+
+  it("applies the optimized reference config without carrying an account id", () => {
+    const defaults = buildOptimizedReferenceDefaults();
+
+    expect(defaults.starting_capital).toBe(234.02);
+    expect(defaults.leverage).toBe(7);
+    expect(defaults.capital_pct).toBe(30);
+    expect(defaults.min_score).toBe(9);
+    expect(defaults.confidence_filter).toBe("low");
+    expect(defaults.max_trades).toBe(6);
+    expect(defaults.execution_mode).toBe("batch");
+    expect(defaults.max_signal_age_minutes).toBe(90);
+    expect(defaults.max_price_drift_pct).toBe(5);
+    expect(defaults.max_drawdown_pct).toBe(15);
+    expect(defaults.breakeven_timeout_hours).toBeNull();
+    expect(defaults.max_trade_duration_hours).toBe(12);
+    expect(defaults.trailing_profit_pct).toBe(3);
+    expect(defaults.target_goal_type).toBe("profit_pct");
+    expect(defaults.target_goal_value).toBe(18);
+    expect(defaults.date_range_start).toBe("2026-06-05T00:00");
+    expect(defaults.date_range_end).toBe("2026-06-11T11:37");
+    expect(defaults.scan_source).toEqual({
+      mode: "schedule",
+      schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
+    });
+    expect("account_id" in OPTIMIZED_REFERENCE_CONFIG).toBe(false);
     expect(backtestConfigSchema.safeParse(defaults).success).toBe(true);
   });
 

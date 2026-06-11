@@ -277,6 +277,23 @@ export const DAD_DEMO_REFERENCE_CONFIG = {
   regime_trend_ema_dist_pct: 1,
 } satisfies Partial<BacktestCreateRequest>;
 
+export const OPTIMIZED_REFERENCE_CONFIG = {
+  ...DAD_DEMO_REFERENCE_CONFIG,
+  starting_capital: 234.02,
+  leverage: 7,
+  capital_pct: 30,
+  min_score: 9,
+  confidence_filter: "low",
+  max_trades: 6,
+  max_signal_age_minutes: 90,
+  max_price_drift_pct: 5,
+  max_drawdown_pct: 15,
+  breakeven_timeout_hours: null,
+  max_trade_duration_hours: 12,
+  trailing_profit_pct: 3,
+  target_goal_value: 18,
+} satisfies Partial<BacktestCreateRequest>;
+
 /** Build default form values, optionally seeded from a partial config.
  * Return type is Required<…> so omitting any field is a typecheck error — this
  * guards against the schema and these defaults silently drifting apart.
@@ -371,6 +388,12 @@ export function buildDadDemoReferenceDefaults(
   _current?: Partial<BacktestCreateRequest>,
 ): Required<BacktestConfigFormValues> {
   return buildDefaults(DAD_DEMO_REFERENCE_CONFIG);
+}
+
+/** Apply the optimized June 2026 research preset as a separate account-free
+ * reference config, leaving the user's stored Reference Config untouched. */
+export function buildOptimizedReferenceDefaults(): Required<BacktestConfigFormValues> {
+  return buildDefaults(OPTIMIZED_REFERENCE_CONFIG);
 }
 
 /** Convert a parsed form value into the API request body (ISO-normalizes dates). */

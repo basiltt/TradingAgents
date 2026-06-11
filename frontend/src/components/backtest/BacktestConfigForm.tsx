@@ -12,6 +12,7 @@ import {
   backtestConfigSchema,
   buildDefaults,
   buildDadDemoReferenceDefaults,
+  buildOptimizedReferenceDefaults,
   toCreateRequest,
   type BacktestConfigFormValues,
 } from "./configSchema";
@@ -569,6 +570,12 @@ export function BacktestConfigForm({
     saveDraft(referenceValues);
   }, [getValues, reset]);
 
+  const applyOptimizedReference = React.useCallback(() => {
+    const referenceValues = buildOptimizedReferenceDefaults();
+    reset(referenceValues);
+    saveDraft(referenceValues);
+  }, [reset]);
+
   const storeReferenceConfig = React.useCallback(() => {
     saveReferenceConfig(getValues() as BacktestDraft);
   }, [getValues]);
@@ -1060,6 +1067,9 @@ export function BacktestConfigForm({
         </Button>
         <Button type="button" variant="secondary" onClick={applyDadDemoReference} disabled={isSubmitting}>
           Reference Config
+        </Button>
+        <Button type="button" variant="secondary" onClick={applyOptimizedReference} disabled={isSubmitting}>
+          Optimized Reference
         </Button>
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Running…" : "Run Backtest"}
