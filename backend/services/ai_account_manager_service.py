@@ -234,15 +234,30 @@ class AIAccountManagerService:
             self._account_locks[account_id] = asyncio.Lock()
         return self._account_locks[account_id]
 
-    async def enable(self, account_id: str, config: AIManagerConfig) -> None:
-        """Enable AI Manager for an account — spawns the decision loop task."""
+    async def enable(
+        self,
+        account_id: str,
+        config: AIManagerConfig,
+        *,
+        persist: bool = True,
+    ) -> None:
+        """Enable AI Manager for an account — spawns the decision loop task.
+
+        persist=True (default) writes `config` to the DB (unchanged legacy
+        behavior). persist=False spawns/reloads the task with `config` in-memory
+        only — used for per-scan capability overrides that must not overwrite the
+        account's stored config.
+        """
         lock = self._get_account_lock(account_id)
         async with lock:
             existing_task = self._tasks.get(account_id)
             if existing_task and not existing_task.is_dead():
-                # Task is alive — just sync config if it changed
-                if getattr(existing_task._config, "auto_enabled", False) != config.auto_enabled:
-                    await self._repo.sync_config_columns(account_id, config.model_dump())
+                # Task is alive — sync config if auto_enabled changed OR an
+                # explicit non-persisting override was supplied.
+                changed = getattr(existing_task._config, "auto_enabled", False) != config.auto_enabled
+                if changed or not persist:
+                    if persist:
+                        await self._repo.sync_config_columns(account_id, config.model_dump())
                     existing_task.reload_config(config)
                 return
             # No task or dead task — (re)spawn
@@ -251,8 +266,9 @@ class AIAccountManagerService:
                 existing_task.cancel()
                 self._tasks.pop(account_id, None)
             await self._repo.upsert_state(account_id, enabled=True, fsm_state="sleeping")
-            await self._repo.sync_config_columns(account_id, config.model_dump())
-            await self._spawn_task(account_id)
+            if persist:
+                await self._repo.sync_config_columns(account_id, config.model_dump())
+            await self._spawn_task(account_id, config_override=None if persist else config)
             source = "auto" if config.auto_enabled else "manual"
             await self._repo.insert_log(account_id, "info", "lifecycle", f"AI Manager enabled ({source})")
 
@@ -874,20 +890,28 @@ class AIAccountManagerService:
             logger.warning("Failed to resolve per-account LLM callable for %s", account_id[:8])
         return None, None, None
 
-    async def _spawn_task(self, account_id: str) -> None:
+    async def _spawn_task(
+        self,
+        account_id: str,
+        *,
+        config_override: "AIManagerConfig | None" = None,
+    ) -> None:
         from backend.services.ai_manager_task import AIManagerTask
 
         state = await self._repo.get_state(account_id)
         if not state or not state.get("enabled", False):
             return
-        try:
-            raw_config = state.get("config") or {}
-            if isinstance(raw_config, str):
-                raw_config = _json.loads(raw_config)
-            config = AIManagerConfig(**raw_config)
-        except Exception:
-            logger.warning("Invalid config for %s, using defaults", account_id)
-            config = AIManagerConfig()
+        if config_override is not None:
+            config = config_override
+        else:
+            try:
+                raw_config = state.get("config") or {}
+                if isinstance(raw_config, str):
+                    raw_config = _json.loads(raw_config)
+                config = AIManagerConfig(**raw_config)
+            except Exception:
+                logger.warning("Invalid config for %s, using defaults", account_id)
+                config = AIManagerConfig()
 
         # Load circuit breaker state from DB
         await self._circuit_breaker.load_from_db(
