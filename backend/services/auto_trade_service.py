@@ -1600,6 +1600,64 @@ class AutoTradeExecutor:
         # No registry wired (e.g. tests) — place without the shared lock.
         return await self._do_place(state, result, direction, cfg, account_id, symbol, phase, mr_fade, ctx)
 
+    async def _maybe_enable_ai_manager(
+        self, account_id: str, cfg: Dict[str, Any], *, strategy_kind: str
+    ) -> None:
+        """Auto-enable the AI Manager for an account on first placement of this scan.
+
+        Applies a per-scan capability override (without persisting) when
+        cfg['ai_manager_capabilities'] is present; otherwise preserves the legacy
+        path (load account config, enable with persist=True). No-op for
+        mean-reversion placements (their positions are excluded from AI management).
+        """
+        if strategy_kind == "mean_reversion":
+            return
+        if not cfg.get("ai_manager_enabled"):
+            return
+        if account_id in self._ai_manager_enabled_accounts:
+            return
+        self._ai_manager_enabled_accounts.add(account_id)
+        if not self._ai_manager_service:
+            return
+        try:
+            # Preserve any existing config — only use defaults if none exists yet.
+            existing_config = None
+            try:
+                existing_dict = await self._ai_manager_service.get_config(account_id)
+                existing_config = _AIMConfig(**existing_dict)
+            except Exception:
+                pass
+            config_to_use = existing_config or _AIMConfig()
+            config_to_use.auto_enabled = True
+
+            capabilities = cfg.get("ai_manager_capabilities")
+            if capabilities is not None:
+                from backend.services.ai_manager_capability_map import (
+                    apply_capability_overrides,
+                )
+                config_to_use = apply_capability_overrides(config_to_use, capabilities)
+                config_to_use.auto_enabled = True
+                await self._ai_manager_service.enable(
+                    account_id, config_to_use, persist=False
+                )
+                logger.info(
+                    "ai_manager_auto_enabled",
+                    extra={"account_id": account_id, "capability_override": True},
+                )
+            else:
+                await self._ai_manager_service.enable(account_id, config_to_use)
+                logger.info(
+                    "ai_manager_auto_enabled",
+                    extra={"account_id": account_id, "capability_override": False},
+                )
+        except Exception as e:
+            # Match legacy behavior: a failed enable must not abort the placement.
+            self._ai_manager_enabled_accounts.discard(account_id)
+            logger.warning(
+                "ai_manager_auto_enable_failed",
+                extra={"account_id": account_id, "error": str(e)[:200]},
+            )
+
     async def _do_place(
         self, state: "_AccountState", result: Dict[str, Any], direction: str,
         cfg: Dict[str, Any], account_id: str, symbol: str, phase: str,
@@ -1740,31 +1798,8 @@ class AutoTradeExecutor:
                 "side": execution.side, "order_id": execution.order_id,
             })
 
-            # Enable AI Manager for this account if configured.
-            # FR-052: a mean-reversion placement must NOT auto-enable the AI manager
-            # (MR positions are excluded from AI management — they have their own
-            # fast/tight exits and the AI's logic would fight them).
-            if (strategy_kind != "mean_reversion"
-                    and cfg.get("ai_manager_enabled")
-                    and account_id not in self._ai_manager_enabled_accounts):
-                self._ai_manager_enabled_accounts.add(account_id)
-                if self._ai_manager_service:
-                    try:
-                        # Preserve any existing config — only use defaults if no config exists yet
-                        existing_config = None
-                        try:
-                            existing_dict = await self._ai_manager_service.get_config(account_id)
-                            existing_config = _AIMConfig(**existing_dict)
-                        except Exception:
-                            pass
-                        config_to_use = existing_config or _AIMConfig()
-                        config_to_use.auto_enabled = True
-                        await self._ai_manager_service.enable(account_id, config_to_use)
-                        logger.info("ai_manager_auto_enabled", extra={"account_id": account_id})
-                    except Exception as e:
-                        logger.warning("ai_manager_auto_enable_failed", extra={
-                            "account_id": account_id, "error": str(e)[:200],
-                        })
+            # Enable AI Manager for this account if configured (FR-052: MR excluded).
+            await self._maybe_enable_ai_manager(account_id, cfg, strategy_kind=strategy_kind)
 
             return execution
 
