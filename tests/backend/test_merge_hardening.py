@@ -60,7 +60,7 @@ async def test_insert_scan_result_persists_analysis_price():
     )
 
     assert "analysis_price" in pool.last_sql, "INSERT must name the analysis_price column"
-    # The bound value must be the float we passed (last positional arg, $10).
+    # The bound value must be the float we passed.
     assert 64250.5 in pool.last_args, "analysis_price value must be bound into the INSERT"
 
 
@@ -76,7 +76,7 @@ async def test_insert_scan_result_analysis_price_absent_binds_none():
          "confidence": "moderate", "score": -6},
     )
 
-    # analysis_price is the final bind ($10) — must be None when absent.
+    # analysis_price is the final bind — must be None when absent.
     assert pool.last_args[-1] is None
 
 
@@ -106,6 +106,23 @@ async def test_insert_scan_result_on_conflict_preserves_existing_price():
          "confidence": "low", "score": 1},
     )
     assert "COALESCE(EXCLUDED.analysis_price" in pool.last_sql.replace("\n", " ")
+
+
+@pytest.mark.asyncio
+async def test_insert_scan_result_persists_completed_at():
+    """completed_at must be stored so backtests rank/age-filter the same payload live used."""
+    pool = _CapturingPool()
+    db = _make_db_with_pool(pool)
+
+    await db.insert_scan_result(
+        "scan-1",
+        {"ticker": "BTCUSDT", "status": "completed", "direction": "buy",
+         "confidence": "high", "score": 8, "completed_at": "2026-06-05T01:02:03.000000Z"},
+    )
+
+    assert "completed_at" in pool.last_sql
+    assert pool.last_args[-2].isoformat().startswith("2026-06-05T01:02:03")
+    assert "COALESCE(EXCLUDED.completed_at" in pool.last_sql.replace("\n", " ")
 
 
 # ---------------------------------------------------------------------------

@@ -208,6 +208,903 @@ def _laconfig(**overrides):
     return base
 
 
+class TestBreakevenTimeoutMarking:
+    def test_breakeven_timeout_does_not_fire_on_favorable_close_only(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [{
+            "id": 1,
+            "ticker": "SHORTUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": 8,
+            "signal_time": base,
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        klines = {"SHORTUSDT": [
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0},
+            # The close is very profitable for a short, but the bar high says the
+            # account-level mark could still be adverse. BREAKEVEN_TIMEOUT should
+            # not mass-close from the favorable close alone.
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 102.0, "low": 95.0, "close": 95.0, "volume": 1.0},
+        ]}
+
+        result = BacktestEngine().run(
+            _laconfig(
+                take_profit_pct=900.0,
+                stop_loss_pct=900.0,
+                breakeven_timeout_hours=0.01,
+            ),
+            signals,
+            klines,
+        )
+
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "backtest_end"
+
+    def test_breakeven_timeout_fires_when_adverse_mark_confirms_profit(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [{
+            "id": 1,
+            "ticker": "SHORTUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": 8,
+            "signal_time": base,
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        klines = {"SHORTUSDT": [
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 94.0, "low": 92.0, "close": 93.0, "volume": 1.0},
+        ]}
+
+        result = BacktestEngine().run(
+            _laconfig(
+                take_profit_pct=900.0,
+                stop_loss_pct=900.0,
+                breakeven_timeout_hours=0.01,
+            ),
+            signals,
+            klines,
+        )
+
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "breakeven"
+
+    def test_schedule_profit_round_does_not_use_synthetic_breakeven_mark(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [{
+            "id": 1,
+            "ticker": "SHORTUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": 8,
+            "signal_time": base,
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        klines = {"SHORTUSDT": [
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 98.0, "low": 97.0, "close": 97.5, "volume": 1.0},
+        ]}
+
+        result = BacktestEngine().run(
+            _laconfig(
+                scan_source={"mode": "schedule", "schedule_id": "sched-1"},
+                take_profit_pct=900.0,
+                stop_loss_pct=900.0,
+                breakeven_timeout_hours=0.01,
+                target_goal_type="profit_pct",
+                target_goal_value=50.0,
+            ),
+            signals,
+            klines,
+        )
+
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "backtest_end"
+
+    def test_breakeven_does_not_use_post_smart_survivor_book_same_window(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [
+            {
+                "id": 1,
+                "ticker": "LOSERUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 9,
+                "signal_time": base,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "WINNERUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 8,
+                "signal_time": base,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+        ]
+        klines = {
+            "LOSERUSDT": [
+                {"open_time": base, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0},
+                {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 100.0, "low": 60.0, "close": 60.0, "volume": 1.0},
+            ],
+            "WINNERUSDT": [
+                {"open_time": base, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0},
+                {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 120.0, "low": 120.0, "close": 120.0, "volume": 1.0},
+                {"open_time": base + timedelta(minutes=10), "open": 120.0, "high": 120.0, "low": 120.0, "close": 120.0, "volume": 1.0},
+            ],
+        }
+
+        result = BacktestEngine().run(
+            _laconfig(
+                capital_pct=50.0,
+                leverage=2,
+                max_trades=2,
+                take_profit_pct=900.0,
+                stop_loss_pct=900.0,
+                max_drawdown_pct=10.0,
+                smart_drawdown_close=True,
+                breakeven_timeout_hours=0.01,
+            ),
+            signals,
+            klines,
+        )
+
+        reasons_by_symbol = {trade["symbol"]: trade["close_reason"] for trade in result.trades}
+        assert reasons_by_symbol["LOSERUSDT"] == "equity_drop_smart"
+        assert reasons_by_symbol["WINNERUSDT"] == "backtest_end"
+
+
+class TestLiveSelectionTiming:
+    def test_live_selection_pin_overrides_algorithmic_score_order(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan_completed = base + timedelta(minutes=30)
+        signals = [
+            {
+                "id": 1,
+                "ticker": "OLDUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 9,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": base + timedelta(minutes=10),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "NEWUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 7,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": base + timedelta(minutes=20),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+        ]
+        candles = [
+            {
+                "open_time": base + timedelta(minutes=i * 5),
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+            }
+            for i in range(24)
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(
+                max_trades=1,
+                _live_selection_by_scan={"s1": [{"symbol": "NEWUSDT", "side": "Buy"}]},
+            ),
+            signals,
+            {
+                "OLDUSDT": list(candles),
+                "NEWUSDT": list(candles),
+            },
+        )
+
+        assert [t["symbol"] for t in result.trades] == ["NEWUSDT"]
+
+    def test_empty_live_selection_pin_skips_scan(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        signals = [{
+            "id": 1,
+            "ticker": "OLDUSDT",
+            "direction": "buy",
+            "confidence": "high",
+            "score": 9,
+            "signal_time": base + timedelta(minutes=30),
+            "scan_started_at": base,
+            "completed_at": base + timedelta(minutes=10),
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        candles = [
+            {
+                "open_time": base + timedelta(minutes=i * 5),
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+            }
+            for i in range(24)
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(_live_selection_by_scan={"s1": []}),
+            signals,
+            {"OLDUSDT": candles},
+        )
+
+        assert result.trades == []
+
+    def test_account_selection_time_controls_signal_age_before_ranking_pick(self):
+        """Live checks max_signal_age at the account's actual placement time.
+
+        The older candidate has the higher score and would win at scan completion,
+        but it is stale by the live account selection timestamp. The backtest must
+        skip it and pick the next eligible signal.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan_completed = base + timedelta(minutes=60)
+        selection_time = base + timedelta(minutes=130)
+
+        signals = [
+            {
+                "id": 1,
+                "ticker": "OLDUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 9,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": base + timedelta(minutes=5),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "NEWUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 8,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": base + timedelta(minutes=20),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+        ]
+
+        candles = []
+        for i in range(48):
+            t = base + timedelta(minutes=i * 5)
+            candles.append({
+                "open_time": t,
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+            })
+
+        result = BacktestEngine().run(
+            _laconfig(
+                max_signal_age_minutes=120,
+                max_trades=1,
+                _selection_time_by_scan={"s1": selection_time},
+            ),
+            signals,
+            {
+                "OLDUSDT": list(candles),
+                "NEWUSDT": list(candles),
+            },
+        )
+
+        assert [t["symbol"] for t in result.trades] == ["NEWUSDT"]
+
+    def test_null_completed_at_uses_analysis_completed_at_for_signal_age(self):
+        """Rows with NULL completed_at still use analysis completion for age."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan_completed = base + timedelta(minutes=60)
+        selection_time = base + timedelta(minutes=240)
+        signals = [
+            {
+                "id": 1,
+                "ticker": "STALEUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -9,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": None,
+                "analysis_completed_at": base + timedelta(minutes=10),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "FRESHUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": None,
+                "analysis_completed_at": base + timedelta(minutes=180),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+        ]
+        candles = [
+            {
+                "open_time": base + timedelta(minutes=i * 5),
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+            }
+            for i in range(60)
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(
+                max_signal_age_minutes=120,
+                max_trades=1,
+                _selection_time_by_scan={"s1": selection_time},
+            ),
+            signals,
+            {"STALEUSDT": list(candles), "FRESHUSDT": list(candles)},
+        )
+
+        assert [t["symbol"] for t in result.trades] == ["FRESHUSDT"]
+
+    def test_batch_uses_analysis_completed_at_to_rank_null_completed_at_rows(self):
+        """Normal batch reconstructs live result completed_at from analysis time."""
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan_completed = base + timedelta(minutes=60)
+        signals = [
+            {
+                "id": 1,
+                "ticker": "OLDUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": None,
+                "analysis_completed_at": base + timedelta(minutes=20),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "NEWUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": scan_completed,
+                "scan_started_at": base,
+                "completed_at": None,
+                "analysis_completed_at": base + timedelta(minutes=50),
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+        ]
+        candles = [
+            {
+                "open_time": base + timedelta(minutes=i * 5),
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+            }
+            for i in range(40)
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(max_trades=1),
+            signals,
+            {"OLDUSDT": list(candles), "NEWUSDT": list(candles)},
+        )
+
+        assert [t["symbol"] for t in result.trades] == ["NEWUSDT"]
+
+    def test_price_drift_uses_decision_time_mark_not_future_entry_open(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        decision_time = base + timedelta(minutes=3)
+        signals = [{
+            "id": 1,
+            "ticker": "DRIFTUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": -8,
+            "signal_time": decision_time,
+            "scan_started_at": base,
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        klines = {"DRIFTUSDT": [
+            # The live mark at decision time has already moved 5% in the sell
+            # direction, so live skips for price_drift even though the future entry
+            # bar opens back near the analysis price.
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 95.0, "close": 95.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0},
+        ]}
+
+        result = BacktestEngine().run(
+            _laconfig(max_price_drift_pct=3.0),
+            signals,
+            klines,
+        )
+
+        assert result.trades == []
+
+    def test_schedule_price_drift_uses_adverse_mark_near_bar_open(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        decision_time = base + timedelta(seconds=5)
+        signals = [{
+            "id": 1,
+            "ticker": "DRIFTUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": -8,
+            "signal_time": decision_time,
+            "scan_started_at": base,
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        klines = {"DRIFTUSDT": [
+            # The 5m close is safe (-1%) but this decision is only five seconds into
+            # the bar, where the live mark can still be near the adverse side.
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 95.0, "close": 99.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0},
+        ]}
+        cfg = _laconfig(max_price_drift_pct=3.0)
+        cfg["scan_source"] = {"mode": "schedule", "schedule_id": "sched"}
+
+        result = BacktestEngine().run(cfg, signals, klines)
+
+        assert result.trades == []
+
+    def test_schedule_price_drift_uses_close_after_early_bar_window(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        decision_time = base + timedelta(minutes=3)
+        signals = [{
+            "id": 1,
+            "ticker": "DRIFTUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": -8,
+            "signal_time": decision_time,
+            "scan_started_at": base,
+            "scan_id": "s1",
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }]
+        klines = {"DRIFTUSDT": [
+            # Later in the bar, the close is the better account-free proxy for the
+            # exchange mark. The adverse low alone would incorrectly reject this.
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 95.0, "close": 99.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0},
+        ]}
+        cfg = _laconfig(max_price_drift_pct=3.0)
+        cfg["scan_source"] = {"mode": "schedule", "schedule_id": "sched"}
+
+        result = BacktestEngine().run(cfg, signals, klines)
+
+        assert [t["symbol"] for t in result.trades] == ["DRIFTUSDT"]
+
+    def test_fill_to_max_only_attempts_remaining_slot_count(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        decision_time = base + timedelta(minutes=3)
+        signals = [
+            {
+                "id": 1,
+                "ticker": "GOODUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": decision_time,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "DRIFTUSDT",
+                "direction": "sell",
+                "confidence": "low",
+                "score": -6,
+                "signal_time": decision_time,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 3,
+                "ticker": "NOKLINEUSDT",
+                "direction": "sell",
+                "confidence": "low",
+                "score": -6,
+                "signal_time": decision_time,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 4,
+                "ticker": "LATEPASSUSDT",
+                "direction": "sell",
+                "confidence": "low",
+                "score": -6,
+                "signal_time": decision_time,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+        ]
+        flat = [
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0},
+        ]
+        drifted = [
+            {"open_time": base, "open": 100.0, "high": 100.0, "low": 95.0, "close": 95.0, "volume": 100.0},
+            {"open_time": base + timedelta(minutes=5), "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0},
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(
+                max_trades=3,
+                fill_to_max_trades=True,
+                min_score=7.0,
+                confidence_filter="high",
+                max_price_drift_pct=3.0,
+            ),
+            signals,
+            {
+                "GOODUSDT": list(flat),
+                "DRIFTUSDT": drifted,
+                "LATEPASSUSDT": list(flat),
+            },
+        )
+
+        assert [trade["symbol"] for trade in result.trades] == ["GOODUSDT"]
+
+    def test_scan_started_with_positions_uses_post_scan_recheck_order_after_clear(self):
+        """If a scan starts with positions open, live rescues it through
+        post_scan_recheck when the book clears before completion. That path ranks
+        tied candidates by abs(score) only, preserving completion/insertion order.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        first_complete = base + timedelta(minutes=12)
+        second_start = base + timedelta(minutes=20)
+        second_complete = base + timedelta(minutes=50)
+
+        signals = [
+            {
+                "id": 1,
+                "ticker": "PREVUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 8,
+                "signal_time": first_complete,
+                "scan_started_at": base,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 3,
+                "ticker": "NEWUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": second_complete,
+                "scan_started_at": second_start,
+                "completed_at": None,
+                "analysis_completed_at": base + timedelta(minutes=49),
+                "scan_id": "s2",
+                "signal_source": "structured",
+                "analysis_price": 50.0,
+            },
+            {
+                "id": 2,
+                "ticker": "OLDUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": second_complete,
+                "scan_started_at": second_start,
+                "completed_at": None,
+                "analysis_completed_at": base + timedelta(minutes=25),
+                "scan_id": "s2",
+                "signal_source": "structured",
+                "analysis_price": 50.0,
+            },
+        ]
+
+        prev = []
+        flat = []
+        for i in range(20):
+            t = base + timedelta(minutes=i * 5)
+            prev_high = 102.0 if t == base + timedelta(minutes=35) else 100.5
+            prev.append({
+                "open_time": t,
+                "open": 100.0,
+                "high": prev_high,
+                "low": 99.5,
+                "close": 100.0,
+                "volume": 100.0,
+            })
+            flat.append({
+                "open_time": t,
+                "open": 50.0,
+                "high": 50.0,
+                "low": 50.0,
+                "close": 50.0,
+                "volume": 100.0,
+            })
+
+        result = BacktestEngine().run(
+            _laconfig(
+                leverage=10,
+                take_profit_pct=10.0,
+                max_trades=1,
+                skip_if_positions_open=True,
+            ),
+            signals,
+            {
+                "PREVUSDT": prev,
+                "OLDUSDT": list(flat),
+                "NEWUSDT": list(flat),
+            },
+        )
+
+        rescued = [t for t in result.trades if t.get("scan_id") == "s2"]
+        assert [t["symbol"] for t in rescued] == ["OLDUSDT"]
+
+    def test_schedule_post_scan_recheck_time_controls_signal_age(self):
+        """Specific Schedule must evaluate rescued scans at the estimated recheck
+        clock, not scan completion. Otherwise near-stale high-score candidates enter
+        even though live would have aged them out by the time post_scan_recheck ran.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        first_complete = base + timedelta(minutes=5)
+        second_start = base + timedelta(minutes=10)
+        second_complete = base + timedelta(minutes=50)
+        recheck_time = base + timedelta(minutes=65)
+
+        signals = [
+            {
+                "id": 1,
+                "ticker": "PREVUSDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 8,
+                "signal_time": first_complete,
+                "scan_started_at": base,
+                "scan_id": "s1",
+                "signal_source": "structured",
+                "analysis_price": 100.0,
+            },
+            {
+                "id": 2,
+                "ticker": "OLDUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -9,
+                "signal_time": second_complete,
+                "scan_started_at": second_start,
+                "completed_at": base + timedelta(minutes=4),
+                "scan_id": "s2",
+                "signal_source": "structured",
+                "analysis_price": 50.0,
+            },
+            {
+                "id": 3,
+                "ticker": "NEWUSDT",
+                "direction": "sell",
+                "confidence": "high",
+                "score": -8,
+                "signal_time": second_complete,
+                "scan_started_at": second_start,
+                "completed_at": base + timedelta(minutes=20),
+                "scan_id": "s2",
+                "signal_source": "structured",
+                "analysis_price": 50.0,
+            },
+        ]
+
+        prev = []
+        flat = []
+        for i in range(24):
+            t = base + timedelta(minutes=i * 5)
+            prev.append({
+                "open_time": t,
+                "open": 100.0,
+                "high": 102.0 if t == base + timedelta(minutes=30) else 100.5,
+                "low": 99.5,
+                "close": 100.0,
+                "volume": 100.0,
+            })
+            flat.append({
+                "open_time": t,
+                "open": 50.0,
+                "high": 50.0,
+                "low": 50.0,
+                "close": 50.0,
+                "volume": 100.0,
+            })
+
+        result = BacktestEngine().run(
+            _laconfig(
+                leverage=10,
+                take_profit_pct=10.0,
+                max_trades=1,
+                skip_if_positions_open=True,
+                max_signal_age_minutes=60,
+                _schedule_post_scan_recheck_time_by_scan={"s2": recheck_time.isoformat()},
+            ),
+            signals,
+            {
+                "PREVUSDT": prev,
+                "OLDUSDT": list(flat),
+                "NEWUSDT": list(flat),
+            },
+        )
+
+        rescued = [t for t in result.trades if t.get("scan_id") == "s2"]
+        assert [t["symbol"] for t in rescued] == ["NEWUSDT"]
+
+
+class TestLiveCloseRuleClock:
+    def _signal(self, scan_id, t, *, started_at=None):
+        return {
+            "id": scan_id,
+            "ticker": "CARRYUSDT",
+            "direction": "buy",
+            "confidence": "high",
+            "score": 8,
+            "signal_time": t,
+            "scan_started_at": started_at or t,
+            "scan_id": scan_id,
+            "signal_source": "structured",
+            "analysis_price": 100.0,
+        }
+
+    def _flat_klines(self, base, bars=30):
+        return [
+            {
+                "open_time": base + timedelta(minutes=5 * i),
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 100.0,
+            }
+            for i in range(bars)
+        ]
+
+    def test_non_skipped_scan_recreates_breakeven_clock_for_carried_book(self):
+        """Live recreates close rules on a non-skipped scan, even if an old
+        position is still open. The breakeven timer must restart at that scan's
+        decision clock, not keep aging from the original position entry.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        second = base + timedelta(minutes=30)
+        signals = [
+            self._signal("s1", base),
+            self._signal("s2", second),
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(
+                take_profit_pct=900.0,
+                stop_loss_pct=900.0,
+                breakeven_timeout_hours=1.0,
+                skip_if_positions_open=False,
+            ),
+            signals,
+            {"CARRYUSDT": self._flat_klines(base)},
+        )
+
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "breakeven"
+        assert result.trades[0]["exit_time"] == base + timedelta(minutes=90)
+
+    def test_skipped_scan_preserves_existing_breakeven_clock(self):
+        """When skip_if_positions_open stops a scan, production exits before rule
+        creation. The backtest must keep the previous active breakeven timer.
+        """
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        second = base + timedelta(minutes=30)
+        signals = [
+            self._signal("s1", base),
+            self._signal("s2", second),
+        ]
+
+        result = BacktestEngine().run(
+            _laconfig(
+                take_profit_pct=900.0,
+                stop_loss_pct=900.0,
+                breakeven_timeout_hours=1.0,
+                skip_if_positions_open=True,
+            ),
+            signals,
+            {"CARRYUSDT": self._flat_klines(base)},
+        )
+
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] == "breakeven"
+        assert result.trades[0]["exit_time"] == base + timedelta(minutes=60)
+
+
 class TestEntryNoLookAhead:
     """Entry must NOT use look-ahead: a position fills at the next tradeable bar's
     OPEN (the first price available after the decision instant), and that same bar's
@@ -393,6 +1290,43 @@ class TestIntrabarEquityDrawdown:
             "fired equity_drop on a 40% wick — over-firing below the 50% threshold"
         )
 
+    def test_smart_drawdown_ignores_intrabar_wick_when_close_equity_holds(self):
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        candles = []
+        for i in range(8):
+            t = base + timedelta(minutes=i * 5)
+            if i == 5:
+                candles.append({"open_time": t, "open": 100.0, "high": 105.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+            else:
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+
+        cfg = self._cfg()
+        cfg["smart_drawdown_close"] = True
+        result = BacktestEngine().run(cfg, self._short_signal(), {"BTCUSDT": candles})
+
+        assert len(result.trades) == 1
+        assert result.trades[0]["close_reason"] != "equity_drop_smart"
+
+    def test_smart_drawdown_closes_losers_at_sampled_close(self):
+        from backend.services.backtest_engine import BacktestEngine
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        candles = []
+        for i in range(8):
+            t = base + timedelta(minutes=i * 5)
+            if i == 5:
+                candles.append({"open_time": t, "open": 100.0, "high": 106.0, "low": 100.0, "close": 105.0, "volume": 100.0})
+            else:
+                candles.append({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100.0})
+
+        cfg = self._cfg()
+        cfg["smart_drawdown_close"] = True
+        result = BacktestEngine().run(cfg, self._short_signal(), {"BTCUSDT": candles})
+
+        trade = result.trades[0]
+        assert trade["close_reason"] == "equity_drop_smart"
+        assert trade["exit_price"] == pytest.approx(105.0)
+
 
 def _fine_key(bar_open_dt):
     """Epoch key the engine uses to index a 1m window by its 5m bar open."""
@@ -519,13 +1453,11 @@ class TestDrilldownEntry:
             f"expected signal-bar 1m fill 97, got {r.trades[0]['entry_price']}"
         )
 
-    def test_equity_drop_close_is_invariant_to_drilled_price(self):
-        """Selection-invariance: the equity close-rules value uPnL off the STABLE 5m
-        reference entry, NOT the drilled fill — so a drilled entry price can NEVER
-        change WHETHER/WHEN an equity rule fires (and thus never changes the trade set /
-        skip_if_positions_open cascade). Here a short's drilled entry is much more
-        favorable, which WOULD delay an equity_drop if the rule used the drilled price;
-        it must fire at the same bar regardless."""
+    def test_equity_drop_uses_drilled_exchange_fill_price(self):
+        """Production wallet equity is based on the exchange avgPrice, so equity close
+        rules must use the simulated actual fill. A drilled short entry that is much
+        more favorable should delay/avoid a drawdown close that the synthetic 5m fill
+        would have triggered."""
         from backend.services.backtest_engine import BacktestEngine
         # short, 10x, capital 100% → +5% adverse = 50% drawdown. drawdown threshold 50%.
         cfg = _laconfig(capital_pct=100.0, leverage=10, take_profit_pct=900.0,
@@ -555,10 +1487,9 @@ class TestDrilldownEntry:
         plain = BacktestEngine().run(cfg, sig, {"BTCUSDT": out})
         drilled = BacktestEngine().run(cfg, sig, {"BTCUSDT": out}, fine_klines=fine)
         assert len(plain.trades) == len(drilled.trades) == 1
-        # SAME close reason and SAME exit time — selection invariant to the drilled price.
-        assert plain.trades[0]["close_reason"] == drilled.trades[0]["close_reason"]
-        assert plain.trades[0]["exit_time"] == drilled.trades[0]["exit_time"]
-        # ...but the drilled trade's REPORTED entry price reflects the 1m fill.
+        assert plain.trades[0]["close_reason"] == "equity_drop"
+        assert drilled.trades[0]["close_reason"] == "backtest_end"
+        assert plain.trades[0]["exit_time"] != drilled.trades[0]["exit_time"]
         assert drilled.trades[0]["entry_price"] == pytest.approx(110.0)
         assert plain.trades[0]["entry_price"] == pytest.approx(100.0)
 

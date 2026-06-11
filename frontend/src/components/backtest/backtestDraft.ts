@@ -12,20 +12,17 @@
 import type { BacktestConfigFormValues } from "./configSchema";
 
 const STORAGE_KEY = "tradingagents_backtest_draft";
+const REFERENCE_STORAGE_KEY = "tradingagents_backtest_reference_config";
 
 /** A partial snapshot — the form may persist before every field is touched, and
  * the schema can gain fields a stale draft predates. buildDefaults() backfills
  * anything missing, so a partial is always safe to restore. */
 export type BacktestDraft = Partial<BacktestConfigFormValues>;
+export type BacktestReferenceConfig = Partial<BacktestConfigFormValues>;
 
-/**
- * Restore the persisted backtest form draft from localStorage.
- * @returns The saved {@link BacktestDraft}, or `undefined` when none exists or the
- * stored value is missing/corrupt/not a plain object — so callers can spread it safely.
- */
-export function loadDraft(): BacktestDraft | undefined {
+function loadStoredObject(key: string): BacktestDraft | undefined {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw);
     // Guard against a non-object payload (e.g. a bare string/array) so callers
@@ -39,13 +36,26 @@ export function loadDraft(): BacktestDraft | undefined {
   }
 }
 
+function saveStoredObject(key: string, value: BacktestDraft): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable (private mode / quota) — storage is best-effort */
+  }
+}
+
+/**
+ * Restore the persisted backtest form draft from localStorage.
+ * @returns The saved {@link BacktestDraft}, or `undefined` when none exists or the
+ * stored value is missing/corrupt/not a plain object — so callers can spread it safely.
+ */
+export function loadDraft(): BacktestDraft | undefined {
+  return loadStoredObject(STORAGE_KEY);
+}
+
 /** Persist the in-progress form draft to localStorage; silently no-ops if storage is unavailable (best-effort). */
 export function saveDraft(draft: BacktestDraft): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
-  } catch {
-    /* storage unavailable (private mode / quota) — draft is best-effort */
-  }
+  saveStoredObject(STORAGE_KEY, draft);
 }
 
 /** Remove any saved draft (e.g. after a successful submit); silently no-ops on storage failure. */
@@ -55,4 +65,14 @@ export function clearDraft(): void {
   } catch {
     /* ignore — nothing we can do, and losing a draft is non-fatal */
   }
+}
+
+/** Restore the user's saved reference config, if one has been stored. */
+export function loadReferenceConfig(): BacktestReferenceConfig | undefined {
+  return loadStoredObject(REFERENCE_STORAGE_KEY);
+}
+
+/** Persist the current form as the reusable reference config. */
+export function saveReferenceConfig(config: BacktestReferenceConfig): void {
+  saveStoredObject(REFERENCE_STORAGE_KEY, config);
 }

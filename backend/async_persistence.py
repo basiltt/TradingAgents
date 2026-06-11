@@ -1046,6 +1046,7 @@ CREATE TABLE IF NOT EXISTS scan_results (
     scan_id TEXT NOT NULL REFERENCES scans(scan_id) ON DELETE CASCADE,
     ticker TEXT NOT NULL,
     run_id TEXT,
+    completed_at TIMESTAMPTZ,
     status TEXT NOT NULL CHECK(status IN ('completed','failed','cancelled','unknown')),
     direction TEXT NOT NULL DEFAULT 'hold' CHECK(direction IN ('buy','sell','hold')),
     confidence TEXT NOT NULL DEFAULT 'none' CHECK(confidence IN ('high','moderate','low','none')),
@@ -1561,6 +1562,28 @@ ALTER TABLE high_freq_snapshots ALTER COLUMN balance TYPE NUMERIC(30,12) USING b
     # RC-3). Callable (multi-statement DDL must not be ';'-split). Additive +
     # idempotent; existing rows default sealed=false → lazy-seal on first access.
     (58, _add_sealed_manifest_columns),
+    # v59 — persist the per-symbol scan-result completion timestamp that live
+    # auto-trading ranks and signal-age filters on. Existing rows fall back to
+    # analysis_runs.completed_at in the backtest loader; new scans store the exact
+    # result["completed_at"] payload produced by scanner_service._collect_result.
+    (59, "ALTER TABLE scan_results ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ"),
+    # v60 — account-free selector history copied from production for local schedule
+    # backtests. This is the minimal adaptive-blacklist input live uses at scan time:
+    # no account ids, API keys, order ids, balances, or selected-trade references.
+    (60, """
+CREATE TABLE IF NOT EXISTS backtest_adaptive_blacklist_history (
+    source_id UUID PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    strategy_kind TEXT NOT NULL DEFAULT 'trend'
+        CHECK (strategy_kind IN ('trend','mean_reversion')),
+    is_win BOOLEAN NOT NULL,
+    closed_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_babh_closed_at
+    ON backtest_adaptive_blacklist_history(closed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_babh_symbol_strategy_closed
+    ON backtest_adaptive_blacklist_history(symbol, strategy_kind, closed_at DESC);
+"""),
 ]
 
 
@@ -1974,7 +1997,7 @@ class AsyncAnalysisDB:
 
     async def update_scan(self, scan_id: str, **fields: Any) -> None:
         """Update allowed scan columns; ignores unknown fields and no-ops if none."""
-        allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries"}
+        allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries", "config"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
@@ -2024,16 +2047,28 @@ class AsyncAnalysisDB:
         except (TypeError, ValueError):
             _analysis_price = None
 
+        _completed_at = result.get("completed_at")
+        if isinstance(_completed_at, str):
+            try:
+                _completed_at = datetime.fromisoformat(_completed_at.replace("Z", "+00:00"))
+            except ValueError:
+                _completed_at = None
+        elif not isinstance(_completed_at, datetime):
+            _completed_at = None
+        if isinstance(_completed_at, datetime) and _completed_at.tzinfo is None:
+            _completed_at = _completed_at.replace(tzinfo=timezone.utc)
+
         row = await self.pool.fetchrow(
             "INSERT INTO scan_results "
             "(scan_id, ticker, run_id, status, direction, confidence, "
-            "score, decision_summary, signal_source, analysis_price) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
+            "score, decision_summary, signal_source, completed_at, analysis_price) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
             "ON CONFLICT (scan_id, ticker) DO UPDATE SET "
             "run_id = EXCLUDED.run_id, status = EXCLUDED.status, "
             "direction = EXCLUDED.direction, confidence = EXCLUDED.confidence, "
             "score = EXCLUDED.score, decision_summary = EXCLUDED.decision_summary, "
             "signal_source = EXCLUDED.signal_source, "
+            "completed_at = COALESCE(EXCLUDED.completed_at, scan_results.completed_at), "
             "analysis_price = COALESCE(EXCLUDED.analysis_price, scan_results.analysis_price) "
             "RETURNING id",
             scan_id,
@@ -2045,6 +2080,7 @@ class AsyncAnalysisDB:
             score,
             result.get("decision_summary", ""),
             result.get("signal_source", "unknown"),
+            _completed_at,
             _analysis_price,
         )
         return row["id"] if row else None
@@ -2062,7 +2098,7 @@ class AsyncAnalysisDB:
         scan = dict(row)
         results = await self.pool.fetch(
             "SELECT id, ticker, run_id, status, direction, confidence, score, "
-            "decision_summary, signal_source "
+            "decision_summary, signal_source, completed_at "
             "FROM scan_results WHERE scan_id=$1 ORDER BY ABS(score) DESC",
             scan_id,
         )

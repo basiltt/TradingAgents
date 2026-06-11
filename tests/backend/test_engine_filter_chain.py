@@ -272,6 +272,169 @@ class TestFilterChainSignalSides:
         assert result.filter_stats["signals_entered"] >= 1 or len(result.trades) >= 1
 
 
+class TestFilterChainLiveSelectionContext:
+    """Selector gates that depend on live preloaded context."""
+
+    def test_max_same_sector_is_enforced_from_sector_map(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        config = _make_config(
+            max_same_sector=1,
+            take_profit_pct=500.0,
+            stop_loss_pct=500.0,
+            slippage_bps=0,
+            _sector_map={"BTCUSDT": "l1", "ETHUSDT": "l1", "UNIUSDT": "defi"},
+        )
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0, signal_time=base),
+            _make_signal(ticker="ETHUSDT", id=2, score=7, analysis_price=3000.0, signal_time=base),
+            _make_signal(ticker="UNIUSDT", id=3, score=6, analysis_price=10.0, signal_time=base),
+        ]
+        klines = {
+            "BTCUSDT": _make_klines("BTCUSDT", 50000.0),
+            "ETHUSDT": _make_klines("ETHUSDT", 3000.0),
+            "UNIUSDT": _make_klines("UNIUSDT", 10.0),
+        }
+
+        result = BacktestEngine().run(config, signals, klines)
+        assert [t["symbol"] for t in result.trades] == ["BTCUSDT", "UNIUSDT"]
+        assert result.filter_stats["signals_entered"] == 2
+
+    def test_adaptive_blacklist_uses_preloaded_live_history(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        config = _make_config(
+            adaptive_blacklist_enabled=True,
+            adaptive_blacklist_min_trades=2,
+            adaptive_blacklist_max_win_rate=50.0,
+            adaptive_blacklist_lookback_hours=48,
+            take_profit_pct=500.0,
+            stop_loss_pct=500.0,
+            slippage_bps=0,
+            _adaptive_blacklist_history=[
+                {"symbol": "BTCUSDT", "is_win": False, "closed_at": base - timedelta(hours=1), "strategy_kind": "trend"},
+                {"symbol": "BTCUSDT", "is_win": False, "closed_at": base - timedelta(hours=2), "strategy_kind": "trend"},
+            ],
+        )
+        signals = [
+            _make_signal(ticker="BTCUSDT", id=1, score=8, analysis_price=50000.0, signal_time=base),
+            _make_signal(ticker="ETHUSDT", id=2, score=7, analysis_price=3000.0, signal_time=base),
+        ]
+        klines = {
+            "BTCUSDT": _make_klines("BTCUSDT", 50000.0),
+            "ETHUSDT": _make_klines("ETHUSDT", 3000.0),
+        }
+
+        result = BacktestEngine().run(config, signals, klines)
+        assert [t["symbol"] for t in result.trades] == ["ETHUSDT"]
+        assert result.filter_stats["signals_entered"] == 1
+
+    def test_submitted_config_max_trades_is_not_overridden_by_selector_snapshot(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 8, 0, tzinfo=timezone.utc)
+        signals = [
+            _make_signal(
+                ticker=f"COIN{i}USDT",
+                id=i,
+                score=20 - i,
+                analysis_price=100.0,
+                signal_time=base,
+            )
+            for i in range(10)
+        ]
+        config = _make_config(
+            max_trades=8,
+            take_profit_pct=500.0,
+            stop_loss_pct=500.0,
+            slippage_bps=0,
+            _selector_config_by_scan={
+                "scan-1": {"max_trades": 3, "_computed_adaptive_blacklist": ["COIN0USDT"]}
+            },
+        )
+        klines = {sig["ticker"]: _make_klines(sig["ticker"], 100.0) for sig in signals}
+
+        result = BacktestEngine().run(config, signals, klines)
+        assert len(result.trades) == 8
+        assert [t["symbol"] for t in result.trades][:3] == ["COIN0USDT", "COIN1USDT", "COIN2USDT"]
+
+    def test_adaptive_blacklist_uses_simulated_closed_trades(self):
+        from backend.services.backtest_engine import BacktestEngine
+
+        base = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        scan_times = [
+            base + timedelta(hours=1),
+            base + timedelta(hours=2),
+            base + timedelta(hours=3),
+        ]
+        config = _make_config(
+            leverage=10,
+            capital_pct=5.0,
+            max_trades=1,
+            adaptive_blacklist_enabled=True,
+            adaptive_blacklist_min_trades=2,
+            adaptive_blacklist_max_win_rate=50.0,
+            adaptive_blacklist_lookback_hours=48,
+            take_profit_pct=500.0,
+            stop_loss_pct=10.0,
+            slippage_bps=0,
+            fee_rate_pct=0.0,
+        )
+        signals = [
+            _make_signal(
+                ticker="BTCUSDT",
+                id=1,
+                score=9,
+                analysis_price=100.0,
+                signal_time=scan_times[0],
+                scan_id="s1",
+            ),
+            _make_signal(
+                ticker="BTCUSDT",
+                id=2,
+                score=9,
+                analysis_price=100.0,
+                signal_time=scan_times[1],
+                scan_id="s2",
+            ),
+            _make_signal(
+                ticker="BTCUSDT",
+                id=3,
+                score=9,
+                analysis_price=100.0,
+                signal_time=scan_times[2],
+                scan_id="s3",
+            ),
+            _make_signal(
+                ticker="ETHUSDT",
+                id=4,
+                score=8,
+                analysis_price=50.0,
+                signal_time=scan_times[2],
+                scan_id="s3",
+            ),
+        ]
+        btc_klines = _make_klines("BTCUSDT", 100.0, candles=60)
+        loss_times = {scan_times[0] + timedelta(minutes=5), scan_times[1] + timedelta(minutes=5)}
+        for candle in btc_klines:
+            if candle["open_time"] in loss_times:
+                candle["low"] = 98.0
+
+        eth_klines = _make_klines("ETHUSDT", 50.0, candles=60)
+
+        result = BacktestEngine().run(
+            config,
+            signals,
+            {"BTCUSDT": btc_klines, "ETHUSDT": eth_klines},
+        )
+
+        s3_symbols = [t["symbol"] for t in result.trades if t.get("scan_id") == "s3"]
+        assert s3_symbols == ["ETHUSDT"]
+        assert [t["symbol"] for t in result.trades[:2]] == ["BTCUSDT", "BTCUSDT"]
+
+
 class TestBatchModeDedup:
     """Test batch mode deduplication behavior."""
 

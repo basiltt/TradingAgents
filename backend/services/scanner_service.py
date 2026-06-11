@@ -492,6 +492,8 @@ class ScannerService:
             "scan_id": scan_id,
             "status": "running",
             "config": config,
+            "schedule_id": schedule_id,
+            "triggered_by": triggered_by,
             "total": 0,
             "completed": 0,
             "failed": 0,
@@ -608,6 +610,131 @@ class ScannerService:
         await self._notify_scan_list_changed()
 
         return scan_id
+
+    async def refresh_active_schedule_config(
+        self,
+        schedule_id: str,
+        scan_config: Dict[str, Any],
+        *,
+        schedule_updated_at: str | None = None,
+    ) -> int:
+        """Push a schedule edit into currently running auto-trade executors.
+
+        Scheduled scans are long-running. Operators expect an auto-trade config
+        edit made while the scan is still running to affect any not-yet-placed
+        trades and the close rules backing them. This refreshes only in-flight
+        scans for the edited schedule; manual scans keep their submitted config.
+        """
+        async with self._lock:
+            scan_ids = [
+                scan_id for scan_id, scan in self._scans.items()
+                if scan.get("status") == "running"
+                and scan.get("schedule_id") == schedule_id
+                and scan.get("auto_trade_executor") is not None
+            ]
+
+        refreshed = 0
+        for scan_id in scan_ids:
+            if await self._refresh_scan_auto_trade_config(
+                scan_id, scan_config, schedule_updated_at=schedule_updated_at
+            ):
+                refreshed += 1
+        return refreshed
+
+    async def _refresh_scan_auto_trade_config(
+        self,
+        scan_id: str,
+        scan_config: Dict[str, Any],
+        *,
+        schedule_updated_at: str | None = None,
+    ) -> bool:
+        auto_configs = scan_config.get("auto_trade_configs") if isinstance(scan_config, dict) else None
+        if not auto_configs:
+            return False
+
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            if not scan or scan.get("cancel"):
+                return False
+            executor = scan.get("auto_trade_executor")
+            if executor is None:
+                return False
+            current_version = scan.get("auto_trade_schedule_updated_at")
+            if schedule_updated_at and current_version == schedule_updated_at:
+                return False
+
+        refreshed_configs = [dict(cfg) for cfg in auto_configs if cfg.get("account_id")]
+        if not refreshed_configs:
+            return False
+
+        await self._resolve_account_cohorts(refreshed_configs)
+        if self._db:
+            adaptive_bl = await self._compute_adaptive_blacklist(refreshed_configs, "trend")
+            if adaptive_bl:
+                for cfg in refreshed_configs:
+                    if cfg.get("adaptive_blacklist_enabled"):
+                        existing = set(cfg.get("_computed_adaptive_blacklist") or [])
+                        cfg["_computed_adaptive_blacklist"] = list(existing | adaptive_bl)
+            mr_bl = await self._compute_adaptive_blacklist(
+                refreshed_configs, "mean_reversion", require_mr=True
+            )
+            if mr_bl:
+                for cfg in refreshed_configs:
+                    if cfg.get("adaptive_blacklist_enabled") and cfg.get("mean_reversion_enabled"):
+                        existing = set(cfg.get("_computed_mr_adaptive_blacklist") or [])
+                        cfg["_computed_mr_adaptive_blacklist"] = list(existing | mr_bl)
+
+        try:
+            await self._set_executor_scan_context(executor, refreshed_configs)
+        except Exception:
+            logger.warning("scan_context_refresh_failed", extra={"scan_id": scan_id}, exc_info=True)
+
+        changed = await executor.refresh_configs(refreshed_configs)
+        await executor.sync_active_close_rules_from_config()
+
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            merged_config = None
+            if scan:
+                merged_config = dict(scan.get("config") or {})
+                merged_config["auto_trade_configs"] = refreshed_configs
+                scan["config"] = merged_config
+                if schedule_updated_at:
+                    scan["auto_trade_schedule_updated_at"] = schedule_updated_at
+
+        if self._db and merged_config is not None:
+            try:
+                await self._db.update_scan(scan_id, config=_json.dumps(merged_config))
+            except Exception:
+                logger.debug("scan_config_refresh_persist_failed", extra={"scan_id": scan_id}, exc_info=True)
+
+        logger.info("auto_trade_config_refreshed", extra={
+            "scan_id": scan_id,
+            "schedule_updated_at": schedule_updated_at,
+            "configs": changed,
+        })
+        return True
+
+    async def _refresh_scan_auto_trade_config_from_schedule(self, scan_id: str) -> bool:
+        if not self._db:
+            return False
+        async with self._lock:
+            scan = self._scans.get(scan_id)
+            schedule_id = scan.get("schedule_id") if scan else None
+            if not schedule_id or scan.get("triggered_by") not in ("scheduled", "run_now"):
+                return False
+        try:
+            schedule = await self._db.get_scheduled_scan(schedule_id)
+        except Exception:
+            logger.debug("schedule_config_refresh_lookup_failed", extra={"scan_id": scan_id, "schedule_id": schedule_id}, exc_info=True)
+            return False
+        if not schedule:
+            return False
+        return await self._refresh_scan_auto_trade_config(
+            scan_id,
+            schedule.get("scan_config") or {},
+            schedule_updated_at=schedule.get("updated_at"),
+        )
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
         """Get a scan by id, preferring the in-memory copy then falling back to the DB; None if absent."""
@@ -1024,6 +1151,7 @@ class ScannerService:
             # Skip batch if >50% of symbols failed (unreliable data)
             too_many_failures = total > 0 and failed_count > total * 0.5
             if executor and all_results and not cancelled and not too_many_failures:
+                await self._refresh_scan_auto_trade_config_from_schedule(scan_id)
                 try:
                     batch_executions = await executor.execute_batch(all_results)
                     await self._append_auto_trade_results(scan_id, batch_executions)
@@ -1391,6 +1519,7 @@ class ScannerService:
                 cancelled = scan.get("cancel", False) if scan else True
             if executor and not cancelled:
                 try:
+                    await self._refresh_scan_auto_trade_config_from_schedule(scan_id)
                     executions = await executor.evaluate_result(result)
                     if executions:
                         async with self._lock:

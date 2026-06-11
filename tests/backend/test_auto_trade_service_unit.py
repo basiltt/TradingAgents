@@ -70,6 +70,57 @@ async def test_init_balances_creates_rules_and_tracks_ids():
 
 
 @pytest.mark.asyncio
+async def test_refresh_configs_preserves_state_and_updates_active_rules():
+    mock_accounts = AsyncMock()
+    mock_close_svc = AsyncMock()
+    mock_close_svc.list_rules.return_value = [
+        {"id": "rise_rule", "trigger_type": "EQUITY_RISE_PCT", "status": "active"},
+        {"id": "drawdown_rule", "trigger_type": "EQUITY_DROP_PCT_SMART", "status": "active"},
+    ]
+
+    executor = AutoTradeExecutor(mock_accounts, mock_close_svc)
+    executor.init_configs([{
+        "account_id": "acc_1",
+        "capital_pct": 18,
+        "target_goal_type": "profit_pct",
+        "target_goal_value": 8,
+        "max_drawdown_pct": 10,
+        "smart_drawdown_close": True,
+    }])
+    state = list(executor._state.values())[0]
+    state.trades_executed = 2
+    state.existing_symbols = {"BTCUSDT"}
+    state.close_rule_id = "rise_rule"
+    state.drawdown_rule_id = "drawdown_rule"
+    state.created_rule_ids = ["rise_rule", "drawdown_rule"]
+
+    refreshed = await executor.refresh_configs([{
+        "account_id": "acc_1",
+        "capital_pct": 22,
+        "target_goal_type": "profit_pct",
+        "target_goal_value": 15,
+        "max_drawdown_pct": 12,
+        "smart_drawdown_close": True,
+    }])
+    await executor.sync_active_close_rules_from_config()
+
+    assert refreshed == 1
+    state = list(executor._state.values())[0]
+    assert state.trades_executed == 2
+    assert state.existing_symbols == {"BTCUSDT"}
+    assert state.config["capital_pct"] == 22
+    assert state.config["target_goal_value"] == 15
+    mock_close_svc.update_rule.assert_any_await(
+        "acc_1", "rise_rule", {"threshold_value": "15"}
+    )
+    mock_close_svc.update_rule.assert_any_await(
+        "acc_1",
+        "drawdown_rule",
+        {"trigger_type": "EQUITY_DROP_PCT_SMART", "threshold_value": "12"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_cleanup_unused_rules_zero_trades():
     mock_accounts = AsyncMock()
     mock_close_svc = AsyncMock()

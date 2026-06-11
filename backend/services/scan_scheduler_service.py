@@ -160,6 +160,21 @@ class ScanSchedulerService:
 
         await self._db.update_scheduled_scan(scan_id, updates)
         logger.info("Updated schedule %s", scan_id)
+        if "scan_config" in updates and hasattr(self._scanner, "refresh_active_schedule_config"):
+            try:
+                refreshed = await self._scanner.refresh_active_schedule_config(
+                    scan_id,
+                    updates["scan_config"],
+                    schedule_updated_at=updates.get("updated_at"),
+                )
+                if refreshed:
+                    logger.info(
+                        "Refreshed %d in-flight auto-trade executor(s) for schedule %s",
+                        refreshed,
+                        scan_id,
+                    )
+            except Exception:
+                logger.exception("Failed to refresh in-flight auto-trade config for schedule %s", scan_id)
         if self._ai_manager_service:
             asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
         return await self._db.get_scheduled_scan(scan_id)

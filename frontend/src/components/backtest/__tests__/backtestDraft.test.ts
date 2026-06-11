@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { loadDraft, saveDraft, clearDraft } from "../backtestDraft";
+import {
+  clearDraft,
+  loadDraft,
+  loadReferenceConfig,
+  saveDraft,
+  saveReferenceConfig,
+} from "../backtestDraft";
 
 describe("backtestDraft", () => {
   beforeEach(() => {
@@ -34,5 +40,17 @@ describe("backtestDraft", () => {
     saveDraft({ starting_capital: 1000 });
     clearDraft();
     expect(loadDraft()).toBeUndefined();
+  });
+
+  it("reference config is stored separately from the in-progress draft", () => {
+    saveDraft({ starting_capital: 1000, leverage: 5 });
+    saveReferenceConfig({ starting_capital: 234, leverage: 10 });
+
+    expect(loadDraft()).toEqual({ starting_capital: 1000, leverage: 5 });
+    expect(loadReferenceConfig()).toEqual({ starting_capital: 234, leverage: 10 });
+
+    clearDraft();
+    expect(loadDraft()).toBeUndefined();
+    expect(loadReferenceConfig()).toEqual({ starting_capital: 234, leverage: 10 });
   });
 });

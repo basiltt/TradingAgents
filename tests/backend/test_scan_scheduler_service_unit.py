@@ -160,6 +160,33 @@ class TestUpdate:
         assert updates.get("next_run_at", "2026-06-07T12:00:00Z") == "2026-06-07T12:00:00Z"
 
     @pytest.mark.asyncio(loop_scope="function")
+    async def test_update_scan_config_refreshes_in_flight_auto_trade(self, scanner, db, config_svc):
+        scanner.refresh_active_schedule_config = AsyncMock(return_value=1)
+        svc = ScanSchedulerService(scanner, db, config_svc)
+        existing = {
+            "id": "s1", "name": "Sched", "schedule_type": "interval",
+            "schedule_config": {"interval_minutes": 180},
+            "scan_config": {"auto_trade_configs": [{"account_id": "acc_1", "target_goal_value": 8}]},
+            "timezone": "UTC",
+            "last_run_at": "2026-06-07T09:00:00Z",
+            "next_run_at": "2026-06-07T12:00:00Z",
+        }
+        new_scan_config = {
+            "auto_trade_configs": [{"account_id": "acc_1", "target_goal_value": 15}]
+        }
+        db.get_scheduled_scan = AsyncMock()
+        db.get_scheduled_scan.side_effect = [existing, {**existing, "scan_config": new_scan_config}]
+        db.update_scheduled_scan = AsyncMock()
+
+        await svc.update("s1", {"scan_config": new_scan_config})
+
+        scanner.refresh_active_schedule_config.assert_awaited_once()
+        args, kwargs = scanner.refresh_active_schedule_config.await_args
+        assert args[0] == "s1"
+        assert args[1]["auto_trade_configs"][0]["target_goal_value"] == 15
+        assert kwargs["schedule_updated_at"] == db.update_scheduled_scan.call_args[0][1]["updated_at"]
+
+    @pytest.mark.asyncio(loop_scope="function")
     async def test_update_timing_field_recomputes_next_run(self, svc, db):
         """Changing the interval SHOULD recompute next_run_at."""
         existing = {

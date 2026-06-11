@@ -199,16 +199,15 @@ class TestExecution:
         assert service._active_slots == 0
 
     @pytest.mark.asyncio
-    async def test_max_same_sector_emits_not_enforced_warning(self, mock_db):
-        """max_same_sector needs the IO-bound sector service the pure engine can't
-        call, so the backtest does not enforce it. When the user sets it, the
-        service must append a 'max_same_sector_not_enforced' warning so results
-        aren't silently misleading (live trading DOES enforce the limit)."""
+    async def test_max_same_sector_does_not_emit_not_enforced_warning(self, mock_db):
+        """max_same_sector is now enforced by preloading the cached/static sector map
+        before the pure engine runs, so the old not-enforced warning must disappear."""
         from unittest.mock import patch, AsyncMock
         from backend.services.backtest_service import BacktestService
         from backend.schemas.backtest_schemas import SimulationResult
         service = BacktestService(db=mock_db, kline_cache=None)
         mock_db.pool.execute = AsyncMock()
+        mock_db.pool.fetch = AsyncMock(return_value=[])
         _wire_transaction(mock_db)
 
         captured = {}
@@ -232,7 +231,7 @@ class TestExecution:
                         with patch.object(service, "_attach_buy_hold", new=AsyncMock()):
                             await service._execute_backtest("run-1", cfg)
 
-        assert "max_same_sector_not_enforced" in captured["warnings"]
+        assert "max_same_sector_not_enforced" not in captured["warnings"]
 
     @pytest.mark.asyncio
     async def test_persist_json_safes_equity_curve(self, mock_db):
@@ -469,7 +468,7 @@ class TestExecution:
             order.append("load")
             return {"BTCUSDT": [{"open_time": 0, "close": 1.0}]}
 
-        async def _ensure_spy(symbols, interval, start, end, on_progress=None):
+        async def _ensure_spy(symbols, interval, start, end, on_progress=None, cancel_check=None, max_concurrency=None):
             order.append("ensure")
             return {"cached": 1, "fetched": 1, "failed": 0}
 
@@ -496,6 +495,156 @@ class TestExecution:
         )
 
     @pytest.mark.asyncio
+    async def test_schedule_warmup_uses_price_free_candidate_symbols(self, mock_db):
+        """Specific Schedule should warm symbols the live-style selector can reach,
+        not every raw scan symbol. A max_trades=3 batch config must not spend the
+        timeout warming 100 low-ranked symbols before the engine starts."""
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+
+        kc = MagicMock()
+        captured: dict[str, list[str]] = {}
+
+        async def _ensure_spy(symbols, interval, start, end, on_progress=None, cancel_check=None, max_concurrency=None):
+            captured["warm_symbols"] = list(symbols)
+            return {"cached": len(symbols), "fetched": 0, "failed": 0}
+
+        async def _load_klines_spy(config, signals):
+            required = list(config.get("_required_kline_symbols") or [])
+            captured["load_symbols"] = required
+            return {sym: [{"open_time": datetime(2026, 1, 1, tzinfo=timezone.utc), "close": 1.0}] for sym in required}
+
+        kc.ensure_coverage = AsyncMock(side_effect=_ensure_spy)
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+
+        base_time = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+        signals = [
+            {
+                "ticker": f"SYM{i:03d}USDT",
+                "direction": "buy",
+                "confidence": "high",
+                "score": 100 - i,
+                "signal_time": base_time,
+                "scan_started_at": base_time - timedelta(minutes=20),
+                "completed_at": base_time + timedelta(seconds=i),
+                "analysis_completed_at": base_time + timedelta(seconds=i),
+                "scan_id": "scan-1",
+            }
+            for i in range(100)
+        ]
+        cfg = _make_config(
+            scan_source={"mode": "schedule", "schedule_id": "sched-1"},
+            execution_mode="batch",
+            max_trades=3,
+            min_score=0,
+            confidence_filter="any",
+        )
+
+        with patch.object(service, "_load_signals", new=AsyncMock(return_value=signals)), \
+             patch.object(service, "_load_klines", new=AsyncMock(side_effect=_load_klines_spy)), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=AsyncMock()), \
+             patch("backend.services.backtest_engine.BacktestEngine.run",
+                   return_value=SimulationResult(trades=[], equity_curve=[],
+                                                 metrics={"total_trades": 0}, warnings=[],
+                                                 filter_stats={})):
+            await service._execute_backtest("run-candidate-warm", cfg)
+
+        assert len(captured["warm_symbols"]) == 3
+        assert captured["warm_symbols"] == captured["load_symbols"]
+        assert captured["warm_symbols"] == [f"SYM{i:03d}USDT" for i in range(3)]
+
+    @pytest.mark.asyncio
+    async def test_schedule_warmup_expands_reached_missing_candidate_symbols(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+
+        kc = MagicMock()
+        kc.ensure_coverage = AsyncMock(return_value={"cached": 1, "fetched": 1, "failed": 0})
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        cfg = _make_config()
+        cfg["_required_kline_symbols"] = ["AAAUSDT"]
+        signals = [{"ticker": "AAAUSDT", "signal_time": cfg["date_range_start"]}]
+        klines = {"AAAUSDT": [{"open_time": cfg["date_range_start"], "close": 1.0}]}
+
+        first = SimulationResult(
+            trades=[],
+            equity_curve=[],
+            metrics={},
+            warnings=[],
+            filter_stats={
+                "signals_no_kline": 1,
+                "signals_no_kline_symbols": ["ZZZUSDT"],
+            },
+        )
+        second = SimulationResult(
+            trades=[],
+            equity_curve=[],
+            metrics={},
+            warnings=[],
+            filter_stats={"signals_no_kline": 0, "signals_no_kline_symbols": []},
+        )
+
+        with patch.object(
+            service,
+            "_load_klines_for_symbols",
+            new=AsyncMock(return_value={"ZZZUSDT": [{"open_time": cfg["date_range_start"], "close": 2.0}]}),
+        ), patch("backend.services.backtest_engine.BacktestEngine.run", side_effect=[first, second]):
+            expanded = await service._expand_reached_kline_symbols(
+                "run-expand",
+                cfg,
+                signals,
+                klines,
+                threading.Event(),
+                {},
+                {},
+            )
+
+        kc.ensure_coverage.assert_awaited_once()
+        assert kc.ensure_coverage.await_args.args[0] == ["ZZZUSDT"]
+        assert cfg["_required_kline_symbols"] == ["AAAUSDT", "ZZZUSDT"]
+        assert "ZZZUSDT" in expanded
+
+    @pytest.mark.asyncio
+    async def test_schedule_warmup_default_does_not_shift_start(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+
+        kc = MagicMock()
+        kc.ensure_coverage = AsyncMock(return_value={})
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+        cfg = _make_config(scan_source={"mode": "schedule", "schedule_id": "sched-1"})
+        sig = [{"ticker": "BTCUSDT", "signal_time": cfg["date_range_start"]}]
+
+        with patch.object(service, "_resolve_schedule_warmup_start", new=AsyncMock()) as resolve_warmup, \
+             patch.object(service, "_load_signals", new=AsyncMock(return_value=sig)) as load_signals, \
+             patch.object(service, "_load_klines",
+                          new=AsyncMock(return_value={"BTCUSDT": [{"open_time": 0, "close": 1.0}]})), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_check_kline_coverage", new=MagicMock()), \
+             patch.object(service, "_check_total_kline_budget", new=MagicMock()), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=AsyncMock()), \
+             patch("backend.services.backtest_engine.BacktestEngine.run",
+                   return_value=SimulationResult(trades=[], equity_curve=[],
+                                                 metrics={"total_trades": 0}, warnings=[],
+                                                 filter_stats={})):
+            await service._execute_backtest("run-no-schedule-warm", cfg)
+
+        resolve_warmup.assert_not_awaited()
+        used_range = load_signals.await_args.args[1]
+        assert used_range[0] == cfg["date_range_start"]
+
+    @pytest.mark.asyncio
     async def test_warmup_reports_progress_into_reserved_band(self, mock_db):
         """The cache warm-up must report progress so the bar ADVANCES during a slow
         fetch instead of pinning at 0%. ensure_coverage receives an on_progress callback;
@@ -506,7 +655,7 @@ class TestExecution:
         kc = MagicMock()
         progress_writes: list = []
 
-        async def _ensure_spy(symbols, interval, start, end, on_progress=None):
+        async def _ensure_spy(symbols, interval, start, end, on_progress=None, cancel_check=None, max_concurrency=None):
             # Simulate warm-up advancing from 0 to 100% of the fetch.
             if on_progress:
                 on_progress(50)
@@ -546,6 +695,44 @@ class TestExecution:
             f"expected a progress write inside the warm-up band (0, {_WARMUP_BAND}]; "
             f"got writes {progress_writes}"
         )
+
+    @pytest.mark.asyncio
+    async def test_timeout_timer_starts_after_cache_warmup(self, mock_db):
+        """Cold-cache warmup must not consume the engine timeout budget."""
+        from backend.services.backtest_service import BacktestService
+        from backend.schemas.backtest_schemas import SimulationResult
+
+        kc = MagicMock()
+
+        async def _ensure_spy(symbols, interval, start, end, on_progress=None, cancel_check=None, max_concurrency=None):
+            await asyncio.sleep(0.03)
+            return {"cached": 0, "fetched": len(symbols), "failed": 0}
+
+        kc.ensure_coverage = AsyncMock(side_effect=_ensure_spy)
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        mock_db.pool.execute = AsyncMock()
+        _wire_transaction(mock_db)
+        sig = [{"ticker": "BTCUSDT", "signal_time": datetime(2026, 1, 1, tzinfo=timezone.utc)}]
+        persist = AsyncMock()
+
+        with patch("backend.services.backtest_service._TIMEOUT_SECONDS", 0.01), \
+             patch.object(service, "_load_signals", new=AsyncMock(return_value=sig)), \
+             patch.object(service, "_load_klines",
+                          new=AsyncMock(return_value={"BTCUSDT": [{"open_time": 0, "close": 1.0}]})), \
+             patch.object(service, "_build_scan_contexts", new=AsyncMock(return_value={})), \
+             patch.object(service, "_resolve_instrument_info", new=AsyncMock(return_value={})), \
+             patch.object(service, "_build_fine_klines", new=AsyncMock(return_value={})), \
+             patch.object(service, "_check_kline_coverage", new=MagicMock()), \
+             patch.object(service, "_check_total_kline_budget", new=MagicMock()), \
+             patch.object(service, "_attach_buy_hold", new=AsyncMock()), \
+             patch.object(service, "_persist_results", new=persist), \
+             patch("backend.services.backtest_engine.BacktestEngine.run",
+                   return_value=SimulationResult(trades=[], equity_curve=[],
+                                                 metrics={"total_trades": 0}, warnings=[],
+                                                 filter_stats={})):
+            await service._execute_backtest("run-timeout-after-warm", _make_config())
+
+        persist.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_coverage_fetch_failure_does_not_abort_run(self, mock_db):
@@ -695,9 +882,30 @@ class TestBuyHoldAndCoverage:
         klines = {"A": [{"x": 1}], "B": [{"x": 1}], "C": [{"x": 1}], "D": [{"x": 1}], "E": []}
         BacktestService._check_kline_coverage(signals, klines)  # no raise
 
+    def test_coverage_guard_can_scope_to_required_symbols(self):
+        from backend.services.backtest_service import BacktestService
+        signals = [{"ticker": s} for s in ["A", "B", "C", "D", "E"]]
+        klines = {"A": [{"x": 1}], "B": [{"x": 1}]}
+        BacktestService._check_kline_coverage(signals, klines, required_symbols={"A", "B"})
+
     def test_coverage_guard_empty_signals_noop(self):
         from backend.services.backtest_service import BacktestService
         BacktestService._check_kline_coverage([], {})  # no raise
+
+    @pytest.mark.asyncio
+    async def test_load_klines_uses_required_symbol_subset(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        kc = MagicMock()
+        kc.get_klines = AsyncMock(return_value=[])
+        service = BacktestService(db=mock_db, kline_cache=kc)
+        cfg = _make_config(_required_kline_symbols=["B", "D"])
+        signals = [{"ticker": s} for s in ["A", "B", "C", "D", "E"]]
+
+        await service._load_klines(cfg, signals)
+
+        called_symbols = [call.args[0] for call in kc.get_klines.await_args_list]
+        assert called_symbols == ["B", "D"]
 
     def test_total_kline_budget_rejects_many_symbols_long_range(self):
         from backend.services.backtest_service import BacktestService, BacktestValidationError

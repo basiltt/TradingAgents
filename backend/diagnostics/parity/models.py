@@ -16,6 +16,17 @@ class LiveTrade:
     scan_result_id: int | None
     opened_at: datetime
     closed_at: datetime | None
+    qty: float = 0.0
+    leverage: int = 1
+    fees: float = 0.0
+    realized_pnl_pct: float | None = None
+    strategy_kind: str = "trend"
+    exchange_closed_pnl: float | None = None
+
+    @property
+    def account_pnl(self) -> float:
+        """PnL that should move account equity; prefer Bybit's closed-PnL ledger."""
+        return self.exchange_closed_pnl if self.exchange_closed_pnl is not None else self.net_pnl
 
     @property
     def pin_key(self) -> tuple[str, str]:
@@ -41,7 +52,7 @@ class Cycle:
 
     @property
     def live_net_pnl(self) -> float:
-        return sum(t.net_pnl for t in self.live_trades)
+        return sum(t.account_pnl for t in self.live_trades)
 
 
 @dataclass

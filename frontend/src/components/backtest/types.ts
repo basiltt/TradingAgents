@@ -52,6 +52,7 @@ export interface BacktestCreateRequest {
   slippage_bps?: number;
   funding_rate_model?: "none" | "fixed_8h";
   funding_rate_fixed_pct?: number;
+  schedule_warmup_enabled?: boolean;
 
   // Trade-decision params (AutoTradeConfig subset)
   direction?: "straight" | "reverse";

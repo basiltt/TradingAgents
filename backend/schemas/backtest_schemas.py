@@ -55,6 +55,10 @@ class BacktestCreateRequest(BaseModel):
     # interactive backtests (the service runs a cheap two-phase pass). The optimizer
     # sweep calls the pure engine directly and is unaffected regardless.
     drilldown_enabled: bool = True
+    # Optional selector-state replay before the requested window. Specific Schedule
+    # defaults to a flat start at date_range_start so local optimization does not
+    # silently include scans from an older production config period.
+    schedule_warmup_enabled: bool = False
 
     # AutoTradeConfig fields (trade decision params)
     direction: Literal["straight", "reverse"] = "straight"

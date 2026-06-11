@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   backtestConfigSchema,
+  DAD_DEMO_REFERENCE_CONFIG,
   scanSourceSchema,
   buildDefaults,
+  buildDadDemoReferenceDefaults,
   toCreateRequest,
 } from "../configSchema";
 
@@ -12,6 +14,21 @@ describe("scanSourceSchema", () => {
     expect(
       scanSourceSchema.safeParse({ mode: "schedule", schedule_id: "s1" }).success,
     ).toBe(true);
+  });
+  it("ignores stale null sibling fields from inactive source modes", () => {
+    const result = scanSourceSchema.safeParse({
+      mode: "schedule",
+      schedule_id: "s1",
+      scan_ids: null,
+      replay_account_id: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.mode).toBe("schedule");
+      expect(result.data.schedule_id).toBe("s1");
+      expect(result.data.scan_ids).toBeUndefined();
+      expect(result.data.replay_account_id).toBeUndefined();
+    }
   });
   it("requires non-empty scan_ids in explicit mode", () => {
     expect(scanSourceSchema.safeParse({ mode: "explicit", scan_ids: [] }).success).toBe(false);
@@ -139,6 +156,43 @@ describe("buildDefaults", () => {
   it("defaults max_drawdown_pct to a backend-valid positive value (not 0)", () => {
     // Backend requires gt=0; a 0 default would 422 on every untouched submit.
     expect(buildDefaults().max_drawdown_pct).toBe(100);
+  });
+
+  it("applies the Dad Demo reference config without carrying an account id", () => {
+    const defaults = buildDadDemoReferenceDefaults({
+      date_range_start: "2026-06-05T00:00",
+      date_range_end: "2026-06-11T00:00",
+      scan_source: { mode: "schedule", schedule_id: "sched-1" },
+      leverage: 99,
+      symbol_whitelist: ["BTCUSDT"],
+    });
+
+    expect(defaults.starting_capital).toBe(234);
+    expect(defaults.leverage).toBe(8);
+    expect(defaults.capital_pct).toBe(22);
+    expect(defaults.max_trades).toBe(3);
+    expect(defaults.execution_mode).toBe("batch");
+    expect(defaults.confidence_filter).toBe("moderate");
+    expect(defaults.funding_rate_model).toBe("fixed_8h");
+    expect(defaults.max_drawdown_pct).toBe(12);
+    expect(defaults.breakeven_timeout_hours).toBe(12);
+    expect(defaults.max_trade_duration_hours).toBe(24);
+    expect(defaults.target_goal_type).toBe("profit_pct");
+    expect(defaults.target_goal_value).toBe(15);
+    expect(defaults.max_same_sector).toBe(4);
+    expect(defaults.max_price_drift_pct).toBe(6);
+    expect(defaults.symbol_blacklist).toBeNull();
+    expect(defaults.symbol_whitelist).toBeNull();
+    expect(defaults.adaptive_blacklist_enabled).toBe(false);
+    expect(defaults.mr_short_enabled).toBe(false);
+    expect(defaults.date_range_start).toBe("2026-06-05T00:00");
+    expect(defaults.date_range_end).toBe("2026-06-11T11:37");
+    expect(defaults.scan_source).toEqual({
+      mode: "schedule",
+      schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
+    });
+    expect("account_id" in DAD_DEMO_REFERENCE_CONFIG).toBe(false);
+    expect(backtestConfigSchema.safeParse(defaults).success).toBe(true);
   });
 
   it("its non-seed fallbacks equal the schema's own defaults (no silent drift)", () => {

@@ -175,6 +175,149 @@ class AutoTradeExecutor:
             key = f"{cfg['account_id']}_{i}"
             self._state[key] = _AccountState(config=cfg)
 
+    async def refresh_configs(self, configs: List[Dict[str, Any]]) -> int:
+        """Refresh active config values while preserving per-scan execution state.
+
+        Scheduled scans can be edited while a scan is still running. A full
+        init_configs() would wipe counters/rule ids and could permit duplicate
+        placements. This method swaps in the latest config objects, keeps runtime
+        fields such as trades_executed/existing_symbols, and marks removed configs
+        stopped so they cannot place new trades.
+        """
+        async with self._lock:
+            old_state = dict(self._state)
+            old_by_account: Dict[str, List[tuple[str, _AccountState]]] = {}
+            for key, state in old_state.items():
+                old_by_account.setdefault(str(state.config.get("account_id", "")), []).append((key, state))
+
+            used_old_keys: set[str] = set()
+            new_state: Dict[str, _AccountState] = {}
+            refreshed = 0
+            for i, cfg in enumerate(configs):
+                account_id = str(cfg.get("account_id", ""))
+                if not account_id:
+                    continue
+                key = f"{account_id}_{i}"
+                state = old_state.get(key)
+                if state is None:
+                    account_matches = [
+                        (old_key, old_state_obj)
+                        for old_key, old_state_obj in old_by_account.get(account_id, [])
+                        if old_key not in used_old_keys
+                    ]
+                    if len(account_matches) == 1:
+                        old_key, state = account_matches[0]
+                        used_old_keys.add(old_key)
+                else:
+                    used_old_keys.add(key)
+
+                if state is None:
+                    state = _AccountState(config=dict(cfg))
+                else:
+                    internal_fields = {
+                        k: v for k, v in state.config.items()
+                        if isinstance(k, str) and k.startswith("_")
+                    }
+                    merged = dict(cfg)
+                    for k, v in internal_fields.items():
+                        merged.setdefault(k, v)
+                    state.config = merged
+                new_state[key] = state
+                refreshed += 1
+
+            for old_key, state in old_state.items():
+                if old_key in used_old_keys:
+                    continue
+                state.stopped = True
+                state.stopped_reason = "config_removed"
+                new_state[old_key] = state
+
+            self._state = new_state
+            return refreshed
+
+    async def sync_active_close_rules_from_config(self) -> None:
+        """Update close-rule thresholds after an in-flight config refresh."""
+        if not self._close_svc:
+            return
+
+        async with self._lock:
+            snapshots: Dict[str, tuple[Dict[str, Any], set[str]]] = {}
+            for state in self._state.values():
+                account_id = state.config.get("account_id")
+                if not account_id:
+                    continue
+                known_rule_ids = {rid for rid in state.created_rule_ids if rid}
+                if state.close_rule_id:
+                    known_rule_ids.add(state.close_rule_id)
+                if state.drawdown_rule_id:
+                    known_rule_ids.add(state.drawdown_rule_id)
+                if not known_rule_ids:
+                    continue
+                snap = snapshots.setdefault(str(account_id), (dict(state.config), set()))
+                snap[1].update(known_rule_ids)
+
+        for account_id, (cfg, known_rule_ids) in snapshots.items():
+            try:
+                rules = await self._close_svc.list_rules(account_id)
+            except Exception as e:
+                logger.warning("auto_trade_rule_refresh_list_failed", extra={
+                    "account_id": account_id, "error": str(e)[:200],
+                })
+                continue
+
+            for rule in rules or []:
+                rule_id = rule.get("id")
+                if rule_id not in known_rule_ids or rule.get("status") != "active":
+                    continue
+                trigger_type = rule.get("trigger_type")
+                data: Dict[str, Any] = {}
+                delete_rule = False
+
+                if trigger_type == "EQUITY_RISE_PCT":
+                    goal_value = cfg.get("target_goal_value")
+                    if cfg.get("target_goal_type") == "profit_pct" and goal_value and goal_value > 0:
+                        data["threshold_value"] = str(goal_value)
+                    else:
+                        delete_rule = True
+                elif trigger_type in ("EQUITY_DROP_PCT", "EQUITY_DROP_PCT_SMART"):
+                    max_drawdown = cfg.get("max_drawdown_pct", 100)
+                    if max_drawdown and max_drawdown < 100:
+                        data["trigger_type"] = "EQUITY_DROP_PCT_SMART" if cfg.get("smart_drawdown_close") else "EQUITY_DROP_PCT"
+                        data["threshold_value"] = str(max_drawdown)
+                    else:
+                        delete_rule = True
+                elif trigger_type == "BREAKEVEN_TIMEOUT":
+                    hours = cfg.get("breakeven_timeout_hours")
+                    if hours and hours > 0:
+                        data["threshold_value"] = str(hours)
+                    else:
+                        delete_rule = True
+                elif trigger_type == "MAX_DURATION":
+                    hours = cfg.get("max_trade_duration_hours")
+                    if hours and hours > 0:
+                        data["threshold_value"] = str(hours)
+                    else:
+                        delete_rule = True
+                elif trigger_type == "TRAILING_PROFIT":
+                    trailing_pct = cfg.get("trailing_profit_pct")
+                    if trailing_pct and trailing_pct > 0:
+                        data["threshold_value"] = str(trailing_pct)
+                    else:
+                        delete_rule = True
+
+                try:
+                    if delete_rule:
+                        await self._close_svc.delete_rule(account_id, rule_id)
+                    elif data:
+                        await self._close_svc.update_rule(account_id, rule_id, data)
+                except Exception as e:
+                    logger.warning("auto_trade_rule_refresh_failed", extra={
+                        "account_id": account_id,
+                        "rule_id": rule_id,
+                        "trigger_type": trigger_type,
+                        "error": str(e)[:200],
+                    })
+
     def restore_state(self, prior_results: List[Dict[str, Any]]) -> None:
         """Restore trade counters and execution records from previously executed auto_trade_results (for resume)."""
         account_success: Dict[str, int] = {}

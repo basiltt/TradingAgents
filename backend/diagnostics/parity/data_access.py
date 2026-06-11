@@ -15,12 +15,29 @@ from typing import Any
 _TRADES_SQL = """
     SELECT t.symbol, t.side, t.net_pnl, t.close_reason, t.entry_price, t.exit_price,
            t.scan_result_id, t.status, t.base_capital, t.opened_at, t.closed_at,
-           t.source, t.ai_closed,
+           t.source, t.ai_closed, t.qty, t.leverage, t.fees, t.realized_pnl_pct,
+           t.strategy_kind, cpr.closed_pnl AS exchange_closed_pnl,
            COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
            sr.scan_id AS scan_id
     FROM trades t
     LEFT JOIN scan_results sr ON sr.id = t.scan_result_id
     LEFT JOIN scans s ON s.scan_id = sr.scan_id
+    LEFT JOIN LATERAL (
+        SELECT c.closed_pnl
+        FROM closed_pnl_records c
+        WHERE c.account_id = t.account_id
+          AND c.symbol = t.symbol
+          AND c.side = CASE WHEN t.side = 'Sell' THEN 'Buy' ELSE 'Sell' END
+          AND (
+              c.qty IS NULL OR t.qty IS NULL
+              OR ABS(c.qty - t.qty) <= GREATEST(ABS(t.qty) * 0.000001, 0.00000001)
+          )
+          AND c.created_time BETWEEN
+              ((EXTRACT(EPOCH FROM t.closed_at) - 120) * 1000)::bigint
+              AND ((EXTRACT(EPOCH FROM t.closed_at) + 120) * 1000)::bigint
+        ORDER BY ABS(c.created_time - (EXTRACT(EPOCH FROM t.closed_at) * 1000)::bigint)
+        LIMIT 1
+    ) cpr ON TRUE
     WHERE t.account_id = $1
       AND t.opened_at >= $2
       AND t.opened_at <  $3
@@ -58,6 +75,7 @@ _UNJOINED_TRADES_SQL = """
 _SIGNALS_SQL = """
     SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
            COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+           sr.completed_at::timestamptz AS completed_at,
            ar.completed_at::timestamptz AS analysis_completed_at,
            s.scan_id, sr.signal_source, sr.analysis_price
     FROM scan_results sr
@@ -66,7 +84,7 @@ _SIGNALS_SQL = """
     WHERE s.scan_id = ANY($1)
       AND sr.status = 'completed'
       AND sr.direction IN ('buy', 'sell')
-    ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
+    ORDER BY signal_time, sr.id
 """
 
 
@@ -106,6 +124,7 @@ class ParityDataAccess:
                 "id": r["id"], "ticker": r["ticker"], "direction": r["direction"],
                 "confidence": r["confidence"], "score": r["score"],
                 "signal_time": r["signal_time"],
+                "completed_at": r["completed_at"],
                 "analysis_completed_at": r["analysis_completed_at"],
                 "scan_id": r["scan_id"], "signal_source": r["signal_source"],
                 "analysis_price": float(r["analysis_price"]) if r["analysis_price"] is not None else None,
@@ -119,6 +138,14 @@ class ParityDataAccess:
     ) -> dict[str, list[dict]]:
         import asyncio
         symbols = sorted(set(symbols))
+        if kline_cache is not None and hasattr(kline_cache, "ensure_coverage"):
+            try:
+                await kline_cache.ensure_coverage(symbols, interval, start, end)
+            except Exception:
+                # Replay/parity should still disclose any symbols with no candles via
+                # symbols_no_kline; a transient warm-up failure must not hide the
+                # comparison behind an infrastructure exception.
+                pass
         results = await asyncio.gather(
             *(kline_cache.get_klines(sym, interval, start, end) for sym in symbols)
         )

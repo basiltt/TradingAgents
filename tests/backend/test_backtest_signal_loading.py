@@ -3,7 +3,7 @@ historical scan results as engine input signals."""
 
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture
@@ -115,7 +115,7 @@ class TestLoadSignals:
         traded — after the full per-ticker analysis), with a started_at fallback. Using
         started_at would enter at a pre-analysis price the live account never got,
         systematically inflating PnL. Also asserts the per-symbol analysis completed_at
-        tiebreak so the per-scan ranking matches production on equal abs(score)."""
+        timestamp and preserves live's stable per-scan input order."""
         from backend.services.backtest_service import BacktestService
         service = BacktestService(db=mock_db)
         mock_db.pool.fetch = AsyncMock(return_value=[])
@@ -133,25 +133,17 @@ class TestLoadSignals:
             # Anchor: COALESCE(completed_at, started_at) AS signal_time — NOT bare started_at.
             assert "COALESCE(s.completed_at, s.started_at)" in query
             assert "AS signal_time" in query
-            # Production-faithful tiebreak on equal abs(score): the per-symbol analysis
-            # completed_at, DESC (latest-completed first), mirroring auto_trade_service's
-            # sorted(key=lambda r: (abs(score), completed_at), reverse=True). A plain
-            # sr.id tiebreak picked DIFFERENT top-N symbols than production on equal
-            # scores — see test_ranks_equal_scores_by_analysis_completed_at_desc.
-            assert "ABS(sr.score) DESC" in query
-            assert "ar.completed_at DESC" in query
+            # The loader must carry result.completed_at but not pre-rank candidates;
+            # the engine does live's stable in-memory sort per scan.
+            assert "sr.completed_at::timestamptz AS completed_at" in query
+            assert "ORDER BY signal_time, sr.id" in query
+            assert "ABS(sr.score) DESC" not in query
 
     @pytest.mark.asyncio
-    async def test_ranks_equal_scores_by_analysis_completed_at_desc(self, mock_db):
-        """REGRESSION: on equal abs(score), the backtest must rank candidates by their
-        per-symbol analysis completed_at DESCENDING, matching production's
-        auto_trade_service ranking `sorted((abs(score), completed_at), reverse=True)`.
-
-        The prior `ORDER BY ... sr.id` tiebreak diverged: in a real scan with five
-        equal -7 signals, production took the three LATEST-analyzed (RUNE/1000FLOKI/
-        CROSS) while the id-ordered backtest took the three lowest-id (CROSS/1000FLOKI/
-        PUMPBTC) — different trades from the identical signal set. The fix joins
-        analysis_runs to recover completed_at and orders by it."""
+    async def test_loads_completed_at_without_sql_reranking(self, mock_db):
+        """REGRESSION: SQL must not pick winners by score/id before the engine sees the
+        scan. Live dedupes and stable-sorts the in-memory scan results; the loader
+        therefore preserves insertion order and only provides completed_at fields."""
         from backend.services.backtest_service import BacktestService
         service = BacktestService(db=mock_db)
         mock_db.pool.fetch = AsyncMock(return_value=[])
@@ -166,10 +158,421 @@ class TestLoadSignals:
                  datetime(2026, 1, 31, tzinfo=timezone.utc)),
             )
             query = mock_db.pool.fetch.call_args[0][0]
-            # Must JOIN analysis_runs to recover the per-symbol completion time.
+            # analysis_runs remains available for copied rows whose
+            # scan_results.completed_at is NULL, but SQL must not pre-rank signals.
             assert "analysis_runs" in query
             assert "ar.run_id = sr.run_id" in query
-            # Tiebreak orders by completed_at DESC (production parity), not bare id.
-            assert "ar.completed_at DESC" in query
+            assert "sr.completed_at::timestamptz AS completed_at" in query
+            assert "ORDER BY signal_time, sr.id" in query
+            assert "ar.completed_at DESC" not in query
+
+    @pytest.mark.asyncio
+    async def test_analysis_completed_at_is_loaded_separately_from_result_completed_at(self, mock_db):
+        """Rows with NULL scan_results.completed_at must keep completed_at NULL.
+
+        analysis_completed_at is carried separately so the engine can reconstruct
+        normal batch ranking without changing SQL ordering or post-scan recheck
+        ranking.
+        """
+        from backend.services.backtest_service import BacktestService
+        service = BacktestService(db=mock_db)
+        analysis_done = datetime(2026, 1, 1, 12, 30, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(return_value=[{
+            "id": 1,
+            "ticker": "BTCUSDT",
+            "direction": "sell",
+            "confidence": "high",
+            "score": -8,
+            "signal_time": datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc),
+            "completed_at": None,
+            "analysis_completed_at": analysis_done,
+            "scan_id": "scan-1",
+            "signal_source": "structured",
+            "analysis_price": None,
+        }])
+
+        signals = await service._load_signals(
+            {"mode": "schedule", "schedule_id": "sched-1"},
+            (datetime(2026, 1, 1, tzinfo=timezone.utc),
+             datetime(2026, 1, 2, tzinfo=timezone.utc)),
+        )
+
+        assert signals[0]["completed_at"] is None
+        assert signals[0]["analysis_completed_at"] == analysis_done
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_filters_scans_before_submitted_config_was_active(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        old_time = datetime(2026, 6, 4, 19, 58, tzinfo=timezone.utc)
+        dad_time = datetime(2026, 6, 4, 23, 21, tzinfo=timezone.utc)
+        trend_time = datetime(2026, 6, 5, 2, 21, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-before-dad",
+                    "started_at": datetime(2026, 6, 4, 18, 43, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 18, "max_trades": 3}]},
+                },
+                {
+                    "scan_id": "scan-with-dad",
+                    "started_at": datetime(2026, 6, 4, 21, 47, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 20, "max_trades": 3}]},
+                },
+                {
+                    "scan_id": "scan-with-trend-default",
+                    "started_at": datetime(2026, 6, 5, 0, 47, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{
+                        "capital_pct": 20, "max_trades": 3, "strategy_cohort": "trend",
+                    }]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "OLDUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": old_time, "scan_id": "scan-before-dad",
+                 "signal_source": "structured", "analysis_price": None},
+                {"id": 2, "ticker": "ARKMUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": dad_time, "scan_id": "scan-with-dad",
+                 "signal_source": "structured", "analysis_price": None},
+                {"id": 3, "ticker": "EIGENUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": trend_time, "scan_id": "scan-with-trend-default",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 20,
+            "max_trades": 3,
+        }
+
+        signals = await service._load_signals(
+            config["scan_source"],
+            (datetime(2026, 6, 4, tzinfo=timezone.utc),
+             datetime(2026, 6, 5, tzinfo=timezone.utc)),
+            config,
+        )
+
+        assert [s["scan_id"] for s in signals] == ["scan-with-dad", "scan-with-trend-default"]
+        assert [s["ticker"] for s in signals] == ["ARKMUSDT", "EIGENUSDT"]
+        assert config["_schedule_config_filter"]["filtered_scan_count"] == 1
+        assert config["_schedule_config_filter"]["eligible_scan_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_keeps_full_window_for_hypothetical_config(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        ts = datetime(2026, 6, 4, 23, 21, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-1",
+                    "started_at": datetime(2026, 6, 4, 18, 43, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 18, "max_trades": 3}]},
+                }
+            ],
+            [
+                {"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                 "score": 8, "signal_time": ts, "scan_id": "scan-1",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 25,
+            "max_trades": 8,
+        }
+
+        signals = await service._load_signals(
+            config["scan_source"],
+            (datetime(2026, 6, 4, tzinfo=timezone.utc),
+             datetime(2026, 6, 5, tzinfo=timezone.utc)),
+            config,
+        )
+
+        assert [s["scan_id"] for s in signals] == ["scan-1"]
+        assert "_schedule_config_filter" not in config
+
+    @pytest.mark.asyncio
+    async def test_schedule_context_loads_account_free_adaptive_history(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "adaptive_blacklist_enabled": True,
+            "max_same_sector": None,
+        }
+        history = [{
+            "symbol": "XPINUSDT",
+            "strategy_kind": "trend",
+            "is_win": False,
+            "closed_at": datetime(2026, 6, 9, 12, tzinfo=timezone.utc),
+        }]
+        service._load_adaptive_blacklist_history = AsyncMock(return_value=history)
+
+        await service._prepare_live_selection_context(
+            config,
+            signals=[],
+            date_range=(
+                datetime(2026, 6, 9, tzinfo=timezone.utc),
+                datetime(2026, 6, 10, tzinfo=timezone.utc),
+            ),
+        )
+
+        assert config["_adaptive_blacklist_history"] == history
+        service._load_adaptive_blacklist_history.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_adaptive_history_prefers_sanitized_copy_table(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        closed_at = datetime(2026, 6, 9, 12, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(return_value=[{
+            "symbol": "XPINUSDT",
+            "strategy_kind": "trend",
+            "is_win": False,
+            "closed_at": closed_at,
+        }])
+
+        rows = await service._load_adaptive_blacklist_history(
+            {"adaptive_blacklist_lookback_hours": 48},
+            (
+                datetime(2026, 6, 9, tzinfo=timezone.utc),
+                datetime(2026, 6, 10, tzinfo=timezone.utc),
+            ),
+        )
+
+        assert rows == [{
+            "symbol": "XPINUSDT",
+            "is_win": False,
+            "closed_at": closed_at,
+            "strategy_kind": "trend",
+        }]
+        query = mock_db.pool.fetch.call_args.args[0]
+        assert "backtest_adaptive_blacklist_history" in query
+        assert "account_id" not in query
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_derives_account_free_selection_times_from_config_index(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        started = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
+        completed = datetime(2026, 6, 5, 1, 0, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-1",
+                    "started_at": started,
+                    "completed_at": completed,
+                    "config": {"auto_trade_configs": [
+                        {"capital_pct": 10, "max_trades": 2},
+                        {"capital_pct": 20, "max_trades": 3},
+                        {"capital_pct": 30, "max_trades": 4},
+                    ]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                 "score": 8, "signal_time": completed, "scan_id": "scan-1",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 20,
+            "max_trades": 3,
+        }
+
+        await service._load_signals(
+            config["scan_source"],
+            (datetime(2026, 6, 5, tzinfo=timezone.utc),
+             datetime(2026, 6, 6, tzinfo=timezone.utc)),
+            config,
+        )
+
+        assert config["_schedule_config_filter"]["matched_config_indices"] == {"scan-1": 1}
+        assert config["_schedule_selection_time_by_scan"] == {
+            "scan-1": "2026-06-05T01:00:40+00:00"
+        }
+        assert config["_schedule_post_scan_recheck_time_by_scan"] == {
+            "scan-1": "2026-06-05T01:01:15+00:00"
+        }
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_anchors_recheck_to_successful_schedule_execution_end(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        started = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
+        completed = datetime(2026, 6, 5, 1, 0, tzinfo=timezone.utc)
+        execution_completed = datetime(2026, 6, 5, 1, 10, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-1",
+                    "started_at": started,
+                    "completed_at": completed,
+                    "schedule_execution_status": "completed",
+                    "schedule_execution_completed_at": execution_completed,
+                    "config": {"auto_trade_configs": [
+                        {"capital_pct": 10, "max_trades": 2},
+                        {"capital_pct": 20, "max_trades": 3},
+                        {"capital_pct": 30, "max_trades": 4},
+                    ]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                 "score": 8, "signal_time": completed, "scan_id": "scan-1",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 20,
+            "max_trades": 3,
+        }
+
+        await service._load_signals(
+            config["scan_source"],
+            (datetime(2026, 6, 5, tzinfo=timezone.utc),
+             datetime(2026, 6, 6, tzinfo=timezone.utc)),
+            config,
+        )
+
+        assert config["_schedule_selection_time_by_scan"] == {
+            "scan-1": "2026-06-05T01:00:40+00:00"
+        }
+        assert config["_schedule_post_scan_recheck_time_by_scan"] == {
+            "scan-1": "2026-06-05T01:09:20+00:00"
+        }
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_keeps_scan_completion_recheck_for_failed_execution(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        started = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
+        completed = datetime(2026, 6, 5, 1, 0, tzinfo=timezone.utc)
+        execution_completed = datetime(2026, 6, 5, 1, 10, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-1",
+                    "started_at": started,
+                    "completed_at": completed,
+                    "schedule_execution_status": "failed",
+                    "schedule_execution_completed_at": execution_completed,
+                    "config": {"auto_trade_configs": [
+                        {"capital_pct": 10, "max_trades": 2},
+                        {"capital_pct": 20, "max_trades": 3},
+                        {"capital_pct": 30, "max_trades": 4},
+                    ]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "BTCUSDT", "direction": "buy", "confidence": "high",
+                 "score": 8, "signal_time": completed, "scan_id": "scan-1",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 20,
+            "max_trades": 3,
+        }
+
+        await service._load_signals(
+            config["scan_source"],
+            (datetime(2026, 6, 5, tzinfo=timezone.utc),
+             datetime(2026, 6, 6, tzinfo=timezone.utc)),
+            config,
+        )
+
+        assert config["_schedule_post_scan_recheck_time_by_scan"] == {
+            "scan-1": "2026-06-05T01:01:15+00:00"
+        }
+
+
+class TestLiveSelectionContext:
+    @pytest.mark.asyncio
+    async def test_schedule_mode_uses_submitted_config_without_account_history(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        mock_db.pool.fetch = AsyncMock(return_value=[])
+        mock_db.pool.fetchrow = AsyncMock()
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "leverage": 10,
+            "direction": "straight",
+            "execution_mode": "batch",
+            "adaptive_blacklist_enabled": True,
+            "strategy_cohort": None,
+            "max_same_sector": None,
+        }
+
+        await service._prepare_live_selection_context(
+            config,
+            [{"ticker": "BTCUSDT", "scan_id": "scan-1"}],
+            (
+                datetime(2026, 6, 5, tzinfo=timezone.utc),
+                datetime(2026, 6, 10, tzinfo=timezone.utc),
+            ),
+        )
+
+        assert "_live_replay_account_id" not in config
+        assert "_selection_time_by_scan" not in config
+        assert "_live_selection_by_scan" not in config
+        assert config["_adaptive_blacklist_history"] == []
+        assert "_selector_config_by_scan" not in config
+        mock_db.pool.fetchrow.assert_not_called()
+        query = mock_db.pool.fetch.call_args.args[0]
+        assert "backtest_adaptive_blacklist_history" in query
+        assert "trades" not in query
+        assert "debug_" not in query
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_loads_only_sector_reference_data_when_needed(self, mock_db):
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [{"symbol": "BTCUSDT", "sector": "layer1"}],
+            [],
+        ])
+        mock_db.pool.fetchrow = AsyncMock()
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "leverage": 10,
+            "execution_mode": "batch",
+            "adaptive_blacklist_enabled": True,
+            "max_same_sector": 1,
+        }
+
+        await service._prepare_live_selection_context(
+            config,
+            [{"ticker": "BTCUSDT", "scan_id": "scan-1"}],
+            (
+                datetime(2026, 6, 5, tzinfo=timezone.utc),
+                datetime(2026, 6, 10, tzinfo=timezone.utc),
+            ),
+        )
+
+        assert config["_sector_map"]["BTCUSDT"] == "layer1"
+        assert "_selector_config_by_scan" not in config
+        assert config["_adaptive_blacklist_history"] == []
+        mock_db.pool.fetchrow.assert_not_called()
+        queries = "\n".join(call.args[0] for call in mock_db.pool.fetch.call_args_list)
+        assert "symbol_sectors" in queries
+        assert "backtest_adaptive_blacklist_history" in queries
+        assert "FROM scans" not in queries
+        assert "trades" not in queries
+        assert "debug_" not in queries
+        assert "signal_performance" not in queries
 
 

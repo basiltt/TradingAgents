@@ -127,7 +127,9 @@ async def main() -> None:
                 closes = [t.closed_at for t in c.live_trades if t.closed_at is not None]
                 if not csyms or not closes:
                     continue
-                w_start = c.signal_time - timedelta(hours=1)
+                opens = [t.opened_at for t in c.live_trades if t.opened_at is not None]
+                window_start = min(opens) if opens else c.signal_time
+                w_start = window_start - timedelta(hours=1)
                 w_end = max(closes) + timedelta(hours=1)
                 fine_by_scan[c.scan_id] = await da.build_fine_klines(
                     kline_cache, csyms, w_start, w_end, sim_interval_seconds=300)

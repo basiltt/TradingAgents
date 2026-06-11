@@ -1,5 +1,7 @@
 """Tests for KlineCacheService — kline data storage, retrieval, and gap detection."""
 
+import asyncio
+
 import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +13,7 @@ def mock_db():
     db = MagicMock()
     db.pool = AsyncMock()
     db.pool.fetch = AsyncMock(return_value=[])
+    db.pool.fetchrow = AsyncMock(return_value={"candle_count": 0, "max_open_time": None})
     db.pool.execute = AsyncMock()
     db.pool.executemany = AsyncMock()
     db.pool.fetchval = AsyncMock(return_value=None)
@@ -315,6 +318,39 @@ class TestEnsureCoverage:
         assert fetch_end >= datetime(2026, 1, 10, tzinfo=timezone.utc)
 
     @pytest.mark.asyncio
+    async def test_fetches_only_missing_tail_for_partial_current_day(self, mock_db):
+        """A growing current-day cache should resume after the last cached bar.
+
+        Regression: every rerun with an end time later than the prior run refetched
+        the full current day for every symbol, even when the cache only needed the
+        newest tail.
+        """
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+
+        mock_db.pool.fetch.return_value = [
+            {"symbol": "BTCUSDT", "date": datetime(2026, 1, 10).date(), "candle_count": 72}
+        ]
+        mock_db.pool.fetchrow.return_value = {
+            "candle_count": 72,
+            "max_open_time": datetime(2026, 1, 10, 5, 55, tzinfo=timezone.utc),
+        }
+        start = datetime(2026, 1, 10, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
+
+        with patch.object(
+            svc, "_fetch_klines_from_bybit",
+            new=AsyncMock(return_value=[
+                {"open_time": datetime(2026, 1, 10, 6, 0, tzinfo=timezone.utc),
+                 "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}]),
+        ) as mock_fetch, patch.object(svc, "store_klines", new=AsyncMock(return_value=1)):
+            await svc.ensure_coverage(["BTCUSDT"], "5m", start, end)
+
+        mock_fetch.assert_awaited()
+        assert mock_fetch.await_args.args[2] == datetime(2026, 1, 10, 6, 0, tzinfo=timezone.utc)
+        assert mock_fetch.await_args.args[3] == end
+
+    @pytest.mark.asyncio
     async def test_no_fetch_when_fully_cached(self, mock_db):
         """When every requested day is fully cached, ensure_coverage must NOT hit Bybit
         at all (cache hit = fast). This is the common 2nd-run case the slowness broke."""
@@ -330,3 +366,54 @@ class TestEnsureCoverage:
             stats = await svc.ensure_coverage(["BTCUSDT"], "5m", start, end)
         mock_fetch.assert_not_awaited()
         assert stats["fetched"] == 0 and not stats["symbols_with_gaps"]
+
+    @pytest.mark.asyncio
+    async def test_progress_advances_for_failed_symbols(self, mock_db):
+        """Progress must advance for every processed gapped symbol, including symbols
+        that return no candles. Regression: failed symbols continued before calling
+        on_progress, so a large schedule backtest could appear stuck near 2%."""
+        from backend.services.kline_cache_service import KlineCacheService
+        svc = KlineCacheService(db=mock_db)
+        mock_db.pool.fetch.return_value = []  # every symbol is a full gap
+        progress: list[int] = []
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 23, 59, tzinfo=timezone.utc)
+
+        with patch.object(svc, "_fetch_klines_from_bybit", new=AsyncMock(return_value=[])):
+            stats = await svc.ensure_coverage(
+                ["AAAUSDT", "BBBUSDT"], "5m", start, end,
+                on_progress=progress.append, max_concurrency=2,
+            )
+
+        assert stats["failed"] == 2
+        assert progress, "failed symbols should still report warmup progress"
+        assert progress[-1] == 100
+
+    @pytest.mark.asyncio
+    async def test_cancel_check_aborts_pending_warmup(self, mock_db):
+        """A cancelled backtest must stop cache warmup, not just mark the run row.
+        The warmup loop polls cancel_check while waiting and cancels pending fetches."""
+        from backend.services.kline_cache_service import KlineCacheService, KlineCoverageCancelled
+        svc = KlineCacheService(db=mock_db)
+        mock_db.pool.fetch.return_value = []  # every symbol is a full gap
+        started = asyncio.Event()
+        cancelled = {"value": False}
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, 23, 59, tzinfo=timezone.utc)
+
+        async def slow_fetch(symbol, interval, fetch_start, fetch_end):
+            started.set()
+            await asyncio.sleep(30)
+            return []
+
+        with patch.object(svc, "_fetch_klines_from_bybit", new=slow_fetch):
+            task = asyncio.create_task(
+                svc.ensure_coverage(
+                    ["AAAUSDT", "BBBUSDT"], "5m", start, end,
+                    cancel_check=lambda: cancelled["value"], max_concurrency=1,
+                )
+            )
+            await started.wait()
+            cancelled["value"] = True
+            with pytest.raises(KlineCoverageCancelled):
+                await asyncio.wait_for(task, timeout=2)

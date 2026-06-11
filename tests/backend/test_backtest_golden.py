@@ -147,11 +147,10 @@ class TestGoldenScenarios:
     def test_golden_max_trades_caps_concurrency(self):
         """max_trades=1 admits one of two simultaneous signals; =2 admits both.
 
-        Both signals are score-8 ties with no analysis_completed_at, so the selection
-        tiebreaker is `id` DESC (matches live's completed_at-then-id order). max_trades=1
-        therefore admits ETH (id=2), not BTC (id=1) — its single-trade net_profit is
-        38.9686 (ETH @ 3000 step 10) vs BTC's 38.9725. The max_trades=2 case admits both,
-        so its aggregate net_profit is unchanged by the tie order.
+        Both signals are score-8 ties with no completed_at, so live's stable sort keeps
+        the scan input order. max_trades=1 therefore admits BTC (the first signal), not
+        ETH; the max_trades=2 case admits both, so its aggregate net_profit is unchanged
+        by the tie order.
         """
         sigs = [
             _signal(sid=1, minute=0),
@@ -161,8 +160,8 @@ class TestGoldenScenarios:
 
         one = BacktestEngine().run(_config(max_trades=1), sigs, klines)
         assert len(one.trades) == 1
-        assert one.trades[0]["symbol"] == "ETHUSDT"   # id-DESC tiebreak picks the higher id
-        assert one.metrics["net_profit"] == pytest.approx(38.96860275, rel=REL_TOL)
+        assert one.trades[0]["symbol"] == "BTCUSDT"
+        assert one.metrics["net_profit"] == pytest.approx(38.97250025, rel=REL_TOL)
 
         two = BacktestEngine().run(_config(max_trades=2), sigs, klines)
         assert len(two.trades) == 2

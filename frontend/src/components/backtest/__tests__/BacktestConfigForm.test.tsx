@@ -64,7 +64,7 @@ describe("BacktestConfigForm", () => {
     fireEvent.change(start, { target: { value: "2026-02-01T00:00" } });
     fireEvent.change(end, { target: { value: "2026-01-01T00:00" } });
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
-    await waitFor(() => expect(screen.getByText(/End must be after start/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText(/End must be after start/i).length).toBeGreaterThan(0));
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -104,8 +104,203 @@ describe("BacktestConfigForm", () => {
     render(<BacktestConfigForm onSubmit={onSubmit} schedules={[{ value: "s1", label: "S1" }]} />);
     fireEvent.change(screen.getByLabelText("Source Mode"), { target: { value: "schedule" } });
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
-    await waitFor(() => expect(screen.getByText(/Select a schedule/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText(/Select a schedule/i).length).toBeGreaterThan(0));
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("submits specific schedule mode when inactive scan source fields are stale nulls", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        schedules={[{ value: "sched-1", label: "Dad Demo schedule" }]}
+        seed={{
+          starting_capital: 234.02,
+          date_range_start: "2026-06-05T00:00",
+          date_range_end: "2026-06-11T00:00",
+          scan_source: {
+            mode: "schedule",
+            schedule_id: "sched-1",
+            scan_ids: null,
+            replay_account_id: null,
+          } as never,
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Invalid input/i)).not.toBeInTheDocument();
+    expect(onSubmit.mock.calls[0][0].scan_source).toEqual({
+      mode: "schedule",
+      schedule_id: "sched-1",
+    });
+  });
+
+  it("applies the Dad Demo reference config with the stored schedule/date range", async () => {
+    const referenceScheduleId = "d9c5f14f-a71f-4907-9449-dab3b75a52cb";
+    const onSubmit = vi.fn();
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        schedules={[
+          { value: "sched-1", label: "Other Schedule" },
+          { value: referenceScheduleId, label: "Every 2 Hour Scan" },
+        ]}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Source Mode"), { target: { value: "schedule" } });
+    fireEvent.change(screen.getByLabelText("Schedule"), { target: { value: "sched-1" } });
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "99" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /reference config/i }));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234"),
+    );
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("2026-06-05T00:00");
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe("2026-06-11T11:37");
+    expect((screen.getByLabelText("Source Mode") as HTMLSelectElement).value).toBe("schedule");
+    expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe(referenceScheduleId);
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("8");
+    expect((screen.getByLabelText("Capital %") as HTMLInputElement).value).toBe("22");
+    expect((screen.getByLabelText("Max trades") as HTMLInputElement).value).toBe("3");
+    expect((screen.getByLabelText("Execution mode") as HTMLSelectElement).value).toBe("batch");
+
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.scan_source).toEqual({ mode: "schedule", schedule_id: referenceScheduleId });
+    expect(req.date_range_start).toBe(new Date("2026-06-05T00:00").toISOString());
+    expect(req.date_range_end).toBe(new Date("2026-06-11T11:37").toISOString());
+    expect(req.starting_capital).toBe(234);
+    expect(req.leverage).toBe(8);
+    expect(req.capital_pct).toBe(22);
+    expect(req.max_trades).toBe(3);
+    expect(req.funding_rate_model).toBe("fixed_8h");
+    expect(req.max_drawdown_pct).toBe(12);
+    expect(req.breakeven_timeout_hours).toBe(12);
+    expect(req.max_trade_duration_hours).toBe(24);
+    expect(req.target_goal_type).toBe("profit_pct");
+    expect(req.target_goal_value).toBe(15);
+    expect(req.max_same_sector).toBe(4);
+    expect(req.max_price_drift_pct).toBe(6);
+    expect(req.symbol_blacklist).toBeNull();
+    expect(req.adaptive_blacklist_enabled).toBe(false);
+    expect("account_id" in req).toBe(false);
+  });
+
+  it("ignores a stale saved reference with blank date fields", async () => {
+    const referenceScheduleId = "d9c5f14f-a71f-4907-9449-dab3b75a52cb";
+    localStorage.setItem(
+      "tradingagents_backtest_reference_config",
+      JSON.stringify({
+        starting_capital: 999,
+        date_range_start: "",
+        date_range_end: "",
+        scan_source: { mode: "schedule", schedule_id: "sched-1" },
+        leverage: 99,
+      }),
+    );
+
+    render(
+      <BacktestConfigForm
+        onSubmit={vi.fn()}
+        schedules={[
+          { value: "sched-1", label: "Other Schedule" },
+          { value: referenceScheduleId, label: "Every 2 Hour Scan" },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /reference config/i }));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("234"),
+    );
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe("2026-06-05T00:00");
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe("2026-06-11T11:37");
+    expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe(referenceScheduleId);
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("8");
+  });
+
+  it("stores the current fill as the reusable reference config", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        schedules={[{ value: "sched-1", label: "Every 2 Hour Scan" }]}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Source Mode"), { target: { value: "schedule" } });
+    fireEvent.change(screen.getByLabelText("Schedule"), { target: { value: "sched-1" } });
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "777" } });
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Capital %"), { target: { value: "33" } });
+    fireEvent.change(screen.getByLabelText("Max trades"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Execution mode"), { target: { value: "batch" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /store reference/i }));
+
+    expect(localStorage.getItem("tradingagents_backtest_reference_config") ?? "").toContain("777");
+
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "10000" } });
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "20" } });
+    fireEvent.change(screen.getByLabelText("Capital %"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Max trades"), { target: { value: "999" } });
+    fireEvent.change(screen.getByLabelText("Execution mode"), { target: { value: "immediate" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /reference config/i }));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("777"),
+    );
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("12");
+    expect((screen.getByLabelText("Capital %") as HTMLInputElement).value).toBe("33");
+    expect((screen.getByLabelText("Max trades") as HTMLInputElement).value).toBe("4");
+    expect((screen.getByLabelText("Execution mode") as HTMLSelectElement).value).toBe("batch");
+    expect((screen.getByLabelText("Source Mode") as HTMLSelectElement).value).toBe("schedule");
+    expect((screen.getByLabelText("Schedule") as HTMLSelectElement).value).toBe("sched-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.scan_source).toEqual({ mode: "schedule", schedule_id: "sched-1" });
+    expect(req.starting_capital).toBe(777);
+    expect(req.leverage).toBe(12);
+    expect(req.capital_pct).toBe(33);
+    expect(req.max_trades).toBe(4);
+    expect(req.execution_mode).toBe("batch");
+    expect("account_id" in req).toBe(false);
+  });
+
+  it("reset clears edited values and prevents stale draft restore", async () => {
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "999" } });
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "88" } });
+
+    await waitFor(() =>
+      expect(localStorage.getItem("tradingagents_backtest_draft") ?? "").toContain("999"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("10000"),
+    );
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("20");
+    expect(localStorage.getItem("tradingagents_backtest_draft") ?? "").not.toContain("999");
+    expect(localStorage.getItem("tradingagents_backtest_draft") ?? "").not.toContain("88");
+
+    unmount();
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("10000");
+    expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("20");
   });
 
   it("auto-opens a collapsed section that contains a validation error", async () => {
@@ -120,6 +315,25 @@ describe("BacktestConfigForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
     // The section should auto-reveal so the error is visible.
     await waitFor(() => expect(screen.getByLabelText("Max drawdown %")).toBeInTheDocument());
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("shows a visible summary and opens target goal when close-on-profit needs a goal value", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByText("Close Rules"));
+    fireEvent.click(screen.getByText("Close and re-trade on profit"));
+    expect(screen.queryByLabelText("Goal Value")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("backtest-validation-summary")).toHaveTextContent(
+        "Goal Value: Close on Profit requires a Goal Value",
+      ),
+    );
+    expect(screen.getByLabelText("Goal Value")).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -209,6 +423,27 @@ describe("BacktestConfigForm", () => {
     await waitFor(() =>
       expect((screen.getByLabelText("Simulation Interval") as HTMLSelectElement).value).toBe("1h"),
     );
+  });
+
+  it("saves a complete draft snapshot, not only the field that changed", async () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), {
+      target: { value: "12345" },
+    });
+
+    await waitFor(() => {
+      const raw = localStorage.getItem("tradingagents_backtest_draft");
+      expect(raw).not.toBeNull();
+      const draft = JSON.parse(raw ?? "{}");
+      expect(draft.starting_capital).toBe("12345");
+      expect(draft.leverage).toBe(20);
+      expect(draft.capital_pct).toBe(5);
+      expect(draft.max_drawdown_pct).toBe(100);
+      expect(draft.adaptive_blacklist_min_trades).toBe(5);
+      expect(draft.mr_leverage).toBe(10);
+      expect(draft.scan_source).toEqual({ mode: "date_range" });
+    });
   });
 
   it("an explicit seed wins over a saved draft", async () => {

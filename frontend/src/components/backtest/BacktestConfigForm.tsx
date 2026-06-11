@@ -11,10 +11,18 @@ import type { BacktestCreateRequest } from "./types";
 import {
   backtestConfigSchema,
   buildDefaults,
+  buildDadDemoReferenceDefaults,
   toCreateRequest,
   type BacktestConfigFormValues,
 } from "./configSchema";
-import { loadDraft, saveDraft, type BacktestDraft } from "./backtestDraft";
+import {
+  clearDraft,
+  loadDraft,
+  loadReferenceConfig,
+  saveDraft,
+  saveReferenceConfig,
+  type BacktestDraft,
+} from "./backtestDraft";
 
 /* ----------------------------- small field helpers ----------------------------- */
 
@@ -85,9 +93,11 @@ interface SelectFieldProps {
   /** Map the empty-string option to null on change (for nullable enum fields). */
   emptyToNull?: boolean;
   hint?: string;
+  error?: string;
 }
 
-function SelectField({ control, name, label, options, emptyToNull, hint }: SelectFieldProps) {
+function SelectField({ control, name, label, options, emptyToNull, hint, error }: SelectFieldProps) {
+  const errorId = `${name}-error`;
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={name}>{label}</Label>
@@ -103,6 +113,8 @@ function SelectField({ control, name, label, options, emptyToNull, hint }: Selec
               field.onChange(emptyToNull && v === "" ? null : v);
             }}
             onBlur={field.onBlur}
+            aria-invalid={!!error}
+            aria-describedby={error ? errorId : undefined}
             className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm text-[var(--neu-text-strong)]"
           >
             {options.map((o) => (
@@ -114,6 +126,11 @@ function SelectField({ control, name, label, options, emptyToNull, hint }: Selec
         )}
       />
       <Hint text={hint} />
+      {error ? (
+        <span id={errorId} className="text-[0.72rem] text-[var(--neu-danger)]">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -393,6 +410,77 @@ function Section({
 
 const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3";
 
+const ERROR_FIELD_LABELS: Record<string, string> = {
+  starting_capital: "Initial Balance",
+  date_range_start: "Start",
+  date_range_end: "End",
+  "scan_source.mode": "Source Mode",
+  "scan_source.schedule_id": "Schedule",
+  "scan_source.scan_ids": "Selected Scans",
+  "scan_source.replay_account_id": "Replay Account",
+  simulation_interval: "Simulation Interval",
+  fee_rate_pct: "Fee Rate",
+  slippage_bps: "Slippage",
+  funding_rate_model: "Funding Model",
+  funding_rate_fixed_pct: "Funding Rate",
+  direction: "Direction",
+  leverage: "Leverage",
+  capital_pct: "Capital %",
+  take_profit_pct: "Take profit %",
+  stop_loss_pct: "Stop loss %",
+  min_score: "Min score",
+  confidence_filter: "Min confidence",
+  signal_sides: "Signal sides",
+  max_trades: "Max trades",
+  execution_mode: "Execution mode",
+  max_same_direction: "Max positions same direction",
+  max_signal_age_minutes: "Max signal age",
+  symbol_whitelist: "Whitelist",
+  symbol_blacklist: "Blacklist",
+  max_drawdown_pct: "Max drawdown %",
+  breakeven_timeout_hours: "Breakeven timeout",
+  max_trade_duration_hours: "Max duration",
+  trailing_profit_pct: "Trailing profit stop",
+  close_on_profit_pct: "Close and re-trade on profit",
+  target_goal_type: "Goal Type",
+  target_goal_value: "Goal Value",
+  max_same_sector: "Max positions same sector",
+  max_price_drift_pct: "Max price drift %",
+  adaptive_blacklist_min_trades: "Adaptive blacklist min trades",
+  adaptive_blacklist_max_win_rate: "Adaptive blacklist max win rate",
+  adaptive_blacklist_lookback_hours: "Adaptive blacklist lookback",
+  session_blocked_hours_utc: "Blocked UTC hours",
+  session_allowed_hours_utc: "Allowed UTC hours",
+  btc_vol_min_threshold: "BTC vol min",
+  btc_vol_max_threshold: "BTC vol max",
+  btc_vol_lookback_candles: "BTC vol lookback",
+  mr_short_enabled: "MR short side",
+  mr_leverage: "MR leverage",
+  mr_capital_pct: "MR capital",
+  mr_max_trades: "MR max trades",
+  mr_mean_period: "MR mean period",
+  mr_target_capture_pct: "MR target capture",
+  mr_tight_stop_pct: "MR tight stop",
+  mr_time_stop_minutes: "MR time-stop",
+  mr_min_edge_pct: "MR min edge",
+};
+
+function summarizeError(path: string, message: string): string {
+  const normalizedPath = path.replace(/\.root$/, "");
+  const label =
+    ERROR_FIELD_LABELS[normalizedPath] ??
+    normalizedPath
+      .split(".")
+      .filter(Boolean)
+      .map((part) =>
+        part
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (char) => char.toUpperCase()),
+      )
+      .join(" > ");
+  return label ? `${label}: ${message}` : message;
+}
+
 /* --------------------------------- main form --------------------------------- */
 
 export interface ScheduleOption {
@@ -439,6 +527,8 @@ export function BacktestConfigForm({
     handleSubmit,
     watch,
     setValue,
+    getValues,
+    reset,
     formState: { errors },
   } = useForm<BacktestConfigFormValues>({
     // zod v4 resolver: cast to keep RHF's generic happy across input/output types.
@@ -458,11 +548,35 @@ export function BacktestConfigForm({
   // the form is interaction-bound, not render-bound. Disable is scoped to this line.
   React.useEffect(() => {
     // eslint-disable-next-line react-hooks/incompatible-library -- intentional non-rendering RHF subscription; see note above
-    const sub = watch((values) => {
-      saveDraft(values as BacktestDraft);
+    const sub = watch(() => {
+      // The callback payload can be partial when fields are hidden/unmounted. Pull
+      // the canonical RHF snapshot so every save keeps the full form state.
+      saveDraft(getValues() as BacktestDraft);
     });
     return () => sub.unsubscribe();
-  }, [watch]);
+  }, [getValues, watch]);
+
+  const applyDadDemoReference = React.useCallback(() => {
+    const storedReference = loadReferenceConfig();
+    const usableStoredReference =
+      storedReference?.date_range_start === "" || storedReference?.date_range_end === ""
+        ? undefined
+        : storedReference;
+    const referenceValues = usableStoredReference
+      ? { ...buildDefaults(), ...usableStoredReference }
+      : buildDadDemoReferenceDefaults(getValues() as Partial<BacktestCreateRequest>);
+    reset(referenceValues);
+    saveDraft(referenceValues);
+  }, [getValues, reset]);
+
+  const storeReferenceConfig = React.useCallback(() => {
+    saveReferenceConfig(getValues() as BacktestDraft);
+  }, [getValues]);
+
+  const resetForm = React.useCallback(() => {
+    reset(buildDefaults());
+    clearDraft();
+  }, [reset]);
 
   const scanMode = watch("scan_source.mode");
   const replayAccountId = watch("scan_source.replay_account_id");
@@ -475,6 +589,7 @@ export function BacktestConfigForm({
     (breakevenHours != null && Number(breakevenHours) > 0) ||
     (maxDurationHours != null && Number(maxDurationHours) > 0);
   const formRef = React.useRef<HTMLFormElement>(null);
+  const summaryRef = React.useRef<HTMLDivElement>(null);
 
   const submit = handleSubmit(
     (values) => {
@@ -486,7 +601,9 @@ export function BacktestConfigForm({
       // render; RHF's own focus fires too early against the still-unmounted field.
       // Move focus to the first invalid control after the DOM updates.
       requestAnimationFrame(() => {
-        const el = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+        const el =
+          formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+          summaryRef.current;
         el?.focus();
       });
     },
@@ -510,6 +627,23 @@ export function BacktestConfigForm({
   };
 
   const anyError = (...paths: string[]) => paths.some((p) => !!fieldError(p));
+  const validationMessages = React.useMemo(() => {
+    const messages: string[] = [];
+    const visit = (node: unknown, path: string[] = []) => {
+      if (!node || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      if (typeof record.message === "string") {
+        messages.push(summarizeError(path.join("."), record.message));
+        return;
+      }
+      for (const [key, value] of Object.entries(record)) {
+        if (key === "ref" || key === "types") continue;
+        visit(value, [...path, key]);
+      }
+    };
+    visit(errors);
+    return Array.from(new Set(messages));
+  }, [errors]);
   const closeRulesHasError = anyError(
     "max_drawdown_pct",
     "breakeven_timeout_hours",
@@ -518,10 +652,49 @@ export function BacktestConfigForm({
     "close_on_profit_pct",
   );
   const riskLimitsHasError = anyError("max_same_direction", "max_signal_age_minutes");
-  const advancedHasError = anyError("max_same_sector", "max_price_drift_pct");
+  const targetGoalHasError = anyError("target_goal_type", "target_goal_value");
+  const advancedHasError = anyError(
+    "max_same_sector",
+    "max_price_drift_pct",
+    "adaptive_blacklist_min_trades",
+    "adaptive_blacklist_max_win_rate",
+    "adaptive_blacklist_lookback_hours",
+  );
+  const regimeHasError = anyError(
+    "session_blocked_hours_utc",
+    "session_allowed_hours_utc",
+    "btc_vol_min_threshold",
+    "btc_vol_max_threshold",
+    "btc_vol_lookback_candles",
+    "mr_short_enabled",
+    "mr_leverage",
+    "mr_capital_pct",
+    "mr_max_trades",
+    "mr_mean_period",
+    "mr_target_capture_pct",
+    "mr_tight_stop_pct",
+    "mr_time_stop_minutes",
+    "mr_min_edge_pct",
+  );
 
   return (
     <form ref={formRef} onSubmit={submit} className={cn("flex flex-col gap-4", className)} aria-label="Backtest configuration">
+      {validationMessages.length ? (
+        <div
+          ref={summaryRef}
+          role="alert"
+          tabIndex={-1}
+          data-testid="backtest-validation-summary"
+          className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-danger)]/45 bg-[color-mix(in_oklch,var(--neu-danger)_10%,var(--neu-surface-base))] px-4 py-3 text-sm text-[var(--neu-danger)]"
+        >
+          <p className="font-semibold">Fix the highlighted backtest settings before running.</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {validationMessages.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="rounded-[var(--neu-radius-lg)] border border-[color:var(--neu-stroke-soft)]/50 bg-[var(--neu-surface-inset)]/30 px-4 py-3">
         <p className="text-[0.78rem] leading-snug text-[var(--neu-text-muted)]">
           Most settings mirror your <span className="font-semibold text-[var(--neu-text)]">Scheduled Market Scan</span> auto-trade
@@ -583,6 +756,7 @@ export function BacktestConfigForm({
             name="scan_source.mode"
             label="Source Mode"
             hint="Backtest-only · where signals come from"
+            error={fieldError("scan_source.mode")}
             options={[
               { value: "date_range", label: "All scans in date range" },
               { value: "schedule", label: "Specific schedule" },
@@ -600,6 +774,8 @@ export function BacktestConfigForm({
                     id="scan_source.schedule_id"
                     value={String(field.value ?? "")}
                     onChange={field.onChange}
+                    aria-invalid={!!fieldError("scan_source.schedule_id")}
+                    aria-describedby={fieldError("scan_source.schedule_id") ? "scan_source.schedule_id-error" : undefined}
                     className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm"
                   >
                     <option value="">Select…</option>
@@ -612,7 +788,7 @@ export function BacktestConfigForm({
                 )}
               />
               {fieldError("scan_source.schedule_id") ? (
-                <span className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.schedule_id")}</span>
+                <span id="scan_source.schedule_id-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.schedule_id")}</span>
               ) : null}
               {schedules.length === 0 ? (
                 <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
@@ -632,6 +808,8 @@ export function BacktestConfigForm({
                     id="scan_source.replay_account_id"
                     value={String(field.value ?? "")}
                     onChange={field.onChange}
+                    aria-invalid={!!fieldError("scan_source.replay_account_id")}
+                    aria-describedby={fieldError("scan_source.replay_account_id") ? "scan_source.replay_account_id-error" : undefined}
                     className="neu-input-base neu-focus-ring h-11 w-full rounded-[var(--neu-radius-md)] px-3 text-sm"
                   >
                     <option value="">Select…</option>
@@ -644,13 +822,13 @@ export function BacktestConfigForm({
                 )}
               />
               {fieldError("scan_source.replay_account_id") ? (
-                <span className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.replay_account_id")}</span>
+                <span id="scan_source.replay_account_id-error" className="text-[0.72rem] text-[var(--neu-danger)]">{fieldError("scan_source.replay_account_id")}</span>
               ) : null}
               <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
-                Replays this account's actual scanner trades through the engine and
-                compares per-cycle results — selection is pinned, so it validates the
-                simulation. The Date Range below bounds which trades are replayed;
-                AI-Manager-closed and non-scanner trades are excluded.
+                Rebuilds this account's actual scanner trade ledger and keeps a
+                candle-engine comparison beside it. The Date Range below bounds which trades are replayed;
+                AI-Manager-closed and non-scanner trades are excluded. Replay infers
+                starting balance from the first live cycle in the range.
               </span>
               {(() => {
                 const acct = accounts.find((a) => a.id === replayAccountId);
@@ -676,10 +854,10 @@ export function BacktestConfigForm({
             { value: "15m", label: "15 minutes" },
             { value: "1h", label: "1 hour" },
             { value: "4h", label: "4 hours" },
-          ]} />
+          ]} error={fieldError("simulation_interval")} />
           <NumberField control={control} name="fee_rate_pct" label="Fee Rate (%)" hint="Backtest-only · taker fee per side (Bybit ≈ 0.055)" error={fieldError("fee_rate_pct")} />
           <NumberField control={control} name="slippage_bps" label="Slippage (bps)" hint="Backtest-only · adverse fill slippage, basis points" error={fieldError("slippage_bps")} />
-          <SelectField control={control} name="funding_rate_model" label="Funding Model" hint="Backtest-only · perpetual funding cost model" options={[
+          <SelectField control={control} name="funding_rate_model" label="Funding Model" hint="Backtest-only · perpetual funding cost model" error={fieldError("funding_rate_model")} options={[
             { value: "none", label: "None" },
             { value: "fixed_8h", label: "Fixed (8h)" },
           ]} />
@@ -692,7 +870,7 @@ export function BacktestConfigForm({
         subtitle="Mirrors the scanner's auto-trade config — same field names, same meaning."
       >
         <div className={GRID}>
-          <SelectField control={control} name="direction" label="Direction" hint="Scanner: Direction" options={[
+          <SelectField control={control} name="direction" label="Direction" hint="Scanner: Direction" error={fieldError("direction")} options={[
             { value: "straight", label: "Straight (follow signal)" },
             { value: "reverse", label: "Reverse (invert signal)" },
           ]} />
@@ -701,19 +879,19 @@ export function BacktestConfigForm({
           <NumberField control={control} name="take_profit_pct" label="Take profit %" hint="Scanner: Take profit %" error={fieldError("take_profit_pct")} />
           <NumberField control={control} name="stop_loss_pct" label="Stop loss %" hint="Scanner: Stop loss %" error={fieldError("stop_loss_pct")} />
           <NumberField control={control} name="min_score" label="Min score" hint="Scanner: Min score" error={fieldError("min_score")} />
-          <SelectField control={control} name="confidence_filter" label="Min confidence" hint="Scanner: Min confidence" options={[
+          <SelectField control={control} name="confidence_filter" label="Min confidence" hint="Scanner: Min confidence" error={fieldError("confidence_filter")} options={[
             { value: "any", label: "Any" },
             { value: "high", label: "High only" },
             { value: "moderate", label: "Moderate+" },
             { value: "low", label: "Low+" },
           ]} />
-          <SelectField control={control} name="signal_sides" label="Signal sides" hint="Scanner: Signal sides" options={[
+          <SelectField control={control} name="signal_sides" label="Signal sides" hint="Scanner: Signal sides" error={fieldError("signal_sides")} options={[
             { value: "both", label: "Both" },
             { value: "buy", label: "Buy only" },
             { value: "sell", label: "Sell only" },
           ]} />
           <NumberField control={control} name="max_trades" label="Max trades" hint="Scanner: Max trades · per scan cycle" error={fieldError("max_trades")} />
-          <SelectField control={control} name="execution_mode" label="Execution mode" hint="Scanner: Execution mode" options={[
+          <SelectField control={control} name="execution_mode" label="Execution mode" hint="Scanner: Execution mode" error={fieldError("execution_mode")} options={[
             { value: "immediate", label: "Immediate" },
             { value: "batch", label: "Batch" },
           ]} />
@@ -776,12 +954,12 @@ export function BacktestConfigForm({
         </div>
       </Section>
 
-      <Section title="Target Goal" defaultOpen={false}>
+      <Section title="Target Goal" defaultOpen={false} forceOpen={targetGoalHasError}>
         <p className="mb-3 text-[0.72rem] leading-snug text-[var(--neu-text-muted)]">
           Scanner: Target goal — stops the whole cycle once reached. Different from &ldquo;Close and re-trade on profit&rdquo; in Close Rules, which closes mid-cycle and keeps trading.
         </p>
         <div className={GRID}>
-          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull hint="Scanner: Target goal type" options={[
+          <SelectField control={control} name="target_goal_type" label="Goal Type" emptyToNull hint="Scanner: Target goal type" error={fieldError("target_goal_type")} options={[
             { value: "", label: "None" },
             { value: "trade_count", label: "Trade count" },
             { value: "profit_pct", label: "Profit %" },
@@ -811,7 +989,7 @@ export function BacktestConfigForm({
       </Section>
 
       <Section title="Market Regime & Strategy (F1/F2/F3)" defaultOpen={false}
-               forceOpen={anyError("session_blocked_hours_utc", "btc_vol_min_threshold", "mr_short_enabled")}>
+               forceOpen={regimeHasError}>
         <p className="mb-3 text-[0.72rem] leading-5 text-[var(--neu-text-muted)]">
           Replay the regime features on history. All off by default. Modeling notes:
           F2-long honors mr_long_enabled (the live server-ack is bypassed — no live
@@ -830,7 +1008,7 @@ export function BacktestConfigForm({
           <CheckField control={control} name="btc_vol_filter_enabled" label="BTC volatility band" />
           <NumberField control={control} name="btc_vol_min_threshold" label="BTC vol min (atr ratio)" nullable error={fieldError("btc_vol_min_threshold")} />
           <NumberField control={control} name="btc_vol_max_threshold" label="BTC vol max (atr ratio)" nullable error={fieldError("btc_vol_max_threshold")} />
-          <SelectField control={control} name="btc_vol_interval" label="BTC vol interval" options={[
+          <SelectField control={control} name="btc_vol_interval" label="BTC vol interval" error={fieldError("btc_vol_interval")} options={[
             { value: "15m", label: "15m" }, { value: "1h", label: "1h" }, { value: "4h", label: "4h" },
           ]} />
           <NumberField control={control} name="btc_vol_lookback_candles" label="BTC vol lookback" error={fieldError("btc_vol_lookback_candles")} />
@@ -838,7 +1016,7 @@ export function BacktestConfigForm({
 
         {/* F3 — Strategy Cohort */}
         <div className="mt-4">
-          <SelectField control={control} name="strategy_cohort" label="Strategy cohort (F3)" emptyToNull options={[
+          <SelectField control={control} name="strategy_cohort" label="Strategy cohort (F3)" emptyToNull error={fieldError("strategy_cohort")} options={[
             { value: "", label: "Inherit (trend)" },
             { value: "trend", label: "Trend" },
             { value: "mean_reversion", label: "Mean-Reversion" },
@@ -856,7 +1034,7 @@ export function BacktestConfigForm({
           <NumberField control={control} name="mr_capital_pct" label="MR capital / trade (%)" error={fieldError("mr_capital_pct")} />
           <NumberField control={control} name="mr_max_trades" label="MR max trades" error={fieldError("mr_max_trades")} />
           <NumberField control={control} name="mr_mean_period" label="MR mean period" error={fieldError("mr_mean_period")} />
-          <SelectField control={control} name="mr_mean_interval" label="MR mean interval" options={[
+          <SelectField control={control} name="mr_mean_interval" label="MR mean interval" error={fieldError("mr_mean_interval")} options={[
             { value: "15m", label: "15m" }, { value: "1h", label: "1h" }, { value: "4h", label: "4h" },
           ]} />
           <NumberField control={control} name="mr_target_capture_pct" label="MR target capture (%)" error={fieldError("mr_target_capture_pct")} />
@@ -873,7 +1051,16 @@ export function BacktestConfigForm({
         ) : null}
       </Section>
 
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <Button type="button" variant="outline" onClick={resetForm} disabled={isSubmitting}>
+          Reset
+        </Button>
+        <Button type="button" variant="outline" onClick={storeReferenceConfig} disabled={isSubmitting}>
+          Store Reference
+        </Button>
+        <Button type="button" variant="secondary" onClick={applyDadDemoReference} disabled={isSubmitting}>
+          Reference Config
+        </Button>
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Running…" : "Run Backtest"}
         </Button>

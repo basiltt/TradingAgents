@@ -2,7 +2,6 @@
 from __future__ import annotations
 from typing import Any, Mapping
 from backend.diagnostics.parity.models import Cycle, CycleComparison, ParityReport
-from backend.diagnostics.parity.extractor import live_final_equity
 from backend.diagnostics.parity.tick_cache import merged_upnl_crossing, price_at
 
 
@@ -136,7 +135,7 @@ def build_report(
         ))
 
     return ParityReport(
-        live_final_equity=live_final_equity(cycles),
+        live_final_equity=live_eq,
         backtest_final_equity=bt_eq,
         cycles=comparisons,
         tolerance_pct=tolerance_pct,

@@ -1016,7 +1016,7 @@ class AnalysisDB:
 
     def update_scan(self, scan_id: str, **fields: Any) -> None:
         """Update allowed scan columns; ignores unknown fields and no-ops if none."""
-        allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries"}
+        allowed = {"status", "total", "completed", "failed", "completed_at", "auto_trade_results", "auto_trade_summaries", "config"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return

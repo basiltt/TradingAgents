@@ -33,7 +33,8 @@ async def test_replay_runner_builds_comparison_from_fakes():
                 dict(symbol="A", side="Sell", net_pnl=10.0, close_reason="rule_triggered",
                      entry_price=100.0, exit_price=99.0, scan_result_id=1, status="closed",
                      base_capital=200.0, scan_id="s1", signal_time=_dt("2026-06-05T01:00:00"),
-                     opened_at=_dt("2026-06-05T01:01:00"), closed_at=_dt("2026-06-05T02:00:00")),
+                     opened_at=_dt("2026-06-05T01:01:00"), closed_at=_dt("2026-06-05T02:00:00"),
+                     exchange_closed_pnl=11.0),
                 dict(symbol="B", side="Sell", net_pnl=12.0, close_reason="rule_triggered",
                      entry_price=50.0, exit_price=49.0, scan_result_id=2, status="closed",
                      base_capital=200.0, scan_id="s1", signal_time=_dt("2026-06-05T01:00:00"),
@@ -62,7 +63,8 @@ async def test_replay_runner_builds_comparison_from_fakes():
               "fill_to_max_trades": True, "skip_if_positions_open": True, "min_score": 7,
               "confidence_filter": "any", "signal_sides": "both", "direction": "straight",
               "fee_rate_pct": 0.055, "slippage_bps": 0, "simulation_interval": "5m",
-              "max_price_drift_pct": None, "breakeven_timeout_hours": None}
+              "max_price_drift_pct": None, "breakeven_timeout_hours": None,
+              "starting_capital": 150.0}
 
     result, comparison = await run_replay(
         FakeDA(), kline_cache=None, account_id="acct",
@@ -76,8 +78,11 @@ async def test_replay_runner_builds_comparison_from_fakes():
     assert c0["scan_id"] == "s1"
     assert "live_net_pnl" in c0 and "backtest_net_pnl" in c0 and "delta_pct" in c0
     assert "final_equity_delta_pct" in comparison
-    # result carries engine trades for the normal results dashboard
-    assert "trades" in result
+    # result carries the live ledger for the normal results dashboard; the candle
+    # engine stays in replay_comparison as the diagnostic comparison.
+    assert [t["pnl"] for t in result["trades"]] == [11.0, 12.0]
+    assert result["starting_capital"] == 200.0
+    assert result["equity_curve"][-1]["equity"] == 223.0
     # data-integrity disclosure keys are present
     assert "missing_pins" in comparison and "excluded_trades" in comparison
 
@@ -143,3 +148,63 @@ async def test_replay_runner_uses_run_sync_wrapper():
         base_config=cfg, run_sync=fake_run_sync)
     assert used["called"] is True
     assert comparison["n_cycles"] == 1
+
+
+@pytest.mark.asyncio
+async def test_parity_data_access_warms_klines_before_read():
+    """Selective replay must not silently simulate only already-cached symbols."""
+    from datetime import datetime, timezone
+    from backend.diagnostics.parity.data_access import ParityDataAccess
+
+    class FakeKlineCache:
+        def __init__(self):
+            self.calls = []
+
+        async def ensure_coverage(self, symbols, interval, start, end):
+            self.calls.append(("ensure", tuple(symbols), interval, start, end))
+            return {"cached": len(symbols), "fetched": 0, "failed": 0}
+
+        async def get_klines(self, symbol, interval, start, end):
+            self.calls.append(("get", symbol, interval, start, end))
+            return [{"open_time": start, "open": 1.0, "high": 1.0,
+                     "low": 1.0, "close": 1.0, "volume": 1.0}]
+
+    start = datetime(2026, 6, 5, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 10, tzinfo=timezone.utc)
+    cache = FakeKlineCache()
+
+    klines = await ParityDataAccess(db=None).fetch_klines(
+        cache, ["B", "A", "A"], start, end, "5m")
+
+    assert set(klines) == {"A", "B"}
+    assert cache.calls[0][0] == "ensure"
+    assert cache.calls[0][1] == ("A", "B")
+    assert [c[0] for c in cache.calls[1:]] == ["get", "get"]
+
+
+def test_pin_signals_anchors_to_first_live_open():
+    from datetime import datetime, timezone
+    from backend.diagnostics.parity.models import Cycle, LiveTrade
+    from backend.diagnostics.parity.shim import pin_signals
+
+    scan_time = datetime(2026, 6, 5, 1, 0, tzinfo=timezone.utc)
+    first_open = datetime(2026, 6, 5, 1, 8, tzinfo=timezone.utc)
+    later_open = datetime(2026, 6, 5, 1, 9, tzinfo=timezone.utc)
+    cycles = [Cycle(
+        scan_id="s1",
+        signal_time=scan_time,
+        base_capital=200.0,
+        live_trades=[
+            LiveTrade("A", "Sell", 1.0, "rule_triggered", 100.0, 99.0, 1, later_open, later_open),
+            LiveTrade("B", "Sell", 1.0, "rule_triggered", 50.0, 49.0, 2, first_open, later_open),
+        ],
+    )]
+    signals = [
+        {"scan_id": "s1", "ticker": "A", "direction": "sell", "signal_time": scan_time},
+        {"scan_id": "s1", "ticker": "B", "direction": "sell", "signal_time": scan_time},
+    ]
+
+    pinned = pin_signals(signals, cycles)
+
+    assert len(pinned) == 2
+    assert {s["signal_time"] for s in pinned} == {first_open}

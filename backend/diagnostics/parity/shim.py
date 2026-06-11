@@ -18,8 +18,12 @@ def pin_signals(
     that had no matching signal (a data-integrity surface, never silent).
     """
     pinned_by_scan: dict[str, set[tuple[str, str]]] = {}
+    first_open_by_scan: dict[str, Any] = {}
     for c in cycles:
         pinned_by_scan.setdefault(c.scan_id, set()).update(c.pinned_set)
+        opens = [t.opened_at for t in c.live_trades if t.opened_at is not None]
+        if opens:
+            first_open_by_scan[c.scan_id] = min(opens)
 
     out: list[Mapping[str, Any]] = []
     matched: set[tuple[str, str, str]] = set()
@@ -30,7 +34,14 @@ def pin_signals(
             continue
         key = (s.get("ticker"), str(s.get("direction", "")).lower())
         if key in pins:
-            out.append(s)
+            rec = dict(s)
+            # In selective replay, membership is pinned from live trades. The decision
+            # instant should therefore be the account's actual order-placement cycle,
+            # not the scan completion timestamp, which can precede live entry by
+            # several minutes and produce stale fills on fast-moving symbols.
+            if sid in first_open_by_scan:
+                rec["signal_time"] = first_open_by_scan[sid]
+            out.append(rec)
             matched.add((sid, key[0], key[1]))
 
     if not return_missing:

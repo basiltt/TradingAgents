@@ -486,6 +486,32 @@ class TestBuildFineKlines:
         cache.get_klines.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_schedule_mode_keeps_sparse_lifecycle_windows(self, mock_db):
+        base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        entry_bar = base + timedelta(minutes=5)
+        exit_bar = base + timedelta(minutes=40)
+        ones = [
+            {"open_time": base + timedelta(minutes=m), "open": 1.0,
+             "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}
+            for m in range(0, 60)
+        ]
+        svc, _cache = self._svc_with_cache(mock_db, ones)
+        trades = [{"symbol": "BTCUSDT", "entry_time": entry_bar + timedelta(seconds=30),
+                   "exit_time": exit_bar + timedelta(seconds=10)}]
+
+        out = await svc._build_fine_klines(
+            _make_config(scan_source={"mode": "schedule", "schedule_id": "sched"}),
+            trades,
+        )
+
+        assert int(entry_bar.timestamp()) in out["BTCUSDT"]
+        assert int(exit_bar.timestamp()) in out["BTCUSDT"]
+        assert int((base + timedelta(minutes=25)).timestamp()) not in out["BTCUSDT"], (
+            "Specific Schedule drilldown must stay sparse so 1m data refines fills/exits "
+            "without changing the scan-selection lifecycle"
+        )
+
+    @pytest.mark.asyncio
     async def test_fetch_failure_omits_symbol(self, mock_db):
         base = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
         svc, cache = self._svc_with_cache(mock_db, [])

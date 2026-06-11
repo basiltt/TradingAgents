@@ -23,7 +23,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -59,6 +59,35 @@ _WARMUP_BAND = 10
 _RATE_LIMIT_MAX = 1000
 _RATE_LIMIT_WINDOW_SECONDS = 3600
 
+# Production processes auto-trade configs sequentially after a scan completes.
+# Specific Schedule backtests cannot use account/trade references, so they estimate
+# the wall-clock selector time from the copied scan config list position. The
+# post-scan recheck runs after the batch/fill phases, so it uses the full list size
+# plus the matched config index.
+_SCHEDULE_BATCH_CONFIG_STEP_SECONDS = 20
+_SCHEDULE_RECHECK_CONFIG_STEP_SECONDS = 15
+_KLINE_EXPANSION_PASSES = 4
+
+_AUTO_TRADE_CONFIG_MATCH_KEYS = (
+    "leverage", "direction", "min_score", "max_trades", "capital_pct",
+    "signal_sides", "stop_loss_pct", "execution_mode", "max_same_sector",
+    "take_profit_pct", "max_drawdown_pct", "symbol_blacklist",
+    "symbol_whitelist", "target_goal_type", "confidence_filter",
+    "target_goal_value", "fill_to_max_trades", "max_same_direction",
+    "close_on_profit_pct", "max_price_drift_pct", "trailing_profit_pct",
+    "smart_drawdown_close", "max_signal_age_minutes", "skip_if_positions_open",
+    "breakeven_timeout_hours", "max_trade_duration_hours",
+    "adaptive_blacklist_enabled", "adaptive_blacklist_min_trades",
+    "adaptive_blacklist_max_win_rate", "adaptive_blacklist_lookback_hours",
+    "regime_filter_enabled", "session_filter_enabled",
+    "session_allowed_hours_utc", "session_blocked_hours_utc",
+    "btc_vol_filter_enabled", "btc_vol_interval", "btc_vol_lookback_candles",
+    "btc_vol_min_threshold", "btc_vol_max_threshold", "strategy_cohort",
+    "mean_reversion_enabled", "mr_short_enabled", "mr_long_enabled",
+    "mr_max_trades", "mr_capital_pct", "mr_leverage", "mr_min_edge_pct",
+    "mr_target_capture_pct", "mr_tight_stop_pct", "mr_extreme_min_abs_score",
+    "mr_time_stop_minutes", "mr_mean_period", "mr_mean_interval", "mr_regime",
+)
 
 class BacktestValidationError(Exception):
     """Raised when a backtest request fails validation (maps to HTTP 422)."""
@@ -548,10 +577,849 @@ class BacktestService:
             sampled.sort(key=lambda s: s["x"])
         return [s["_orig"] for s in sampled]
 
+    @staticmethod
+    def _to_symbol(ticker: str) -> str:
+        return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
+
+    async def _prepare_live_selection_context(
+        self,
+        config: dict[str, Any],
+        signals: list[dict[str, Any]],
+        date_range: tuple[datetime, datetime],
+    ) -> None:
+        """Preload the non-price selector inputs live auto-trading has at scan time."""
+        scan_source = config.get("scan_source") or {}
+        mode = scan_source.get("mode")
+
+        # Schedule backtests are the local optimization path: they run from copied
+        # scheduled scan rows and the submitted backtest config only. Do not infer
+        # production accounts, persisted account snapshots, or exact live trade
+        # references here; local strategy tuning must remain account-free and able
+        # to vary selector knobs such as max_trades/TP/SL independently.
+        if mode == "schedule":
+            if config.get("max_same_sector") is not None:
+                config["_sector_map"] = await self._load_sector_map(signals)
+            if config.get("adaptive_blacklist_enabled"):
+                config["_adaptive_blacklist_history"] = await self._load_adaptive_blacklist_history(
+                    config, date_range
+                )
+            return
+
+        # Replay is the explicit account-ground-truth validation mode. It can pin
+        # exact live selections because the caller intentionally supplied an account.
+        account_id = None
+        if mode == "replay":
+            account_id = scan_source.get("replay_account_id") or config.get("replay_account_id")
+        elif config.get("account_id") or config.get("replay_account_id"):
+            account_id = await self._resolve_live_replay_account_id(config)
+
+        if account_id:
+            account_id = str(account_id)
+            config["_live_replay_account_id"] = account_id
+            config["_selection_time_by_scan"] = await self._load_live_selection_times(
+                account_id, date_range
+            )
+            config["_live_selection_by_scan"] = await self._load_live_selection_by_scan(
+                account_id, date_range
+            )
+        if config.get("max_same_sector") is not None:
+            config["_sector_map"] = await self._load_sector_map(signals)
+        if config.get("adaptive_blacklist_enabled"):
+            config["_adaptive_blacklist_history"] = await self._load_adaptive_blacklist_history(
+                config, date_range
+            )
+
+    @staticmethod
+    def _config_values_match(a: Any, b: Any) -> bool:
+        if isinstance(a, list) or isinstance(b, list):
+            return list(a or []) == list(b or [])
+        if isinstance(a, bool) or isinstance(b, bool):
+            return bool(a) == bool(b)
+        if a is None or b is None:
+            return a is None and b is None
+        try:
+            return float(a) == float(b)
+        except (TypeError, ValueError):
+            return str(a) == str(b)
+
+    @classmethod
+    def _config_key_values_match(cls, key: str, a: Any, b: Any) -> bool:
+        if key == "strategy_cohort":
+            a = a or "trend"
+            b = b or "trend"
+        return cls._config_values_match(a, b)
+
+    @staticmethod
+    def _coerce_scan_config(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str) and value:
+            try:
+                parsed = json.loads(value)
+            except Exception:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    def _auto_trade_config_matches(self, submitted: dict[str, Any], candidate: Any) -> bool:
+        """True when a scan snapshot contains the submitted selector config.
+
+        Account identity is deliberately ignored: Specific Schedule must stay
+        account-free. Missing candidate keys are tolerated for old snapshots so newly
+        added default fields do not make historical config snapshots unusable.
+        """
+        if not isinstance(candidate, dict):
+            return False
+        checked = 0
+        for key in _AUTO_TRADE_CONFIG_MATCH_KEYS:
+            if key not in submitted or key not in candidate:
+                continue
+            checked += 1
+            if not self._config_key_values_match(key, submitted.get(key), candidate.get(key)):
+                return False
+        return checked > 0
+
+    def _matching_auto_trade_config_indices(
+        self,
+        submitted: dict[str, Any],
+        candidates: list[Any],
+    ) -> list[int]:
+        return [
+            idx for idx, candidate in enumerate(candidates)
+            if self._auto_trade_config_matches(submitted, candidate)
+        ]
+
+    @staticmethod
+    def _offset_time(value: Any, seconds: int) -> Optional[datetime]:
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value + timedelta(seconds=seconds)
+
+    async def _resolve_schedule_config_scan_filter(
+        self,
+        config: dict[str, Any],
+        date_range: tuple[datetime, datetime],
+    ) -> Optional[dict[str, Any]]:
+        """Account-free scan eligibility from copied scan-time config snapshots.
+
+        When the submitted config appears in scan.config.auto_trade_configs, the
+        backtest should only let those scan rounds seed selector/position state. This
+        prevents a config that became active mid-window from inheriting positions from
+        older scans that live never ran for that config. If no snapshot matches (the
+        user is researching hypothetical numbers), return None and preserve the
+        existing full-window behavior.
+        """
+        scan_source = config.get("scan_source") or {}
+        if scan_source.get("mode") != "schedule" or not scan_source.get("schedule_id"):
+            return None
+
+        start, end = date_range
+        try:
+            rows = await self._db.pool.fetch(
+                """
+                SELECT s.scan_id,
+                       s.started_at::timestamptz AS started_at,
+                       s.completed_at::timestamptz AS completed_at,
+                       s.config,
+                       s.auto_trade_results,
+                       se.status AS schedule_execution_status,
+                       NULLIF(se.completed_at, '')::timestamptz AS schedule_execution_completed_at
+                FROM scans s
+                LEFT JOIN LATERAL (
+                    SELECT status, completed_at, id
+                    FROM schedule_executions
+                    WHERE schedule_id = s.schedule_id
+                      AND scan_id = s.scan_id
+                    ORDER BY
+                        CASE WHEN status = 'completed' THEN 0 ELSE 1 END,
+                        NULLIF(completed_at, '')::timestamptz DESC NULLS LAST,
+                        id DESC
+                    LIMIT 1
+                ) se ON TRUE
+                WHERE s.schedule_id = $1
+                  AND s.started_at::timestamptz >= $2
+                  AND s.started_at::timestamptz <= $3
+                ORDER BY s.started_at::timestamptz
+                """,
+                scan_source.get("schedule_id"),
+                start,
+                end,
+            )
+        except Exception:
+            logger.warning("backtest_schedule_config_filter_load_failed", exc_info=True)
+            return None
+
+        if not rows:
+            return None
+
+        matching: set[str] = set()
+        uninspectable_after_first: set[str] = set()
+        first_match_started_at: Optional[datetime] = None
+        inspectable_count = 0
+        matched_config_indices: dict[str, int] = {}
+        selection_time_by_scan: dict[str, datetime] = {}
+        post_recheck_time_by_scan: dict[str, datetime] = {}
+
+        for row in rows:
+            scan_id = str(row.get("scan_id") or "")
+            if not scan_id:
+                continue
+            scan_config = self._coerce_scan_config(row.get("config"))
+            candidates = scan_config.get("auto_trade_configs") if scan_config else None
+            if not isinstance(candidates, list) or not candidates:
+                if first_match_started_at is not None:
+                    uninspectable_after_first.add(scan_id)
+                continue
+            # schedule_executions.status is advisory only for historical schedule
+            # backtests. Production can mark a schedule execution failed after scanner
+            # trades were already placed, and older copied rows can have empty
+            # auto_trade_results even when live trades exist. If the scan completed and
+            # the config snapshot matches, keep the scan eligible and let the selector
+            # reproduce the trade attempt from scan data.
+            inspectable_count += 1
+            match_indices = self._matching_auto_trade_config_indices(config, candidates)
+            if match_indices:
+                match_index = match_indices[0]
+                matching.add(scan_id)
+                matched_config_indices[scan_id] = match_index
+                completed_at = row.get("completed_at")
+                selection_time = self._offset_time(
+                    completed_at,
+                    (match_index + 1) * _SCHEDULE_BATCH_CONFIG_STEP_SECONDS,
+                )
+                post_recheck_time = self._offset_time(
+                    completed_at,
+                    (len(candidates) + match_index + 1) * _SCHEDULE_RECHECK_CONFIG_STEP_SECONDS,
+                )
+                schedule_execution_completed_at = row.get("schedule_execution_completed_at")
+                if (
+                    row.get("schedule_execution_status") == "completed"
+                    and isinstance(schedule_execution_completed_at, datetime)
+                    and isinstance(completed_at, datetime)
+                    and schedule_execution_completed_at >= completed_at
+                ):
+                    # schedule_executions.completed_at is written after live has run
+                    # batch/fill/post_scan_recheck for the schedule. For account-free
+                    # Specific Schedule rechecks, anchor from that copied end-time and
+                    # walk backwards by the submitted config's position. This keeps the
+                    # local recheck clock close to live without copying account/trade
+                    # references.
+                    remaining_configs = max(1, len(candidates) - match_index)
+                    execution_recheck_time = schedule_execution_completed_at - timedelta(
+                        seconds=remaining_configs * _SCHEDULE_BATCH_CONFIG_STEP_SECONDS
+                    )
+                    if execution_recheck_time >= completed_at:
+                        post_recheck_time = execution_recheck_time
+                if selection_time is not None:
+                    selection_time_by_scan[scan_id] = selection_time
+                if post_recheck_time is not None:
+                    post_recheck_time_by_scan[scan_id] = post_recheck_time
+                started_at = row.get("started_at")
+                if (
+                    isinstance(started_at, datetime)
+                    and (first_match_started_at is None or started_at < first_match_started_at)
+                ):
+                    first_match_started_at = started_at
+
+        if not matching:
+            return None
+
+        eligible = set(matching)
+        eligible.update(uninspectable_after_first)
+        return {
+            "eligible_scan_ids": eligible,
+            "matched_scan_count": len(matching),
+            "eligible_scan_count": len(eligible),
+            "total_scan_count": len(rows),
+            "inspectable_scan_count": inspectable_count,
+            "first_match_started_at": first_match_started_at,
+            "matched_config_indices": matched_config_indices,
+            "selection_time_by_scan": selection_time_by_scan,
+            "post_recheck_time_by_scan": post_recheck_time_by_scan,
+        }
+
+    async def _resolve_live_replay_account_id(self, config: dict[str, Any]) -> str | None:
+        """Resolve the account whose live execution clock should be replayed.
+
+        Prefer an explicit replay/account id. For schedule-sourced backtests created
+        from an account config, older run records do not store account_id; infer it
+        by matching the run config against the schedule's auto_trade_configs.
+        """
+        scan_source = config.get("scan_source") or {}
+        explicit = (
+            scan_source.get("replay_account_id")
+            or config.get("replay_account_id")
+            or config.get("account_id")
+        )
+        if explicit:
+            return str(explicit)
+
+        if scan_source.get("mode") != "schedule" or not scan_source.get("schedule_id"):
+            return None
+
+        try:
+            row = await self._db.pool.fetchrow(
+                "SELECT scan_config FROM scheduled_scans WHERE id = $1",
+                scan_source.get("schedule_id"),
+            )
+        except Exception:
+            logger.warning("backtest_replay_account_infer_failed", exc_info=True)
+            return None
+        if not row:
+            return None
+
+        scan_config = row["scan_config"]
+        if isinstance(scan_config, str):
+            import json as _json
+            try:
+                scan_config = _json.loads(scan_config)
+            except Exception:
+                return None
+        candidates = (scan_config or {}).get("auto_trade_configs") or []
+        matches: list[str] = []
+        for candidate in candidates:
+            if not candidate.get("account_id"):
+                continue
+            if all(
+                key not in config
+                or key not in candidate
+                or self._config_key_values_match(key, config.get(key), candidate.get(key))
+                for key in _AUTO_TRADE_CONFIG_MATCH_KEYS
+            ):
+                matches.append(str(candidate["account_id"]))
+        return matches[0] if len(matches) == 1 else None
+
+    async def _load_live_selection_times(
+        self,
+        account_id: str,
+        date_range: tuple[datetime, datetime],
+    ) -> dict[str, datetime]:
+        start, end = date_range
+        try:
+            rows = await self._db.pool.fetch(
+                """
+                WITH trace_times AS (
+                    SELECT dr.scan_id,
+                           MIN(dat.created_at)::timestamptz AS trace_time
+                    FROM debug_account_traces dat
+                    JOIN debug_runs dr ON dr.id = dat.run_id
+                    WHERE dat.account_id = $1
+                      AND dr.scan_started_at >= $2
+                      AND dr.scan_started_at <= $3
+                    GROUP BY dr.scan_id
+                ),
+                trade_times AS (
+                    SELECT s.scan_id,
+                           MIN(COALESCE(t.opened_at, t.created_at))::timestamptz AS trade_time
+                    FROM trades t
+                    JOIN scan_results sr ON sr.id = t.scan_result_id
+                    JOIN scans s ON s.scan_id = sr.scan_id
+                    WHERE t.account_id = $1
+                      AND COALESCE(t.source, 'scanner') = 'scanner'
+                      AND COALESCE(t.ai_closed, false) = false
+                      AND s.started_at::timestamptz >= $2
+                      AND s.started_at::timestamptz <= $3
+                    GROUP BY s.scan_id
+                )
+                SELECT COALESCE(tt.scan_id, tr.scan_id) AS scan_id,
+                       COALESCE(tr.trade_time, tt.trace_time)::timestamptz AS selection_time
+                FROM trace_times tt
+                FULL OUTER JOIN trade_times tr ON tr.scan_id = tt.scan_id
+                """,
+                account_id,
+                start,
+                end,
+            )
+        except Exception:
+            logger.warning("backtest_live_selection_times_load_failed", exc_info=True)
+            try:
+                rows = await self._db.pool.fetch(
+                    """
+                    SELECT s.scan_id,
+                           MIN(COALESCE(t.opened_at, t.created_at))::timestamptz AS selection_time
+                    FROM trades t
+                    JOIN scan_results sr ON sr.id = t.scan_result_id
+                    JOIN scans s ON s.scan_id = sr.scan_id
+                    WHERE t.account_id = $1
+                      AND COALESCE(t.source, 'scanner') = 'scanner'
+                      AND COALESCE(t.ai_closed, false) = false
+                      AND s.started_at::timestamptz >= $2
+                      AND s.started_at::timestamptz <= $3
+                    GROUP BY s.scan_id
+                    """,
+                    account_id,
+                    start,
+                    end,
+                )
+            except Exception:
+                logger.warning("backtest_live_trade_selection_times_load_failed", exc_info=True)
+                return {}
+        return {
+            str(row["scan_id"]): row["selection_time"]
+            for row in rows
+            if row.get("scan_id") and row.get("selection_time")
+        }
+
+    async def _load_live_selection_by_scan(
+        self,
+        account_id: str,
+        date_range: tuple[datetime, datetime],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Load the exact symbols live selected for an account per scan.
+
+        Debug traces identify scans where the account ran but selected nothing; trade
+        rows identify the symbols live actually placed. This keeps schedule-mode
+        backtests pinned to the same trade membership as live when a historical
+        account can be resolved, while generic backtests still use the pure selector.
+        """
+        start, end = date_range
+        selected: dict[str, list[dict[str, Any]]] = {}
+        try:
+            trace_rows = await self._db.pool.fetch(
+                """
+                SELECT DISTINCT dr.scan_id
+                FROM debug_account_traces dat
+                JOIN debug_runs dr ON dr.id = dat.run_id
+                JOIN scans s ON s.scan_id = dr.scan_id
+                WHERE dat.account_id = $1
+                  AND s.started_at::timestamptz >= $2
+                  AND s.started_at::timestamptz <= $3
+                """,
+                account_id,
+                start,
+                end,
+            )
+            for row in trace_rows:
+                if row.get("scan_id"):
+                    selected.setdefault(str(row["scan_id"]), [])
+        except Exception:
+            logger.warning("backtest_live_selection_trace_load_failed", exc_info=True)
+
+        try:
+            trade_rows = await self._db.pool.fetch(
+                """
+                SELECT s.scan_id,
+                       t.symbol,
+                       t.side,
+                       COALESCE(t.opened_at, t.created_at)::timestamptz AS opened_at
+                FROM trades t
+                JOIN scan_results sr ON sr.id = t.scan_result_id
+                JOIN scans s ON s.scan_id = sr.scan_id
+                WHERE t.account_id = $1
+                  AND COALESCE(t.source, 'scanner') = 'scanner'
+                  AND COALESCE(t.ai_closed, false) = false
+                  AND s.started_at::timestamptz >= $2
+                  AND s.started_at::timestamptz <= $3
+                ORDER BY s.scan_id, COALESCE(t.opened_at, t.created_at), t.id
+                """,
+                account_id,
+                start,
+                end,
+            )
+        except Exception:
+            logger.warning("backtest_live_selection_trades_load_failed", exc_info=True)
+            return selected
+
+        for row in trade_rows:
+            scan_id = row.get("scan_id")
+            symbol = row.get("symbol")
+            if not scan_id or not symbol:
+                continue
+            selected.setdefault(str(scan_id), []).append({
+                "symbol": str(symbol),
+                "side": row.get("side"),
+                "opened_at": row.get("opened_at"),
+            })
+        return selected
+
+    async def _load_sector_map(self, signals: list[dict[str, Any]]) -> dict[str, str]:
+        symbols = sorted({self._to_symbol(s.get("ticker", "")) for s in signals if s.get("ticker")})
+        if not symbols:
+            return {}
+
+        sector_map: dict[str, str] = {}
+        try:
+            rows = await self._db.pool.fetch(
+                "SELECT symbol, sector FROM symbol_sectors WHERE symbol = ANY($1)",
+                symbols,
+            )
+            for row in rows:
+                record = dict(row)
+                if record.get("symbol") and record.get("sector"):
+                    sector_map[record["symbol"]] = record["sector"]
+        except Exception:
+            logger.warning("backtest_sector_map_load_failed", exc_info=True)
+
+        from backend.services.sector_map import _SECTOR_MAP
+        for symbol in symbols:
+            if symbol in _SECTOR_MAP:
+                sector_map.setdefault(symbol, _SECTOR_MAP[symbol])
+        return sector_map
+
+    async def _load_adaptive_blacklist_history(
+        self,
+        config: dict[str, Any],
+        date_range: tuple[datetime, datetime],
+    ) -> list[dict[str, Any]]:
+        """Load DB history so adaptive blacklist can be computed per scan time."""
+        lookback_hours = config.get("adaptive_blacklist_lookback_hours", 48)
+        start, end = date_range
+        history_start = start - timedelta(hours=lookback_hours)
+        is_schedule = (config.get("scan_source") or {}).get("mode") == "schedule"
+        try:
+            rows = await self._db.pool.fetch(
+                "SELECT symbol, is_win, closed_at::timestamptz AS closed_at, "
+                "strategy_kind "
+                "FROM backtest_adaptive_blacklist_history "
+                "WHERE closed_at::timestamptz > $1 "
+                "AND closed_at::timestamptz <= $2 "
+                "AND strategy_kind = ANY($3)",
+                history_start,
+                end,
+                ["trend", "mean_reversion"],
+            )
+            if rows and "is_win" not in dict(rows[0]):
+                rows = []
+            if rows or is_schedule:
+                return [
+                    {
+                        "symbol": row["symbol"],
+                        "is_win": bool(row["is_win"]),
+                        "closed_at": row["closed_at"],
+                        "strategy_kind": row.get("strategy_kind") or "trend",
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            # Older local DBs may not have the sanitized copy table yet. Fall back to
+            # the legacy live tables when present. Schedule mode deliberately does
+            # not use those account/trade tables; it must remain portable to local
+            # scan-only copies.
+            logger.debug("backtest_adaptive_blacklist_copy_history_unavailable", exc_info=True)
+            if is_schedule:
+                return []
+
+        try:
+            rows = await self._db.pool.fetch(
+                "SELECT sp.symbol AS symbol, sp.is_win AS is_win, "
+                "sp.closed_at::timestamptz AS closed_at, t.strategy_kind AS strategy_kind "
+                "FROM signal_performance sp "
+                "JOIN trades t ON t.id = sp.trade_id "
+                "WHERE sp.closed_at::timestamptz > $1 "
+                "AND sp.closed_at::timestamptz <= $2 "
+                "AND t.strategy_kind = ANY($3)",
+                history_start,
+                end,
+                ["trend", "mean_reversion"],
+            )
+            history = []
+            for row in rows:
+                record = dict(row)
+                history.append({
+                    "symbol": record["symbol"],
+                    "is_win": bool(record["is_win"]),
+                    "closed_at": record["closed_at"],
+                    "strategy_kind": record.get("strategy_kind") or "trend",
+                })
+            return history
+        except Exception:
+            logger.warning("backtest_adaptive_blacklist_history_load_failed", exc_info=True)
+            return []
+
+    @staticmethod
+    def _parse_candidate_time(value: Any) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, str) and value:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return None
+
+    @staticmethod
+    def _candidate_confidence_ok(confidence: Any, required_filter: Any) -> bool:
+        if required_filter in (None, "", "any"):
+            return True
+        levels = {"high": 3, "moderate": 2, "low": 1, "none": 0}
+        required = levels.get(str(required_filter).lower(), 0)
+        actual = levels.get(str(confidence or "none").lower(), 0)
+        return actual >= required
+
+    @classmethod
+    def _candidate_passes_price_free_filters(
+        cls,
+        config: dict[str, Any],
+        signal: dict[str, Any],
+        current_time: Optional[datetime],
+        *,
+        relaxed: bool,
+    ) -> bool:
+        """Cheap subset of the live selector used only to choose kline symbols.
+
+        The real engine still applies the full filter chain. This only removes
+        symbols the engine cannot reach without needing candle data, so cold-cache
+        schedule backtests do not warm hundreds of irrelevant scan symbols first.
+        """
+        ticker = signal.get("ticker") or ""
+        if not ticker:
+            return False
+
+        symbol = cls._to_symbol(ticker)
+        blacklist = config.get("symbol_blacklist") or []
+        if blacklist and symbol in blacklist:
+            return False
+        whitelist = config.get("symbol_whitelist")
+        if whitelist and symbol not in whitelist:
+            return False
+
+        direction = str(signal.get("direction") or "").lower()
+        if direction == "hold":
+            return False
+
+        signal_sides = config.get("signal_sides", "both")
+        if signal_sides != "both":
+            side_filter = str(signal_sides).lower()
+            if side_filter in ("buy", "long") and direction not in ("buy", "long"):
+                return False
+            if side_filter in ("sell", "short") and direction not in ("sell", "short"):
+                return False
+
+        max_age = config.get("max_signal_age_minutes")
+        if max_age is not None and current_time is not None:
+            age_anchor = (
+                signal.get("completed_at")
+                or signal.get("analysis_completed_at")
+                or signal.get("signal_time")
+            )
+            age_anchor = cls._parse_candidate_time(age_anchor)
+            if age_anchor is not None:
+                try:
+                    if (current_time - age_anchor).total_seconds() / 60 > float(max_age):
+                        return False
+                except (TypeError, ValueError):
+                    pass
+
+        if not relaxed:
+            try:
+                if abs(float(signal.get("score") or 0.0)) < float(config.get("min_score", 0.0)):
+                    return False
+            except (TypeError, ValueError):
+                return False
+            if not cls._candidate_confidence_ok(signal.get("confidence"), config.get("confidence_filter", "any")):
+                return False
+
+        return True
+
+    @classmethod
+    def _candidate_limit_per_scan(cls, config: dict[str, Any], unique_count: int) -> int:
+        if unique_count <= 0:
+            return 0
+        try:
+            max_trades = int(config.get("max_trades", 999))
+        except (TypeError, ValueError):
+            max_trades = 999
+        if max_trades <= 0:
+            return 0
+        if max_trades >= 100:
+            return unique_count
+        # Warm only the first selector slice up front. Price/position-dependent gates
+        # can force the engine to reach lower-ranked candidates; those are discovered
+        # by the bounded expansion pass after the first dry run and warmed on demand.
+        return min(unique_count, max_trades)
+
+    @classmethod
+    def _select_price_free_candidates(
+        cls,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        current_time: Optional[datetime],
+        *,
+        selection_mode: str,
+    ) -> list[dict[str, Any]]:
+        from backend.services.backtest_engine import BacktestEngine
+
+        if not scan_signals:
+            return []
+        execution_mode = config.get("execution_mode", "immediate")
+        if selection_mode in ("batch", "post_scan_recheck"):
+            deduped: dict[str, dict[str, Any]] = {}
+            for sig in scan_signals:
+                deduped[sig["ticker"]] = sig
+            ordered = list(deduped.values())
+            if selection_mode == "post_scan_recheck":
+                ordered.sort(key=BacktestEngine._post_recheck_sort_key)
+            else:
+                ordered.sort(key=BacktestEngine._rank_key, reverse=True)
+        elif execution_mode == "batch":
+            deduped = {}
+            for sig in scan_signals:
+                deduped[sig["ticker"]] = sig
+            ordered = list(deduped.values())
+            ordered.sort(key=BacktestEngine._rank_key, reverse=True)
+        else:
+            ordered = list(scan_signals)
+
+        limit = cls._candidate_limit_per_scan(config, len(ordered))
+        strict_all = [
+            sig for sig in ordered
+            if cls._candidate_passes_price_free_filters(config, sig, current_time, relaxed=False)
+        ]
+        strict = strict_all[:limit]
+        if not config.get("fill_to_max_trades"):
+            return strict
+        try:
+            max_trades = int(config.get("max_trades", 999))
+        except (TypeError, ValueError):
+            max_trades = limit
+        if len(strict_all) >= max_trades:
+            return strict
+
+        open_like = {BacktestEngine._to_symbol(s["ticker"]) for s in strict if s.get("ticker")}
+        relaxed = [
+            sig for sig in ordered
+            if sig.get("ticker")
+            and BacktestEngine._to_symbol(sig["ticker"]) not in open_like
+            and cls._candidate_passes_price_free_filters(config, sig, current_time, relaxed=True)
+        ]
+        relaxed.sort(key=BacktestEngine._fill_rank_key, reverse=True)
+        relaxed_slots = max(0, max_trades - len(strict_all))
+        return strict + relaxed[:max(0, min(limit, relaxed_slots))]
+
+    @classmethod
+    def _derive_required_kline_symbols(
+        cls,
+        config: dict[str, Any],
+        signals: list[dict[str, Any]],
+    ) -> Optional[set[str]]:
+        """Return the kline symbol subset reachable by account-free trade picking.
+
+        None means "do not reduce" for configs whose route depends on extra market
+        context not represented by the price-free selector.
+        """
+        if not signals:
+            return set()
+        if (
+            config.get("regime_filter_enabled")
+            or config.get("mean_reversion_enabled")
+            or config.get("strategy_cohort") == "mean_reversion"
+            or config.get("_live_selection_by_scan")
+        ):
+            return None
+
+        from collections import defaultdict
+
+        scans: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for sig in signals:
+            if sig.get("ticker"):
+                scans[str(sig.get("scan_id") or "")].append(sig)
+
+        required: set[str] = set()
+        selection_times = config.get("_schedule_selection_time_by_scan") or {}
+        recheck_times = config.get("_schedule_post_scan_recheck_time_by_scan") or {}
+        for scan_id, scan_signals in scans.items():
+            default_time = cls._parse_candidate_time(scan_signals[0].get("signal_time"))
+            selection_time = cls._parse_candidate_time(selection_times.get(scan_id)) or default_time
+            recheck_time = cls._parse_candidate_time(recheck_times.get(scan_id)) or selection_time
+            normal = cls._select_price_free_candidates(
+                config,
+                scan_signals,
+                selection_time,
+                selection_mode=config.get("execution_mode", "immediate"),
+            )
+            for sig in normal:
+                if sig.get("ticker"):
+                    required.add(sig["ticker"])
+            if config.get("skip_if_positions_open"):
+                recheck = cls._select_price_free_candidates(
+                    config,
+                    scan_signals,
+                    recheck_time,
+                    selection_mode="post_scan_recheck",
+                )
+                for sig in recheck:
+                    if sig.get("ticker"):
+                        required.add(sig["ticker"])
+
+        return required
+
+    @classmethod
+    def _required_kline_symbols_for(
+        cls,
+        config: dict[str, Any],
+        signals: list[dict[str, Any]],
+    ) -> list[str]:
+        if "_required_kline_symbols" in config:
+            required = config.get("_required_kline_symbols") or []
+            return sorted({str(sym) for sym in required if sym})
+        return sorted({s["ticker"] for s in signals if s.get("ticker")})
+
+    async def _resolve_schedule_warmup_start(self, config: dict[str, Any]) -> datetime:
+        """Find an optional account-free schedule warm-up start before the window.
+
+        This is opt-in because local strategy tuning often starts at a known config
+        change date. Enabling it replays earlier copied scans from the same schedule
+        to approximate carried selector/position state without accounts or trades.
+        """
+        scan_source = config.get("scan_source") or {}
+        if scan_source.get("mode") != "schedule" or not scan_source.get("schedule_id"):
+            return config["date_range_start"]
+
+        requested_start = config["date_range_start"]
+        try:
+            max_trade_hours = float(config.get("max_trade_duration_hours") or 0)
+        except (TypeError, ValueError):
+            max_trade_hours = 0.0
+        try:
+            breakeven_hours = float(config.get("breakeven_timeout_hours") or 0)
+        except (TypeError, ValueError):
+            breakeven_hours = 0.0
+        try:
+            adaptive_hours = float(config.get("adaptive_blacklist_lookback_hours") or 0)
+        except (TypeError, ValueError):
+            adaptive_hours = 0.0
+
+        warmup_days = max(
+            7,
+            int((max_trade_hours + 23) // 24) + 2,
+            int((breakeven_hours + 23) // 24) + 2,
+            int((adaptive_hours + 23) // 24) + 1,
+        )
+        warmup_days = max(0, min(warmup_days, 30))
+        if warmup_days <= 0:
+            return requested_start
+
+        candidate_start = requested_start - timedelta(days=warmup_days)
+        try:
+            row = await self._db.pool.fetchrow(
+                """
+                SELECT MIN(started_at)::timestamptz AS warmup_start
+                FROM scans
+                WHERE schedule_id = $1
+                  AND started_at::timestamptz >= $2
+                  AND started_at::timestamptz < $3
+                """,
+                scan_source.get("schedule_id"),
+                candidate_start,
+                requested_start,
+            )
+        except Exception:
+            logger.warning("backtest_schedule_warmup_start_failed", exc_info=True)
+            return requested_start
+
+        warmup_start = row.get("warmup_start") if row else None
+        if warmup_start and warmup_start < requested_start:
+            return warmup_start
+        return requested_start
+
     async def _load_signals(
         self,
         scan_source: dict[str, Any],
         date_range: tuple[datetime, datetime],
+        config: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """Load historical scan result signals for the backtest engine.
 
@@ -560,34 +1428,39 @@ class BacktestService:
         - "date_range": Load all scan results within date range (any scanner)
         - "explicit": Load scan results from specific scan IDs
 
-        The query JOINs scan_results with scans to get signal timestamps,
-        since scan_results has no timestamp column itself.
-
         signal_time is anchored to the scan's COMPLETED_AT (the moment production
         actually placed the trade — execute_batch runs after the full per-ticker
         analysis finishes), NOT started_at. Anchoring at scan start would enter every
         trade at a pre-analysis price the live account never got (the scan takes
         minutes), systematically inflating PnL. COALESCE falls back to started_at for
         any legacy scan missing completed_at. The date-range WHERE still filters on
-        started_at (the user picks the window by when scans RAN). On equal abs(score)
-        the per-symbol analysis completed_at (from analysis_runs) breaks the tie,
-        DESC (latest-analyzed first) — mirroring production auto_trade_service's
-        `sorted(key=lambda r: (abs(score), completed_at), reverse=True)`, so the
-        backtest selects the SAME top-N symbols a live cycle would. sr.id is a final
-        tiebreak for determinism when completed_at is equal/NULL.
+        started_at (the user picks the window by when scans RAN).
+
+        Per-result completed_at is loaded from scan_results because live ranks on
+        result["completed_at"]. Historical rows that have NULL scan_results.completed_at
+        must keep completed_at=NULL: those live result objects did not have the
+        timestamp tie-breaker either, so equal-score candidates kept scan insertion
+        order. analysis_runs.completed_at remains available as separate diagnostic
+        data, but it must not be promoted into completed_at for selection.
 
         Returns:
-            List of signal dicts with: id, ticker, direction, confidence,
-            score, signal_time, scan_id, signal_source, analysis_price.
+            List of signal dicts with: id, ticker, direction, confidence, score,
+            signal_time, completed_at, analysis_completed_at, scan_id,
+            signal_source, analysis_price.
         """
         mode = scan_source.get("mode", "date_range")
         start, end = date_range
+        schedule_config_filter = None
+        if mode == "schedule" and config is not None:
+            schedule_config_filter = await self._resolve_schedule_config_scan_filter(config, date_range)
 
         if mode == "schedule":
             schedule_id = scan_source.get("schedule_id")
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
                        COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+                       s.started_at::timestamptz AS scan_started_at,
+                       sr.completed_at::timestamptz AS completed_at,
                        ar.completed_at::timestamptz AS analysis_completed_at,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
@@ -598,7 +1471,7 @@ class BacktestService:
                   AND s.started_at::timestamptz <= $3
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
+                ORDER BY signal_time, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, schedule_id, start, end)
@@ -608,6 +1481,8 @@ class BacktestService:
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
                        COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+                       s.started_at::timestamptz AS scan_started_at,
+                       sr.completed_at::timestamptz AS completed_at,
                        ar.completed_at::timestamptz AS analysis_completed_at,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
@@ -616,7 +1491,7 @@ class BacktestService:
                 WHERE s.scan_id = ANY($1)
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
+                ORDER BY signal_time, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, scan_ids)
@@ -625,6 +1500,8 @@ class BacktestService:
             query = f"""
                 SELECT sr.id, sr.ticker, sr.direction, sr.confidence, sr.score,
                        COALESCE(s.completed_at, s.started_at)::timestamptz AS signal_time,
+                       s.started_at::timestamptz AS scan_started_at,
+                       sr.completed_at::timestamptz AS completed_at,
                        ar.completed_at::timestamptz AS analysis_completed_at,
                        s.scan_id, sr.signal_source, sr.analysis_price
                 FROM scan_results sr
@@ -634,27 +1511,71 @@ class BacktestService:
                   AND s.started_at::timestamptz <= $2
                   AND sr.status = 'completed'
                   AND sr.direction IN ('buy', 'sell')
-                ORDER BY signal_time, ABS(sr.score) DESC, ar.completed_at DESC NULLS LAST, sr.id
+                ORDER BY signal_time, sr.id
                 LIMIT {_MAX_SIGNALS}
             """
             rows = await self._db.pool.fetch(query, start, end)
 
         # Convert asyncpg Records to plain dicts
-        signals = [
-            {
-                "id": row["id"],
-                "ticker": row["ticker"],
-                "direction": row["direction"],
-                "confidence": row["confidence"],
-                "score": row["score"],
-                "signal_time": row["signal_time"],
-                "analysis_completed_at": row.get("analysis_completed_at"),
-                "scan_id": row["scan_id"],
-                "signal_source": row.get("signal_source", "unknown"),
-                "analysis_price": float(row["analysis_price"]) if row.get("analysis_price") else None,
+        signals = []
+        for row in rows:
+            record = dict(row)
+            signals.append({
+                "id": record["id"],
+                "ticker": record["ticker"],
+                "direction": record["direction"],
+                "confidence": record["confidence"],
+                "score": record["score"],
+                "signal_time": record["signal_time"],
+                "scan_started_at": record.get("scan_started_at"),
+                # Preserve the live selector field exactly. If historical
+                # scan_results.completed_at is NULL, live had no timestamp tie-breaker
+                # and no max-signal-age timestamp for that result.
+                "completed_at": record.get("completed_at"),
+                "analysis_completed_at": record.get("analysis_completed_at"),
+                "scan_id": record["scan_id"],
+                "signal_source": record.get("signal_source", "unknown"),
+                "analysis_price": float(record["analysis_price"]) if record.get("analysis_price") else None,
+            })
+
+        if schedule_config_filter is not None:
+            eligible_scan_ids = schedule_config_filter.get("eligible_scan_ids") or set()
+            before_scan_ids = {str(s["scan_id"]) for s in signals if s.get("scan_id")}
+            signals = [
+                s for s in signals
+                if str(s.get("scan_id") or "") in eligible_scan_ids
+            ]
+            after_scan_ids = {str(s["scan_id"]) for s in signals if s.get("scan_id")}
+            config["_schedule_config_filter"] = {
+                "matched_scan_count": schedule_config_filter.get("matched_scan_count", 0),
+                "eligible_scan_count": schedule_config_filter.get("eligible_scan_count", 0),
+                "total_scan_count": schedule_config_filter.get("total_scan_count", 0),
+                "inspectable_scan_count": schedule_config_filter.get("inspectable_scan_count", 0),
+                "filtered_scan_count": max(0, len(before_scan_ids) - len(after_scan_ids)),
+                "filtered_signal_count": max(0, len(rows) - len(signals)),
+                "first_match_started_at": (
+                    schedule_config_filter["first_match_started_at"].isoformat()
+                    if isinstance(schedule_config_filter.get("first_match_started_at"), datetime)
+                    else None
+                ),
+                "matched_config_indices": dict(
+                    schedule_config_filter.get("matched_config_indices") or {}
+                ),
             }
-            for row in rows
-        ]
+            selection_time_by_scan = schedule_config_filter.get("selection_time_by_scan") or {}
+            post_recheck_time_by_scan = schedule_config_filter.get("post_recheck_time_by_scan") or {}
+            if selection_time_by_scan:
+                config["_schedule_selection_time_by_scan"] = {
+                    str(scan_id): ts.isoformat()
+                    for scan_id, ts in selection_time_by_scan.items()
+                    if str(scan_id) in after_scan_ids and isinstance(ts, datetime)
+                }
+            if post_recheck_time_by_scan:
+                config["_schedule_post_scan_recheck_time_by_scan"] = {
+                    str(scan_id): ts.isoformat()
+                    for scan_id, ts in post_recheck_time_by_scan.items()
+                    if str(scan_id) in after_scan_ids and isinstance(ts, datetime)
+                }
 
         logger.info(
             "backtest_signals_loaded",
@@ -787,6 +1708,18 @@ class BacktestService:
                 await self._persist_results(run_id, sim, replay_comparison=comparison)
                 return
 
+            def _on_timeout() -> None:
+                timed_out.set()
+                cancel_event.set()
+
+            def _start_timeout() -> None:
+                nonlocal timer
+                if timer is not None:
+                    return
+                timer = threading.Timer(_TIMEOUT_SECONDS, _on_timeout)
+                timer.daemon = True
+                timer.start()
+
             # Progress plumbing — defined up-front so the cache warm-up (below) can
             # report into the reserved warm-up band. `loop` is the running event loop
             # (engine progress callbacks hop to it from pool threads); progress_state
@@ -795,18 +1728,68 @@ class BacktestService:
             loop = asyncio.get_running_loop()
             progress_state = {"last": 0}
 
+            simulation_config = config
+            if config.get("schedule_warmup_enabled"):
+                warmup_start = await self._resolve_schedule_warmup_start(config)
+                if warmup_start < config["date_range_start"]:
+                    simulation_config = dict(config)
+                    simulation_config["date_range_start"] = warmup_start
+                    simulation_config["_report_start"] = config["date_range_start"]
+                    simulation_config["_report_end"] = config["date_range_end"]
+                    simulation_config["_schedule_warmup_start"] = warmup_start
+                    logger.info(
+                        "backtest_schedule_warmup_enabled",
+                        extra={
+                            "run_id": run_id,
+                            "warmup_start": warmup_start.isoformat(),
+                            "report_start": config["date_range_start"].isoformat(),
+                        },
+                    )
+
             self._emit_stage(run_id, "loading_signals", "Loading scan signals", pct=0)
             signals = await self._load_signals(
-                config.get("scan_source", {}),
-                (config["date_range_start"], config["date_range_end"]),
+                simulation_config.get("scan_source", {}),
+                (simulation_config["date_range_start"], simulation_config["date_range_end"]),
+                simulation_config,
             )
+            if cancel_event.is_set():
+                raise BacktestCancelled
+            await self._prepare_live_selection_context(
+                simulation_config,
+                signals,
+                (simulation_config["date_range_start"], simulation_config["date_range_end"]),
+            )
+            if cancel_event.is_set():
+                raise BacktestCancelled
+
+            required_symbols = self._derive_required_kline_symbols(simulation_config, signals)
+            raw_symbols = sorted({s["ticker"] for s in signals if s.get("ticker")})
+            if required_symbols is not None and set(required_symbols) != set(raw_symbols):
+                simulation_config = dict(simulation_config)
+                simulation_config["_required_kline_symbols"] = sorted(required_symbols)
+                logger.info(
+                    "backtest_kline_symbol_set_reduced",
+                    extra={
+                        "run_id": run_id,
+                        "required_symbols": len(required_symbols),
+                        "raw_symbols": len(raw_symbols),
+                    },
+                )
             # Bound total kline memory BEFORE loading (symbols × candles-per-symbol)
             # so a many-symbol long-range backtest can't OOM the process.
-            self._check_total_kline_budget(config, signals)
-            n_symbols_needed = len({s["ticker"] for s in signals})
+            self._check_total_kline_budget(simulation_config, signals)
+            n_symbols_needed = len(raw_symbols)
+            n_required_symbols = len(self._required_kline_symbols_for(simulation_config, signals))
             self._emit_stage(
                 run_id, "loading_signals", "Loaded scan signals",
-                detail=f"{len(signals)} signals · {n_symbols_needed} symbols",
+                detail=(
+                    f"{len(signals)} signals · {n_symbols_needed} symbols"
+                    if n_required_symbols == n_symbols_needed
+                    else (
+                        f"{len(signals)} signals · {n_required_symbols} candidate symbols "
+                        f"from {n_symbols_needed} scan symbols"
+                    )
+                ),
                 pct=2, status="done",
             )
 
@@ -822,11 +1805,16 @@ class BacktestService:
             # signal still lacking a candle at its fill time.
             if self._kline_cache is not None:
                 try:
-                    symbols = sorted({s["ticker"] for s in signals})
-                    interval = config.get("simulation_interval", "5m")
+                    symbols = self._required_kline_symbols_for(simulation_config, signals)
+                    interval = simulation_config.get("simulation_interval", "5m")
                     self._emit_stage(
                         run_id, "warming_cache", "Warming price-data cache",
-                        detail=f"{len(symbols)} symbols", pct=2,
+                        detail=(
+                            f"{len(symbols)} symbols"
+                            if len(symbols) == n_symbols_needed
+                            else f"{len(symbols)} candidate symbols from {n_symbols_needed} scan symbols"
+                        ),
+                        pct=2,
                     )
                     # Warm-up owns the first WARMUP_BAND% of the progress bar so the bar
                     # ADVANCES during the (potentially slow) fetch instead of freezing at
@@ -841,9 +1829,14 @@ class BacktestService:
 
                     cov = await self._kline_cache.ensure_coverage(
                         symbols, interval,
-                        config["date_range_start"], config["date_range_end"],
+                        simulation_config.get("_report_start", simulation_config["date_range_start"]),
+                        simulation_config["date_range_end"],
                         on_progress=_warm_progress,
+                        cancel_check=cancel_event.is_set,
+                        max_concurrency=12,
                     )
+                    if cancel_event.is_set():
+                        raise BacktestCancelled
                     logger.info("backtest_cache_warmed", extra={"run_id": run_id, **(cov or {})})
                     _fetched = (cov or {}).get("fetched", 0)
                     self._emit_stage(
@@ -853,12 +1846,16 @@ class BacktestService:
                         pct=_WARMUP_BAND, status="done",
                     )
                 except Exception:  # noqa: BLE001 — warming is best-effort, never fatal
+                    if cancel_event.is_set() or timed_out.is_set():
+                        raise BacktestCancelled
                     logger.warning("backtest_cache_warm_failed", extra={"run_id": run_id}, exc_info=False)
                     self._emit_stage(run_id, "warming_cache", "Cache warm-up skipped",
                                      detail="proceeding with cached data", pct=_WARMUP_BAND, status="done")
 
             self._emit_stage(run_id, "loading_klines", "Loading price data into memory", pct=_WARMUP_BAND)
-            klines = await self._load_klines(config, signals)
+            klines = await self._load_klines(simulation_config, signals)
+            if cancel_event.is_set():
+                raise BacktestCancelled
             self._emit_stage(
                 run_id, "loading_klines", "Price data loaded",
                 detail=f"{len(klines)} symbols", pct=_WARMUP_BAND, status="done",
@@ -871,20 +1868,16 @@ class BacktestService:
             # backtest would be misleading (most signals un-simulatable). Fail it
             # with a clear message rather than silently producing garbage. The
             # frontend can pre-check via GET /backtest-cache/status to avoid this.
-            self._check_kline_coverage(signals, klines)
+            self._check_kline_coverage(
+                signals,
+                klines,
+                set(self._required_kline_symbols_for(simulation_config, signals)),
+            )
 
             # Regime Multi-Strategy (F1/F2/F3): build per-scan ScanContexts so the
             # engine can replay session/vol gating + MR routing/means. Returns {} (no
             # extra fetches) unless a regime feature is enabled — default-off stays free.
-            scan_contexts = await self._build_scan_contexts(config, signals)
-
-            def _on_timeout() -> None:
-                timed_out.set()
-                cancel_event.set()
-
-            timer = threading.Timer(_TIMEOUT_SECONDS, _on_timeout)
-            timer.daemon = True
-            timer.start()
+            scan_contexts = await self._build_scan_contexts(simulation_config, signals)
 
             def _make_progress_cb(band_lo: int, band_hi: int):
                 """Build an engine progress callback scoped to the [band_lo, band_hi]
@@ -915,6 +1908,23 @@ class BacktestService:
             instrument_info = await self._resolve_instrument_info(signals)
 
             engine = BacktestEngine()
+            klines = await self._expand_reached_kline_symbols(
+                run_id,
+                simulation_config,
+                signals,
+                klines,
+                cancel_event,
+                instrument_info,
+                scan_contexts,
+            )
+            if cancel_event.is_set():
+                raise BacktestCancelled
+            self._check_kline_coverage(
+                signals,
+                klines,
+                set(self._required_kline_symbols_for(simulation_config, signals)),
+            )
+            _start_timeout()
 
             # ── 1-minute DRILL-DOWN (two-phase) ──
             # The engine computes each trade's entry/exit + tp/sl internally, so the
@@ -940,12 +1950,12 @@ class BacktestService:
                                  detail="resolving entry/exit bars", pct=_WARMUP_BAND)
                 phase_a = await loop.run_in_executor(
                     self._executor,
-                    lambda: engine.run(config, signals, klines, cancel_event, phase_a_cb, instrument_info, scan_contexts),
+                    lambda: engine.run(simulation_config, signals, klines, cancel_event, phase_a_cb, instrument_info, scan_contexts),
                 )
                 if not (cancel_event.is_set() or timed_out.is_set()):
                     self._emit_stage(run_id, "drilldown", "Refining fills (1-minute drill-down)",
                                      detail=f"{len(phase_a.trades or [])} trades", pct=_mid)
-                    fine_klines = await self._build_fine_klines(config, phase_a.trades or [])
+                    fine_klines = await self._build_fine_klines(simulation_config, phase_a.trades or [])
                 phase_b_cb = _make_progress_cb(_mid, 100)
                 self._emit_stage(run_id, "simulating", "Simulating trades (pass 2/2)",
                                  detail="applying drilled fills", pct=_mid)
@@ -956,19 +1966,21 @@ class BacktestService:
 
             result = await loop.run_in_executor(
                 self._executor,
-                lambda: engine.run(config, signals, klines, cancel_event, phase_b_cb, instrument_info, scan_contexts, fine_klines or None),
+                lambda: engine.run(simulation_config, signals, klines, cancel_event, phase_b_cb, instrument_info, scan_contexts, fine_klines or None),
             )
             engine_done = True
+            schedule_filter = simulation_config.get("_schedule_config_filter") or {}
+            if schedule_filter and result.warnings is not None:
+                filtered_scans = int(schedule_filter.get("filtered_scan_count") or 0)
+                if filtered_scans:
+                    result.warnings.append(
+                        "schedule_config_filter_applied_"
+                        f"{schedule_filter.get('eligible_scan_count', 0)}_of_"
+                        f"{schedule_filter.get('total_scan_count', 0)}_scans"
+                    )
             # Tell the consumer drill-down actually ran (and on how many trades).
             if fine_klines and result.warnings is not None:
                 result.warnings.append(f"drilldown_applied_{len(fine_klines)}_symbols")
-
-            # Surface config knobs the engine cannot honor so results aren't
-            # silently misleading. max_same_sector needs the IO-bound sector
-            # service (unavailable to the pure engine), so live trading enforces it
-            # but the backtest does not — warn when the user set it.
-            if config.get("max_same_sector") is not None and result.warnings is not None:
-                result.warnings.append("max_same_sector_not_enforced")
 
             # Regime Multi-Strategy modeling notes: surface the parity caveats so the
             # user knows where the backtest necessarily approximates live trading.
@@ -1124,7 +2136,16 @@ class BacktestService:
         """
         if self._kline_cache is None:
             return {}
-        symbols = sorted({s["ticker"] for s in signals})
+        symbols = self._required_kline_symbols_for(config, signals)
+        return await self._load_klines_for_symbols(config, symbols)
+
+    async def _load_klines_for_symbols(
+        self, config: dict[str, Any], symbols: list[str] | set[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Load cached klines for a specific symbol set."""
+        if self._kline_cache is None:
+            return {}
+        symbols = sorted({str(symbol) for symbol in symbols if symbol})
         interval = config.get("simulation_interval", "5m")
         start = config["date_range_start"]
         end = config["date_range_end"]
@@ -1134,17 +2155,122 @@ class BacktestService:
         return {symbol: series for symbol, series in zip(symbols, results)}
 
     @staticmethod
+    def _result_missing_kline_symbols(result: Any) -> set[str]:
+        stats = getattr(result, "filter_stats", None) or {}
+        raw = stats.get("signals_no_kline_symbols") or []
+        if not isinstance(raw, list):
+            return set()
+        return {str(symbol) for symbol in raw if symbol}
+
+    async def _expand_reached_kline_symbols(
+        self,
+        run_id: str,
+        config: dict[str, Any],
+        signals: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        cancel_event: threading.Event,
+        instrument_info: dict[str, dict[str, float]],
+        scan_contexts: dict[str, "ScanContext"],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Warm symbols the live-like selector actually reaches but lacks klines for.
+
+        The first cache warm-up is intentionally small: top-N per scan by the same
+        account-free ordering live uses. If price drift, sector, existing positions,
+        or adaptive blacklist cause the engine to walk further down a scan's ranked
+        candidates, the dry run reports those reached-but-unloaded symbols here. We
+        warm only those symbols and rerun from the beginning. This preserves trade
+        selection parity without warming every raw scan symbol.
+        """
+        if self._kline_cache is None or "_required_kline_symbols" not in config:
+            return klines
+        if config.get("_live_selection_by_scan"):
+            return klines
+
+        from backend.services.backtest_engine import BacktestEngine
+
+        loop = asyncio.get_running_loop()
+        attempted: set[str] = set()
+        required = set(self._required_kline_symbols_for(config, signals))
+        interval = config.get("simulation_interval", "5m")
+        warm_start = config.get("_report_start", config["date_range_start"])
+        end = config["date_range_end"]
+
+        for pass_idx in range(_KLINE_EXPANSION_PASSES):
+            if cancel_event.is_set():
+                break
+            probe_engine = BacktestEngine()
+            probe = await loop.run_in_executor(
+                self._executor,
+                lambda: probe_engine.run(
+                    config,
+                    signals,
+                    klines,
+                    cancel_event,
+                    None,
+                    instrument_info,
+                    scan_contexts,
+                ),
+            )
+            missing = self._result_missing_kline_symbols(probe)
+            to_warm = sorted(missing - attempted)
+            if not to_warm:
+                break
+
+            attempted.update(to_warm)
+            required.update(to_warm)
+            config["_required_kline_symbols"] = sorted(required)
+            self._emit_stage(
+                run_id,
+                "warming_cache",
+                "Expanding price-data cache",
+                detail=f"{len(to_warm)} reached selector symbols",
+                pct=_WARMUP_BAND,
+            )
+            try:
+                await self._kline_cache.ensure_coverage(
+                    to_warm,
+                    interval,
+                    warm_start,
+                    end,
+                    cancel_check=cancel_event.is_set,
+                    max_concurrency=12,
+                )
+            except Exception:  # noqa: BLE001 — final run will surface no-kline warnings
+                if cancel_event.is_set():
+                    break
+                logger.warning(
+                    "backtest_kline_expansion_warm_failed",
+                    extra={"run_id": run_id, "symbols": len(to_warm), "pass": pass_idx + 1},
+                    exc_info=False,
+                )
+            klines.update(await self._load_klines_for_symbols(config, to_warm))
+            logger.info(
+                "backtest_kline_symbol_set_expanded",
+                extra={
+                    "run_id": run_id,
+                    "pass": pass_idx + 1,
+                    "added_symbols": len(to_warm),
+                    "required_symbols": len(required),
+                },
+            )
+
+        return klines
+
+    @staticmethod
     def _interval_minutes(interval: str) -> int:
         return {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 60)
 
     async def _build_fine_klines(
         self, config: dict[str, Any], trades: list[dict[str, Any]]
     ) -> dict[str, dict[int, list[dict[str, Any]]]]:
-        """Fetch 1-minute candles for the entry + exit 5m bars of each Phase-A trade,
+        """Fetch 1-minute candles for the bars Phase-A trades can touch,
         indexed for engine drill-down: {symbol: {bar_open_epoch: [1m candles asc]}}.
 
-        - Fetches ONLY the bars actual trades touched (entry bar + exit bar ±1 neighbour
-          — entry-drill can shift tp/sl so the real exit may land one bar over).
+        - All modes stay sparse: entry bar + exit bar ±1 neighbour (entry-drill can
+          shift tp/sl so the real exit may land one bar over). Specific Schedule must
+          not inject continuous holding windows because that changes the
+          skip_if_positions_open/post-scan cascade and makes the simulator pick
+          different scan rounds than live.
         - Uses `_fetch_klines_from_bybit` DIRECTLY (not get_klines/ensure_coverage): the
           coverage table marks a partial day "covered" and would skip refetching newer
           1m candles; and we deliberately DO NOT `store_klines` (that would re-poison the
@@ -1165,6 +2291,10 @@ class BacktestService:
 
         # Collect the distinct (symbol, bar_open_epoch) windows to fetch.
         wanted: dict[str, set[int]] = {}
+
+        def _remember_epoch(sym: str, epoch: int) -> None:
+            wanted.setdefault(sym, set()).add(epoch)
+
         for t in trades:
             sym = t.get("symbol")
             if not sym:
@@ -1181,8 +2311,8 @@ class BacktestService:
             if isinstance(xt, datetime):
                 xe = _bar_open_epoch(xt)
                 epochs.update({xe - bar_s, xe, xe + bar_s})  # exit ±1 neighbour
-            if epochs:
-                wanted.setdefault(sym, set()).update(epochs)
+            for epoch in epochs:
+                _remember_epoch(sym, epoch)
 
         # ── FULL-BOOK coverage for PORTFOLIO-equity closes ──
         # The engine's 1-minute portfolio-equity walk (drawdown / smart / rise /
@@ -1211,41 +2341,48 @@ class BacktestService:
                 open_from = _bar_open_epoch(et)
                 open_until = _bar_open_epoch(xt) if isinstance(xt, datetime) else fire_epoch
                 if open_from <= fire_epoch <= open_until:
-                    wanted.setdefault(sym, set()).update(fire_epochs)
+                    for epoch in fire_epochs:
+                        _remember_epoch(sym, epoch)
 
         if not wanted:
             return {}
 
-        # Fetch every symbol's 1m window CONCURRENTLY (was a sequential per-symbol
-        # await — each drill symbol paid a full Bybit round-trip in series). The
-        # bucketing below is pure CPU and stays identical, so the output is the same;
-        # only the network latency overlaps. return_exceptions=True keeps one symbol's
-        # fetch failure from cancelling the rest (matches the old per-symbol try/except
-        # fail-soft: a failed/empty symbol is simply omitted → engine falls back to 5m).
-        sym_list = list(wanted.keys())
-        windows = []
-        for sym in sym_list:
-            epochs = wanted[sym]
+        requests: list[tuple[str, datetime, datetime]] = []
+        for sym, epochs in wanted.items():
             lo = min(epochs)
-            hi = max(epochs) + bar_s  # cover the last bar fully
-            windows.append((datetime.fromtimestamp(lo, tz=timezone.utc),
-                            datetime.fromtimestamp(hi, tz=timezone.utc)))
-        fetched = await asyncio.gather(
-            *(self._kline_cache._fetch_klines_from_bybit(sym, "1m", ws, we)
-              for sym, (ws, we) in zip(sym_list, windows)),
-            return_exceptions=True,
-        )
+            hi = max(epochs) + bar_s
+            requests.append((
+                sym,
+                datetime.fromtimestamp(lo, tz=timezone.utc),
+                datetime.fromtimestamp(hi, tz=timezone.utc),
+            ))
+
+        # Fetch 1m windows CONCURRENTLY, but bounded. The sparse request set keeps
+        # drilldown from changing the trade lifecycle while avoiding the old sequential
+        # round-trip cost.
+        sem = asyncio.Semaphore(8)
+
+        async def _fetch_one(req: tuple[str, datetime, datetime]):
+            sym, ws, we = req
+            try:
+                async with sem:
+                    ones = await self._kline_cache._fetch_klines_from_bybit(sym, "1m", ws, we)
+                return sym, ones, None
+            except Exception as exc:  # fail-soft per symbol/range
+                return sym, [], exc
+
+        fetched = await asyncio.gather(*(_fetch_one(req) for req in requests))
 
         out: dict[str, dict[int, list[dict[str, Any]]]] = {}
-        for sym, ones in zip(sym_list, fetched):
+        for sym, ones, exc in fetched:
             epochs = wanted[sym]
-            if isinstance(ones, Exception):
+            if exc is not None:
                 logger.warning("backtest_drilldown_fetch_failed", extra={"symbol": sym}, exc_info=False)
                 continue
             if not ones:
                 continue
             # Bucket each 1m candle into its simulation-bar window.
-            buckets: dict[int, list[dict[str, Any]]] = {}
+            buckets = out.setdefault(sym, {})
             for c in ones:
                 ot = c["open_time"]
                 if not isinstance(ot, datetime):
@@ -1253,10 +2390,17 @@ class BacktestService:
                 key = (int(ot.timestamp()) // bar_s) * bar_s
                 if key in epochs:
                     buckets.setdefault(key, []).append(c)
-            for key in buckets:
-                buckets[key].sort(key=lambda c: c["open_time"])
-            if buckets:
-                out[sym] = buckets
+        for buckets in out.values():
+            for key, bucket in list(buckets.items()):
+                seen: set[datetime] = set()
+                deduped: list[dict[str, Any]] = []
+                for candle in sorted(bucket, key=lambda c: c["open_time"]):
+                    ot = candle.get("open_time")
+                    if ot in seen:
+                        continue
+                    seen.add(ot)
+                    deduped.append(candle)
+                buckets[key] = deduped
         return out
 
     async def _build_scan_contexts(
@@ -1437,6 +2581,7 @@ class BacktestService:
         signals = await self._load_signals(
             config.get("scan_source", {}),
             (config["date_range_start"], config["date_range_end"]),
+            config,
         )
         klines = await self._load_klines(config, signals)
         instrument_info = await self._resolve_instrument_info(signals)
@@ -1567,7 +2712,7 @@ class BacktestService:
         Raises:
             BacktestValidationError: If the estimated total candle count is too large.
         """
-        symbols = {s["ticker"] for s in signals}
+        symbols = set(BacktestService._required_kline_symbols_for(config, signals))
         if not symbols:
             return
         start = config["date_range_start"]
@@ -1584,7 +2729,9 @@ class BacktestService:
 
     @staticmethod
     def _check_kline_coverage(
-        signals: list[dict[str, Any]], klines: dict[str, list[dict[str, Any]]]
+        signals: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        required_symbols: Optional[set[str] | list[str]] = None,
     ) -> None:
         """Reject a run when >20% of required symbols have no kline data.
 
@@ -1592,7 +2739,11 @@ class BacktestService:
             BacktestValidationError: If more than 20% of the symbols referenced by
             the signals have empty kline data — the simulation would be misleading.
         """
-        symbols = {s["ticker"] for s in signals}
+        symbols = (
+            {str(sym) for sym in required_symbols if sym}
+            if required_symbols is not None
+            else {s["ticker"] for s in signals if s.get("ticker")}
+        )
         if not symbols:
             return
         missing = [sym for sym in symbols if not klines.get(sym)]
@@ -1707,7 +2858,7 @@ class BacktestService:
             # cancel (the work is done; mid-sim cancels never reach persist).
             await conn.execute(
                 "UPDATE backtest_runs SET status = 'completed', "
-                "completed_at = now(), progress_pct = 100 WHERE id = $1",
+                "completed_at = now(), progress_pct = 100, error_message = NULL WHERE id = $1",
                 run_id,
             )
 

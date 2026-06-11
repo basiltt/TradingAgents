@@ -449,12 +449,12 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
         />
       ) : null}
 
-      {/* Replay vs Live — only for replay-mode runs. Framed as fidelity, NOT a
-          pass/fail vs an unrealistic ±1% (live has execution-latency slippage). */}
+      {/* Replay vs Live — only for replay-mode runs. The headline run metrics use the
+          live ledger; this section is the pure candle-engine diagnostic comparison. */}
       {completed && replay && replay.n_cycles > 0 ? (
         <div className="neu-surface-base neu-surface-raised rounded-[var(--neu-radius-lg)] p-4">
           <div className="mb-3 flex flex-wrap items-baseline gap-2">
-            <h2 className="text-base font-semibold text-[var(--neu-text-strong)]">Replay vs Live</h2>
+            <h2 className="text-base font-semibold text-[var(--neu-text-strong)]">Engine Diagnostic vs Live</h2>
             <span className="text-[0.72rem] text-[var(--neu-text-muted)]">
               {replay.pinned_trades} pinned trades · {replay.n_cycles} cycles
             </span>
@@ -480,7 +480,7 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
             </div>
           </div>
           <p className="mt-2 text-[0.72rem] text-[var(--neu-text-muted)]">
-            Backtest is typically a few % conservative vs live due to live execution latency.
+            Headline metrics use the live account ledger; this table shows the pure candle-engine replay gap.
           </p>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-[0.78rem] tabular-nums">

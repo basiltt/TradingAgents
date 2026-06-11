@@ -29,6 +29,12 @@ _PAGE_SIZE = 1000
 # completed on a subsequent run (never wrongly sealed — see _seal_closed_days).
 _MAX_PAGES = 60
 _MAX_RETRIES = 3
+_DEFAULT_WARMUP_CONCURRENCY = 8
+_STORE_TIMEOUT_SECONDS = 20.0
+
+
+class KlineCoverageCancelled(Exception):
+    """Raised when a caller cancels an in-flight kline cache warmup."""
 
 
 class KlineCacheService:
@@ -116,10 +122,16 @@ class KlineCacheService:
             (symbol, interval, k["open_time"], k["open"], k["high"], k["low"], k["close"], k["volume"])
             for k in klines
         ]
-        await self._db.pool.executemany(query, records)
+        await asyncio.wait_for(
+            self._db.pool.executemany(query, records),
+            timeout=_STORE_TIMEOUT_SECONDS,
+        )
 
         # Update coverage tracking
-        await self._update_coverage(symbol, interval, klines)
+        await asyncio.wait_for(
+            self._update_coverage(symbol, interval, klines),
+            timeout=_STORE_TIMEOUT_SECONDS,
+        )
 
         return len(klines)
 
@@ -235,13 +247,18 @@ class KlineCacheService:
         start: datetime,
         end: datetime,
         on_progress: Optional[Callable[[int], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+        max_concurrency: int = _DEFAULT_WARMUP_CONCURRENCY,
     ) -> dict[str, Any]:
         """Ensure kline data is cached for all symbols in the date range.
 
         Checks for gaps and fetches missing data from Bybit API. on_progress, when
         supplied, is called with an integer 0-100 reflecting how many of the gapped
         symbols have been processed — so a caller (the backtest) can surface warm-up
-        progress instead of pinning its bar at 0% through a long fetch.
+        progress instead of pinning its bar at 0% through a long fetch. cancel_check
+        lets a caller stop the warmup cooperatively when the run is cancelled or times
+        out; pending HTTP requests are cancelled rather than waiting for the entire
+        symbol list to drain.
 
         Args:
             symbols: List of symbols needed.
@@ -252,6 +269,7 @@ class KlineCacheService:
         Returns:
             Stats dict: {cached: int, fetched: int, failed: int, symbols_with_gaps: list}
         """
+        symbols = sorted(set(symbols))
         gaps = await self.get_coverage_gaps(symbols, interval, start, end)
 
         stats: dict[str, Any] = {
@@ -269,45 +287,135 @@ class KlineCacheService:
             extra={"gap_count": len(gaps), "symbols": list(gaps.keys())[:10]},
         )
 
-        # Fill each gapped symbol from Bybit, fetching ONLY the span covering that
-        # symbol's gap days — NOT the whole [start, end] window. Fetching the full range
-        # every time is catastrophic once the partial-day fix marks the (always-
-        # incomplete) current day as a gap: every symbol would refetch its entire history
-        # on every run, making warm-up crawl. We fetch [min_gap_day, max_gap_day + 1d]
-        # clipped to the requested window, so a single stale/partial day pulls only that
-        # day, not months. Storing is idempotent (ON CONFLICT DO NOTHING). One symbol's
-        # failure must not abort the rest, so each is isolated — a symbol the exchange
-        # returns nothing for is counted failed (and its gap entry retained).
+        # Fill gapped symbols from Bybit, fetching ONLY the span covering each symbol's
+        # gap days — NOT the whole [start, end] window. Fetching the full range every
+        # time is catastrophic once the partial-day fix marks the (always-incomplete)
+        # current day as a gap: every symbol would refetch its entire history on every
+        # run, making warm-up crawl. We fetch [min_gap_day, max_gap_day + 1d] clipped
+        # to the requested window, so a single stale/partial day pulls only that day,
+        # not months. Storing is idempotent (ON CONFLICT DO NOTHING).
+        #
+        # The old implementation did this sequentially. A 520-symbol schedule backtest
+        # could therefore sit in the first 2-5% of the progress bar for many minutes,
+        # and a cancel only changed the DB row while the loop continued fetching. Keep
+        # the exchange load bounded, but overlap a small number of symbols and check
+        # cancellation while waiting so a stopped backtest actually stops.
         still_missing: list[str] = []
         total_gaps = len(gaps)
-        for idx, symbol in enumerate(gaps):
-            gap_days = gaps[symbol]
-            # Span the gap days only. lo = first gap day's 00:00 (clamped to start);
-            # hi = last gap day's end-of-day (clamped to end) so the fetch is bounded.
-            lo_day = min(gap_days)
-            hi_day = max(gap_days)
-            fetch_start = max(start, datetime(lo_day.year, lo_day.month, lo_day.day, tzinfo=timezone.utc))
-            day_after_hi = datetime(hi_day.year, hi_day.month, hi_day.day, tzinfo=timezone.utc) + timedelta(days=1)
-            fetch_end = min(end, day_after_hi)
+        processed = 0
+        concurrency = max(1, int(max_concurrency or 1))
+        sem = asyncio.Semaphore(concurrency)
+        interval_min = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 5)
+        interval_delta = timedelta(minutes=interval_min)
+
+        def _is_cancelled() -> bool:
             try:
-                fetched = await self._fetch_klines_from_bybit(symbol, interval, fetch_start, fetch_end)
-            except Exception:  # noqa: BLE001 — per-symbol isolation; network/parse errors
-                logger.exception("kline_ensure_fetch_failed", extra={"symbol": symbol})
-                fetched = []
+                return bool(cancel_check and cancel_check())
+            except Exception:  # noqa: BLE001 — cancellation check is best-effort
+                return False
 
-            if not fetched:
-                stats["failed"] += 1
-                still_missing.append(symbol)
-                continue
+        def _emit_progress() -> None:
+            if on_progress is None or not total_gaps:
+                return
+            try:
+                on_progress(int((processed / total_gaps) * 100))
+            except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
+                pass
 
-            await self.store_klines(symbol, interval, fetched)
-            stats["fetched"] += 1
-
-            if on_progress is not None and total_gaps:
+        async def _process_symbol(symbol: str, gap_days: list[date]) -> tuple[str, bool]:
+            if _is_cancelled():
+                raise KlineCoverageCancelled("kline warmup cancelled")
+            async with sem:
+                if _is_cancelled():
+                    raise KlineCoverageCancelled("kline warmup cancelled")
+                # Span the gap days only. lo = first gap day's 00:00 (clamped to start);
+                # hi = last gap day's end-of-day (clamped to end) so the fetch is bounded.
+                lo_day = min(gap_days)
+                hi_day = max(gap_days)
+                fetch_start = max(start, datetime(lo_day.year, lo_day.month, lo_day.day, tzinfo=timezone.utc))
+                day_after_hi = datetime(hi_day.year, hi_day.month, hi_day.day, tzinfo=timezone.utc) + timedelta(days=1)
+                fetch_end = min(end, day_after_hi)
+                expected_bars = max(
+                    0,
+                    int(((fetch_end - fetch_start).total_seconds() / 60.0) // interval_min),
+                )
+                if expected_bars > 0:
+                    try:
+                        cached = await self._db.pool.fetchrow(
+                            """
+                            SELECT COUNT(*)::int AS candle_count,
+                                   MAX(open_time) AS max_open_time
+                            FROM kline_cache
+                            WHERE symbol = $1 AND interval = $2
+                              AND open_time >= $3 AND open_time < $4
+                            """,
+                            symbol,
+                            interval,
+                            fetch_start,
+                            fetch_end,
+                        )
+                    except Exception:  # noqa: BLE001 — tail optimization is best-effort
+                        cached = None
+                    if cached is not None:
+                        cached_count = int(cached["candle_count"] or 0)
+                        max_open_time = cached["max_open_time"]
+                        last_expected_open = fetch_start + interval_delta * (expected_bars - 1)
+                        if (
+                            cached_count > 0
+                            and cached_count < expected_bars
+                            and max_open_time is not None
+                            and max_open_time < last_expected_open
+                        ):
+                            fetch_start = min(max_open_time + interval_delta, fetch_end)
+                        # If max_open_time already reaches the requested tail but count
+                        # is still short, the gap is an interior hole. Keep the full span.
+                if fetch_start >= fetch_end:
+                    return symbol, True
                 try:
-                    on_progress(int(((idx + 1) / total_gaps) * 100))
-                except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
-                    pass
+                    fetched = await self._fetch_klines_from_bybit(symbol, interval, fetch_start, fetch_end)
+                    if _is_cancelled():
+                        raise KlineCoverageCancelled("kline warmup cancelled")
+                    if not fetched:
+                        return symbol, False
+                    await self.store_klines(symbol, interval, fetched)
+                    return symbol, True
+                except KlineCoverageCancelled:
+                    raise
+                except Exception:  # noqa: BLE001 — per-symbol isolation; network/parse/store errors
+                    logger.exception("kline_ensure_fetch_failed", extra={"symbol": symbol})
+                    return symbol, False
+
+        tasks = {
+            asyncio.create_task(_process_symbol(symbol, gap_days))
+            for symbol, gap_days in gaps.items()
+        }
+        pending = set(tasks)
+        try:
+            while pending:
+                if _is_cancelled():
+                    raise KlineCoverageCancelled("kline warmup cancelled")
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=0.5,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    continue
+                for task in done:
+                    symbol, ok = await task
+                    processed += 1
+                    if ok:
+                        stats["fetched"] += 1
+                    else:
+                        stats["failed"] += 1
+                        still_missing.append(symbol)
+                    _emit_progress()
+        except KlineCoverageCancelled:
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            raise
 
         # symbols_with_gaps now reflects what's STILL uncovered after fetching, so
         # the caller (backtest pre-flight / cache_status) sees the true post-warmup

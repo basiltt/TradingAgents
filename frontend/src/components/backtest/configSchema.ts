@@ -13,15 +13,19 @@ import { z } from "zod";
 import type { BacktestCreateRequest } from "./types";
 
 const isoDate = z.string().min(1, "Required");
+const nullToUndefined = (value: unknown) => (value === null ? undefined : value);
 
 export const scanSourceSchema = z
   .object({
     mode: z.enum(["schedule", "date_range", "explicit", "replay"]),
-    schedule_id: z.string().optional(),
+    schedule_id: z.preprocess(nullToUndefined, z.string().optional()),
     // Backend caps scan_ids at 500 (backtest_schemas.py).
-    scan_ids: z.array(z.string()).max(500, "Maximum 500 scans").optional(),
+    scan_ids: z.preprocess(
+      nullToUndefined,
+      z.array(z.string()).max(500, "Maximum 500 scans").optional(),
+    ),
     // Replay mode: account whose actual live trades are replayed for validation.
-    replay_account_id: z.string().optional(),
+    replay_account_id: z.preprocess(nullToUndefined, z.string().optional()),
   })
   .refine(
     (s) => s.mode !== "schedule" || !!s.schedule_id,
@@ -201,6 +205,78 @@ function seedDateToInput(value: string | undefined, fallback: Date): string {
   return Number.isNaN(d.getTime()) ? toLocalInputValue(fallback) : toLocalInputValue(d);
 }
 
+export const DAD_DEMO_REFERENCE_CONFIG = {
+  starting_capital: 234,
+  date_range_start: "2026-06-05T00:00",
+  date_range_end: "2026-06-11T11:37",
+  scan_source: {
+    mode: "schedule",
+    schedule_id: "d9c5f14f-a71f-4907-9449-dab3b75a52cb",
+  },
+  simulation_interval: "5m",
+  fee_rate_pct: 0.055,
+  slippage_bps: 2,
+  funding_rate_model: "fixed_8h",
+  funding_rate_fixed_pct: 0.01,
+  direction: "straight",
+  leverage: 8,
+  capital_pct: 22,
+  take_profit_pct: 150,
+  stop_loss_pct: 100,
+  min_score: 7,
+  confidence_filter: "moderate",
+  signal_sides: "both",
+  max_trades: 3,
+  execution_mode: "batch",
+  fill_to_max_trades: true,
+  skip_if_positions_open: true,
+  max_same_direction: 3,
+  max_same_sector: 4,
+  symbol_blacklist: null,
+  symbol_whitelist: null,
+  max_signal_age_minutes: 120,
+  max_price_drift_pct: 6,
+  max_drawdown_pct: 12,
+  smart_drawdown_close: true,
+  breakeven_timeout_hours: 12,
+  max_trade_duration_hours: 24,
+  trailing_profit_pct: 2,
+  close_on_profit_pct: null,
+  target_goal_type: "profit_pct",
+  target_goal_value: 15,
+  adaptive_blacklist_enabled: false,
+  adaptive_blacklist_min_trades: 5,
+  adaptive_blacklist_max_win_rate: 30,
+  adaptive_blacklist_lookback_hours: 48,
+  regime_filter_enabled: false,
+  session_filter_enabled: false,
+  session_blocked_hours_utc: null,
+  session_allowed_hours_utc: null,
+  btc_vol_filter_enabled: false,
+  btc_vol_min_threshold: null,
+  btc_vol_max_threshold: null,
+  btc_vol_interval: "1h",
+  btc_vol_lookback_candles: 14,
+  mean_reversion_enabled: false,
+  mr_short_enabled: false,
+  mr_long_enabled: false,
+  mr_regime: "ranging",
+  mr_mean_period: 20,
+  mr_mean_interval: "1h",
+  mr_target_capture_pct: 60,
+  mr_tight_stop_pct: null,
+  mr_time_stop_minutes: 120,
+  mr_min_edge_pct: 1,
+  mr_extreme_min_abs_score: 5,
+  mr_capital_pct: 2,
+  mr_leverage: 10,
+  mr_max_trades: 2,
+  strategy_cohort: null,
+  regime_staleness_minutes: 30,
+  regime_volatile_atr: 2,
+  regime_trend_ema_dist_pct: 1,
+} satisfies Partial<BacktestCreateRequest>;
+
 /** Build default form values, optionally seeded from a partial config.
  * Return type is Required<…> so omitting any field is a typecheck error — this
  * guards against the schema and these defaults silently drifting apart.
@@ -286,6 +362,25 @@ export function buildDefaults(
     regime_volatile_atr: seed?.regime_volatile_atr ?? 2,
     regime_trend_ema_dist_pct: seed?.regime_trend_ema_dist_pct ?? 1,
   };
+}
+
+/** Apply the Dad - Demo production auto-trade values as a reference preset.
+ * This is a complete account-free reference backtest config: it includes the
+ * schedule and date range from the verified local reference run, but no account id. */
+export function buildDadDemoReferenceDefaults(
+  current?: Partial<BacktestCreateRequest>,
+): Required<BacktestConfigFormValues> {
+  return buildDefaults({
+    date_range_start: current?.date_range_start,
+    date_range_end: current?.date_range_end,
+    scan_source: current?.scan_source,
+    simulation_interval: current?.simulation_interval,
+    fee_rate_pct: current?.fee_rate_pct,
+    slippage_bps: current?.slippage_bps,
+    funding_rate_model: current?.funding_rate_model,
+    funding_rate_fixed_pct: current?.funding_rate_fixed_pct,
+    ...DAD_DEMO_REFERENCE_CONFIG,
+  });
 }
 
 /** Convert a parsed form value into the API request body (ISO-normalizes dates). */

@@ -44,13 +44,15 @@ class _MarkIndex:
     built once per run and reused across all three call sites.
     """
 
-    __slots__ = ("_open_times", "_closes")
+    __slots__ = ("_open_times", "_closes", "_series")
 
     def __init__(self, klines: dict[str, list[dict[str, Any]]]):
         self._open_times: dict[str, list[datetime]] = {}
         self._closes: dict[str, list[float]] = {}
+        self._series: dict[str, list[dict[str, Any]]] = {}
         for sym, series in klines.items():
             # series is sorted by open_time (cache returns ORDER BY open_time ASC).
+            self._series[sym] = series
             self._open_times[sym] = [k["open_time"] for k in series]
             self._closes[sym] = [k["close"] for k in series]
 
@@ -73,6 +75,43 @@ class _MarkIndex:
         if idx < 0:
             return default
         return self._closes[symbol][idx]
+
+    def candle_at_or_before(self, symbol: str, t: datetime) -> Optional[dict[str, Any]]:
+        """Last candle with open_time <= t, or None if the series has no mark yet."""
+        ots = self._open_times.get(symbol)
+        if not ots:
+            return None
+        idx = bisect.bisect_right(ots, t) - 1
+        if idx < 0:
+            return None
+        series = self._series.get(symbol) or []
+        return series[idx] if idx < len(series) else None
+
+    def candles_after_until(
+        self, symbol: str, start_time: datetime, end_time: Optional[datetime]
+    ) -> list[dict[str, Any]]:
+        """Candles with start_time < open_time < end_time.
+
+        Parity-exact replacement for the legacy per-window full-series scan:
+            for k in klines[symbol]:
+                if k["open_time"] <= start_time: continue
+                if end_time and k["open_time"] >= end_time: continue
+                ...
+
+        The kline series are sorted, so a pair of bisections finds the exact same
+        half-open window without walking all historical candles for every scan
+        segment.
+        """
+        ots = self._open_times.get(symbol)
+        if not ots:
+            return []
+        lo = bisect.bisect_right(ots, start_time)
+        hi = bisect.bisect_left(ots, end_time) if end_time is not None else len(ots)
+        if hi <= lo:
+            return []
+        # _series is attached below for the range lookup; keeping the mark arrays as
+        # plain lists preserves the hot mark_at_or_before path.
+        return self._series.get(symbol, [])[lo:hi]
 
 
 class BacktestCancelled(Exception):
@@ -115,13 +154,10 @@ class Position:
     # filled in (used by the service to locate the exit-bar window). Entry drill-down
     # is price-only, so it never restricts a bar's evaluation.
     entry_bar_open: Optional[datetime] = None
-    # Stable equity-reference entry price = the UN-drilled 5m next-bar-open fill. The
-    # equity close-rules (drawdown / rise / close_on_profit) value this position's uPnL
-    # off THIS price, NOT the drilled entry_price, so toggling drill-down never changes
-    # the equity cascade — i.e. never changes WHICH trades happen (selection +
-    # skip_if_positions_open stay identical to the pure 5m run). Drill-down refines
-    # entry_price for the trade's reported fill + realized PnL only. 0.0 ⇒ fall back to
-    # entry_price (no drill), so the two are equal and behaviour is unchanged.
+    # Equity-reference entry price used by portfolio close rules. Production's wallet
+    # equity is based on the exchange avgPrice, so this must follow the simulated
+    # actual fill (including entry drill-down/slippage), not a synthetic 5m fill.
+    # 0.0 => fall back to entry_price for legacy fixtures.
     equity_ref_entry: float = 0.0
 
 
@@ -138,6 +174,11 @@ class SimulationState:
     cycle_active: bool = False
     cycle_start_equity: float = 0.0
     cycle_start_time: Optional[datetime] = None
+    # Production's account close rules use rule.reference_value as the clock start.
+    # These are refreshed only when live would create fresh rules for a non-skipped
+    # scan/recheck; skipped scans preserve the previous active-rule clock.
+    breakeven_rule_started_at: Optional[datetime] = None
+    max_duration_rule_started_at: Optional[datetime] = None
     # Tracking
     signals_processed: int = 0
     signals_filtered: int = 0
@@ -147,6 +188,7 @@ class SimulationState:
     signals_no_kline: int = 0  # signals dropped because the symbol had NO cached candles —
                                # production would have traded them, so this means the backtest
                                # UNDER-trades vs reality; surfaced as a warning, not a silent skip.
+    no_kline_symbols: set[str] = field(default_factory=set)
     slippage_bps: int = 0  # round-trip slippage; applied adversely on BOTH entry fill and exit fill
                            # (production closes via Bybit market reduce-only orders that slip)
     smart_drawdown_fired: bool = False  # EQUITY_DROP_PCT_SMART is ONE-SHOT per scan
@@ -154,6 +196,15 @@ class SimulationState:
                            # "executed", and never re-arms it until the next scan
                            # re-creates it. Reset each scan; gates re-firing so the
                            # backtest can't over-close winners-turned-losers mid-window.
+    smart_drawdown_closed_at: Optional[datetime] = None  # timestamp of the last SMART
+                           # loser close. Used to keep BREAKEVEN_TIMEOUT from
+                           # immediately evaluating a post-SMART survivor-only
+                           # book in the same rule sampling window; production's
+                           # account-rule pass uses the pre-close wallet snapshot.
+    breakeven_suppressed_after_smart: bool = False  # SMART is a partial-cycle
+                           # account close. Live leaves survivors to later
+                           # position/time rules instead of letting breakeven
+                           # immediately operate on the reduced survivor book.
     # Last 8h funding boundary already charged, as (date, hour) — guards against
     # charging funding more than once per 0/8/16h event regardless of candle density
     # (so a finer interval than 5m can't multi-charge a single boundary).
@@ -235,6 +286,59 @@ class BacktestEngine:
         )
 
         warnings: list[str] = []
+        report_start = self._as_aware_datetime(config.get("_report_start"))
+        report_end = self._as_aware_datetime(config.get("_report_end"))
+        report_started = report_start is None
+
+        def _start_report_window() -> None:
+            """Reset accounting at the requested window after selector warm-up."""
+            nonlocal report_started
+            if report_started or report_start is None:
+                return
+            state.wallet_balance = starting_capital
+            state.equity_curve = [{
+                "ts": report_start,
+                "equity": starting_capital,
+                "drawdown_pct": 0.0,
+            }]
+            # Carried positions were opened before the report window. Their entry fees
+            # and pre-window funding are already reflected in the user's supplied
+            # starting balance, so do not charge those costs again when they close.
+            for pos in state.open_positions:
+                pos.entry_fee = 0.0
+                pos.funding_paid = 0.0
+            report_started = True
+            warnings.append("schedule_warmup_applied")
+
+        def _maybe_start_report_window(at_time: Optional[datetime]) -> None:
+            if report_started or report_start is None or at_time is None:
+                return
+            at = self._as_aware_datetime(at_time)
+            if at is not None and at >= report_start:
+                _start_report_window()
+
+        def _evaluate_window(
+            cfg: dict[str, Any],
+            start_time: datetime,
+            end_time: Optional[datetime],
+        ) -> None:
+            nonlocal report_started
+            if (
+                report_start is not None
+                and not report_started
+                and start_time < report_start
+                and (end_time is None or end_time > report_start)
+            ):
+                self._evaluate_candles_until(
+                    cfg, klines, state, start_time, report_start, cancel_event
+                )
+                _start_report_window()
+                self._evaluate_candles_until(
+                    cfg, klines, state, report_start, end_time, cancel_event
+                )
+                return
+            _maybe_start_report_window(start_time)
+            self._evaluate_candles_until(cfg, klines, state, start_time, end_time, cancel_event)
 
         # Handle empty signals
         if not signals:
@@ -246,7 +350,13 @@ class BacktestEngine:
                 equity_curve=[{"ts": None, "equity": starting_capital, "drawdown_pct": 0.0}],
                 metrics={},
                 warnings=warnings,
-                filter_stats={"signals_total": 0, "signals_filtered": 0, "signals_entered": 0},
+                filter_stats={
+                    "signals_total": 0,
+                    "signals_filtered": 0,
+                    "signals_entered": 0,
+                    "signals_no_kline": 0,
+                    "signals_no_kline_symbols": [],
+                },
             )
 
         # Check cancellation before starting
@@ -268,7 +378,7 @@ class BacktestEngine:
         # this, the first recorded point would be the first trade's CLOSE, hiding
         # the start→first-close move from drawdown/run-up/Sharpe and leaving a
         # single-trade run with a degenerate 1-point curve.
-        if scan_order:
+        if scan_order and report_started:
             state.equity_curve.append({
                 "ts": scans[scan_order[0]][0]["signal_time"],
                 "equity": starting_capital,
@@ -287,8 +397,14 @@ class BacktestEngine:
             if cancel_event and cancel_event.is_set():
                 raise BacktestCancelled("Cancelled during simulation")
 
+            scan_config = config
+            scan_execution_mode = scan_config.get("execution_mode", execution_mode)
             scan_signals = scans[scan_id]
             current_time = scan_signals[0]["signal_time"]
+            scan_started_at = scan_signals[0].get("scan_started_at") or current_time
+            selection_time = self._scan_selection_time(scan_config, scan_id, current_time)
+            post_recheck_time = self._scan_post_scan_recheck_time(scan_config, scan_id, selection_time)
+            live_selection = self._scan_live_selection(scan_config, scan_id)
 
             # Bind this scan's ScanContext (or None) for the regime gate/route block.
             self._ctx = self._scan_contexts.get(scan_id)
@@ -299,56 +415,75 @@ class BacktestEngine:
             # untouched (it drives the backtest-level target_goal early-stop + stats).
             state.scan_entered = 0
 
-            # NOTE: the equity-rule reference (cycle_start_equity) is re-anchored
-            # below at the per-scan sizing refresh — for EVERY non-skipped scan, to the
-            # available-balance basis, mirroring production. See that block for the
-            # full rationale. The skip_if_positions_open early-continue below preserves
-            # the existing anchor (production's only preservation case).
+            next_scan_start = None
+            if scan_idx + 1 < len(scan_order):
+                next_scan_id = scan_order[scan_idx + 1]
+                next_scan_start = scans[next_scan_id][0].get("scan_started_at") or scans[next_scan_id][0]["signal_time"]
 
-            # --- CYCLE LOCK (Task 3.9) ---
-            # If skip_if_positions_open=True AND positions exist → skip entire scan
-            if config.get("skip_if_positions_open") and state.open_positions:
-                state.signals_filtered += len(scan_signals)
-                # Still evaluate close rules on the carried positions until the next
-                # scan. We deliberately do NOT re-trade this scan's signals if the
-                # book clears mid-window: production's post_scan_recheck fires ONCE,
-                # synchronously at scan completion (scanner_service calls it right
-                # after execute_batch — auto_trade_service.post_scan_recheck is a
-                # single non-looping pass). Because each scan is anchored to its
-                # completed_at timestamp, that instant is already modelled by the
-                # per-scan open branch; positions clearing LATER in the window are not
-                # re-traded by production until the NEXT scheduled scan (with its own
-                # signals). See "Known Modeling Approximations" in the spec.
+            if live_selection is not None:
+                if live_selection:
+                    self._force_close_for_live_selection(scan_config, klines, state, selection_time)
+                    self._open_scan_signals(
+                        scan_config,
+                        scan_signals,
+                        klines,
+                        state,
+                        selection_time,
+                        scan_execution_mode,
+                        selection_mode="live_selection",
+                        live_selection=live_selection,
+                    )
+                else:
+                    state.signals_filtered += len(scan_signals)
+
                 if state.open_positions:
-                    next_scan_time = None
-                    if scan_idx + 1 < len(scan_order):
-                        next_scan_id = scan_order[scan_idx + 1]
-                        next_scan_time = scans[next_scan_id][0]["signal_time"]
-                    self._evaluate_candles_until(config, klines, state, current_time, next_scan_time, cancel_event)
+                    _evaluate_window(scan_config, selection_time, next_scan_start)
+                    candle_count += 1
+
                 if on_progress:
                     pct = int(((scan_idx + 1) / len(scan_order)) * 100)
                     on_progress(min(pct, 99))
                 continue
 
-            # Refresh the per-scan available balance + re-anchor the equity reference,
-            # then open this scan's signals. Extracted into a helper so the open
-            # sequence (balance refresh, reference anchor, batch/immediate dispatch)
-            # lives in exactly one place.
-            self._open_scan_signals(config, scan_signals, klines, state, current_time, execution_mode)
+            # Live evaluates skip_if_positions_open at scan START, then executes the
+            # scan at completion. If positions existed at start but closed during the
+            # scan, post_scan_recheck trades the completed results using its own
+            # abs(score)-only ordering. The backtest must preserve that split or it
+            # selects a normal batch set that live never attempted for this account.
+            positions_open_at_scan_start = bool(state.open_positions)
+            if positions_open_at_scan_start:
+                _evaluate_window(scan_config, scan_started_at, post_recheck_time)
 
-            # --- CANDLE-BY-CANDLE CLOSE RULE EVALUATION (Task 3.3+) ---
-            # After opening positions, evaluate close rules on subsequent candles
-            # until next scan event (or end of data)
-            next_scan_time = None
-            if scan_idx + 1 < len(scan_order):
-                next_scan_id = scan_order[scan_idx + 1]
-                next_scan_time = scans[next_scan_id][0]["signal_time"]
-
-            # Evaluate open positions against candles until the next scan event.
-            if state.open_positions:
-                self._evaluate_candles_until(
-                    config, klines, state, current_time, next_scan_time, cancel_event
+            evaluate_from_time = selection_time
+            if scan_config.get("skip_if_positions_open") and positions_open_at_scan_start:
+                if state.open_positions:
+                    state.signals_filtered += len(scan_signals)
+                    _evaluate_window(scan_config, post_recheck_time, next_scan_start)
+                    if on_progress:
+                        pct = int(((scan_idx + 1) / len(scan_order)) * 100)
+                        on_progress(min(pct, 99))
+                    continue
+                _maybe_start_report_window(post_recheck_time)
+                self._open_scan_signals(
+                    scan_config,
+                    scan_signals,
+                    klines,
+                    state,
+                    post_recheck_time,
+                    scan_execution_mode,
+                    selection_mode="post_scan_recheck",
                 )
+                evaluate_from_time = post_recheck_time
+            else:
+                _maybe_start_report_window(selection_time)
+                self._open_scan_signals(
+                    scan_config, scan_signals, klines, state, selection_time, scan_execution_mode
+                )
+
+            # Evaluate open positions until the next scan START, because live
+            # init_balances observes positions at that instant.
+            if state.open_positions:
+                _evaluate_window(scan_config, evaluate_from_time, next_scan_start)
                 candle_count += 1
 
             # Report progress
@@ -358,6 +493,8 @@ class BacktestEngine:
 
         # --- FORCE-CLOSE AT BACKTEST END (Task 3.10) ---
         fee_rate = config.get("fee_rate_pct", 0.055)
+        if report_start is not None and not report_started:
+            _start_report_window()
         if state.open_positions:
             # Close all remaining positions at last available price
             for pos in list(state.open_positions):
@@ -413,9 +550,27 @@ class BacktestEngine:
                 round(((_eq - _peak) / _peak) * 100.0, 4) if _peak > 0 else 0.0
             )
 
-        # Compute all metrics from trades + equity curve
+        def _in_report_window(trade: dict[str, Any]) -> bool:
+            if report_start is None:
+                return True
+            entry_time = self._as_aware_datetime(trade.get("entry_time"))
+            exit_time = self._as_aware_datetime(trade.get("exit_time"))
+            activity_time = exit_time or entry_time
+            if activity_time is None:
+                return False
+            if activity_time < report_start:
+                return False
+            if report_end is not None and entry_time is not None and entry_time > report_end:
+                return False
+            return True
+
+        result_trades = [t for t in state.closed_trades if _in_report_window(t)]
+
+        # Compute all metrics from reported trades + reported equity curve. Warm-up
+        # trades remain in state.closed_trades for adaptive selector history, but are
+        # not surfaced as user-visible backtest trades.
         from backend.services.backtest_metrics import compute_all_metrics
-        metrics = compute_all_metrics(state.closed_trades, state.equity_curve, config)
+        metrics = compute_all_metrics(result_trades, state.equity_curve, config)
 
         # Surface any input sanitization the metrics layer had to perform as
         # warnings — silent coercion of bad engine data would otherwise hide
@@ -431,7 +586,7 @@ class BacktestEngine:
             warnings.append(f"metrics_sanitized_{diag['equity_values_sanitized']}_non_finite_equity_values")
 
         return SimulationResult(
-            trades=state.closed_trades,
+            trades=result_trades,
             equity_curve=state.equity_curve,
             metrics=metrics,
             warnings=warnings,
@@ -440,38 +595,220 @@ class BacktestEngine:
                 "signals_filtered": state.signals_filtered,
                 "signals_entered": state.signals_entered,
                 "signals_no_kline": state.signals_no_kline,
+                "signals_no_kline_symbols": sorted(state.no_kline_symbols),
             },
         )
 
     # --- Filter chain implementation ---
 
     @staticmethod
-    def _rank_key(s: dict[str, Any]) -> tuple:
-        """Selection rank that matches live's auto_trade_service.execute_batch ORDER:
-        (abs(score), analysis_completed_at, id), all DESC under reverse=True.
+    def _completed_timestamp(s: dict[str, Any]) -> tuple[int, float]:
+        completed_at = s.get("completed_at") or s.get("analysis_completed_at")
+        has_ts = 0
+        ts = 0.0
+        if isinstance(completed_at, datetime):
+            if completed_at.tzinfo is None:
+                completed_at = completed_at.replace(tzinfo=timezone.utc)
+            has_ts = 1
+            ts = completed_at.timestamp()
+        elif isinstance(completed_at, str) and completed_at:
+            try:
+                parsed = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                has_ts = 1
+                ts = parsed.timestamp()
+            except ValueError:
+                has_ts = 0
+                ts = 0.0
+        return has_ts, ts
 
-        analysis_completed_at breaks score-ties (latest-analyzed first, matching live's
-        `completed_at` DESC). A NULL completed_at must sort LAST within a tie (live's SQL
-        uses NULLS LAST), so under reverse=True it needs the SMALLEST sort value — use a
-        (has_ts, ts_epoch) pair where has_ts=0 for NULL. `id` is the final deterministic
-        tiebreak.
+    @classmethod
+    def _rank_key(cls, s: dict[str, Any]) -> tuple:
+        """Selection rank used by live auto_trade_service.execute_batch.
 
-        CAVEAT (not byte-identical to live, but the closest the engine can get):
-        - Live ranks on `result["completed_at"]` from the scan-result payload; the engine
-          ranks on `analysis_runs.completed_at` (per-ticker analysis finish). These are
-          usually the same instant but may differ — see _load_signals' docstring.
-        - Live compares ISO strings lexicographically; this compares epoch floats. They
-          agree for uniform UTC ISO timestamps.
-        - Live has no final `id` tiebreak (relies on stable dedup order); the engine adds
-          `id` DESC for full determinism. On the two fill-pass sites (relaxed/immediate)
-          live sorts by abs(score) ONLY — applying _rank_key there is harmless
-          determinism hardening (signals already arrive pre-sorted from _load_signals'
-          `ORDER BY ABS(score) DESC, ar.completed_at DESC NULLS LAST, sr.id`).
+        Live sorts the deduped in-memory results by
+        ``(abs(score), result["completed_at"])`` descending and relies on Python's
+        stable sort for exact ties. Copied schedule rows can have
+        scan_results.completed_at NULL even though the live in-memory result had
+        the per-symbol analysis completion timestamp, so reconstruct that timestamp
+        from analysis_completed_at before ranking. There is deliberately no final
+        id tiebreak here: adding one changes which equal-score/equal-time signals
+        enter when max_trades cuts the candidate list.
         """
-        ca = s.get("analysis_completed_at")
-        has_ts = 1 if ca is not None else 0
-        ts = ca.timestamp() if ca is not None else 0.0
-        return (abs(s.get("score", 0)), has_ts, ts, s.get("id", 0))
+        has_ts, ts = cls._completed_timestamp(s)
+        return (abs(s.get("score", 0)), has_ts, ts)
+
+    @staticmethod
+    def _fill_rank_key(s: dict[str, Any]) -> float:
+        """Live relaxed fill ranks leftover candidates by abs(score) only."""
+        return abs(s.get("score", 0))
+
+    @classmethod
+    def _post_recheck_sort_key(cls, s: dict[str, Any]) -> tuple:
+        """Live post_scan_recheck ranks by abs(score), preserving completion order.
+
+        The scanner's in-memory ``results`` list is appended as analyses complete.
+        post_scan_recheck then applies a stable ``abs(score)`` sort, so equal-score
+        candidates keep completion-time ASC order. Historical local rows are loaded
+        by scan_result id, so reconstruct that stable order from analysis_completed_at
+        when scan_results.completed_at is absent.
+        """
+        has_ts, ts = cls._completed_timestamp(s)
+        return (-abs(s.get("score", 0)), 0 if has_ts else 1, ts)
+
+    @staticmethod
+    def _to_symbol(ticker: str) -> str:
+        return ticker if ticker.endswith("USDT") else f"{ticker}USDT"
+
+    @staticmethod
+    def _sector_for(config: dict[str, Any], symbol: str) -> str:
+        sector_map = config.get("_sector_map") or {}
+        sector = sector_map.get(symbol)
+        if sector:
+            return sector
+        from backend.services.sector_map import get_sector as _static_get_sector
+        return _static_get_sector(symbol)
+
+    @staticmethod
+    def _as_aware_datetime(value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return None
+
+    def _scan_selection_time(
+        self,
+        config: dict[str, Any],
+        scan_id: str,
+        default_time: datetime,
+    ) -> datetime:
+        """Live account replay clock for this scan, falling back to scan completion.
+
+        Production checks signal age and places market orders at the account's actual
+        executor time, not at scan completion. For account-aware backtests the service
+        injects that per-scan timestamp from debug traces / trade rows.
+        """
+        default_time = self._as_aware_datetime(default_time) or default_time
+        by_scan = config.get("_selection_time_by_scan") or {}
+        raw = None
+        if isinstance(by_scan, dict):
+            raw = by_scan.get(scan_id) or by_scan.get(str(scan_id))
+        selection_time = self._as_aware_datetime(raw)
+        if selection_time is not None:
+            return selection_time
+        by_scan = config.get("_schedule_selection_time_by_scan") or {}
+        raw = None
+        if isinstance(by_scan, dict):
+            raw = by_scan.get(scan_id) or by_scan.get(str(scan_id))
+        selection_time = self._as_aware_datetime(raw)
+        return selection_time or default_time
+
+    def _scan_post_scan_recheck_time(
+        self,
+        config: dict[str, Any],
+        scan_id: str,
+        default_time: datetime,
+    ) -> datetime:
+        """Estimated live clock for post_scan_recheck.
+
+        Account replay supplies exact `_selection_time_by_scan` values. Account-free
+        Specific Schedule supplies `_schedule_post_scan_recheck_time_by_scan`, derived
+        from the copied scan config order.
+        """
+        default_time = self._as_aware_datetime(default_time) or default_time
+        by_scan = config.get("_selection_time_by_scan") or {}
+        raw = None
+        if isinstance(by_scan, dict):
+            raw = by_scan.get(scan_id) or by_scan.get(str(scan_id))
+        recheck_time = self._as_aware_datetime(raw)
+        if recheck_time is not None:
+            return recheck_time
+        by_scan = config.get("_schedule_post_scan_recheck_time_by_scan") or {}
+        raw = None
+        if isinstance(by_scan, dict):
+            raw = by_scan.get(scan_id) or by_scan.get(str(scan_id))
+        recheck_time = self._as_aware_datetime(raw)
+        return recheck_time or default_time
+
+    def _scan_live_selection(
+        self,
+        config: dict[str, Any],
+        scan_id: str,
+    ) -> Optional[list[dict[str, Any]]]:
+        by_scan = config.get("_live_selection_by_scan")
+        if not isinstance(by_scan, dict):
+            return None
+        if scan_id in by_scan:
+            return list(by_scan.get(scan_id) or [])
+        key = str(scan_id)
+        if key in by_scan:
+            return list(by_scan.get(key) or [])
+        return None
+
+    @staticmethod
+    def _side_name(side: Any) -> str:
+        value = str(side or "").strip().lower()
+        if value in ("buy", "long"):
+            return "buy"
+        if value in ("sell", "short"):
+            return "sell"
+        return value
+
+    def _signals_for_live_selection(
+        self,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        live_selection: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        from backend.services.trading_rules import determine_side
+
+        remaining = list(scan_signals)
+        selected: list[dict[str, Any]] = []
+        for item in live_selection:
+            wanted_symbol = self._to_symbol(str(item.get("symbol") or ""))
+            wanted_side = self._side_name(item.get("side"))
+            match_idx = None
+            for idx, sig in enumerate(remaining):
+                if self._to_symbol(sig.get("ticker", "")) != wanted_symbol:
+                    continue
+                if wanted_side:
+                    sig_side = self._side_name(
+                        determine_side(sig.get("direction", ""), config.get("direction", "straight"))
+                    )
+                    if sig_side != wanted_side:
+                        continue
+                match_idx = idx
+                break
+            if match_idx is not None:
+                selected.append(remaining.pop(match_idx))
+        return selected
+
+    def _force_close_for_live_selection(
+        self,
+        config: dict[str, Any],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        close_time: datetime,
+    ) -> None:
+        """Clear simulated positions before a pinned live selection opens.
+
+        If live placed new scanner trades for this account, the live account had no
+        blocking positions at that instant. The simulated close timing can still lag;
+        close those carried positions at the current mark so they are recorded and do
+        not block the exact live-selected membership.
+        """
+        if not state.open_positions:
+            return
+        fee_rate = config.get("fee_rate_pct", 0.055)
+        for pos in list(state.open_positions):
+            exit_price = self._mark_index.mark_at_or_before(pos.symbol, close_time, pos.entry_price)
+            self._close_position(state, pos, "live_selection_sync", exit_price, close_time, fee_rate)
 
     def _process_batch_signals(
         self,
@@ -488,8 +825,7 @@ class BacktestEngine:
             deduped[sig["ticker"]] = sig
         unique_signals = list(deduped.values())
 
-        # Step 2: Rank by abs(score) descending, ties broken by analysis_completed_at
-        # then id (matches live execute_batch selection order — see _rank_key).
+        # Step 2: Rank exactly like live execute_batch (see _rank_key).
         unique_signals.sort(key=self._rank_key, reverse=True)
 
         # Step 3: Apply filter chain (strict pass)
@@ -503,18 +839,78 @@ class BacktestEngine:
 
         # Step 4: fill_to_max_trades relaxed pass
         if config.get("fill_to_max_trades") and entered < config.get("max_trades", 999):
-            remaining = [s for s in unique_signals if s["ticker"] not in
+            remaining = [s for s in unique_signals if self._to_symbol(s["ticker"]) not in
                          {p.symbol for p in state.open_positions}]
-            remaining.sort(key=self._rank_key, reverse=True)
-            for sig in remaining:
-                if entered >= config.get("max_trades", 999):
-                    break
+            remaining.sort(key=self._fill_rank_key, reverse=True)
+            remaining_slots = max(0, config.get("max_trades", 999) - entered)
+            for sig in remaining[:remaining_slots]:
                 if (
                     self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
                     and self._open_position(config, sig, klines, state, current_time, relaxed=True)
                 ):
                     entered += 1
 
+        return entered
+
+    def _process_post_scan_recheck_signals(
+        self,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        current_time: datetime,
+    ) -> int:
+        """Process a scan through live post_scan_recheck ordering.
+
+        post_scan_recheck dedupes by ticker, then sorts only by abs(score)
+        descending. Python's stable sort preserves scan-result completion order for
+        equal scores, which is why rescued scans can pick a different top-N set than
+        execute_batch.
+        """
+        deduped: dict[str, dict] = {}
+        for sig in scan_signals:
+            deduped[sig["ticker"]] = sig
+        unique_signals = list(deduped.values())
+        unique_signals.sort(key=self._post_recheck_sort_key)
+
+        entered = 0
+        for sig in unique_signals:
+            if (
+                self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=False)
+                and self._open_position(config, sig, klines, state, current_time)
+            ):
+                entered += 1
+
+        if config.get("fill_to_max_trades") and entered < config.get("max_trades", 999):
+            remaining = [s for s in unique_signals if self._to_symbol(s["ticker"]) not in
+                         {p.symbol for p in state.open_positions}]
+            remaining.sort(key=self._fill_rank_key, reverse=True)
+            remaining_slots = max(0, config.get("max_trades", 999) - entered)
+            for sig in remaining[:remaining_slots]:
+                if (
+                    self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
+                    and self._open_position(config, sig, klines, state, current_time, relaxed=True)
+                ):
+                    entered += 1
+
+        return entered
+
+    def _process_live_selection_signals(
+        self,
+        config: dict[str, Any],
+        scan_signals: list[dict[str, Any]],
+        live_selection: list[dict[str, Any]],
+        klines: dict[str, list[dict[str, Any]]],
+        state: SimulationState,
+        current_time: datetime,
+    ) -> int:
+        """Open the exact symbols that the live account selected for this scan."""
+        entered = 0
+        for sig in self._signals_for_live_selection(config, scan_signals, live_selection):
+            if self._open_position(config, sig, klines, state, current_time):
+                entered += 1
+        skipped = max(0, len(scan_signals) - entered)
+        state.signals_filtered += skipped
         return entered
 
     def _process_immediate_signals(
@@ -543,12 +939,11 @@ class BacktestEngine:
             open_syms = {p.symbol for p in state.open_positions}
             remaining = [
                 s for s in scan_signals
-                if s.get("ticker") not in open_syms and s.get("direction", "hold") != "hold"
+                if self._to_symbol(s.get("ticker", "")) not in open_syms and s.get("direction", "hold") != "hold"
             ]
-            remaining.sort(key=self._rank_key, reverse=True)
-            for sig in remaining:
-                if state.scan_entered >= config.get("max_trades", 999):
-                    break
+            remaining.sort(key=self._fill_rank_key, reverse=True)
+            remaining_slots = max(0, config.get("max_trades", 999) - state.scan_entered)
+            for sig in remaining[:remaining_slots]:
                 if (
                     self._apply_filter_chain(config, sig, state, current_time, klines, relaxed=True)
                     and self._open_position(config, sig, klines, state, current_time, relaxed=True)
@@ -657,7 +1052,7 @@ class BacktestEngine:
         # match the blacklist/whitelist against THAT — production does NOT also match a
         # bare ticker, so neither must the backtest, or a bare-listed symbol would be
         # filtered here while production trades it.
-        symbol = ticker if ticker.endswith("USDT") else f"{ticker}USDT"
+        symbol = self._to_symbol(ticker)
 
         # 3. Blacklist
         blacklist = config.get("symbol_blacklist") or []
@@ -673,7 +1068,7 @@ class BacktestEngine:
 
         # 5. Existing position (no duplicate positions on same symbol)
         existing_symbols = {p.symbol for p in state.open_positions}
-        if ticker in existing_symbols:
+        if symbol in existing_symbols:
             state.signals_filtered += 1
             return False
 
@@ -709,17 +1104,17 @@ class BacktestEngine:
         # freshness bound — without this the backtest over-fills any config that pairs
         # fill_to_max_trades with max_signal_age_minutes, diverging from real trading.
         #
-        # Age is measured from the PER-TICKER analysis completion (analysis_completed_at),
-        # NOT the scan-level signal_time: every signal in one scan shares the same
-        # signal_time (the loader anchors it to the scan's completed_at), so measuring age
-        # from signal_time would always yield 0 and make this gate a no-op on real data.
-        # analysis_completed_at is the backtest analog of live's per-ticker
-        # result.completed_at (set when each symbol's analysis finishes). Fall back to
-        # signal_time when per-ticker completion is absent (legacy/synthetic data) so the
-        # gate still enforces rather than silently bypassing.
+        # Age is measured from the per-symbol completion timestamp. Copied rows can
+        # have NULL scan_results.completed_at even though analysis_runs.completed_at
+        # preserves the timestamp _try_trade used for freshness. Use the same fallback
+        # as normal batch ranking so stale early completions are skipped like live.
         max_age = config.get("max_signal_age_minutes")
         if max_age is not None:
-            age_anchor = signal.get("analysis_completed_at") or signal.get("signal_time")
+            age_anchor = (
+                signal.get("completed_at")
+                or signal.get("analysis_completed_at")
+                or signal.get("signal_time")
+            )
             if age_anchor and current_time:
                 age_minutes = (current_time - age_anchor).total_seconds() / 60
                 if age_minutes > max_age:
@@ -741,17 +1136,28 @@ class BacktestEngine:
                 state.signals_filtered += 1
                 return False
 
-        # 9. Sector concentration limit — NOT enforced in the backtest engine.
-        # Real sector classification requires the IO-bound sector service
-        # (CoinGecko/LLM/DB cache), which the pure synchronous engine cannot call.
-        # max_same_sector is therefore intentionally a no-op here; the service
-        # surfaces a `max_same_sector_not_enforced` warning when it is set so the
-        # user knows results may diverge from live trading (which DOES enforce it).
+        # 9. Sector concentration limit. The service preloads the live sector cache
+        # into config["_sector_map"]; unknown/static-only symbols fall back to the
+        # same static map live uses when the dynamic service is unavailable.
+        max_same_sector = config.get("max_same_sector")
+        if max_same_sector is not None:
+            sector = self._sector_for(config, symbol)
+            if sector != "other":
+                same_sector_count = sum(
+                    1 for p in state.open_positions
+                    if self._sector_for(config, p.symbol) == sector
+                )
+                if same_sector_count >= max_same_sector:
+                    state.signals_filtered += 1
+                    return False
 
-        # 10. Adaptive blacklist (computed from backtest's own trade history)
-        if (
-            config.get("adaptive_blacklist_enabled")
-            and self._is_adaptively_blacklisted(config, ticker, state, current_time)
+        # 10. Adaptive blacklist. Live computes this from signal_performance before
+        # placement. Local schedule backtests do not have account trade history, so
+        # compute the same rolling win-rate rule from simulated trades already closed
+        # earlier in this run. Explicit replay/precomputed inputs still win when
+        # intentionally supplied.
+        if config.get("adaptive_blacklist_enabled") and self._is_adaptively_blacklisted(
+            config, state, symbol, current_time, is_mr=is_mr
         ):
             state.signals_filtered += 1
             return False
@@ -818,22 +1224,34 @@ class BacktestEngine:
         if max_drift is not None and not is_mr:
             analysis_price = signal.get("analysis_price")
             if analysis_price and analysis_price > 0:
-                # Compare analysis_price against the price the trade would FILL at —
-                # the next bar's OPEN (same next-bar-open basis as _open_position, no
-                # look-ahead). Using the bar's close here would drift-check against a
-                # price ~one candle in the future AND disagree with the actual fill.
-                # NB: this stays on the 5m next-bar-open in BOTH drill-down phases so a
-                # signal's selection is identical with/without fine_klines — a 1m drift
-                # basis would only ever apply in Phase B and could reject a trade Phase A
-                # admitted, silently changing the selected set (drill-down is exit-price
-                # refinement only, never selection).
-                symbol_klines = klines.get(ticker, [])
-                current_price = None
-                for k in symbol_klines:
-                    if k["open_time"] >= current_time:
-                        current_price = k["open"]
-                        break
-                if current_price is not None:
+                # Live checks drift against the exchange mark at the decision instant
+                # (`accounts_service.get_mark_price`), before placement. The closest
+                # account-free historical equivalent is the last cached mark at or before
+                # the decision time, not the future entry bar's open.
+                current_price = self._mark_index.mark_at_or_before(ticker, current_time, None)
+                if (config.get("scan_source") or {}).get("mode") == "schedule":
+                    candle = self._mark_index.candle_at_or_before(ticker, current_time)
+                    if candle is not None:
+                        # Live checks an exchange mark at the decision instant. Copied
+                        # account-free schedule data has only OHLC bars, so approximate
+                        # the mark from where the decision lands inside the 5m bar:
+                        # near the bar open, the adverse side best protects against
+                        # trades live skipped on a fast current-mark move; once the
+                        # decision is materially inside the bar, the close is the better
+                        # point estimate and avoids rejecting trades live still admitted.
+                        elapsed = None
+                        open_time = candle.get("open_time")
+                        if isinstance(open_time, datetime):
+                            elapsed = (current_time - open_time).total_seconds()
+                        bar_seconds = self._sim_bar_seconds(klines.get(ticker, [])) or 300
+                        early_window = min(30.0, max(1.0, bar_seconds * 0.10))
+                        if elapsed is not None and 0 <= elapsed <= early_window:
+                            current_price = (
+                                candle["high"] if direction in ("buy", "long") else candle["low"]
+                            )
+                        else:
+                            current_price = candle["close"]
+                if current_price is not None and current_price > 0:
                     drift_pct = (current_price - analysis_price) / analysis_price * 100
                     if direction in ("buy", "long") and drift_pct > max_drift:
                         state.signals_filtered += 1
@@ -952,6 +1370,7 @@ class BacktestEngine:
             # production WOULD have traded it. Count it distinctly (not as a filtered
             # signal) so the service can warn that the backtest under-traded here.
             state.signals_no_kline += 1
+            state.no_kline_symbols.add(ticker)
             return False
 
         # Entry fills at the NEXT BAR'S OPEN — the first tradeable price strictly
@@ -982,6 +1401,7 @@ class BacktestEngine:
         # position. Count it like a no-kline drop (surfaced as a warning) and skip.
         if entry_bar_open is None:
             state.signals_no_kline += 1
+            state.no_kline_symbols.add(ticker)
             return False
 
         # ── 1-minute ENTRY DRILL-DOWN (price-only) ──
@@ -995,9 +1415,6 @@ class BacktestEngine:
         # (strictly after the fill minute) → no look-ahead, no perturbation of which bars
         # the position is open for. This tightens the entry price toward production's
         # mid-bar fill without moving the trade lifecycle. No window ⇒ unchanged 5m open.
-        # equity_ref_base = the UN-drilled 5m fill, preserved so the equity close-rules
-        # value uPnL off a price that is INVARIANT to drill-down → identical selection.
-        equity_ref_base = entry_base_price
         if self._fine_klines and entry_bar_open is not None:
             sim_secs = self._sim_bar_seconds(symbol_klines)
             signal_bar_epoch = (int(current_time.timestamp()) // sim_secs) * sim_secs if sim_secs else None
@@ -1037,10 +1454,11 @@ class BacktestEngine:
             side = "Buy" if mr_placement["signal_direction"] == "long" else "Sell"
 
         entry_price = apply_slippage(entry_base_price, side, config.get("slippage_bps", 2))
-        # Slipped equity-reference fill (the un-drilled 5m price + same slippage). Equals
-        # entry_price when no drill occurred. The equity close-rules use this so drill
-        # never shifts selection.
-        equity_ref_entry = apply_slippage(equity_ref_base, side, config.get("slippage_bps", 2))
+        # Equity rules must value uPnL from the same fill basis live sees in wallet
+        # equity: the exchange avgPrice. Using the un-drilled 5m open here can make a
+        # profit-target/drawdown rule fire before production would, which changes the
+        # skip_if_positions_open and post_scan_recheck trade-picking path.
+        equity_ref_entry = entry_price
 
         # Per-symbol instrument parameters (lot step, min qty, tick size, max
         # leverage). When the service didn't resolve real values for this symbol the
@@ -1179,28 +1597,65 @@ class BacktestEngine:
     def _is_adaptively_blacklisted(
         self,
         config: dict[str, Any],
-        ticker: str,
         state: SimulationState,
+        symbol: str,
         current_time: datetime,
+        *,
+        is_mr: bool = False,
     ) -> bool:
-        """Check if symbol is adaptively blacklisted based on backtest trade history."""
+        """Check the same adaptive blacklist rule live auto-trading uses.
+
+        Live injects a precomputed symbol set from signal_performance before the
+        executor runs. In schedule backtests, there is no local account/trade table;
+        the equivalent source is the simulated closed-trade ledger up to this scan.
+        """
+        from backend.services.strategy_router import select_adaptive_blacklist
+
+        precomputed = select_adaptive_blacklist(config, mr_fade=is_mr)
+        if precomputed:
+            precomputed_set = precomputed if isinstance(precomputed, set) else set(precomputed)
+            return symbol in precomputed_set
+
         lookback_hours = config.get("adaptive_blacklist_lookback_hours", 48)
         min_trades = config.get("adaptive_blacklist_min_trades", 5)
         max_win_rate = config.get("adaptive_blacklist_max_win_rate", 30.0)
-
+        strategy_kind = "mean_reversion" if is_mr else "trend"
         cutoff = current_time - timedelta(hours=lookback_hours)
 
-        # Count wins and total trades for this ticker in simulated time window
         wins = 0
         total = 0
-        for trade in state.closed_trades:
-            if trade.get("symbol") != ticker:
-                continue
-            exit_time = trade.get("exit_time")
-            if exit_time and exit_time >= cutoff:
+
+        def _count(symbol_value: Any, strategy_value: Any, closed_at_value: Any, is_win_value: Any) -> None:
+            nonlocal wins, total
+            if symbol_value != symbol:
+                return
+            if (strategy_value or "trend") != strategy_kind:
+                return
+            closed_at = self._as_aware_datetime(closed_at_value)
+            if closed_at is None:
+                return
+            if cutoff < closed_at <= current_time:
                 total += 1
-                if (trade.get("pnl") or 0) > 0:
+                if bool(is_win_value):
                     wins += 1
+
+        for row in config.get("_adaptive_blacklist_history") or []:
+            if row.get("symbol") != symbol:
+                continue
+            _count(
+                row.get("symbol"),
+                row.get("strategy_kind"),
+                row.get("closed_at"),
+                row.get("is_win"),
+            )
+
+        for trade in state.closed_trades:
+            _count(
+                trade.get("symbol"),
+                trade.get("strategy_kind"),
+                trade.get("exit_time"),
+                float(trade.get("pnl") or 0.0) > 0.0,
+            )
 
         if total < min_trades:
             return False
@@ -1216,6 +1671,8 @@ class BacktestEngine:
         state: SimulationState,
         current_time: datetime,
         execution_mode: str,
+        selection_mode: Optional[str] = None,
+        live_selection: Optional[list[dict[str, Any]]] = None,
     ) -> int:
         """Refresh the per-scan AVAILABLE balance, re-anchor the equity reference, and
         open this scan's signals. The single source of the per-scan open sequence.
@@ -1235,6 +1692,13 @@ class BacktestEngine:
         # fresh EQUITY_DROP_PCT_SMART. Re-arm the one-shot SMART guard here (NOT on a
         # skipped scan, which preserves the prior rule's executed state).
         state.smart_drawdown_fired = False
+        state.breakeven_suppressed_after_smart = False
+        state.breakeven_rule_started_at = (
+            current_time if config.get("breakeven_timeout_hours") else None
+        )
+        state.max_duration_rule_started_at = (
+            current_time if config.get("max_trade_duration_hours") else None
+        )
         carried_upnl = 0.0
         for _p in state.open_positions:
             _ref = _p.equity_ref_entry or _p.entry_price
@@ -1247,7 +1711,13 @@ class BacktestEngine:
         state.cycle_start_equity = available_balance
 
         before = state.scan_entered
-        if execution_mode == "batch":
+        if selection_mode == "live_selection":
+            self._process_live_selection_signals(
+                config, scan_signals, live_selection or [], klines, state, current_time
+            )
+        elif selection_mode == "post_scan_recheck":
+            self._process_post_scan_recheck_signals(config, scan_signals, klines, state, current_time)
+        elif execution_mode == "batch":
             self._process_batch_signals(config, scan_signals, klines, state, current_time)
         else:
             self._process_immediate_signals(config, scan_signals, klines, state, current_time)
@@ -1279,12 +1749,8 @@ class BacktestEngine:
         all_timestamps: set[datetime] = set()
         for sym in open_symbols:
             idx: dict[datetime, dict] = {}
-            for k in klines.get(sym, []):
+            for k in self._mark_index.candles_after_until(sym, start_time, end_time):
                 kt = k["open_time"]
-                if kt <= start_time:
-                    continue
-                if end_time and kt >= end_time:
-                    continue
                 idx[kt] = k
                 all_timestamps.add(kt)
             if idx:
@@ -1315,7 +1781,7 @@ class BacktestEngine:
         candle_count = 0
 
         # Process timestamps chronologically — unified timeline
-        for candle_time in sorted_timestamps:
+        for idx, candle_time in enumerate(sorted_timestamps):
             if not state.open_positions:
                 break
 
@@ -1450,7 +1916,40 @@ class BacktestEngine:
 
             # --- TIME RULES (use per-symbol latest price for exits) ---
             if state.open_positions:
-                self._evaluate_time_rules(config, state, candle_time, fee_rate, latest_prices)
+                next_candle_time = (
+                    sorted_timestamps[idx + 1]
+                    if idx + 1 < len(sorted_timestamps)
+                    else candle_time + timedelta(minutes=5)
+                )
+                smart_closed_at = state.smart_drawdown_closed_at
+                suppress_breakeven = (
+                    smart_closed_at is not None
+                    and candle_time <= smart_closed_at < next_candle_time
+                )
+                breakeven_prices = dict(latest_prices)
+                if config.get("breakeven_timeout_hours"):
+                    for pos in state.open_positions:
+                        candle = candles_at_time.get(pos.symbol)
+                        if not candle:
+                            continue
+                        # Live BREAKEVEN_TIMEOUT evaluates the exchange wallet's
+                        # totalPerpUPL, not last-trade candle closes. Without a
+                        # historical mark-price stream, use the adverse side of the
+                        # current bar as a conservative account-level mark so a brief
+                        # favorable close cannot trigger a mass close live would not
+                        # confirm.
+                        breakeven_prices[pos.symbol] = (
+                            candle["low"] if pos.side == "Buy" else candle["high"]
+                        )
+                self._evaluate_time_rules(
+                    config,
+                    state,
+                    candle_time,
+                    fee_rate,
+                    latest_prices,
+                    breakeven_prices=breakeven_prices,
+                    suppress_breakeven=suppress_breakeven,
+                )
 
     def _close_position(
         self,
@@ -1715,9 +2214,8 @@ class BacktestEngine:
         losing_positions = []
         for pos in state.open_positions:
             current_price = latest_prices.get(pos.symbol, pos.entry_price)
-            # Equity rules value uPnL off the STABLE 5m reference entry (invariant to
-            # drill-down) so toggling drill-down never changes which threshold fires →
-            # identical trade selection. Falls back to entry_price when not drilled.
+            # Equity rules value uPnL off the simulated exchange avgPrice, matching
+            # production wallet equity. Falls back to entry_price for legacy positions.
             ref = pos.equity_ref_entry or pos.entry_price
             upnl = compute_unrealized_pnl(ref, current_price, pos.qty, pos.side)
             total_upnl += upnl
@@ -1726,46 +2224,48 @@ class BacktestEngine:
 
         equity = state.wallet_balance + total_upnl
 
-        # --- EQUITY_DROP_PCT / EQUITY_DROP_PCT_SMART (INTRABAR-AWARE) ---
+        # --- EQUITY_DROP_PCT / EQUITY_DROP_PCT_SMART ---
         max_drawdown_pct = config.get("max_drawdown_pct", 100.0)
         if max_drawdown_pct < 100.0:
-            # Worst-case intra-candle equity: value every open position at its
-            # adverse extreme THIS bar (short → high, long → low). A position with
-            # no candle this timestamp keeps its latest-close mark (no new info).
-            # This is the price at which the live tick-driven rule would have seen
-            # the deepest drawdown within the bar.
-            drawdown_upnl = 0.0
+            smart_drawdown = bool(config.get("smart_drawdown_close"))
             adverse_price: dict[str, float] = {}
-            for pos in state.open_positions:
-                candle = candles_at_time.get(pos.symbol)
-                if candle is not None:
-                    # Entry-bar guard: a 1m-drilled position uses its POST-ENTRY 1m
-                    # extreme on its own entry bar, so pre-fill price action can't
-                    # fabricate a drawdown close (look-ahead). Otherwise the 5m extreme.
-                    hi, lo = self._bar_extremes_for(pos, candle, candle_time)
-                    extreme = hi if pos.side == "Sell" else lo
-                else:
-                    extreme = latest_prices.get(pos.symbol, pos.entry_price)
-                adverse_price[pos.symbol] = extreme
-                drawdown_upnl += compute_unrealized_pnl(
-                    pos.equity_ref_entry or pos.entry_price, extreme, pos.qty, pos.side
-                )
-            intrabar_equity = state.wallet_balance + drawdown_upnl
-            # Fire on the worse of (close, intrabar) — the intrabar extreme is by
-            # construction ≤ close-equity for a drawdown, so this strictly widens
-            # detection to real breaches the close hid; it never fires when even the
-            # adverse extreme stays above the threshold (verified by the control test).
-            drop_equity = min(equity, intrabar_equity)
+            intrabar_equity = equity
+            if smart_drawdown:
+                # Live SMART evaluates the sampled account mark/equity and closes
+                # currently losing positions. It does not replay a completed 5m
+                # candle's hidden high/low after the fact.
+                drop_equity = equity
+            else:
+                # Non-SMART remains intrabar-aware: value every open position at its
+                # adverse extreme THIS bar (short -> high, long -> low). A position
+                # with no candle this timestamp keeps its latest-close mark.
+                drawdown_upnl = 0.0
+                for pos in state.open_positions:
+                    candle = candles_at_time.get(pos.symbol)
+                    if candle is not None:
+                        # Entry-bar guard: a 1m-drilled position uses its POST-ENTRY
+                        # 1m extreme on its own entry bar, so pre-fill price action
+                        # cannot fabricate a drawdown close.
+                        hi, lo = self._bar_extremes_for(pos, candle, candle_time)
+                        extreme = hi if pos.side == "Sell" else lo
+                    else:
+                        extreme = latest_prices.get(pos.symbol, pos.entry_price)
+                    adverse_price[pos.symbol] = extreme
+                    drawdown_upnl += compute_unrealized_pnl(
+                        pos.equity_ref_entry or pos.entry_price, extreme, pos.qty, pos.side
+                    )
+                intrabar_equity = state.wallet_balance + drawdown_upnl
+                drop_equity = min(equity, intrabar_equity)
 
             def _exit_px(pos: "Position") -> float:
-                # Close at the adverse extreme when the breach was intrabar (so the
-                # booked exit reflects where the rule tripped), else the latest close.
-                if intrabar_equity < equity:
+                # Non-SMART closes at the adverse extreme when the breach was
+                # intrabar. SMART closes at the sampled latest mark/close.
+                if not smart_drawdown and intrabar_equity < equity:
                     return adverse_price.get(pos.symbol, latest_prices.get(pos.symbol, pos.entry_price))
                 return latest_prices.get(pos.symbol, pos.entry_price)
 
             if check_equity_drop(drop_equity, state.cycle_start_equity, max_drawdown_pct):
-                if config.get("smart_drawdown_close"):
+                if smart_drawdown:
                     # SMART is ONE-SHOT per scan window. Production closes the losing
                     # symbols once, transitions the rule to "executed", and does NOT
                     # re-arm or re-anchor it (close_rule_evaluator.py:314) — surviving
@@ -1775,22 +2275,13 @@ class BacktestEngine:
                     # turned losing within the same window — closing positions
                     # production would have held. Gate on the fired-flag for parity.
                     #
-                    # Losers are judged at the SAME adverse extreme used for the
-                    # breach, so a position only pulled negative by the intrabar wick
-                    # is correctly closed (matching live, which sees the live tick).
-                    intrabar_losers = [
-                        pos for pos in state.open_positions
-                        if compute_unrealized_pnl(
-                            pos.equity_ref_entry or pos.entry_price,
-                            adverse_price.get(pos.symbol, pos.equity_ref_entry or pos.entry_price),
-                            pos.qty, pos.side,
-                        ) < 0
-                    ]
                     if state.smart_drawdown_fired:
                         pass  # already fired this scan window — production holds
-                    elif intrabar_losers:
-                        for pos in list(intrabar_losers):
+                    elif losing_positions:
+                        for pos in list(losing_positions):
                             self._close_position(state, pos, "equity_drop_smart", _exit_px(pos), candle_time, fee_rate)
+                        state.smart_drawdown_closed_at = candle_time
+                        state.breakeven_suppressed_after_smart = True
                         # Mark one-shot fired. Do NOT re-anchor cycle_start_equity:
                         # production leaves the (now-executed) rule's reference
                         # untouched, and the shared reference still feeds the
@@ -1944,13 +2435,16 @@ class BacktestEngine:
         candle_time: datetime,
         fee_rate: float,
         latest_prices: Optional[dict[str, float]] = None,
+        breakeven_prices: Optional[dict[str, float]] = None,
+        suppress_breakeven: bool = False,
     ) -> None:
         """Evaluate time-based close rules: BREAKEVEN_TIMEOUT, MAX_DURATION, and the
         per-position MR fast time-stop (F2).
 
         BREAKEVEN_TIMEOUT: account-level — closes ALL remaining positions once total
-            open uPnL >= fee buffer, after the breakeven window.
-        MAX_DURATION: force-closes after elapsed hours at the symbol's latest price.
+            open uPnL >= fee buffer, after the rule-created breakeven window.
+        MAX_DURATION: account-level — force-closes all remaining positions after the
+            rule-created duration window.
         MR time-stop: force-closes a mean_reversion position after its own
             time_stop_minutes (F2's strategy-critical fast exit), independent of the
             account-level MAX_DURATION.
@@ -1967,6 +2461,7 @@ class BacktestEngine:
             return
 
         latest_prices = latest_prices or {}
+        breakeven_prices = breakeven_prices or latest_prices
         positions_to_close = []          # (pos, close_reason)
 
         for pos in list(state.open_positions):
@@ -1975,12 +2470,6 @@ class BacktestEngine:
             # MR fast time-stop (per-position): close after its own minutes elapse.
             if pos.time_stop_minutes and elapsed_hours * 60.0 >= pos.time_stop_minutes:
                 positions_to_close.append((pos, "mr_time_stop"))
-                continue
-
-            # MAX_DURATION: force close after max hours
-            if max_duration_hours and elapsed_hours >= max_duration_hours:
-                positions_to_close.append((pos, "max_duration"))
-                continue
 
         # BREAKEVEN_TIMEOUT (account-level, mirrors live close_rule_evaluator): once the
         # cycle has aged past the breakeven window, close ALL remaining open positions
@@ -1988,25 +2477,47 @@ class BacktestEngine:
         # × 1.5), so the mass close nets ~flat. Positions already queued for MR/
         # MAX_DURATION close above are excluded. Empty remaining → do nothing (no
         # positions = cannot be at breakeven).
-        if breakeven_hours:
+        account_free_schedule = (config.get("scan_source") or {}).get("mode") == "schedule"
+        schedule_profit_round = (
+            account_free_schedule
+            and config.get("target_goal_type") == "profit_pct"
+            and bool(config.get("target_goal_value"))
+        )
+        if (
+            breakeven_hours
+            and not schedule_profit_round
+            and not suppress_breakeven
+            and not state.breakeven_suppressed_after_smart
+        ):
             already = {id(p) for p, _ in positions_to_close}
             remaining = [p for p in state.open_positions if id(p) not in already]
-            if remaining:
-                # All positions in a cycle share ~one entry_time (no mid-cycle entries), so the oldest position's age is the cycle's age past the breakeven window.
-                oldest_elapsed = max(
-                    (candle_time - p.entry_time).total_seconds() / 3600.0 for p in remaining
-                )
-                if oldest_elapsed >= breakeven_hours:
+            started_at = state.breakeven_rule_started_at
+            if remaining and started_at is not None:
+                rule_elapsed = (candle_time - started_at).total_seconds() / 3600.0
+                if rule_elapsed >= breakeven_hours:
                     total_upnl = 0.0
                     total_buffer = 0.0
                     for p in remaining:
-                        mark = latest_prices.get(p.symbol, p.entry_price)
+                        mark = breakeven_prices.get(p.symbol, latest_prices.get(p.symbol, p.entry_price))
                         ref = p.equity_ref_entry or p.entry_price
                         total_upnl += compute_unrealized_pnl(ref, mark, p.qty, p.side)
                         total_buffer += compute_fee(p.qty, mark, fee_rate) * 1.5
                     if total_upnl >= total_buffer:
                         for p in remaining:
                             positions_to_close.append((p, "breakeven"))
+
+        # MAX_DURATION is also an account-level production close rule. It is created
+        # after BREAKEVEN_TIMEOUT, so breakeven gets first chance on a candle where
+        # both elapsed clocks are true; if it did not close, duration closes the rest.
+        if max_duration_hours:
+            already = {id(p) for p, _ in positions_to_close}
+            remaining = [p for p in state.open_positions if id(p) not in already]
+            started_at = state.max_duration_rule_started_at
+            if remaining and started_at is not None:
+                rule_elapsed = (candle_time - started_at).total_seconds() / 3600.0
+                if rule_elapsed >= max_duration_hours:
+                    for p in remaining:
+                        positions_to_close.append((p, "max_duration"))
 
         # Close time-stopped positions at the symbol's latest price. Guard against a
         # position already closed by an earlier rule this candle (defensive parity

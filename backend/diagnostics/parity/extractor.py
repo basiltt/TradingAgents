@@ -24,6 +24,16 @@ def build_cycles(trade_rows: list[Mapping[str, Any]]) -> list[Cycle]:
             exit_price=float(r["exit_price"]) if r.get("exit_price") is not None else None,
             scan_result_id=r.get("scan_result_id"),
             opened_at=r["opened_at"], closed_at=r["closed_at"],
+            qty=float(r["qty"]) if r.get("qty") is not None else 0.0,
+            leverage=int(r["leverage"]) if r.get("leverage") is not None else 1,
+            fees=float(r["fees"]) if r.get("fees") is not None else 0.0,
+            realized_pnl_pct=(
+                float(r["realized_pnl_pct"]) if r.get("realized_pnl_pct") is not None else None
+            ),
+            strategy_kind=r.get("strategy_kind") or "trend",
+            exchange_closed_pnl=(
+                float(r["exchange_closed_pnl"]) if r.get("exchange_closed_pnl") is not None else None
+            ),
         ))
         if sid not in meta:
             meta[sid] = (r["signal_time"], float(r["base_capital"]))
