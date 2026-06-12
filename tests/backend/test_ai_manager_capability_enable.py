@@ -147,10 +147,15 @@ async def test_disable_clears_ephemeral_override(service, mock_repo):
 @pytest.mark.asyncio
 async def test_patch_config_capability_clears_ephemeral_override(service, mock_repo):
     """A persisting patch_config of a capability flag must drop the ephemeral override
-    so it doesn't re-apply (revert the edit) on the next respawn."""
+    so it doesn't re-apply (revert the edit) on the next respawn — AND the live task
+    reload must reflect the edit, not the stale override (guards a clear/reload reorder)."""
     mock_repo.sync_config_columns = AsyncMock()
+    reloaded = {}
     with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
-        MockTask.return_value = MagicMock(start=MagicMock(), reload_config=MagicMock())
+        MockTask.return_value = MagicMock(
+            start=MagicMock(),
+            reload_config=MagicMock(side_effect=lambda c: reloaded.update(cfg=c)),
+        )
         await service.enable(
             "acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False
         )
@@ -159,6 +164,8 @@ async def test_patch_config_capability_clears_ephemeral_override(service, mock_r
         # Operator edits the same capability via the persisting dashboard path.
         await service.patch_config("acc-1", {"mtf_enabled": True})
         assert "acc-1" not in service._ephemeral_capability_overrides
+        # The live task reload must carry the EDIT (mtf on), not the stale override.
+        assert reloaded["cfg"].mtf_enabled is True
 
 
 @pytest.mark.asyncio

@@ -398,12 +398,17 @@ crash protection is a deliberate, visible choice rather than a silent footgun.
 
 ### 11.4 Drift guards
 
-Key-set drift is now caught by tests rather than convention: backend asserts
+Key-set drift is now caught by tests/compiler rather than convention: backend asserts
 `CAPABILITY_FLAG_MAP` keys == `AIManagerCapabilityToggles` fields and that every mapped
-flag is a real `AIManagerConfig` field; frontend derives `allCapabilitiesOn()` from the
-metadata array and asserts its key set. The dashboard's separate `CAPABILITY_REGISTRY`
-(`ai_manager_capabilities_status.py`) uses a different display vocabulary and is
-cross-referenced with an explanatory comment — intentionally not unified.
+flag is a real `AIManagerConfig` field; frontend derives `allCapabilitiesOn()` from a
+compile-time-checked key set (`CAPABILITY_KEY_PRESENCE`, a
+`Record<keyof AIManagerCapabilities, true>` that fails `tsc -b` if the interface gains a
+key), and a test asserts the display-metadata array matches that key set. Frontend↔backend
+key parity is **not** compiler-enforced (the FE has no import of the Pydantic model) — the
+two sides are kept in sync manually, each guarded by its own drift test. The dashboard's
+separate `CAPABILITY_REGISTRY` (`ai_manager_capabilities_status.py`) uses a different
+display vocabulary and is cross-referenced with an explanatory comment — intentionally
+not unified.
 
 ### 11.5 Accepted risks (pre-existing, not introduced here)
 

@@ -5,7 +5,9 @@ export type AICapabilityKey = keyof AIManagerCapabilities;
 // Compile-time exhaustiveness guard: this object MUST list every key of the
 // AIManagerCapabilities interface (and no extras). Adding a field to the interface
 // without adding it here is a TypeScript error — keeping the interface, this key set,
-// the metadata below, and the backend AIManagerCapabilityToggles in lockstep.
+// and the metadata array below in lockstep (the metadata match is enforced by a test).
+// NOTE: parity with the BACKEND AIManagerCapabilityToggles is NOT compiler-enforced —
+// the two key sets must be kept in sync manually (the backend has its own drift test).
 const CAPABILITY_KEY_PRESENCE: Record<AICapabilityKey, true> = {
   mtf: true,
   orderbook: true,
