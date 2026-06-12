@@ -172,3 +172,32 @@ async def test_patch_config_non_capability_keeps_ephemeral_override(service, moc
         )
         await service.patch_config("acc-1", {"max_daily_actions": 12})
         assert "acc-1" in service._ephemeral_capability_overrides
+
+
+@pytest.mark.asyncio
+async def test_lock_position_reload_preserves_active_capability_override(service, mock_repo):
+    """While a per-scan override is active, a non-capability edit (lock_position) must
+    reload the live task WITH the override still applied — not transiently revert to
+    DB capability values."""
+    mock_repo.sync_config_columns = AsyncMock()
+    # DB config carries default capabilities (emergency_close ON).
+    mock_repo.get_state = AsyncMock(return_value={
+        "enabled": True, "fsm_state": "sleeping", "config": "{}",
+        "circuit_breaker_count": 0, "circuit_breaker_active": False,
+    })
+    reloaded = {}
+    live = MagicMock()
+    live.is_dead = MagicMock(return_value=False)
+    live._config = AIManagerConfig(auto_enabled=False)
+    live.reload_config = MagicMock(side_effect=lambda c: reloaded.update(cfg=c))
+    service._tasks["acc-1"] = live
+
+    # Active per-scan override turns emergency_close OFF (in-memory only).
+    await service.enable(
+        "acc-1", AIManagerConfig(auto_enabled=True, emergency_close_enabled=False), persist=False
+    )
+    # Operator locks a position (non-capability edit). The live reload must keep
+    # emergency_close OFF (the override), not flip it back ON from DB.
+    await service.lock_position("acc-1", "BTCUSDT")
+    assert reloaded["cfg"].emergency_close_enabled is False
+    assert reloaded["cfg"].locked_positions == ["BTCUSDT"]

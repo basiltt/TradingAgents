@@ -256,6 +256,25 @@ class AIAccountManagerService:
         """Drop any per-scan capability override for the account (idempotent)."""
         self._ephemeral_capability_overrides.pop(account_id, None)
 
+    def _reload_task_with_ephemeral(self, account_id: str, config: "AIManagerConfig") -> None:
+        """Hot-reload the live task with `config`, re-applying any active per-scan
+        capability override on top — so the running task stays consistent with what a
+        respawn would produce (instead of transiently reverting capabilities to the DB
+        values until the next respawn). Call sites must hold the account lock."""
+        task = self._tasks.get(account_id)
+        if not task:
+            return
+        caps = self._ephemeral_capability_overrides.get(account_id)
+        if caps is not None:
+            from backend.services.ai_manager_capability_map import apply_capability_overrides
+            try:
+                config = apply_capability_overrides(config, caps)
+            except Exception:
+                logger.warning(
+                    "Failed to re-apply ephemeral capabilities on reload for %s", account_id
+                )
+        task.reload_config(config)
+
     async def enable(
         self,
         account_id: str,
@@ -626,9 +645,7 @@ class AIAccountManagerService:
             from backend.services.ai_manager_capability_map import CAPABILITY_FLAG_MAP
             if any(flag in updates for flag in CAPABILITY_FLAG_MAP.values()):
                 self._clear_ephemeral_capabilities(account_id)
-            task = self._tasks.get(account_id)
-            if task:
-                task.reload_config(config)
+            self._reload_task_with_ephemeral(account_id, config)
 
     async def lock_position(self, account_id: str, symbol: str) -> None:
         """Add symbol to locked_positions — prevents AI from closing it."""
@@ -646,9 +663,7 @@ class AIAccountManagerService:
             raw_config["locked_positions"] = sorted(locked)
             config = AIManagerConfig(**raw_config)
             await self._repo.sync_config_columns(account_id, config.model_dump())
-            task = self._tasks.get(account_id)
-            if task:
-                task.reload_config(config)
+            self._reload_task_with_ephemeral(account_id, config)
 
     async def unlock_position(self, account_id: str, symbol: str) -> None:
         """Remove symbol from locked_positions — allows AI to manage it again."""
@@ -666,9 +681,7 @@ class AIAccountManagerService:
             raw_config["locked_positions"] = sorted(locked)
             config = AIManagerConfig(**raw_config)
             await self._repo.sync_config_columns(account_id, config.model_dump())
-            task = self._tasks.get(account_id)
-            if task:
-                task.reload_config(config)
+            self._reload_task_with_ephemeral(account_id, config)
 
     async def get_decisions(
         self, account_id: str, limit: int = 50, cursor: Optional[str] = None, outcome_filter: Optional[str] = None
