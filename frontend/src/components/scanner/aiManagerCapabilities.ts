@@ -2,6 +2,25 @@ import type { AIManagerCapabilities } from "@/api/client";
 
 export type AICapabilityKey = keyof AIManagerCapabilities;
 
+// Compile-time exhaustiveness guard: this object MUST list every key of the
+// AIManagerCapabilities interface (and no extras). Adding a field to the interface
+// without adding it here is a TypeScript error — keeping the interface, this key set,
+// the metadata below, and the backend AIManagerCapabilityToggles in lockstep.
+const CAPABILITY_KEY_PRESENCE: Record<AICapabilityKey, true> = {
+  mtf: true,
+  orderbook: true,
+  sweep_defense: true,
+  correlation: true,
+  regime_enhanced: true,
+  event_driven: true,
+  trailing: true,
+  emergency_close: true,
+};
+
+export const AI_CAPABILITY_KEYS = Object.keys(
+  CAPABILITY_KEY_PRESENCE,
+) as AICapabilityKey[];
+
 export interface AICapabilityMeta {
   key: AICapabilityKey;
   title: string;
@@ -20,13 +39,13 @@ export const AI_MANAGER_CAPABILITIES: AICapabilityMeta[] = [
   { key: "emergency_close", title: "Emergency Close", description: "Deterministic fast-path crash protection on sharp adverse moves." },
 ];
 
-/** All 8 capabilities enabled — the default when the AI Manager is switched on.
- *  Derived from AI_MANAGER_CAPABILITIES so a newly-added capability is included
- *  automatically (single source of truth for the key set). */
+/** All capabilities enabled — the default when the AI Manager is switched on.
+ *  Built from the compile-time-checked key set, so it always covers every
+ *  AIManagerCapabilities field (single source of truth). */
 export function allCapabilitiesOn(): AIManagerCapabilities {
   const out = {} as Record<AICapabilityKey, boolean>;
-  for (const cap of AI_MANAGER_CAPABILITIES) {
-    out[cap.key] = true;
+  for (const key of AI_CAPABILITY_KEYS) {
+    out[key] = true;
   }
   return out;
 }

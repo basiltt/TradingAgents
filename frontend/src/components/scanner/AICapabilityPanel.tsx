@@ -12,12 +12,21 @@ interface AICapabilityPanelProps {
   onChange: (next: AIManagerCapabilities) => void;
 }
 
-// Capabilities whose disablement removes a crash-protection / safety net. Toggling
-// any of these off surfaces a danger warning so it isn't an unflagged footgun.
-const SAFETY_KEYS: { key: AICapabilityKey; label: string }[] = [
-  { key: "emergency_close", label: "Emergency Close" },
-  { key: "sweep_defense", label: "Sweep / Stop-Hunt Defense" },
-];
+// Capabilities whose disablement changes the AI Manager's protective behavior.
+// Each carries its own message because the effect differs: turning emergency_close
+// off removes the fast crash-close; turning sweep_defense off makes the manager MORE
+// willing to close into stop-hunts/liquidity sweeps. Keyed only (titles resolved from
+// AI_MANAGER_CAPABILITIES) so labels never drift from the toggle metadata.
+const SAFETY_WARNINGS: Partial<Record<AICapabilityKey, string>> = {
+  emergency_close:
+    "won't fast-close positions on sharp adverse moves (crash protection off)",
+  sweep_defense:
+    "may close into stop-hunts / liquidity sweeps instead of riding them out",
+};
+const SAFETY_KEYS = Object.keys(SAFETY_WARNINGS) as AICapabilityKey[];
+
+const titleOf = (key: AICapabilityKey): string =>
+  AI_MANAGER_CAPABILITIES.find((c) => c.key === key)?.title ?? key;
 
 /**
  * Nested panel of per-scan AI Manager capability toggles. Rendered only when the
@@ -36,7 +45,7 @@ export function AICapabilityPanel({ value, onChange }: AICapabilityPanelProps) {
   const setKey = (key: AICapabilityKey, checked: boolean) =>
     onChange({ ...v, [key]: checked });
 
-  const disabledSafety = SAFETY_KEYS.filter((s) => v[s.key] === false);
+  const disabledSafety = SAFETY_KEYS.filter((key) => v[key] === false);
 
   return (
     <div className="mt-3 ml-3 rounded-[var(--neu-radius-md)] neu-surface-base bg-[var(--neu-surface-muted)] p-3 shadow-[var(--neu-shadow-inset)] space-y-2">
@@ -55,14 +64,21 @@ export function AICapabilityPanel({ value, onChange }: AICapabilityPanelProps) {
       </div>
       {disabledSafety.length > 0 ? (
         <div
+          role="alert"
           data-testid="ai-cap-safety-warning"
           className="flex items-start gap-2 rounded-[var(--neu-radius-sm)] border border-[color-mix(in_oklch,var(--neu-danger)_30%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-danger)_8%,var(--neu-surface-base))] px-3 py-2 text-[11px] leading-5 text-[color-mix(in_oklch,var(--neu-danger)_85%,var(--neu-text-strong))]"
         >
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-current" />
           <span>
-            Crash protection reduced: {disabledSafety.map((s) => s.label).join(" and ")}{" "}
-            {disabledSafety.length > 1 ? "are" : "is"} off. The AI Manager won't fast-close
-            positions on sharp adverse moves for this scan.
+            Crash protection reduced for this scan:
+            <ul className="mt-1 list-disc pl-4 space-y-0.5">
+              {disabledSafety.map((key) => (
+                <li key={key}>
+                  <span className="font-semibold">{titleOf(key)}</span> off — the AI
+                  Manager {SAFETY_WARNINGS[key]}.
+                </li>
+              ))}
+            </ul>
           </span>
         </div>
       ) : null}

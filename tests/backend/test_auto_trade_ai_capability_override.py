@@ -14,6 +14,48 @@ def _make_executor_with_ai():
     return ex, ai_svc
 
 
+def _make_executor_with_existing_config(existing: dict):
+    """Executor whose account already has a saved AIManagerConfig (as a dict)."""
+    ai_svc = AsyncMock()
+    ai_svc.get_config = AsyncMock(return_value=existing)
+    ai_svc.enable = AsyncMock()
+    ex = AutoTradeExecutor(MagicMock(), MagicMock(), ai_manager_service=ai_svc)
+    return ex, ai_svc
+
+
+@pytest.mark.asyncio
+async def test_emergency_close_override_flows_through():
+    """A per-scan emergency_close=False must reach emergency_close_enabled=False on
+    the config handed to enable() (the crash-protection footgun end-to-end)."""
+    ex, ai_svc = _make_executor_with_ai()
+    cfg = {
+        "ai_manager_enabled": True,
+        "ai_manager_capabilities": {"emergency_close": False},
+    }
+    await ex._maybe_enable_ai_manager("acc-1", cfg, strategy_kind="trend")
+    sent_config = ai_svc.enable.await_args[0][1]
+    assert sent_config.emergency_close_enabled is False
+    assert ai_svc.enable.await_args.kwargs.get("persist") is False
+
+
+@pytest.mark.asyncio
+async def test_override_merges_onto_existing_account_config():
+    """The capability override must layer onto the account's saved config, not
+    replace it — non-capability fields the user customized must survive."""
+    ex, ai_svc = _make_executor_with_existing_config(
+        {"max_daily_actions": 7, "mtf_enabled": True}
+    )
+    cfg = {
+        "ai_manager_enabled": True,
+        "ai_manager_capabilities": {"mtf": False},
+    }
+    await ex._maybe_enable_ai_manager("acc-1", cfg, strategy_kind="trend")
+    sent_config = ai_svc.enable.await_args[0][1]
+    assert sent_config.mtf_enabled is False        # capability overridden
+    assert sent_config.max_daily_actions == 7      # user's custom value preserved
+    assert sent_config.auto_enabled is True
+
+
 @pytest.mark.asyncio
 async def test_override_present_calls_enable_persist_false():
     ex, ai_svc = _make_executor_with_ai()
@@ -79,6 +121,9 @@ async def test_malformed_override_falls_back_to_managed_enable():
     _args, kwargs = ai_svc.enable.await_args
     assert kwargs.get("persist", True) is True  # fell back to safe managed enable
     assert _args[1].auto_enabled is True
+    # The config must be the UNMODIFIED account default — no half-applied override.
+    assert _args[1].emergency_close_enabled is True  # safety left ON
+    assert _args[1].mtf_enabled is True
 
 
 @pytest.mark.asyncio

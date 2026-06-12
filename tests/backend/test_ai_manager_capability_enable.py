@@ -85,7 +85,8 @@ async def test_enable_persist_false_alive_task_reloads_without_write(service, mo
 @pytest.mark.asyncio
 async def test_persist_false_override_survives_respawn(service, mock_repo):
     """A health-sweep / kill-switch respawn (no explicit override arg) must re-apply
-    the per-scan override from the ephemeral registry, NOT the empty DB config."""
+    the per-scan capability toggles onto the CURRENT DB config — preserving the
+    capability selection while picking up fresh values for everything else."""
     with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
         inst = MagicMock()
         inst.start = MagicMock()
@@ -96,16 +97,26 @@ async def test_persist_false_override_survives_respawn(service, mock_repo):
             auto_enabled=True, emergency_close_enabled=False, trailing_enabled=True
         )
         await service.enable("acc-1", cfg, persist=False)
-        assert "acc-1" in service._ephemeral_config_overrides
+        assert "acc-1" in service._ephemeral_capability_overrides
+
+        # Between enable and respawn, the user locks a position (written to DB).
+        # The DB config now carries locked_positions=["BTCUSDT"]. A respawn must use
+        # this FRESH value (R2-1: no stale snapshot), while re-applying the toggles.
+        import json as _json
+        mock_repo.get_state = AsyncMock(return_value={
+            "enabled": True, "fsm_state": "sleeping",
+            "config": _json.dumps({"locked_positions": ["BTCUSDT"]}),
+            "circuit_breaker_count": 0, "circuit_breaker_active": False,
+        })
 
         # Simulate a respawn with NO override arg (how the health-sweep loop calls it).
-        # DB config is "{}" (defaults) — without the registry this would revert.
         MockTask.reset_mock()
         await service._spawn_task("acc-1")
 
         spawned = MockTask.call_args.kwargs["config"]
-        assert spawned.emergency_close_enabled is False  # override preserved
-        assert spawned.trailing_enabled is True
+        assert spawned.emergency_close_enabled is False  # capability toggle preserved
+        assert spawned.trailing_enabled is True           # capability toggle preserved
+        assert spawned.locked_positions == ["BTCUSDT"]    # fresh DB value, not stale snapshot
 
 
 @pytest.mark.asyncio
@@ -114,10 +125,10 @@ async def test_persisting_enable_clears_ephemeral_override(service, mock_repo):
     with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
         MockTask.return_value = MagicMock(start=MagicMock())
         await service.enable("acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False)
-        assert "acc-1" in service._ephemeral_config_overrides
+        assert "acc-1" in service._ephemeral_capability_overrides
 
         await service.enable("acc-1", AIManagerConfig(auto_enabled=True), persist=True)
-        assert "acc-1" not in service._ephemeral_config_overrides
+        assert "acc-1" not in service._ephemeral_capability_overrides
 
 
 @pytest.mark.asyncio
@@ -127,7 +138,7 @@ async def test_disable_clears_ephemeral_override(service, mock_repo):
     with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
         MockTask.return_value = MagicMock(start=MagicMock())
         await service.enable("acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False)
-        assert "acc-1" in service._ephemeral_config_overrides
+        assert "acc-1" in service._ephemeral_capability_overrides
 
         await service.disable("acc-1")
-        assert "acc-1" not in service._ephemeral_config_overrides
+        assert "acc-1" not in service._ephemeral_capability_overrides

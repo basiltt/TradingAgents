@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AI_MANAGER_CAPABILITIES,
+  AI_CAPABILITY_KEYS,
   allCapabilitiesOn,
   type AICapabilityKey,
 } from "../aiManagerCapabilities";
@@ -18,7 +19,16 @@ describe("AI_MANAGER_CAPABILITIES metadata", () => {
       expect(cap.description.length).toBeGreaterThan(0);
     }
   });
+
+  it("metadata covers exactly the compile-time-checked key set", () => {
+    // AI_CAPABILITY_KEYS is derived from a Record<keyof AIManagerCapabilities, true>,
+    // so this fails if the metadata array drifts from the interface key set.
+    expect(AI_MANAGER_CAPABILITIES.map((c) => c.key).sort()).toEqual(
+      [...AI_CAPABILITY_KEYS].sort(),
+    );
+  });
 });
+
 
 describe("allCapabilitiesOn", () => {
   it("returns every capability set to true", () => {
@@ -80,14 +90,39 @@ describe("AICapabilityPanel", () => {
     render(<AICapabilityPanel value={value} onChange={vi.fn()} />);
     const warning = screen.getByTestId("ai-cap-safety-warning");
     expect(warning.textContent).toContain("Emergency Close");
+    // crash-protection-specific copy
+    expect(warning.textContent).toContain("crash protection off");
   });
 
-  it("warns when sweep_defense is turned off", () => {
+  it("warns when sweep_defense is turned off (with sweep-accurate copy)", () => {
     const value = { ...allCapabilitiesOn(), sweep_defense: false };
     render(<AICapabilityPanel value={value} onChange={vi.fn()} />);
-    expect(screen.getByTestId("ai-cap-safety-warning").textContent).toContain(
-      "Sweep",
+    const warning = screen.getByTestId("ai-cap-safety-warning");
+    expect(warning.textContent).toContain("Sweep");
+    // sweep_defense off means the AI is MORE willing to close — copy reflects that
+    expect(warning.textContent).toContain("stop-hunts");
+  });
+
+  it("exposes the safety warning as an alert for screen readers", () => {
+    const value = { ...allCapabilitiesOn(), emergency_close: false };
+    render(<AICapabilityPanel value={value} onChange={vi.fn()} />);
+    expect(screen.getByTestId("ai-cap-safety-warning").getAttribute("role")).toBe(
+      "alert",
     );
+  });
+
+  it("removes the warning after re-enabling the safety capability", () => {
+    const { rerender } = render(
+      <AICapabilityPanel
+        value={{ ...allCapabilitiesOn(), emergency_close: false }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("ai-cap-safety-warning")).toBeTruthy();
+    rerender(
+      <AICapabilityPanel value={allCapabilitiesOn()} onChange={vi.fn()} />,
+    );
+    expect(screen.queryByTestId("ai-cap-safety-warning")).toBeNull();
   });
 
   it("normalizes a partial capability object so missing keys render ON", () => {

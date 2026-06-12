@@ -60,6 +60,7 @@ from backend.ai_manager_schemas import AIManagerConfig
 from backend.services.ai_manager_capability_map import (
     CAPABILITY_FLAG_MAP,
     apply_capability_overrides,
+    extract_capability_toggles,
 )
 
 
@@ -155,4 +156,27 @@ def test_apply_rejects_non_mapping():
     base = AIManagerConfig()
     with pytest.raises(TypeError):
         apply_capability_overrides(base, ["trailing"])  # list, not a mapping
+
+
+def test_extract_is_inverse_of_apply():
+    """extract_capability_toggles reads back exactly the 8 toggles that apply set,
+    so a round-trip (apply -> extract -> apply) is stable."""
+    toggles = AIManagerCapabilityToggles(
+        emergency_close=False, trailing=True, mtf=False
+    )
+    applied = apply_capability_overrides(AIManagerConfig(), toggles)
+    extracted = extract_capability_toggles(applied)
+    assert set(extracted.keys()) == ALL_KEYS
+    assert extracted["emergency_close"] is False
+    assert extracted["trailing"] is True
+    assert extracted["mtf"] is False
+    assert extracted["orderbook"] is True
+    # re-applying the extracted dict reproduces the same flags
+    reapplied = apply_capability_overrides(AIManagerConfig(), extracted)
+    assert reapplied.model_dump() == applied.model_dump()
+
+
+def test_extract_returns_plain_bools():
+    out = extract_capability_toggles(AIManagerConfig())
+    assert all(isinstance(v, bool) for v in out.values())
 
