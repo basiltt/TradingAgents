@@ -42,7 +42,10 @@ customized the capabilities, **all capabilities are enabled** (the literal
 ### Non-Goals
 - **Backtesting** integration (AI Manager is explicitly deferred in backtests per
   project context).
-- **Account-level** capability-selection UI (decided: scan-form only).
+- ~~**Account-level** capability-selection UI (decided: scan-form only).~~
+  **Superseded during workflow review — see §11.6.** Account-level persisted capability
+  editing was promoted from non-goal to shipped scope (`ConfigPanel`, mounted in
+  `AIMonitorPanel`).
 - **Persisting** per-scan choices back into the account's `AIManagerConfig`.
 - Changing the AI Manager's internal decision logic or adding new capabilities.
 
@@ -334,7 +337,8 @@ Tests are written **before** implementation for each unit.
 ## 10. Out of Scope (restated)
 
 - Backtesting integration (AI Manager deferred there).
-- Account-level capability-selection UI.
+- ~~Account-level capability-selection UI.~~ **Promoted to scope during workflow
+  review — see §11.6.**
 - Persisting per-scan choices into the account `AIManagerConfig`.
 - New AI Manager capabilities or decision-logic changes.
 
@@ -422,3 +426,41 @@ not unified.
 - **Dashboard reflects in-memory task config:** the dashboard reads the running task's
   config (which *does* include an active per-scan override), so it is accurate while a
   task is live; it does not show overrides for accounts whose task isn't running.
+
+### 11.6 Scope changes from the workflow-integration review (2026-06-12)
+
+A second review pass traced the feature end-to-end through the real codebase (not just
+the diff) and surfaced integration gaps. The fixes expanded scope beyond the original
+§2/§10 boundaries; recorded here so the spec matches the shipped feature.
+
+**Promoted from non-goal → shipped (supersedes §2 and §10):**
+
+- **Account-level persisted capability UI.** `ConfigPanel` now exposes the same 8
+  capability flags as persisted, per-account toggles (PATCH `AIManagerConfigPatch`),
+  and is **mounted** in `AIMonitorPanel` (the account "AI Monitor" tab) under the
+  capabilities health grid. **Precedence is unchanged from D4:** the account config is
+  the durable base; a scan-form selection is a **non-persisting per-scan override**
+  layered on top for that scan only — it never rewrites the DB. The two surfaces edit
+  the same `AIManagerConfig` flags; the account one persists, the scan one does not.
+
+**Also shipped during the review (beyond the original spec):**
+
+- **`regime_enhanced` is now genuinely wired** (it was a no-op before). When off,
+  `_do_enrichment` skips `compute_regime` and returns a neutral default (no enhanced
+  regime detail reaches the LLM), AND the `EventTriggerDetector` regime-change trigger
+  is gated off (otherwise it compared the real regime against the forced static value
+  and fired an eval loop every cooldown).
+- **Dashboard capability registry corrected** (`ai_manager_capabilities_status.py`):
+  `sweep_detection` now maps to `sweep_defense_enabled` (was wrongly `orderbook_enabled`),
+  `regime_detection` maps to `regime_enhanced`, and cards were added for
+  `emergency_close`, `trailing`, `event_driven` — so a per-scan override of any of the 8
+  is truthfully reflected. Display names unified across scan form / ConfigPanel /
+  dashboard.
+- **Live-reload trailing cancel:** `reload_config` now cancels in-flight trailing loops
+  when `trailing_enabled` transitions True→False on a live task (not just blocks new ones).
+- **Post-scan feedback:** per-account `ai_manager_disabled_capabilities` is surfaced in
+  the auto-trade summary and shown as a "reduced protection" notice on the scan result.
+- **Legacy scheduled-job edit normalization:** editing a pre-feature job (AI on, no
+  capabilities) seeds all-on on load so it can't submit `undefined`.
+- **MCP allow-list:** `ai_manager_capabilities` classified in the optimizer's
+  `KNOWN_DENY` (out of scope for sweeping) — required to pass the fail-closed CI guard.
