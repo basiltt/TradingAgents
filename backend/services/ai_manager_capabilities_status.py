@@ -5,21 +5,24 @@ from datetime import datetime, timezone
 from typing import Any
 
 # NOTE: This registry powers the AI Manager *dashboard health view* and uses its own
-# display-oriented vocabulary (e.g. "mtf_analysis", "sweep_detection"). It is a
-# DIFFERENT concept from the per-scan capability TOGGLES in
-# `ai_manager_capability_map.py` (keys like "mtf", "sweep_defense"), which select
-# which AIManagerConfig flags a scan enables. The two intentionally don't share keys:
-# this view reports runtime health/degradation; the toggle set is a config-flag-aligned
-# input. Some entries here (regime_detection, episodic_memory) have no per-scan toggle,
-# and some toggles (trailing, event_driven, emergency_close) aren't surfaced here.
-# If you add a user-facing capability, decide deliberately whether it belongs in both.
+# display-oriented `key` vocabulary (e.g. "mtf_analysis", "sweep_detection") that
+# differs from the per-scan capability TOGGLE keys in `ai_manager_capability_map.py`
+# (e.g. "mtf", "sweep_defense"). What ties them together is `config_flag`: each entry
+# maps to the SAME AIManagerConfig field the toggles set, so a per-scan override (read
+# here via task._config) is reflected truthfully on the dashboard. Keep config_flag in
+# sync with CAPABILITY_FLAG_MAP values. `episodic_memory` has config_flag=None (always
+# on, no toggle). If you add a user-facing capability, add it to BOTH this registry and
+# the toggle set/map so the dashboard doesn't misreport it.
 CAPABILITY_REGISTRY: list[dict[str, Any]] = [
     {"key": "mtf_analysis", "display_name": "Multi-Timeframe Analysis", "config_flag": "mtf_enabled"},
     {"key": "correlation", "display_name": "Correlation & Clustering", "config_flag": "correlation_enabled"},
     {"key": "orderbook", "display_name": "Order Book Monitoring", "config_flag": "orderbook_enabled"},
-    {"key": "regime_detection", "display_name": "Market Regime Classification", "config_flag": None},
-    {"key": "sweep_detection", "display_name": "Sweep/Stop-Hunt Defense", "config_flag": "orderbook_enabled"},
+    {"key": "regime_detection", "display_name": "Market Regime Classification", "config_flag": "regime_enhanced"},
+    {"key": "sweep_detection", "display_name": "Sweep/Stop-Hunt Defense", "config_flag": "sweep_defense_enabled"},
     {"key": "episodic_memory", "display_name": "Pattern Learning & Memory", "config_flag": None},
+    {"key": "emergency_close", "display_name": "Emergency Close", "config_flag": "emergency_close_enabled"},
+    {"key": "trailing", "display_name": "Trailing TP/SL", "config_flag": "trailing_enabled"},
+    {"key": "event_driven", "display_name": "Event-Driven Evaluation", "config_flag": "event_driven_enabled"},
 ]
 
 DEGRADATION_MAP: dict[int, list[str]] = {

@@ -57,6 +57,36 @@ async def test_override_merges_onto_existing_account_config():
 
 
 @pytest.mark.asyncio
+async def test_disabled_capabilities_surface_in_summary():
+    """A per-scan override that disables capabilities is surfaced in get_summaries so
+    the scan result UI can show a reduced-protection run."""
+    ex, ai_svc = _make_executor_with_ai()
+    # Seed an account state so get_summaries emits a row for it.
+    from backend.services.auto_trade_service import _AccountState
+    ex._state["acc-1"] = _AccountState(config={"account_id": "acc-1"})
+    cfg = {
+        "ai_manager_enabled": True,
+        "ai_manager_capabilities": {"emergency_close": False, "trailing": False},
+    }
+    await ex._maybe_enable_ai_manager("acc-1", cfg, strategy_kind="trend")
+
+    summary = next(s for s in ex.get_summaries() if s["account_id"] == "acc-1")
+    assert set(summary["ai_manager_disabled_capabilities"]) == {"emergency_close", "trailing"}
+
+
+@pytest.mark.asyncio
+async def test_no_disabled_capabilities_yields_empty_summary_list():
+    ex, ai_svc = _make_executor_with_ai()
+    from backend.services.auto_trade_service import _AccountState
+    ex._state["acc-1"] = _AccountState(config={"account_id": "acc-1"})
+    await ex._maybe_enable_ai_manager(
+        "acc-1", {"ai_manager_enabled": True}, strategy_kind="trend"
+    )
+    summary = next(s for s in ex.get_summaries() if s["account_id"] == "acc-1")
+    assert summary["ai_manager_disabled_capabilities"] == []
+
+
+@pytest.mark.asyncio
 async def test_disabled_capabilities_are_logged_for_forensics(caplog):
     """Disabling a safety capability per-scan must leave an auditable WARNING record
     naming the disabled capabilities (not just 'an override happened')."""

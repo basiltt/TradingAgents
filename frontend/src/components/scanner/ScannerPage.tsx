@@ -1207,7 +1207,22 @@ export function ScannerPage() {
               </div>
             )}
 
-            {/* Current batch tickers */}
+            {/* AI Manager reduced-protection notice (per-scan capability overrides) */}
+            {scan.auto_trade_summaries && scan.auto_trade_summaries.some((s: AutoTradeSummary) => (s.ai_manager_disabled_capabilities?.length ?? 0) > 0) && (
+              <div className="space-y-3 border-t border-[var(--neu-stroke-strong)]/20 pt-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">AI Manager — reduced protection</p>
+                <div className="space-y-2">
+                  {scan.auto_trade_summaries.filter((s: AutoTradeSummary) => (s.ai_manager_disabled_capabilities?.length ?? 0) > 0).map((s: AutoTradeSummary, i: number) => (
+                    <div key={i} className="rounded-[calc(var(--radius)*1.05)] border border-[color-mix(in_oklch,var(--neu-danger)_25%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-danger)_8%,var(--neu-surface-base))] text-[var(--neu-danger)] px-3.5 py-3 shadow-[var(--shadow-card)]">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-semibold text-foreground">{accountLabelMap[s.account_id] || s.account_id?.slice(0, 8)}</span>
+                        <span className="ml-auto text-[11px]">disabled: {s.ai_manager_disabled_capabilities?.map((c) => c.replace(/_/g, " ")).join(", ")}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {isRunning && scan.current_tickers.length > 0 && (
               <div className="space-y-3 border-t border-[var(--neu-stroke-strong)]/20 pt-4">
                 <div className="flex items-center justify-between gap-3">

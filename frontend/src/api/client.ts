@@ -462,6 +462,7 @@ export interface AutoTradeSummary {
   stopped_reason?: string | null;
   close_rule_id?: string | null;
   drawdown_rule_id?: string | null;
+  ai_manager_disabled_capabilities?: string[];
 }
 
 export interface ScanStatus {

@@ -89,6 +89,9 @@ class AutoTradeExecutor:
         # AI manager / close loop acting on the same position concurrently.
         self._position_lock_registry = position_lock_registry
         self._ai_manager_enabled_accounts: set = set()
+        # account_id -> list of capability flags a per-scan override turned OFF, so the
+        # scan summary can surface a reduced-protection run.
+        self._ai_manager_disabled_caps: Dict[str, List[str]] = {}
         self._recorder = recorder
         self._debug_ctx = debug_ctx
         # Regime Multi-Strategy: scan-time context (set by scanner_service before a
@@ -795,6 +798,9 @@ class AutoTradeExecutor:
                      "order_id": e.order_id, "error": e.error}
                     for e in state.executions
                 ],
+                "ai_manager_disabled_capabilities": self._ai_manager_disabled_caps.get(
+                    state.config["account_id"], []
+                ),
             }
             for state in self._state.values()
         ]
@@ -1669,6 +1675,8 @@ class AutoTradeExecutor:
                     key for key, on in extract_capability_toggles(config_to_use).items()
                     if not on
                 ]
+            if disabled_caps:
+                self._ai_manager_disabled_caps[account_id] = disabled_caps
             log_level = logging.WARNING if disabled_caps else logging.INFO
             logger.log(
                 log_level,

@@ -276,7 +276,13 @@ class AIManagerTask:
 
     def reload_config(self, config: AIManagerConfig) -> None:
         """Hot-reload configuration without restarting the task."""
+        # Capture the prior trailing flag before swapping — a True->False transition
+        # (e.g. a per-scan capability override disabling trailing on a live task) must
+        # cancel in-flight trailing loops, not just block new ones.
+        was_trailing_enabled = getattr(self._config, "trailing_enabled", False)
         self._config = config
+        if was_trailing_enabled and not config.trailing_enabled:
+            self._cancel_all_trailing()
         self._correlation_analyzer = CorrelationAnalyzer(
             correlation_threshold=config.correlation_threshold,
         )
