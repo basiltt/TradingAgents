@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 import { clampNumber, clampNumberOrNull } from "@/lib/number";
 import { NeuSwitch } from "@/design-system/neumorphism";
 import { RegimeStrategyFields } from "./RegimeStrategyFields";
+import { CoolOffFields } from "./CoolOffFields";
+import { CoolOffBadge } from "./CoolOffBadge";
 
 const STORAGE_KEY = "tradingagents_auto_trade_configs";
 
@@ -42,6 +44,15 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   trailing_profit_pct: null,
   max_same_direction: null,
   ai_pause_cycles: null,
+  // Cool Off Time — all default-off
+  cooloff_on_success_enabled: false,
+  cooloff_on_success_minutes: null,
+  cooloff_on_failure_enabled: false,
+  cooloff_on_failure_minutes: null,
+  cooloff_on_double_success_enabled: false,
+  cooloff_on_double_success_minutes: null,
+  cooloff_on_double_failure_enabled: false,
+  cooloff_on_double_failure_minutes: null,
   // Regime Multi-Strategy — all default-off (current behavior preserved)
   regime_filter_enabled: false,
   session_filter_enabled: false,
@@ -312,6 +323,15 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          {config.account_id ? (
+            <CoolOffBadge
+              accountId={config.account_id}
+              tiersEnabled={
+                !!config.cooloff_on_success_enabled || !!config.cooloff_on_failure_enabled ||
+                !!config.cooloff_on_double_success_enabled || !!config.cooloff_on_double_failure_enabled
+              }
+            />
+          ) : null}
           {config.account_id && !accountsLoading && !selectedAccount ? (
             <Badge variant="destructive" className="px-3 py-1 text-[10px] tracking-[0.16em] uppercase">
               Account removed
@@ -825,6 +845,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
         </div>
 
         <RegimeStrategyFields config={config} onChange={onChange} />
+        <CoolOffFields config={config} onChange={onChange} />
       </div>
     </article>
   );

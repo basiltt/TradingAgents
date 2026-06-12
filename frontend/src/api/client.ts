@@ -357,6 +357,15 @@ export interface AutoTradeConfig {
   adaptive_blacklist_max_win_rate?: number;
   adaptive_blacklist_lookback_hours?: number;
   ai_pause_cycles?: number | null;
+  // ── Cool Off Time (4 optional tiers, all default-off) ──
+  cooloff_on_success_enabled?: boolean;
+  cooloff_on_success_minutes?: number | null;
+  cooloff_on_failure_enabled?: boolean;
+  cooloff_on_failure_minutes?: number | null;
+  cooloff_on_double_success_enabled?: boolean;
+  cooloff_on_double_success_minutes?: number | null;
+  cooloff_on_double_failure_enabled?: boolean;
+  cooloff_on_double_failure_minutes?: number | null;
   // ── Regime Multi-Strategy (3 optional features, all default-off) ──
   // F1 — Regime/Session Entry Filter
   regime_filter_enabled?: boolean;
@@ -394,6 +403,22 @@ export interface AutoTradeConfig {
   // read-back (response only)
   strategy_kind?: "trend" | "mean_reversion";
   f1_active?: boolean;
+}
+
+/** The four outcome tiers that can arm a cool-off pause. Mirrors the backend
+ * CooloffReason enum (cooloff_core.py). Source of truth for the wire type; the UI
+ * tier descriptors (components/scanner/cooloffTiers) import this. */
+export type CooloffReason = "success" | "failure" | "double_success" | "double_failure";
+
+/** Live Cool Off Time status for an account (GET /accounts/:id/cooloff). */
+export interface CooloffStatus {
+  account_id?: string;
+  cooling: boolean;
+  cooloff_until: string | null;
+  cooloff_reason: CooloffReason | null;
+  consecutive_wins: number;
+  consecutive_losses: number;
+  cooloff_remaining_seconds: number;
 }
 
 export interface ScanRequest {
@@ -978,6 +1003,17 @@ export const accountsApi = {
       signal,
     );
   },
+
+  /** GET /api/v1/accounts/:id/cooloff — live Cool Off Time status for an account. */
+  getCooloffStatus: (id: string, signal?: AbortSignal) =>
+    request<CooloffStatus>(`/api/v1/accounts/${encodeURIComponent(id)}/cooloff`, undefined, signal),
+
+  /** POST /api/v1/accounts/:id/cooloff/clear — Resume now (end an active cool-off). */
+  clearCooloff: (id: string, resetStreak = false) =>
+    mutate<{ cleared: boolean; cooloff_until: null }>(
+      "POST",
+      `/api/v1/accounts/${encodeURIComponent(id)}/cooloff/clear?reset_streak=${resetStreak}`,
+    ),
 
   /** GET /api/v1/portfolio/summary — fetch aggregate portfolio summary. */
   getPortfolioSummary: (signal?: AbortSignal) =>

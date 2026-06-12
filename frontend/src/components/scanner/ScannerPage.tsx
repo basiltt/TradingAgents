@@ -24,6 +24,7 @@ import { MobileCollapse } from "@/components/analysis/MobileCollapse";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { DIRECTION_CONFIG } from "@/components/scanner/constants";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
+import { cooloffGateValid, collectCooloffGateErrors } from "@/components/scanner/cooloffValidation";
 import { NeuSwitch, NeuScoreBar } from "@/design-system/neumorphism";
 
 const PROVIDERS_FALLBACK = ["openai", "anthropic", "google", "deepseek", "nvidia", "xai", "qwen", "glm", "openrouter", "azure", "ollama"];
@@ -495,6 +496,12 @@ export function ScannerPage() {
   }, [scan?.status, scan?.results.length]);
 
   const handleStart = () => {
+    // Block launch if any enabled cool-off tier has an invalid/blank duration.
+    const cooloffErrors = collectCooloffGateErrors(autoTradeConfigs);
+    if (cooloffErrors.length > 0) {
+      window.alert("Fix the cool-off settings before launching:\n" + cooloffErrors.map((e) => "• " + e.message).join("\n"));
+      return;
+    }
     const body: ScanRequest = {
       analysis_date: analysisDate,
       asset_type: "crypto",
@@ -1054,7 +1061,7 @@ export function ScannerPage() {
 
           <Button
             onClick={handleStart}
-            disabled={startMutation.isPending || analysts.length === 0}
+            disabled={startMutation.isPending || analysts.length === 0 || !cooloffGateValid(autoTradeConfigs)}
             className="w-full justify-center text-[0.78rem] font-semibold uppercase tracking-[0.18em]"
             size="lg"
           >
@@ -1075,6 +1082,14 @@ export function ScannerPage() {
               </>
             )}
           </Button>
+          {!cooloffGateValid(autoTradeConfigs) && (
+            <p
+              className="text-center text-[0.72rem] font-medium text-[var(--neu-danger)]"
+              data-testid="cooloff-launch-hint"
+            >
+              Set a valid cool-off duration (1–43200 min) for each enabled tier to launch.
+            </p>
+          )}
           {startMutation.isError && (
             <p className="text-center text-sm font-semibold text-destructive">
               Failed to start scan: {(startMutation.error as Error).message}

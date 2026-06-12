@@ -1013,6 +1013,7 @@ export function NeuSwitch({
   description,
   disabled,
   className,
+  ariaLabel,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
@@ -1021,6 +1022,10 @@ export function NeuSwitch({
   disabled?: boolean;
   accent?: "accent" | "success" | "warning";
   className?: string;
+  /** Accessible name for the toggle when there is no visible `label` (e.g. the
+   * switch sits beside externally-rendered text). Forwarded to the button as
+   * aria-label so screen readers and role-name queries can find it. */
+  ariaLabel?: string;
 }) {
   return (
     <div className={cn("flex items-start gap-4 p-1", disabled && "opacity-50 pointer-events-none", className)}>
@@ -1028,6 +1033,7 @@ export function NeuSwitch({
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(

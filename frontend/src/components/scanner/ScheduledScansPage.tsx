@@ -26,6 +26,7 @@ import { formatDateTimeLabel } from "@/lib/format";
 import { exportSingle, exportAll, parseImportFile } from "./scheduled-scan-io";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
+import { cooloffGateValid, collectCooloffGateErrors } from "@/components/scanner/cooloffValidation";
 import { NeuSwitch } from "@/design-system/neumorphism";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -1010,6 +1011,9 @@ function ScheduleFormDialog({
     e.preventDefault();
     if (submitting) return;
     if (!name.trim()) { toast.error("Name is required"); return; }
+    // Block save if any enabled cool-off tier has an invalid/blank duration.
+    const cooloffErrors = collectCooloffGateErrors(autoTradeConfigs);
+    if (cooloffErrors.length > 0) { toast.error(cooloffErrors[0].message); return; }
     if (scheduleType === "once" && !runAt) { toast.error("Date/time is required for one-time schedules"); return; }
     if (scheduleType === "once" && runAt) {
       const d = new Date(runAt);
@@ -1461,10 +1465,18 @@ function ScheduleFormDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-            <Button disabled={submitting || (!!editingId && editLoading)} onClick={handleSubmit}>
+            <Button disabled={submitting || (!!editingId && editLoading) || !cooloffGateValid(autoTradeConfigs)} onClick={handleSubmit}>
               {submitting ? "Saving..." : editingId ? "Update" : "Create"}
             </Button>
           </DialogFooter>
+          {!cooloffGateValid(autoTradeConfigs) && (
+            <p
+              className="mt-1 text-right text-[0.72rem] font-medium text-[var(--neu-danger)]"
+              data-testid="cooloff-save-hint"
+            >
+              Set a valid cool-off duration (1–43200 min) for each enabled tier to save.
+            </p>
+          )}
         </form>
         )}
       </DialogContent>
