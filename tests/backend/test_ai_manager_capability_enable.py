@@ -80,3 +80,54 @@ async def test_enable_persist_false_alive_task_reloads_without_write(service, mo
     alive.reload_config.assert_called_once()
     assert alive.reload_config.call_args.args[0].mtf_enabled is False
     mock_repo.sync_config_columns.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_persist_false_override_survives_respawn(service, mock_repo):
+    """A health-sweep / kill-switch respawn (no explicit override arg) must re-apply
+    the per-scan override from the ephemeral registry, NOT the empty DB config."""
+    with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
+        inst = MagicMock()
+        inst.start = MagicMock()
+        MockTask.return_value = inst
+
+        # enable with a non-persisting override (emergency_close OFF, trailing ON)
+        cfg = AIManagerConfig(
+            auto_enabled=True, emergency_close_enabled=False, trailing_enabled=True
+        )
+        await service.enable("acc-1", cfg, persist=False)
+        assert "acc-1" in service._ephemeral_config_overrides
+
+        # Simulate a respawn with NO override arg (how the health-sweep loop calls it).
+        # DB config is "{}" (defaults) — without the registry this would revert.
+        MockTask.reset_mock()
+        await service._spawn_task("acc-1")
+
+        spawned = MockTask.call_args.kwargs["config"]
+        assert spawned.emergency_close_enabled is False  # override preserved
+        assert spawned.trailing_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_persisting_enable_clears_ephemeral_override(service, mock_repo):
+    """A later persisting enable() supersedes a prior ephemeral override."""
+    with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
+        MockTask.return_value = MagicMock(start=MagicMock())
+        await service.enable("acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False)
+        assert "acc-1" in service._ephemeral_config_overrides
+
+        await service.enable("acc-1", AIManagerConfig(auto_enabled=True), persist=True)
+        assert "acc-1" not in service._ephemeral_config_overrides
+
+
+@pytest.mark.asyncio
+async def test_disable_clears_ephemeral_override(service, mock_repo):
+    """disable() must drop the ephemeral override so a later re-enable starts clean."""
+    mock_repo.upsert_state = AsyncMock()
+    with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
+        MockTask.return_value = MagicMock(start=MagicMock())
+        await service.enable("acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False)
+        assert "acc-1" in service._ephemeral_config_overrides
+
+        await service.disable("acc-1")
+        assert "acc-1" not in service._ephemeral_config_overrides

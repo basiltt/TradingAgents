@@ -30,20 +30,27 @@ def apply_capability_overrides(
 ) -> AIManagerConfig:
     """Return a copy of `config` with the 8 capability flags overridden by `toggles`.
 
-    No-op (returns an equivalent copy) when `toggles` is None. A dict is read by
-    key, falling back to True for any omitted capability (matching the toggle
-    model's all-True defaults). The input `config` is never mutated.
+    No-op (returns an equivalent copy) when `toggles` is None. A dict is validated
+    through AIManagerCapabilityToggles (strict booleans, extra="forbid") so a string
+    like "false" or an unknown/typo key raises ValidationError instead of silently
+    coercing to the wrong value — the caller is expected to handle that loudly rather
+    than leave positions mis-managed. The input `config` is never mutated.
     """
     if toggles is None:
         return config.model_copy()
 
-    if isinstance(toggles, AIManagerCapabilityToggles):
-        toggle_values = toggles.model_dump()
-    else:
-        toggle_values = {
-            key: bool(toggles.get(key, True)) for key in CAPABILITY_FLAG_MAP
-        }
+    if not isinstance(toggles, AIManagerCapabilityToggles):
+        if not isinstance(toggles, dict):
+            raise TypeError(
+                f"ai_manager_capabilities must be a mapping or AIManagerCapabilityToggles, "
+                f"got {type(toggles).__name__}"
+            )
+        # Validate dicts via the model. This raises ValidationError on bad keys or
+        # value-types (e.g. a non-bool string that isn't a recognized boolean) —
+        # fail loud, not silent.
+        toggles = AIManagerCapabilityToggles(**toggles)
 
+    toggle_values = toggles.model_dump()
     updates = {
         CAPABILITY_FLAG_MAP[key]: toggle_values[key]
         for key in CAPABILITY_FLAG_MAP

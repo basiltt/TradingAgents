@@ -67,6 +67,25 @@ def test_flag_map_covers_all_eight_keys():
     assert set(CAPABILITY_FLAG_MAP.keys()) == ALL_KEYS
 
 
+def test_flag_map_keys_match_toggle_model_fields():
+    """CAPABILITY_FLAG_MAP keys must exactly match AIManagerCapabilityToggles fields,
+    so adding/renaming a toggle without updating the map fails loudly."""
+    model_fields = set(AIManagerCapabilityToggles.model_fields.keys())
+    assert set(CAPABILITY_FLAG_MAP.keys()) == model_fields
+
+
+def test_flag_map_values_are_real_aimanager_config_fields():
+    """Every mapped flag must be a real AIManagerConfig field — guards against a
+    typo'd flag name silently no-op'ing (model_copy(update=) would set a bogus attr
+    and leave the real flag at its default)."""
+    config_fields = set(AIManagerConfig.model_fields.keys())
+    for toggle_key, flag_name in CAPABILITY_FLAG_MAP.items():
+        assert flag_name in config_fields, (
+            f"CAPABILITY_FLAG_MAP[{toggle_key!r}] -> {flag_name!r} is not a field "
+            f"on AIManagerConfig"
+        )
+
+
 def test_apply_none_returns_unchanged_copy():
     base = AIManagerConfig()
     out = apply_capability_overrides(base, None)
@@ -109,4 +128,31 @@ def test_apply_accepts_dict_toggles():
     out = apply_capability_overrides(base, {"orderbook": False})
     assert out.orderbook_enabled is False
     assert out.mtf_enabled is True  # omitted dict key → default True
+
+
+def test_apply_dict_rejects_unknown_key():
+    base = AIManagerConfig()
+    with pytest.raises(ValidationError):
+        apply_capability_overrides(base, {"trailling": False})  # typo
+
+
+def test_apply_dict_coerces_boolean_strings_correctly():
+    """Routing through the model means JSON-y "false" coerces to False (the user's
+    intent) — NOT Python's bool("false")==True footgun the old hand-rolled path had."""
+    base = AIManagerConfig()
+    out = apply_capability_overrides(base, {"trailing": "false", "mtf": "true"})
+    assert out.trailing_enabled is False
+    assert out.mtf_enabled is True
+
+
+def test_apply_dict_rejects_non_coercible_value():
+    base = AIManagerConfig()
+    with pytest.raises(ValidationError):
+        apply_capability_overrides(base, {"trailing": "banana"})
+
+
+def test_apply_rejects_non_mapping():
+    base = AIManagerConfig()
+    with pytest.raises(TypeError):
+        apply_capability_overrides(base, ["trailing"])  # list, not a mapping
 

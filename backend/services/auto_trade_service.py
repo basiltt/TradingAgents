@@ -1606,9 +1606,14 @@ class AutoTradeExecutor:
         """Auto-enable the AI Manager for an account on first placement of this scan.
 
         Applies a per-scan capability override (without persisting) when
-        cfg['ai_manager_capabilities'] is present; otherwise preserves the legacy
-        path (load account config, enable with persist=True). No-op for
+        cfg['ai_manager_capabilities'] is present; otherwise enables with the
+        account's saved config (persist=True, legacy path). No-op for
         mean-reversion placements (their positions are excluded from AI management).
+
+        Enablement is attempted exactly once per executor lifetime per account: the
+        account is added to the guard set up-front and is NOT rolled back on failure,
+        so a persistent error (e.g. DB down) does not re-attempt — and re-log/re-write —
+        on every subsequent placement in the scan.
         """
         if strategy_kind == "mean_reversion":
             return
@@ -1630,29 +1635,36 @@ class AutoTradeExecutor:
             config_to_use = existing_config or _AIMConfig()
             config_to_use.auto_enabled = True
 
+            # Resolve the per-scan capability override (if any). A malformed override
+            # must NOT leave the account unmanaged — fall back to enabling with the
+            # account's own config so open positions still get AI management.
+            persist = True
             capabilities = cfg.get("ai_manager_capabilities")
             if capabilities is not None:
                 from backend.services.ai_manager_capability_map import (
                     apply_capability_overrides,
                 )
-                config_to_use = apply_capability_overrides(config_to_use, capabilities)
-                config_to_use.auto_enabled = True
-                await self._ai_manager_service.enable(
-                    account_id, config_to_use, persist=False
-                )
-                logger.info(
-                    "ai_manager_auto_enabled",
-                    extra={"account_id": account_id, "capability_override": True},
-                )
-            else:
-                await self._ai_manager_service.enable(account_id, config_to_use)
-                logger.info(
-                    "ai_manager_auto_enabled",
-                    extra={"account_id": account_id, "capability_override": False},
-                )
+                try:
+                    # model_copy preserves auto_enabled=True; the helper only touches
+                    # the 8 capability flags.
+                    config_to_use = apply_capability_overrides(config_to_use, capabilities)
+                    persist = False
+                except Exception as cap_err:
+                    logger.warning(
+                        "ai_manager_capability_override_invalid",
+                        extra={"account_id": account_id, "error": str(cap_err)[:200]},
+                    )
+                    # persist stays True → enable with the safe account config.
+
+            await self._ai_manager_service.enable(account_id, config_to_use, persist=persist)
+            logger.info(
+                "ai_manager_auto_enabled",
+                extra={"account_id": account_id, "capability_override": not persist},
+            )
         except Exception as e:
-            # Match legacy behavior: a failed enable must not abort the placement.
-            self._ai_manager_enabled_accounts.discard(account_id)
+            # A failed enable must not abort the placement (the trade already opened).
+            # The account stays in the guard set (see docstring) so we don't spam
+            # retries; the next scan cycle gets a fresh executor and another attempt.
             logger.warning(
                 "ai_manager_auto_enable_failed",
                 extra={"account_id": account_id, "error": str(e)[:200]},

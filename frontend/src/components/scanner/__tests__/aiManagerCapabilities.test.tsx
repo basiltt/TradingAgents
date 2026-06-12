@@ -27,6 +27,14 @@ describe("allCapabilitiesOn", () => {
       expect(all[key]).toBe(true);
     }
   });
+
+  it("returns exactly the expected key set (catches metadata drift)", () => {
+    // Derived from AI_MANAGER_CAPABILITIES — guards against a key being added to
+    // the interface/metadata without being reflected here, or vice-versa.
+    expect(Object.keys(allCapabilitiesOn()).sort()).toEqual(
+      [...EXPECTED_KEYS].sort(),
+    );
+  });
 });
 
 import { render, screen, fireEvent } from "@testing-library/react";
@@ -61,5 +69,46 @@ describe("AICapabilityPanel", () => {
     fireEvent.click(screen.getByTestId("ai-cap-reset"));
     expect(onChange).toHaveBeenCalledWith(allCapabilitiesOn());
   });
+
+  it("shows no safety warning when all capabilities are on", () => {
+    render(<AICapabilityPanel value={allCapabilitiesOn()} onChange={vi.fn()} />);
+    expect(screen.queryByTestId("ai-cap-safety-warning")).toBeNull();
+  });
+
+  it("warns when emergency_close is turned off", () => {
+    const value = { ...allCapabilitiesOn(), emergency_close: false };
+    render(<AICapabilityPanel value={value} onChange={vi.fn()} />);
+    const warning = screen.getByTestId("ai-cap-safety-warning");
+    expect(warning.textContent).toContain("Emergency Close");
+  });
+
+  it("warns when sweep_defense is turned off", () => {
+    const value = { ...allCapabilitiesOn(), sweep_defense: false };
+    render(<AICapabilityPanel value={value} onChange={vi.fn()} />);
+    expect(screen.getByTestId("ai-cap-safety-warning").textContent).toContain(
+      "Sweep",
+    );
+  });
+
+  it("normalizes a partial capability object so missing keys render ON", () => {
+    // Only one key present — the other 7 must still render as ON (defined),
+    // and flipping one must persist the full 8-key object.
+    const onChange = vi.fn();
+    const partial = { mtf: false } as unknown as Parameters<
+      typeof AICapabilityPanel
+    >[0]["value"];
+    render(<AICapabilityPanel value={partial} onChange={onChange} />);
+    // 8 switches still render
+    expect(screen.getAllByRole("switch")).toHaveLength(8);
+    // flipping orderbook emits a full object with all keys defined
+    const row = screen.getByTestId("ai-cap-row-orderbook");
+    fireEvent.click(row.querySelector('[role="switch"]')!);
+    const payload = onChange.mock.calls[0][0];
+    expect(Object.keys(payload).sort()).toEqual([...EXPECTED_KEYS].sort());
+    expect(payload.mtf).toBe(false); // preserved
+    expect(payload.orderbook).toBe(false); // flipped
+    expect(payload.trailing).toBe(true); // normalized to on
+  });
 });
+
 

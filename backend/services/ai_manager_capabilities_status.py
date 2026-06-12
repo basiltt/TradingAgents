@@ -4,6 +4,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+# NOTE: This registry powers the AI Manager *dashboard health view* and uses its own
+# display-oriented vocabulary (e.g. "mtf_analysis", "sweep_detection"). It is a
+# DIFFERENT concept from the per-scan capability TOGGLES in
+# `ai_manager_capability_map.py` (keys like "mtf", "sweep_defense"), which select
+# which AIManagerConfig flags a scan enables. The two intentionally don't share keys:
+# this view reports runtime health/degradation; the toggle set is a config-flag-aligned
+# input. Some entries here (regime_detection, episodic_memory) have no per-scan toggle,
+# and some toggles (trailing, event_driven, emergency_close) aren't surfaced here.
+# If you add a user-facing capability, decide deliberately whether it belongs in both.
 CAPABILITY_REGISTRY: list[dict[str, Any]] = [
     {"key": "mtf_analysis", "display_name": "Multi-Timeframe Analysis", "config_flag": "mtf_enabled"},
     {"key": "correlation", "display_name": "Correlation & Clustering", "config_flag": "correlation_enabled"},

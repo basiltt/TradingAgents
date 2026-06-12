@@ -20,16 +20,13 @@ export const AI_MANAGER_CAPABILITIES: AICapabilityMeta[] = [
   { key: "emergency_close", title: "Emergency Close", description: "Deterministic fast-path crash protection on sharp adverse moves." },
 ];
 
-/** All 8 capabilities enabled — the default when the AI Manager is switched on. */
+/** All 8 capabilities enabled — the default when the AI Manager is switched on.
+ *  Derived from AI_MANAGER_CAPABILITIES so a newly-added capability is included
+ *  automatically (single source of truth for the key set). */
 export function allCapabilitiesOn(): AIManagerCapabilities {
-  return {
-    mtf: true,
-    orderbook: true,
-    sweep_defense: true,
-    correlation: true,
-    regime_enhanced: true,
-    event_driven: true,
-    trailing: true,
-    emergency_close: true,
-  };
+  const out = {} as Record<AICapabilityKey, boolean>;
+  for (const cap of AI_MANAGER_CAPABILITIES) {
+    out[cap.key] = true;
+  }
+  return out;
 }

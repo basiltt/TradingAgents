@@ -337,3 +337,68 @@ Tests are written **before** implementation for each unit.
 - Account-level capability-selection UI.
 - Persisting per-scan choices into the account `AIManagerConfig`.
 - New AI Manager capabilities or decision-logic changes.
+
+---
+
+## 11. Post-Review Addendum (2026-06-12)
+
+A multi-lens code review surfaced findings that refined the implementation beyond
+the original §5 design. Recorded here so the spec stays truthful.
+
+### 11.1 Respawn must re-apply the override (the missed Critical)
+
+§5.3 assumed `enable(persist=False)` + `_spawn_task(config_override=...)` was
+sufficient. It is not on its own: `_spawn_task` is **also** called with no override
+by the health-sweep loop, the kill-switch-reset path, and app-restart bootstrap —
+each re-reads config from the DB. Because `persist=False` deliberately leaves the DB
+config untouched (often empty/default for an auto-enabled account), an in-process
+respawn would **silently revert** the per-scan capability choice to defaults — flipping
+safety capabilities back on/off against operator intent, and persisting that drift
+across crashes.
+
+**Resolution:** an in-memory `_ephemeral_config_overrides` registry on the service,
+keyed by account. Written by `enable(persist=False)`, read by `_spawn_task` as a
+fallback when no explicit override is passed, cleared by `disable()` and by any
+persisting `enable()`. This keeps D4 intact (the account's **saved DB config is never
+rewritten**) while making in-process respawns honor the override. On a full process
+restart the registry is empty by design — the driving scan/executor is gone too, so
+the account falls back to its saved config; documented as acceptable and always in the
+safe direction.
+
+### 11.2 Override validation fails loud, caller fails safe
+
+`apply_capability_overrides` now validates a dict override through
+`AIManagerCapabilityToggles` (Pydantic, `extra="forbid"`, real boolean coercion)
+instead of a hand-rolled `bool(...)` read. This (a) correctly coerces JSON-y
+`"false"` → `False` (the prior `bool("false")==True` footgun is gone), and (b) raises
+on unknown keys / non-coercible values. The caller (`_maybe_enable_ai_manager`)
+**falls back to a managed enable with the account's own config** (`persist=True`) when
+the override is malformed — a bad override never leaves open positions unmanaged.
+
+### 11.3 Crash-protection warning (UI)
+
+Disabling `emergency_close` or `sweep_defense` per-scan is allowed (D2: all 8 are
+selectable), but the panel now renders a danger Notice when either is off, so reducing
+crash protection is a deliberate, visible choice rather than a silent footgun.
+
+### 11.4 Drift guards
+
+Key-set drift is now caught by tests rather than convention: backend asserts
+`CAPABILITY_FLAG_MAP` keys == `AIManagerCapabilityToggles` fields and that every mapped
+flag is a real `AIManagerConfig` field; frontend derives `allCapabilitiesOn()` from the
+metadata array and asserts its key set. The dashboard's separate `CAPABILITY_REGISTRY`
+(`ai_manager_capabilities_status.py`) uses a different display vocabulary and is
+cross-referenced with an explanatory comment — intentionally not unified.
+
+### 11.5 Accepted risks (pre-existing, not introduced here)
+
+- **Cross-scan last-writer-wins:** the AI Manager is a per-account singleton, so two
+  concurrent scans targeting one account share one task; the later enable's capability
+  set wins. This is inherent to the existing single-task-per-account design, not new to
+  this feature.
+- **`extra="forbid"` on persisted configs:** a stale/unknown key in a saved scheduled
+  job can fail that job's re-validation. This is the pre-existing `AutoTradeConfig`
+  philosophy applied to every field, not specific to capability toggles.
+- **Dashboard reflects in-memory task config:** the dashboard reads the running task's
+  config (which *does* include an active per-scan override), so it is accurate while a
+  task is live; it does not show overrides for accounts whose task isn't running.

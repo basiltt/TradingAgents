@@ -69,6 +69,14 @@ class AIAccountManagerService:
         self._singleton_conn: Optional[Any] = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
+        # Per-scan capability overrides (enable(persist=False)). Kept in-memory only
+        # so the account's saved AIManagerConfig is never rewritten, while in-process
+        # respawns (health sweep, kill-switch reset, dead-task respawn) re-apply the
+        # same override instead of silently reverting to the account's stored config.
+        # Cleared on disable() and superseded by any persisting enable(). Empty after a
+        # process restart by design — the driving scan/executor is gone too, and the
+        # fallback to the saved config is always in the safe direction.
+        self._ephemeral_config_overrides: Dict[str, AIManagerConfig] = {}
         # Set externally (main.py) when an LLM provider is configured.
         self._llm_callable: Optional[Callable] = None  # async (system_prompt, context_prompt) -> str
         self._pattern_llm_callable: Optional[Callable] = None
@@ -250,6 +258,13 @@ class AIAccountManagerService:
         """
         lock = self._get_account_lock(account_id)
         async with lock:
+            # Track (or clear) the ephemeral override so in-process respawns re-apply
+            # it rather than reverting to the account's saved config. A persisting
+            # enable re-establishes the DB config as the source of truth.
+            if persist:
+                self._ephemeral_config_overrides.pop(account_id, None)
+            else:
+                self._ephemeral_config_overrides[account_id] = config
             existing_task = self._tasks.get(account_id)
             if existing_task and not existing_task.is_dead():
                 # Task is alive — sync config if auto_enabled changed OR an
@@ -279,6 +294,7 @@ class AIAccountManagerService:
             task = self._tasks.pop(account_id, None)
             if task:
                 task.cancel()
+            self._ephemeral_config_overrides.pop(account_id, None)
             await self._repo.upsert_state(
                 account_id, enabled=False, fsm_state="sleeping",
                 emergency_ref_equity=None, emergency_cooldown_until=None,
@@ -901,6 +917,12 @@ class AIAccountManagerService:
         state = await self._repo.get_state(account_id)
         if not state or not state.get("enabled", False):
             return
+        # Precedence: explicit override arg > stored ephemeral override > DB config.
+        # The ephemeral fallback keeps a per-scan capability override in effect across
+        # in-process respawns (health sweep, kill-switch reset) instead of silently
+        # reverting to the account's saved config.
+        if config_override is None:
+            config_override = self._ephemeral_config_overrides.get(account_id)
         if config_override is not None:
             config = config_override
         else:
