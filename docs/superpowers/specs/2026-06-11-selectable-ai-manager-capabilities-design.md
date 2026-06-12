@@ -356,14 +356,29 @@ respawn would **silently revert** the per-scan capability choice to defaults —
 safety capabilities back on/off against operator intent, and persisting that drift
 across crashes.
 
-**Resolution:** an in-memory `_ephemeral_config_overrides` registry on the service,
-keyed by account. Written by `enable(persist=False)`, read by `_spawn_task` as a
-fallback when no explicit override is passed, cleared by `disable()` and by any
-persisting `enable()`. This keeps D4 intact (the account's **saved DB config is never
-rewritten**) while making in-process respawns honor the override. On a full process
-restart the registry is empty by design — the driving scan/executor is gone too, so
-the account falls back to its saved config; documented as acceptable and always in the
-safe direction.
+**Resolution:** an in-memory `_ephemeral_capability_overrides` registry on the
+service, keyed by account, storing **only the 8 capability toggles** (not the whole
+config). Written by `enable(persist=False)` via `_set_ephemeral_capabilities`, read by
+`_spawn_task` when no explicit override arg is passed, cleared by
+`_clear_ephemeral_capabilities` on `disable()`, on any persisting `enable()`, and when
+`patch_config` edits a capability flag. On a no-arg respawn `_spawn_task` loads the
+**current** DB config and re-applies just those toggles via `apply_capability_overrides`
+— so `locked_positions`, patched limits, and every non-capability field reflect current
+state (no stale snapshot), while the per-scan capability selection is preserved. This
+keeps D4 intact (the account's **saved DB config is never rewritten**).
+
+> **Why toggles-only, not the whole config (round-2 fix):** an earlier iteration stored
+> the entire `AIManagerConfig` snapshot and re-used it wholesale on respawn. That
+> resurrected stale fields — e.g. a position the user `locked` *after* the override was
+> set would be un-locked on respawn, letting the AI close it. Storing only the 8 bools
+> and re-applying onto fresh DB config eliminates that class of bug.
+
+On a full process restart the registry is empty by design — the driving scan/executor
+is gone too, so the account falls back to its saved DB config. This is safe for the
+seven capabilities that default ON (disabled ones revert to protective/neutral); the
+lone asymmetry is `trailing` (config default OFF, per-scan default ON), so a restart
+drops trailing — a profit-preservation feature, not a crash-safety one — which is an
+accepted, non-dangerous direction.
 
 ### 11.2 Override validation fails loud, caller fails safe
 

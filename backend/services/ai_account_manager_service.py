@@ -619,6 +619,13 @@ class AIAccountManagerService:
                     raw_config[key] = val
             config = AIManagerConfig(**raw_config)
             await self._repo.sync_config_columns(account_id, config.model_dump())
+            # If the operator explicitly edits a capability flag via this persisting
+            # path, drop any per-scan ephemeral override for those flags so it doesn't
+            # silently re-apply (revert the edit) on the next respawn. The edit is now
+            # the persisted source of truth.
+            from backend.services.ai_manager_capability_map import CAPABILITY_FLAG_MAP
+            if any(flag in updates for flag in CAPABILITY_FLAG_MAP.values()):
+                self._clear_ephemeral_capabilities(account_id)
             task = self._tasks.get(account_id)
             if task:
                 task.reload_config(config)
@@ -931,10 +938,6 @@ class AIAccountManagerService:
         state = await self._repo.get_state(account_id)
         if not state or not state.get("enabled", False):
             return
-        # Precedence: explicit override arg > stored ephemeral override > DB config.
-        # The ephemeral fallback keeps a per-scan capability override in effect across
-        # in-process respawns (health sweep, kill-switch reset) instead of silently
-        # reverting to the account's saved config.
         # Precedence: explicit override arg > (fresh DB config + ephemeral capability
         # toggles re-applied) > fresh DB config. The explicit arg is the live per-scan
         # config passed straight from enable(). On a respawn with no arg (health sweep,

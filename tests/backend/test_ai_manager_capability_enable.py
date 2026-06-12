@@ -142,3 +142,33 @@ async def test_disable_clears_ephemeral_override(service, mock_repo):
 
         await service.disable("acc-1")
         assert "acc-1" not in service._ephemeral_capability_overrides
+
+
+@pytest.mark.asyncio
+async def test_patch_config_capability_clears_ephemeral_override(service, mock_repo):
+    """A persisting patch_config of a capability flag must drop the ephemeral override
+    so it doesn't re-apply (revert the edit) on the next respawn."""
+    mock_repo.sync_config_columns = AsyncMock()
+    with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
+        MockTask.return_value = MagicMock(start=MagicMock(), reload_config=MagicMock())
+        await service.enable(
+            "acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False
+        )
+        assert "acc-1" in service._ephemeral_capability_overrides
+
+        # Operator edits the same capability via the persisting dashboard path.
+        await service.patch_config("acc-1", {"mtf_enabled": True})
+        assert "acc-1" not in service._ephemeral_capability_overrides
+
+
+@pytest.mark.asyncio
+async def test_patch_config_non_capability_keeps_ephemeral_override(service, mock_repo):
+    """Patching a NON-capability field must NOT clear the per-scan capability override."""
+    mock_repo.sync_config_columns = AsyncMock()
+    with patch("backend.services.ai_manager_task.AIManagerTask") as MockTask:
+        MockTask.return_value = MagicMock(start=MagicMock(), reload_config=MagicMock())
+        await service.enable(
+            "acc-1", AIManagerConfig(auto_enabled=True, mtf_enabled=False), persist=False
+        )
+        await service.patch_config("acc-1", {"max_daily_actions": 12})
+        assert "acc-1" in service._ephemeral_capability_overrides

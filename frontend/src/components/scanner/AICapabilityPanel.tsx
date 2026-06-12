@@ -69,7 +69,7 @@ export function AICapabilityPanel({ value, onChange }: AICapabilityPanelProps) {
           className="flex items-start gap-2 rounded-[var(--neu-radius-sm)] border border-[color-mix(in_oklch,var(--neu-danger)_30%,var(--neu-stroke-soft))] bg-[color-mix(in_oklch,var(--neu-danger)_8%,var(--neu-surface-base))] px-3 py-2 text-[11px] leading-5 text-[color-mix(in_oklch,var(--neu-danger)_85%,var(--neu-text-strong))]"
         >
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-current" />
-          <span>
+          <div>
             Crash protection reduced for this scan:
             <ul className="mt-1 list-disc pl-4 space-y-0.5">
               {disabledSafety.map((key) => (
@@ -79,7 +79,7 @@ export function AICapabilityPanel({ value, onChange }: AICapabilityPanelProps) {
                 </li>
               ))}
             </ul>
-          </span>
+          </div>
         </div>
       ) : null}
       {AI_MANAGER_CAPABILITIES.map((cap) => (

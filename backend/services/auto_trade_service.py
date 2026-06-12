@@ -1657,9 +1657,27 @@ class AutoTradeExecutor:
                     # persist stays True → enable with the safe account config.
 
             await self._ai_manager_service.enable(account_id, config_to_use, persist=persist)
-            logger.info(
+            # Forensic record of which capabilities a per-scan override turned OFF —
+            # especially the crash-protection ones (emergency_close / sweep_defense) —
+            # so a disabled safety net is auditable after the fact, not just a UI hint.
+            disabled_caps: list = []
+            if not persist:
+                from backend.services.ai_manager_capability_map import (
+                    extract_capability_toggles,
+                )
+                disabled_caps = [
+                    key for key, on in extract_capability_toggles(config_to_use).items()
+                    if not on
+                ]
+            log_level = logging.WARNING if disabled_caps else logging.INFO
+            logger.log(
+                log_level,
                 "ai_manager_auto_enabled",
-                extra={"account_id": account_id, "capability_override": not persist},
+                extra={
+                    "account_id": account_id,
+                    "capability_override": not persist,
+                    "disabled_capabilities": disabled_caps,
+                },
             )
         except Exception as e:
             # A failed enable must not abort the placement (the trade already opened).

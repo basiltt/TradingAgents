@@ -57,7 +57,24 @@ async def test_override_merges_onto_existing_account_config():
 
 
 @pytest.mark.asyncio
-async def test_override_present_calls_enable_persist_false():
+async def test_disabled_capabilities_are_logged_for_forensics(caplog):
+    """Disabling a safety capability per-scan must leave an auditable WARNING record
+    naming the disabled capabilities (not just 'an override happened')."""
+    import logging
+    ex, ai_svc = _make_executor_with_ai()
+    cfg = {
+        "ai_manager_enabled": True,
+        "ai_manager_capabilities": {"emergency_close": False, "sweep_defense": False},
+    }
+    with caplog.at_level(logging.WARNING):
+        await ex._maybe_enable_ai_manager("acc-1", cfg, strategy_kind="trend")
+
+    recs = [r for r in caplog.records if r.message == "ai_manager_auto_enabled"]
+    assert recs, "expected an ai_manager_auto_enabled log record"
+    rec = recs[-1]
+    assert rec.levelno == logging.WARNING
+    assert set(rec.disabled_capabilities) == {"emergency_close", "sweep_defense"}
+
     ex, ai_svc = _make_executor_with_ai()
     cfg = {
         "ai_manager_enabled": True,
