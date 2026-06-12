@@ -480,6 +480,19 @@ class AutoTradeConfig(BaseModel):
     adaptive_blacklist_lookback_hours: int = Field(default=48, ge=1, le=720)
     ai_pause_cycles: Optional[int] = Field(None, ge=1, le=10)
 
+    # ── Cool Off Time (4 optional tiers, all default-off) ──
+    # After an account's scanner auto-trade cycle completes (account goes flat), the
+    # cycle's net realized P&L sign decides success/failure; an enabled tier then pauses
+    # new auto-entries for the configured minutes. Account-specific; live + backtest.
+    cooloff_on_success_enabled: bool = False
+    cooloff_on_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_failure_enabled: bool = False
+    cooloff_on_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_success_enabled: bool = False
+    cooloff_on_double_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_failure_enabled: bool = False
+    cooloff_on_double_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+
     # ── Regime Multi-Strategy (3 optional features, all default-off) ──
     # F1 — Regime/Session Entry Filter
     regime_filter_enabled: bool = False                      # umbrella master for F1
@@ -539,6 +552,16 @@ class AutoTradeConfig(BaseModel):
     def validate_mr_direction(self) -> "AutoTradeConfig":
         if self.mean_reversion_enabled and not (self.mr_short_enabled or self.mr_long_enabled):
             raise ValueError("mean_reversion_enabled requires at least one of mr_short_enabled / mr_long_enabled")
+        return self
+
+    @model_validator(mode="after")
+    def validate_cooloff(self) -> "AutoTradeConfig":
+        # Each enabled cool-off tier requires its duration (FR-002, CO-CFG-4).
+        for tier in ("success", "failure", "double_success", "double_failure"):
+            if getattr(self, f"cooloff_on_{tier}_enabled") and getattr(self, f"cooloff_on_{tier}_minutes") is None:
+                raise ValueError(
+                    f"cooloff_on_{tier}_minutes is required when cooloff_on_{tier}_enabled is True"
+                )
         return self
 
     @model_validator(mode="after")

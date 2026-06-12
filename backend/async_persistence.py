@@ -1024,6 +1024,38 @@ async def _add_sealed_manifest_columns(conn) -> None:
     )
 
 
+async def _migrate_v62_cooloff_fk_cascade(conn) -> None:
+    """v62 — make account_cooloff_state.account_id FK ON DELETE CASCADE.
+
+    The v61 FK was NO ACTION, which would block deleting a trading_account once it had a
+    cool-off row. Drops whatever FK currently links account_cooloff_state.account_id to
+    trading_accounts (named or auto-named) and re-adds it as CASCADE. Idempotent: if the
+    cascading constraint already exists (re-run), the lookup finds + drops it and re-adds
+    an identical one. Uses discrete statements (no DO $$ block) because the migration
+    runner splits SQL strings on ';'.
+    """
+    fk_name = await conn.fetchval(
+        """
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'account_cooloff_state'::regclass
+          AND contype = 'f'
+          AND confrelid = 'trading_accounts'::regclass
+        LIMIT 1
+        """
+    )
+    if fk_name:
+        # conname is an identifier; format() with quote_ident equivalent via %I is not
+        # available here, but conname from the catalog is a safe Postgres identifier.
+        await conn.execute(
+            f'ALTER TABLE account_cooloff_state DROP CONSTRAINT "{fk_name}"'
+        )
+    await conn.execute(
+        "ALTER TABLE account_cooloff_state "
+        "ADD CONSTRAINT account_cooloff_state_account_id_fkey "
+        "FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE"
+    )
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -1584,6 +1616,38 @@ CREATE INDEX IF NOT EXISTS idx_babh_closed_at
 CREATE INDEX IF NOT EXISTS idx_babh_symbol_strategy_closed
     ON backtest_adaptive_blacklist_history(symbol, strategy_kind, closed_at DESC);
 """),
+    # v61 — Cool Off Time per-account state (settings snapshot + live cool-off +
+    # streak + episode high-water mark). Additive, no trades-table change, no backfill.
+    # One row per account; absent row == feature off / streak 0.
+    (61, """
+CREATE TABLE IF NOT EXISTS account_cooloff_state (
+    account_id TEXT PRIMARY KEY REFERENCES trading_accounts(id),
+    cooloff_until TIMESTAMPTZ,
+    cooloff_reason TEXT CHECK (cooloff_reason IN ('success','failure','double_success','double_failure')),
+    consecutive_wins SMALLINT NOT NULL DEFAULT 0 CHECK (consecutive_wins >= 0),
+    consecutive_losses SMALLINT NOT NULL DEFAULT 0 CHECK (consecutive_losses >= 0),
+    last_processed_close_at TIMESTAMPTZ,
+    last_processed_close_id UUID,
+    success_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    success_minutes INT CHECK (success_minutes IS NULL OR success_minutes BETWEEN 1 AND 43200),
+    failure_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    failure_minutes INT CHECK (failure_minutes IS NULL OR failure_minutes BETWEEN 1 AND 43200),
+    double_success_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    double_success_minutes INT CHECK (double_success_minutes IS NULL OR double_success_minutes BETWEEN 1 AND 43200),
+    double_failure_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    double_failure_minutes INT CHECK (double_failure_minutes IS NULL OR double_failure_minutes BETWEEN 1 AND 43200),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_cooloff_pair CHECK ((cooloff_until IS NULL) = (cooloff_reason IS NULL))
+);
+"""),
+    # Cool Off Time: make the account FK ON DELETE CASCADE so deleting a trading
+    # account also removes its cool-off state row. The original v61 FK was NO ACTION,
+    # which would block account deletion once a cool-off row existed. Implemented as a
+    # callable (NOT a SQL string) because the migration runner naively splits SQL on
+    # ';', which would corrupt a DO $$...$$ block; the callable runs discrete statements.
+    # Idempotent: drops whatever FK currently points account_cooloff_state.account_id at
+    # trading_accounts (named or auto-named), then adds the cascading one.
+    (62, _migrate_v62_cooloff_fk_cascade),
 ]
 
 

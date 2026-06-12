@@ -329,6 +329,41 @@ class ScannerService:
         self._scans: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
+    def _resolve_cooloff_repo(self):
+        """Cool-off repo for the executor: prefer the main.py-stamped singleton; else
+        construct one from self._db (fallback for entrypoints/tests that don't stamp).
+        Returns None when no db is available (e.g. minimal test harness)."""
+        repo = getattr(self, "_cooloff_repo", None)
+        if repo is not None:
+            return repo
+        if self._db is None:
+            return None
+        try:
+            from backend.services.cooloff_repository import CooloffRepository
+            repo = CooloffRepository(self._db)
+            self._cooloff_repo = repo
+            return repo
+        except Exception:
+            return None
+
+    def _resolve_cooloff_classifier(self):
+        """Cool-off classifier for the executor: prefer the stamped singleton; else build
+        one from self._db + the resolved repo so the gate-time sync classify path is never
+        silently dropped (DP54)."""
+        clf = getattr(self, "_cooloff_classifier", None)
+        if clf is not None:
+            return clf
+        repo = self._resolve_cooloff_repo()
+        if repo is None or self._db is None:
+            return None
+        try:
+            from backend.services.cooloff_classifier import CooloffClassifier
+            clf = CooloffClassifier(self._db, repo)
+            self._cooloff_classifier = clf
+            return clf
+        except Exception:
+            return None
+
     async def _notify_scan_list_changed(self) -> None:
         if self._ws:
             try:
@@ -566,6 +601,8 @@ class ScannerService:
                 sector_service=self._sector_service,
                 recorder=self._debug_recorder, debug_ctx=debug_ctx,
                 position_lock_registry=getattr(self, "_position_lock_registry", None),
+                cooloff_repo=self._resolve_cooloff_repo(),
+                cooloff_classifier=self._resolve_cooloff_classifier(),
             )
             # ── Regime Multi-Strategy: build the scan-time ScanContext ──
             # Kill-switch is read UNCONDITIONALLY (R3-F1) so master/per-feature kills
@@ -896,6 +933,8 @@ class ScannerService:
                     sector_service=self._sector_service,
                     recorder=self._debug_recorder, debug_ctx=debug_ctx,
                     position_lock_registry=getattr(self, "_position_lock_registry", None),
+                    cooloff_repo=self._resolve_cooloff_repo(),
+                    cooloff_classifier=self._resolve_cooloff_classifier(),
                 )
                 # Regime Multi-Strategy: rebuild the ScanContext on resume too, else
                 # MR would be silently inert (and the kill-switch unread) for resumed

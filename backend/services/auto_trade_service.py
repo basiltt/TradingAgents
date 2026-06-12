@@ -74,11 +74,15 @@ class TradeExecution:
 class AutoTradeExecutor:
     """Evaluates scan results against auto-trade configs and executes trades."""
 
-    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None, position_lock_registry: Any = None):
+    def __init__(self, accounts_service: Any, close_positions_service: Any = None, ai_manager_service: Any = None, sector_service: Any = None, *, recorder: Any = None, debug_ctx: Any = None, position_lock_registry: Any = None, cooloff_repo: Any = None, cooloff_classifier: Any = None):
         self._accounts = accounts_service
         self._close_svc = close_positions_service
         self._ai_manager_service = ai_manager_service
         self._sector_service = sector_service
+        # Cool Off Time: None-guarded (like _close_svc). Backtest builds neither, so the
+        # gate + pre-pass are inert there.
+        self._cooloff_repo = cooloff_repo
+        self._cooloff_classifier = cooloff_classifier
         self._state: Dict[str, _AccountState] = {}
         # Per-scan MR caches; created lazily (annotation-only here, so getattr-based
         # lazy init still sees the attribute as absent until first use).
@@ -389,8 +393,84 @@ class AutoTradeExecutor:
             logger.warning("pause_trading_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
         return False
 
+    @staticmethod
+    def _cooloff_settings_from_config(config: Dict[str, Any]) -> dict:
+        """Extract the 8 cool-off settings columns from an auto-trade config dict."""
+        return {
+            "success_enabled": bool(config.get("cooloff_on_success_enabled")),
+            "success_minutes": config.get("cooloff_on_success_minutes"),
+            "failure_enabled": bool(config.get("cooloff_on_failure_enabled")),
+            "failure_minutes": config.get("cooloff_on_failure_minutes"),
+            "double_success_enabled": bool(config.get("cooloff_on_double_success_enabled")),
+            "double_success_minutes": config.get("cooloff_on_double_success_minutes"),
+            "double_failure_enabled": bool(config.get("cooloff_on_double_failure_enabled")),
+            "double_failure_minutes": config.get("cooloff_on_double_failure_minutes"),
+        }
+
+    @staticmethod
+    def _cooloff_any_enabled(settings: dict) -> bool:
+        return bool(
+            settings["success_enabled"] or settings["failure_enabled"]
+            or settings["double_success_enabled"] or settings["double_failure_enabled"]
+        )
+
+    async def _account_in_cooloff(self, account_id: str) -> bool:
+        """Return True if the account is currently in a Cool Off Time pause.
+
+        Sibling to _is_account_paused. FAIL-OPEN (return False) on any error or corrupt
+        state: cool-off is risk-reduction pacing, not a safety halt, so a degraded read
+        must never halt trading (CR-4). First triggers a synchronous best-effort classify
+        (gate-time driver — closes the resume window for a just-completed cycle), then reads
+        the persisted status via a pure-time predicate (FR-029). The classify and the read
+        use separate sequential acquisitions — the gate never holds a pooled conn across the
+        classify call (no pool starvation, D50).
+        """
+        if self._cooloff_repo is None:
+            return False
+        try:
+            if self._cooloff_classifier is not None:
+                await self._cooloff_classifier.maybe_classify(account_id)  # fail-open internally
+            status = await self._cooloff_repo.read_status(account_id)
+            return bool(status.get("cooling"))
+        except Exception as e:  # noqa: BLE001 — fail-open
+            logger.warning("cooloff_check_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+            return False
+
+    async def _upsert_cooloff_settings_prepass(self) -> None:
+        """Un-gated pre-pass: persist each account's cool-off settings snapshot.
+
+        Runs BEFORE the stopped-check loop so a cooling-off / paused / positions-open
+        account still refreshes its settings (D46/DS19). Fail-open per account.
+
+        Clobber guard (DELIBERATELY RETAINED here, unlike the scheduled-save writer):
+        the manual Market Scan auto-trade config defaults to all-OFF and runs un-gated
+        on EVERY scan, so writing all-OFF here would wipe a cool-off policy a user set
+        on the SCHEDULED surface for the same account every time they run a manual scan —
+        a fail-DANGEROUS outcome (the account would trade without its intended pause).
+        Skipping all-OFF here fails SAFE (errs toward keeping a pause). Turning cool-off
+        OFF is therefore done via the explicit, durable scheduled-scan save (which DOES
+        persist all-OFF), not as a side effect of a transient manual scan.
+        """
+        if self._cooloff_repo is None:
+            return
+        seen: set = set()
+        for state in self._state.values():
+            account_id = state.config.get("account_id")
+            if not account_id or account_id in seen:
+                continue
+            seen.add(account_id)
+            settings = self._cooloff_settings_from_config(state.config)
+            if not self._cooloff_any_enabled(settings):
+                continue  # clobber guard (see docstring): all-OFF manual config must not wipe scheduled settings
+            try:
+                await self._cooloff_repo.upsert_settings(account_id, settings)
+            except Exception as e:  # noqa: BLE001 — never abort the scan (NFR-001)
+                logger.warning("cooloff_settings_upsert_failed", extra={"account_id": account_id, "error": str(e)[:200]})
+
     async def init_balances(self) -> None:
         """Pre-fetch wallet balances and check positions for all configured accounts."""
+        # Cool Off Time settings pre-pass (un-gated; before the stopped-check loop).
+        await self._upsert_cooloff_settings_prepass()
         rules_created_for: set = set()  # track accounts that already got close rules this cycle
         force_closed_accounts: set = set()  # track accounts already force-closed this cycle
         positions_cache: Dict[str, list] = {}  # account_id -> positions list (avoid re-fetching)
@@ -483,6 +563,10 @@ class AutoTradeExecutor:
             if await self._is_account_paused(account_id):
                 state.stopped = True
                 state.stopped_reason = "ai_paused_trading"
+            # Check for Cool Off Time pause (additive to PAUSE — either halts new entries).
+            if not state.stopped and await self._account_in_cooloff(account_id):
+                state.stopped = True
+                state.stopped_reason = "cooloff_active"
             if state.stopped:
                 continue
             # Check positions if skip_if_positions_open is enabled
@@ -1009,6 +1093,15 @@ class AutoTradeExecutor:
                         for state in states:
                             state.stopped = True
                             state.stopped_reason = "ai_paused_trading"
+                    continue
+
+                # Check for Cool Off Time pause (mirror the PAUSE block — set all states +
+                # continue BEFORE the reset block below, or the reset clears stopped). DP2.
+                if await self._account_in_cooloff(account_id):
+                    async with self._lock:
+                        for state in states:
+                            state.stopped = True
+                            state.stopped_reason = "cooloff_active"
                     continue
 
                 # Delete old rules and create fresh ones

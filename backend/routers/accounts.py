@@ -765,3 +765,79 @@ async def notify_equity_change(account_id: str, request: Request):
 
     await ai_svc.notify_equity_reset(account_id, current_equity)
     return {"status": "ok", "new_equity_baseline": current_equity}
+
+
+# ── Cool Off Time (status + clear) ───────────────────────────────────────────
+
+def _get_cooloff_repo(request: Request):
+    """Cool-off repo from app state, or 503 when the feature/accounts layer is off."""
+    repo = getattr(request.app.state, "cooloff_repo", None)
+    if repo is None:
+        raise HTTPException(503, detail="Cool-off feature unavailable")
+    return repo
+
+
+@router.get("/accounts/{account_id}/cooloff")
+async def get_cooloff_status(request: Request, account_id: str):
+    """Return the account's live Cool Off Time status.
+
+    A known account with no cool-off row returns 200 defaults (not 404). 404 is only
+    for an unknown account. Behind the same per-account guard the sibling routes use.
+    """
+    _validate_account_id(account_id)
+    svc = _get_service(request)
+    account = await svc.get_account(account_id)
+    if not account:
+        return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
+    repo = _get_cooloff_repo(request)
+    status = await repo.read_status(account_id)
+    # Serialize datetime -> ISO for JSON.
+    until = status.get("cooloff_until")
+    return {
+        "account_id": account_id,
+        "cooling": bool(status.get("cooling")),
+        "cooloff_until": until.isoformat() if until is not None else None,
+        "cooloff_reason": status.get("cooloff_reason"),
+        "consecutive_wins": status.get("consecutive_wins", 0),
+        "consecutive_losses": status.get("consecutive_losses", 0),
+        "cooloff_remaining_seconds": status.get("cooloff_remaining_seconds", 0),
+    }
+
+
+@router.post("/accounts/{account_id}/cooloff/clear")
+async def clear_cooloff(
+    request: Request,
+    account_id: str,
+    reset_streak: bool = Query(False, description="Also reset the consecutive win/loss streak"),
+):
+    """Manually end an active cool-off (Resume now).
+
+    Does NOT reset the streak unless reset_streak=true. Idempotent. Audited.
+    """
+    _validate_account_id(account_id)
+    svc = _get_service(request)
+    account = await svc.get_account(account_id)
+    if not account:
+        return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
+    repo = _get_cooloff_repo(request)
+    before = await repo.read_status(account_id)
+    cleared = await repo.clear(account_id, reset_streak=reset_streak)
+    after = await repo.read_status(account_id)
+    logger.info(
+        "cooloff_cleared",
+        extra={
+            "account_id": account_id,
+            "actor": request.client.host if request.client else None,
+            "reset_streak": reset_streak,
+            "cleared": bool(cleared),
+            "before_cooloff_until": before.get("cooloff_until").isoformat()
+                if before.get("cooloff_until") is not None else None,
+            "before_wins": before.get("consecutive_wins", 0),
+            "before_losses": before.get("consecutive_losses", 0),
+            "after_cooloff_until": after.get("cooloff_until").isoformat()
+                if after.get("cooloff_until") is not None else None,
+            "after_wins": after.get("consecutive_wins", 0),
+            "after_losses": after.get("consecutive_losses", 0),
+        },
+    )
+    return {"cleared": bool(cleared), "cooloff_until": None}

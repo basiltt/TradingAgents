@@ -104,6 +104,14 @@ def test_allow_list_fail_on_new_autotradeconfig_field():
         "session_filter_enabled", "session_allowed_hours_utc", "session_blocked_hours_utc",
         "btc_vol_filter_enabled", "btc_vol_interval", "btc_vol_lookback_candles",
         "btc_vol_min_threshold", "btc_vol_max_threshold",
+        # ── Cool Off Time fields. DENIED from sweeping: these are risk-management
+        # pacing knobs (pause-after-outcome), not strategy parameters. The optimizer
+        # must never auto-tune how long an account halts after a win/loss streak;
+        # they stay fail-closed until a human deliberately promotes them.
+        "cooloff_on_success_enabled", "cooloff_on_success_minutes",
+        "cooloff_on_failure_enabled", "cooloff_on_failure_minutes",
+        "cooloff_on_double_success_enabled", "cooloff_on_double_success_minutes",
+        "cooloff_on_double_failure_enabled", "cooloff_on_double_failure_minutes",
     }
     classified = SWEEPABLE_FIELDS | KNOWN_DENY
     unclassified = model_fields - classified

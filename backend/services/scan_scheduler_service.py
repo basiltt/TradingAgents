@@ -55,6 +55,54 @@ class ScanSchedulerService:
         """Inject the AI manager service (resolves a startup wiring cycle)."""
         self._ai_manager_service = ai_manager_service
 
+    async def _persist_cooloff_settings(self, scan_config: Dict[str, Any]) -> None:
+        """Writer-1 for Cool Off Time (FR-013): on a scheduled-scan save, persist each
+        account's cool-off settings snapshot immediately so a saved-but-not-yet-run
+        schedule has its row.
+
+        Persists the FULL snapshot INCLUDING an all-OFF config — a scheduled save is an
+        explicit, durable declaration of the account's cool-off policy, so disabling
+        every tier MUST propagate (the feature is "optional/toggleable" per the user's
+        primary requirement; the earlier all-OFF clobber guard, DS19, silently broke the
+        disable path and is superseded by last-write-wins, DS14). The upsert is
+        column-scoped (state columns untouched), so writing all-OFF stops FUTURE arming
+        while any ACTIVE cool-off still runs to expiry (the user's disable-mid-cooloff
+        decision). Fail-open.
+        """
+        repo = getattr(self, "_cooloff_repo", None)
+        if repo is None and self._db is not None:
+            try:
+                from backend.services.cooloff_repository import CooloffRepository
+                repo = CooloffRepository(self._db)
+                self._cooloff_repo = repo
+            except Exception:
+                return
+        if repo is None or not isinstance(scan_config, dict):
+            return
+        configs = scan_config.get("auto_trade_configs")
+        if not isinstance(configs, list):
+            return  # defense-in-depth: a non-list value must never raise out of a save
+        for cfg in configs:
+            if not isinstance(cfg, dict):
+                continue
+            account_id = cfg.get("account_id")
+            if not account_id:
+                continue
+            settings = {
+                "success_enabled": bool(cfg.get("cooloff_on_success_enabled")),
+                "success_minutes": cfg.get("cooloff_on_success_minutes"),
+                "failure_enabled": bool(cfg.get("cooloff_on_failure_enabled")),
+                "failure_minutes": cfg.get("cooloff_on_failure_minutes"),
+                "double_success_enabled": bool(cfg.get("cooloff_on_double_success_enabled")),
+                "double_success_minutes": cfg.get("cooloff_on_double_success_minutes"),
+                "double_failure_enabled": bool(cfg.get("cooloff_on_double_failure_enabled")),
+                "double_failure_minutes": cfg.get("cooloff_on_double_failure_minutes"),
+            }
+            try:
+                await repo.upsert_settings(account_id, settings)
+            except Exception:
+                logger.warning("cooloff_scheduled_settings_upsert_failed", extra={"account_id": account_id})
+
     # ── CRUD ─────────────────────────────────────────────────────────
 
     def _validate_schedule(self, schedule_type: str, schedule_config: Dict[str, Any]) -> None:
@@ -104,6 +152,10 @@ class ScanSchedulerService:
 
         schedule["next_run_at"] = self._compute_next_run(schedule)
         await self._db.insert_scheduled_scan(schedule)
+        try:
+            await self._persist_cooloff_settings(schedule["scan_config"])  # Cool Off Time writer-1
+        except Exception:
+            logger.warning("cooloff_settings_persist_failed", extra={"scan_id": scan_id})
         logger.info("Created schedule %s (%s)", scan_id, data["name"])
         if self._ai_manager_service:
             asyncio.create_task(self._ai_manager_service.reconcile_active_schedules())
@@ -160,6 +212,11 @@ class ScanSchedulerService:
 
         await self._db.update_scheduled_scan(scan_id, updates)
         logger.info("Updated schedule %s", scan_id)
+        if "scan_config" in updates:
+            try:
+                await self._persist_cooloff_settings(updates["scan_config"])  # Cool Off Time writer-1
+            except Exception:
+                logger.warning("cooloff_settings_persist_failed", extra={"scan_id": scan_id})
         if "scan_config" in updates and hasattr(self._scanner, "refresh_active_schedule_config"):
             try:
                 refreshed = await self._scanner.refresh_active_schedule_config(

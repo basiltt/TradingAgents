@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import time
 from collections import OrderedDict
@@ -47,6 +48,32 @@ class TradeService:
         self._ws = ws_manager
         self._signal_perf = signal_perf
         self._stats_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        # Cool Off Time: optional post-commit classifier trigger (set via setter after
+        # both services are built). Background task refs are held so they are not GC'd.
+        self._cooloff_classifier: Any = None
+        self._cooloff_bg_tasks: set = set()
+
+    def set_cooloff_classifier(self, classifier: Any) -> None:
+        """Wire the cool-off classifier (deferred — avoids a construction cycle)."""
+        self._cooloff_classifier = classifier
+
+    def _fire_cooloff(self, account_id: str) -> None:
+        """Schedule a post-commit, fire-and-forget cool-off classification.
+
+        MUST be called only AFTER a close transaction has committed, and the SCHEDULING
+        itself is wrapped so it can never raise into the (already-committed) close path
+        (NFR-001/002, D40). maybe_classify is itself fully fail-open. The task ref is held
+        and discarded on done so the task isn't garbage-collected mid-flight.
+        """
+        classifier = self._cooloff_classifier
+        if classifier is None:
+            return
+        try:
+            task = asyncio.create_task(classifier.maybe_classify(account_id))
+            self._cooloff_bg_tasks.add(task)
+            task.add_done_callback(self._cooloff_bg_tasks.discard)
+        except Exception:  # noqa: BLE001 — scheduling must never break a committed close
+            logger.warning("cooloff_trigger_schedule_failed", extra={"account_id": account_id})
 
     _STATS_CACHE_TTL = 10.0
     _STATS_CACHE_MAX = 1000
@@ -97,6 +124,8 @@ class TradeService:
         self.invalidate_stats_cache(account_id)
         if closed:
             await self._broadcast_trade_event("trade.closed", closed)
+        # Cool Off Time: post-commit trigger (reconcile_close txn already exited). Fail-open.
+        self._fire_cooloff(account_id)
         return closed
 
     async def get_open_trades(self, account_id: str, limit: int = 500) -> list[dict]:
@@ -226,6 +255,8 @@ class TradeService:
         logger.info("close_trade_record_only_done", extra={
             "account_id": account_id, "trade_id": trade_id, "duration_ms": round(elapsed_ms, 1),
         })
+        # Cool Off Time: post-commit trigger (record-only close txn already exited). Fail-open.
+        self._fire_cooloff(account_id)
         return closed
 
     async def _close_full(
@@ -305,6 +336,8 @@ class TradeService:
             "trade_id": trade_id, "account_id": account_id,
             "exit_price": pnl_data["exit_price"], "net_pnl": pnl_data["net_pnl"],
         })
+        # Cool Off Time: post-commit trigger (_close_full txn already exited). Fail-open.
+        self._fire_cooloff(account_id)
         return closed
 
     async def _close_partial(
@@ -443,6 +476,7 @@ class TradeService:
             # position_reconciler backfills the real exit_price/PnL from Bybit's closed-
             # PnL history afterward, preserving this reason.
             resolved_reason = close_reason or "external"
+            _recorded_closed = False
             try:
                 async with self._db.pool.acquire() as conn, conn.transaction():
                     await self._repo.reconcile_close(
@@ -452,9 +486,14 @@ class TradeService:
                         close_rule_id=close_rule_id,
                     )
                 self.invalidate_stats_cache(account_id)
-                return
+                _recorded_closed = True
             except Exception:
                 logger.exception("reconcile_after_failure_failed", extra={"trade_id": trade_id})
+            if _recorded_closed:
+                # Cool Off Time: post-commit trigger — OUTSIDE the try so a scheduling
+                # error can never fall through to the revert-to-open below (P3R-F1).
+                self._fire_cooloff(account_id)
+                return
 
         reverted_version = None
         try:

@@ -243,6 +243,8 @@ async def trigger_auto_trade(request: Request, scan_id: str):
                 accounts_service, close_svc, ai_manager_service,
                 sector_service=sector_service,
                 recorder=debug_recorder, debug_ctx=debug_ctx,
+                cooloff_repo=getattr(request.app.state, "cooloff_repo", None),
+                cooloff_classifier=getattr(request.app.state, "cooloff_classifier", None),
             )
             if debug_recorder is not None and debug_ctx is not None:
                 await debug_recorder.open_run(debug_ctx, config_snapshot={"num_configs": len(auto_configs), "manual": True})

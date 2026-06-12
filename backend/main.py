@@ -478,6 +478,36 @@ def create_app() -> FastAPI:
             app.state.accounts_service.set_trade_dependencies(trade_repo, trade_service)
             app.state.close_positions_service.set_trade_service(trade_service)
 
+            # Cool Off Time: repository + deferred classifier + 60s sweep. Wrapped so a
+            # cool-off wiring failure can NEVER abort app startup or take down the more
+            # critical position_reconciler that follows — cool-off is non-critical and
+            # fail-open (no classifier wired ⇒ no pausing, trading proceeds normally).
+            try:
+                from backend.services.cooloff_repository import CooloffRepository
+                from backend.services.cooloff_classifier import CooloffClassifier
+                from backend.services.cooloff_sweep import CooloffSweep
+                cooloff_repo = CooloffRepository(db)
+                cooloff_classifier = CooloffClassifier(db, cooloff_repo)
+                app.state.cooloff_repo = cooloff_repo
+                app.state.cooloff_classifier = cooloff_classifier
+                # Wire the post-commit trigger into trade_service (deferred — avoids a cycle).
+                trade_service.set_cooloff_classifier(cooloff_classifier)
+                # Stamp onto scanner_service so its per-scan AutoTradeExecutor builds inherit
+                # the gate + settings pre-pass (mirrors the _ai_manager_service stamp pattern).
+                if getattr(app.state, "scanner_service", None) is not None:
+                    app.state.scanner_service._cooloff_repo = cooloff_repo
+                    app.state.scanner_service._cooloff_classifier = cooloff_classifier
+                if getattr(app.state, "scheduler_service", None) is not None:
+                    app.state.scheduler_service._cooloff_repo = cooloff_repo
+                cooloff_sweep = CooloffSweep(db, cooloff_classifier, app.state.accounts_service)
+                await cooloff_sweep.start()
+                app.state.cooloff_sweep = cooloff_sweep
+            except Exception:
+                logger.exception("cooloff_wiring_failed_continuing_without_cooloff")
+                app.state.cooloff_repo = None
+                app.state.cooloff_classifier = None
+                app.state.cooloff_sweep = None
+
             from backend.services.position_reconciler import PositionReconciler
             position_reconciler = PositionReconciler(
                 db=db,
@@ -497,6 +527,9 @@ def create_app() -> FastAPI:
             app.state.trade_repo = None
             app.state.trade_service = None
             app.state.position_reconciler = None
+            app.state.cooloff_repo = None
+            app.state.cooloff_classifier = None
+            app.state.cooloff_sweep = None
 
         # Regime classifier — always running, independent of accounts
         from backend.services.regime_classifier import RegimeClassifier
@@ -637,6 +670,8 @@ def create_app() -> FastAPI:
             await _safe_shutdown("cycle_engine", app.state.cycle_engine.shutdown())
         if getattr(app.state, "position_reconciler", None):
             await _safe_shutdown("position_reconciler", app.state.position_reconciler.shutdown())
+        if getattr(app.state, "cooloff_sweep", None):
+            await _safe_shutdown("cooloff_sweep", app.state.cooloff_sweep.shutdown())
         if app.state.snapshot_scheduler:
             await _safe_shutdown("snapshot_scheduler", app.state.snapshot_scheduler.shutdown())
             await asyncio.sleep(0.5)
