@@ -130,6 +130,85 @@ describe("BacktestResultsPage", () => {
     expect(await screen.findByTestId("equity-curve-chart")).toBeInTheDocument();
   });
 
+  it("renders the cool-off summary (skipped count + reasons) when summary carries cool-off telemetry", async () => {
+    const withCooloff = run({
+      results: {
+        metrics: metrics(),
+        equity_curve: [
+          { ts: "2026-01-01T00:00:00Z", equity: 10000 },
+          { ts: "2026-01-02T00:00:00Z", equity: 10500 },
+        ],
+        summary: {
+          cooloff_signals_skipped: 7,
+          cooloff_skipped_by_reason: { failure: 5, double_failure: 2 },
+          cooloff_bands: [
+            { start: "2026-01-01T06:00:00Z", end: "2026-01-01T18:00:00Z", reason: "failure" },
+          ],
+        },
+        warnings: [],
+      },
+    });
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(withCooloff)),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({ trades: [], total: 0, page: 1 }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /equity/i }));
+    const summaryBlock = await screen.findByTestId("cooloff-summary");
+    expect(summaryBlock).toHaveTextContent(/7\s*signals skipped during cool-off/i);
+    expect(summaryBlock).toHaveTextContent(/Failure:\s*5/);
+    expect(summaryBlock).toHaveTextContent(/Double failure:\s*2/);
+    // The band (06:00–18:00 Jan1) contains NEITHER equity sample (00:00 Jan1 / 00:00
+    // Jan2), so the chart shades nothing → the legend must NOT claim shading.
+    expect(summaryBlock).not.toHaveTextContent(/Shaded = cool-off pause/);
+  });
+
+  it("shows the 'Shaded = cool-off pause' legend only when a band overlaps an equity sample", async () => {
+    const withVisibleBand = run({
+      results: {
+        metrics: metrics(),
+        equity_curve: [
+          { ts: "2026-01-01T00:00:00Z", equity: 10000 },
+          { ts: "2026-01-01T12:00:00Z", equity: 10200 }, // falls inside the band below
+          { ts: "2026-01-02T00:00:00Z", equity: 10500 },
+        ],
+        summary: {
+          cooloff_signals_skipped: 3,
+          cooloff_skipped_by_reason: { failure: 3 },
+          cooloff_bands: [
+            { start: "2026-01-01T06:00:00Z", end: "2026-01-01T18:00:00Z", reason: "failure" },
+          ],
+        },
+        warnings: [],
+      },
+    });
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(withVisibleBand)),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({ trades: [], total: 0, page: 1 }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /equity/i }));
+    const summaryBlock = await screen.findByTestId("cooloff-summary");
+    expect(summaryBlock).toHaveTextContent(/Shaded = cool-off pause/);
+  });
+
+  it("omits the cool-off summary entirely when no cool-off telemetry is present (OFF parity)", async () => {
+    server.use(
+      http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),
+      http.get("/api/v1/backtest/run-123/trades", () =>
+        HttpResponse.json({ trades: [], total: 0, page: 1 }),
+      ),
+    );
+    renderWithClient(<BacktestResultsPage runId="run-123" />);
+    fireEvent.click(await screen.findByRole("tab", { name: /equity/i }));
+    await screen.findByTestId("equity-curve-chart");
+    expect(screen.queryByTestId("cooloff-summary")).not.toBeInTheDocument();
+  });
+
   it("renders the Analysis tab with aggregated charts", async () => {
     server.use(
       http.get("/api/v1/backtest/run-123", () => HttpResponse.json(run())),

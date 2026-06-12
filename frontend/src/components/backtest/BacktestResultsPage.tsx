@@ -12,6 +12,8 @@ import { isTerminalStatus } from "./types";
 import { BacktestStatusBadge } from "./BacktestStatusBadge";
 import { MetricsGrid } from "./MetricsGrid";
 import { EquityCurveChart } from "./EquityCurveChart";
+import { computeCooloffMembership } from "./equityCurveData";
+import { extractCooloff, cooloffReasonLabel } from "./cooloffResults";
 import { TradeListTable } from "./TradeListTable";
 import { BacktestAnalysisTab } from "./BacktestAnalysisTab";
 import { addToBasket, isInBasket, MAX_BASKET, getBasket } from "./comparisonBasket";
@@ -383,6 +385,19 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
   const resultWarnings = run.results?.warnings ?? [];
   const replay = run.results?.replay_comparison ?? null;
 
+  // Cool-off telemetry rides in results.summary (the persisted filter_stats). These
+  // keys are present ONLY when at least one cool-off tier was enabled for the run;
+  // a backtest with cool-off OFF omits them entirely, so the stat + bands simply do
+  // not render (the pre-feature view). See backtest_engine._cooloff_finalize_bands.
+  const cooloff = extractCooloff(run.results?.summary);
+  // The chart only shades bands that actually contain an equity sample (categorical
+  // x-axis membership). Gate the "Shaded = cool-off pause" legend on the SAME check
+  // so the legend never claims shading the chart didn't draw (e.g. a sub-sample band).
+  // Cheap single pass; not memoised because this code runs after the component's
+  // early returns (a hook here would violate rules-of-hooks) and the cost is trivial.
+  const cooloffBandsVisible =
+    cooloff.bands.length > 0 && computeCooloffMembership(equityCurve, cooloff.bands).some(Boolean);
+
   // Retry/Re-run must reproduce the ORIGINAL run faithfully. The backend stores
   // scan_source in a separate column from config, so run.config alone omits it —
   // merging it back in keeps a schedule/explicit-sourced run from resetting to the
@@ -584,7 +599,43 @@ export function BacktestResultsPage({ runId, onBack, onRetry, onCompare }: Backt
               <EquityCurveChart
                 equityCurve={equityCurve}
                 buyHoldFinalValue={metrics.buy_hold_final_value}
+                cooloffBands={cooloff.bands}
               />
+              {cooloff.hasContent ? (
+                <div
+                  className="mt-3 flex flex-col gap-2 border-t border-[var(--neu-stroke-soft)] pt-3"
+                  data-testid="cooloff-summary"
+                >
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                    {cooloffBandsVisible ? (
+                      <span className="flex items-center gap-1.5 text-[var(--neu-text-muted)]">
+                        <span
+                          className="inline-block h-3 w-3 rounded-sm border border-[var(--neu-warning)]"
+                          style={{ backgroundColor: "var(--neu-warning)", opacity: 0.14 }}
+                          aria-hidden="true"
+                        />
+                        Shaded = cool-off pause
+                      </span>
+                    ) : null}
+                    <span className="text-[var(--neu-text-strong)]">
+                      <strong>{cooloff.signalsSkipped.toLocaleString()}</strong> signal
+                      {cooloff.signalsSkipped === 1 ? "" : "s"} skipped during cool-off
+                    </span>
+                  </div>
+                  {cooloff.byReason.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {cooloff.byReason.map((r) => (
+                        <span
+                          key={r.reason}
+                          className="rounded-full bg-[var(--neu-surface-sunken)] px-2 py-0.5 text-xs text-[var(--neu-text-muted)]"
+                        >
+                          {cooloffReasonLabel(r.reason)}: {r.count.toLocaleString()}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </TabsContent>
 

@@ -116,6 +116,58 @@ describe("backtestConfigSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  const baseValid = {
+    starting_capital: 10000,
+    date_range_start: "2026-01-01T00:00",
+    date_range_end: "2026-02-01T00:00",
+    scan_source: { mode: "date_range" as const },
+  };
+
+  it("rejects an enabled cool-off tier with no duration (backend validate_cooloff parity)", () => {
+    const result = backtestConfigSchema.safeParse({
+      ...baseValid,
+      cooloff_on_failure_enabled: true,
+      cooloff_on_failure_minutes: null,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((i) => i.path.includes("cooloff_on_failure_minutes")),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts an enabled cool-off tier with a valid duration", () => {
+    const result = backtestConfigSchema.safeParse({
+      ...baseValid,
+      cooloff_on_double_success_enabled: true,
+      cooloff_on_double_success_minutes: 90,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts cool-off tiers left off (the default)", () => {
+    expect(backtestConfigSchema.safeParse(baseValid).success).toBe(true);
+  });
+
+  it("rejects a cool-off duration above the 43200-minute maximum", () => {
+    const result = backtestConfigSchema.safeParse({
+      ...baseValid,
+      cooloff_on_success_enabled: true,
+      cooloff_on_success_minutes: 43201,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a cool-off duration below the 1-minute minimum", () => {
+    const result = backtestConfigSchema.safeParse({
+      ...baseValid,
+      cooloff_on_failure_enabled: true,
+      cooloff_on_failure_minutes: 0,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("buildDefaults", () => {

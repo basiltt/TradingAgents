@@ -89,6 +89,15 @@ export interface BacktestCreateRequest {
   adaptive_blacklist_min_trades?: number;
   adaptive_blacklist_max_win_rate?: number;
   adaptive_blacklist_lookback_hours?: number;
+  // Cool Off Time (4 optional tiers, all default-off)
+  cooloff_on_success_enabled?: boolean;
+  cooloff_on_success_minutes?: number | null;
+  cooloff_on_failure_enabled?: boolean;
+  cooloff_on_failure_minutes?: number | null;
+  cooloff_on_double_success_enabled?: boolean;
+  cooloff_on_double_success_minutes?: number | null;
+  cooloff_on_double_failure_enabled?: boolean;
+  cooloff_on_double_failure_minutes?: number | null;
 
   // ── Regime Multi-Strategy (F1/F2/F3) — replayed in the backtester ──
   // F1 — Regime/Session Entry Filter

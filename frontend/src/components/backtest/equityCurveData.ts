@@ -164,3 +164,114 @@ export function buildBuyHoldSeries(
     buyHold: round2(start + ((finalValue - start) * i) / n),
   }));
 }
+
+/**
+ * A cool-off pause window emitted by the backtest engine.
+ *
+ * The engine clamps, de-duplicates, and merges these before persisting them in
+ * `results.summary.cooloff_bands`, so the array this UI receives is already
+ * non-overlapping and sorted by `start`. We still defend against malformed rows.
+ *
+ * @property start - ISO-8601 timestamp when the account entered cool-off (inclusive).
+ * @property end - ISO-8601 timestamp when the pause expires (inclusive).
+ * @property reason - Which tier armed the pause: one of `success` / `failure` /
+ *   `double_success` / `double_failure` (or `unknown` defensively).
+ */
+export interface CooloffBand {
+  start: string;
+  end: string;
+  reason: string;
+}
+
+/**
+ * Parse an ISO timestamp to epoch milliseconds.
+ *
+ * @param ts - ISO-8601 string, or null/undefined.
+ * @returns Epoch ms, or null when the input is absent or unparseable. A bare
+ *   date/datetime with no zone is parsed by the host as local time — that is
+ *   acceptable here because membership only compares it against the band bounds,
+ *   which are produced by the same backend serializer.
+ */
+function tsToMs(ts: string | null | undefined): number | null {
+  if (!ts) return null;
+  const ms = Date.parse(ts);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Compute per-row cool-off band membership, parallel to the equity series.
+ *
+ * recharts renders the equity chart on a *categorical* x-axis (`dataKey="label"`),
+ * so timestamp-anchored `ReferenceArea` shading would not line up with the
+ * irregular sample spacing. Instead we test each sample's own timestamp against
+ * the (already-merged) band windows and return a boolean per row; the chart then
+ * paints a full-height shaded `Area` over the contiguous `true` runs.
+ *
+ * Defensive by construction: a point with a null/unparseable `ts` is never in a
+ * band, and a band with unparseable bounds (or start > end) is skipped — so a
+ * single bad row can never mark the entire curve as paused.
+ *
+ * @param points - Raw equity samples (must carry `ts`); same order as the chart rows.
+ * @param bands - Cool-off windows from `results.summary.cooloff_bands`, or null.
+ * @returns A `boolean[]` the same length and order as `points`.
+ *
+ * @example
+ * computeCooloffMembership(
+ *   [{ ts: "2026-01-01T00:00:00Z", equity: 100 },
+ *    { ts: "2026-01-02T00:00:00Z", equity: 100 }],
+ *   [{ start: "2026-01-01T12:00:00Z", end: "2026-01-03T00:00:00Z", reason: "failure" }],
+ * ); // [false, true]
+ */
+export function computeCooloffMembership(
+  points: EquityPoint[],
+  bands: CooloffBand[] | null | undefined,
+): boolean[] {
+  if (!bands || bands.length === 0) return points.map(() => false);
+  const windows: Array<[number, number]> = [];
+  for (const b of bands) {
+    const s = tsToMs(b?.start);
+    const e = tsToMs(b?.end);
+    if (s == null || e == null || s > e) continue;
+    windows.push([s, e]);
+  }
+  if (windows.length === 0) return points.map(() => false);
+  return points.map((p) => {
+    const t = tsToMs(p.ts);
+    if (t == null) return false;
+    return windows.some(([s, e]) => t >= s && t <= e);
+  });
+}
+
+/**
+ * Attach a per-row cool-off band overlay value to the equity rows.
+ *
+ * recharts shades a band by painting an Area whose value is full-height
+ * (`maxEquity`) inside a band and `null` outside it (recharts skips null points),
+ * with the Area's `baseValue` set to `minEquity`. This helper produces that field
+ * WITHOUT mutating the input rows.
+ *
+ * OFF-parity guarantee (load-bearing): when `flags` has no `true` entry, the input
+ * array is returned **by reference, unchanged** — so a backtest with cool-off OFF
+ * renders byte-identically to the pre-feature chart. Callers can assert
+ * `buildCooloffChartData(rows, flags, max) === rows` to prove that invariant.
+ *
+ * @param rows - The equity series (already benchmark-merged), in chart order.
+ * @param flags - Per-row band membership, parallel to `rows` (see computeCooloffMembership).
+ * @param maxEquity - The y-domain max; in-band rows get this value for a full-height band.
+ * @returns The same array (no band present) or a new array with a `cooloffBand` field.
+ */
+export function buildCooloffChartData<T>(
+  rows: T[],
+  flags: boolean[],
+  maxEquity: number,
+): Array<T & { cooloffBand?: number | null }> {
+  // OFF parity: return the SAME array by reference. `cooloffBand` is optional, so a
+  // plain T is structurally a (T & { cooloffBand? }); the cast just satisfies the
+  // unconstrained-generic checker without copying (referential identity is the
+  // load-bearing OFF-parity contract — see the test `expect(out).toBe(rows)`).
+  if (!flags.some(Boolean)) return rows as Array<T & { cooloffBand?: number | null }>;
+  return rows.map((row, i) => ({
+    ...row,
+    cooloffBand: flags[i] ? maxEquity : null,
+  }));
+}

@@ -11,6 +11,7 @@
  */
 import { z } from "zod";
 import type { BacktestCreateRequest } from "./types";
+import { COOLOFF_MIN_MINUTES, COOLOFF_MAX_MINUTES } from "../scanner/cooloffTiers";
 
 const isoDate = z.string().min(1, "Required");
 const nullToUndefined = (value: unknown) => (value === null ? undefined : value);
@@ -92,6 +93,18 @@ export const backtestConfigSchema = z
     adaptive_blacklist_min_trades: z.coerce.number().int().min(1).max(100).default(5),
     adaptive_blacklist_max_win_rate: z.coerce.number().min(0).max(100).default(30),
     adaptive_blacklist_lookback_hours: z.coerce.number().int().min(1).max(720).default(48),
+
+    // ── Cool Off Time (4 optional tiers, all default-off) ──
+    // Bounds come from the shared cooloffTiers constants so the backtest gate can't
+    // drift from the scanner editor / validation / backend (single source of truth).
+    cooloff_on_success_enabled: z.boolean().default(false),
+    cooloff_on_success_minutes: z.coerce.number().int().min(COOLOFF_MIN_MINUTES).max(COOLOFF_MAX_MINUTES).nullable().default(null),
+    cooloff_on_failure_enabled: z.boolean().default(false),
+    cooloff_on_failure_minutes: z.coerce.number().int().min(COOLOFF_MIN_MINUTES).max(COOLOFF_MAX_MINUTES).nullable().default(null),
+    cooloff_on_double_success_enabled: z.boolean().default(false),
+    cooloff_on_double_success_minutes: z.coerce.number().int().min(COOLOFF_MIN_MINUTES).max(COOLOFF_MAX_MINUTES).nullable().default(null),
+    cooloff_on_double_failure_enabled: z.boolean().default(false),
+    cooloff_on_double_failure_minutes: z.coerce.number().int().min(COOLOFF_MIN_MINUTES).max(COOLOFF_MAX_MINUTES).nullable().default(null),
 
     // ── Regime Multi-Strategy (F1/F2/F3) — replayed in the backtester ──
     regime_filter_enabled: z.boolean().default(false),
@@ -178,6 +191,25 @@ export const backtestConfigSchema = z
     // Regime F2: enabling MR requires at least one direction (backend).
     (c) => !c.mean_reversion_enabled || c.mr_short_enabled || c.mr_long_enabled,
     { message: "Enable at least one MR direction (short or long)", path: ["mr_short_enabled"] },
+  )
+  // Cool Off Time: each enabled tier requires a duration (mirrors backend
+  // validate_cooloff and the scanner-page cooloffConfigsValid gate, so the backtest
+  // form cannot submit an enabled-but-blank tier the backend would reject).
+  .refine(
+    (c) => !c.cooloff_on_success_enabled || c.cooloff_on_success_minutes != null,
+    { message: "Set a cool-off duration (1–43200 min)", path: ["cooloff_on_success_minutes"] },
+  )
+  .refine(
+    (c) => !c.cooloff_on_failure_enabled || c.cooloff_on_failure_minutes != null,
+    { message: "Set a cool-off duration (1–43200 min)", path: ["cooloff_on_failure_minutes"] },
+  )
+  .refine(
+    (c) => !c.cooloff_on_double_success_enabled || c.cooloff_on_double_success_minutes != null,
+    { message: "Set a cool-off duration (1–43200 min)", path: ["cooloff_on_double_success_minutes"] },
+  )
+  .refine(
+    (c) => !c.cooloff_on_double_failure_enabled || c.cooloff_on_double_failure_minutes != null,
+    { message: "Set a cool-off duration (1–43200 min)", path: ["cooloff_on_double_failure_minutes"] },
   );
 
 export type BacktestConfigFormValues = z.input<typeof backtestConfigSchema>;
@@ -248,6 +280,14 @@ export const DAD_DEMO_REFERENCE_CONFIG = {
   adaptive_blacklist_min_trades: 5,
   adaptive_blacklist_max_win_rate: 30,
   adaptive_blacklist_lookback_hours: 48,
+  cooloff_on_success_enabled: false,
+  cooloff_on_success_minutes: null,
+  cooloff_on_failure_enabled: false,
+  cooloff_on_failure_minutes: null,
+  cooloff_on_double_success_enabled: false,
+  cooloff_on_double_success_minutes: null,
+  cooloff_on_double_failure_enabled: false,
+  cooloff_on_double_failure_minutes: null,
   regime_filter_enabled: false,
   session_filter_enabled: false,
   session_blocked_hours_utc: null,
@@ -350,6 +390,14 @@ export function buildDefaults(
     adaptive_blacklist_min_trades: seed?.adaptive_blacklist_min_trades ?? 5,
     adaptive_blacklist_max_win_rate: seed?.adaptive_blacklist_max_win_rate ?? 30,
     adaptive_blacklist_lookback_hours: seed?.adaptive_blacklist_lookback_hours ?? 48,
+    cooloff_on_success_enabled: seed?.cooloff_on_success_enabled ?? false,
+    cooloff_on_success_minutes: seed?.cooloff_on_success_minutes ?? null,
+    cooloff_on_failure_enabled: seed?.cooloff_on_failure_enabled ?? false,
+    cooloff_on_failure_minutes: seed?.cooloff_on_failure_minutes ?? null,
+    cooloff_on_double_success_enabled: seed?.cooloff_on_double_success_enabled ?? false,
+    cooloff_on_double_success_minutes: seed?.cooloff_on_double_success_minutes ?? null,
+    cooloff_on_double_failure_enabled: seed?.cooloff_on_double_failure_enabled ?? false,
+    cooloff_on_double_failure_minutes: seed?.cooloff_on_double_failure_minutes ?? null,
     // Regime Multi-Strategy (F1/F2/F3) — defaults mirror backend (all off / inherit).
     regime_filter_enabled: seed?.regime_filter_enabled ?? false,
     session_filter_enabled: seed?.session_filter_enabled ?? false,

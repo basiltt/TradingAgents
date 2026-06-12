@@ -6,6 +6,9 @@ import {
   equityDomain,
   formatTsLabel,
   buildBuyHoldSeries,
+  computeCooloffMembership,
+  buildCooloffChartData,
+  type CooloffBand,
 } from "../equityCurveData";
 import type { EquityPoint } from "../types";
 
@@ -165,5 +168,132 @@ describe("buildBuyHoldSeries", () => {
   it("returns the input unchanged for fewer than 2 points", () => {
     const base = series([10000]);
     expect(buildBuyHoldSeries(base, 12000)[0]).not.toHaveProperty("buyHold");
+  });
+});
+
+describe("computeCooloffMembership", () => {
+  const pts = (tss: Array<string | null>): EquityPoint[] =>
+    tss.map((ts) => ({ ts, equity: 100 }));
+
+  it("returns all-false when bands is null/undefined/empty", () => {
+    const points = pts(["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]);
+    expect(computeCooloffMembership(points, null)).toEqual([false, false]);
+    expect(computeCooloffMembership(points, undefined)).toEqual([false, false]);
+    expect(computeCooloffMembership(points, [])).toEqual([false, false]);
+  });
+
+  it("marks samples inside a band (inclusive of both bounds)", () => {
+    const points = pts([
+      "2026-01-01T00:00:00Z", // before
+      "2026-01-01T12:00:00Z", // == start → in
+      "2026-01-02T00:00:00Z", // inside
+      "2026-01-03T00:00:00Z", // == end → in
+      "2026-01-04T00:00:00Z", // after
+    ]);
+    const bands: CooloffBand[] = [
+      { start: "2026-01-01T12:00:00Z", end: "2026-01-03T00:00:00Z", reason: "failure" },
+    ];
+    expect(computeCooloffMembership(points, bands)).toEqual([
+      false,
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it("supports multiple disjoint bands", () => {
+    const points = pts([
+      "2026-01-01T00:00:00Z",
+      "2026-01-02T00:00:00Z",
+      "2026-01-03T00:00:00Z",
+      "2026-01-04T00:00:00Z",
+    ]);
+    const bands: CooloffBand[] = [
+      { start: "2026-01-01T00:00:00Z", end: "2026-01-01T06:00:00Z", reason: "success" },
+      { start: "2026-01-03T00:00:00Z", end: "2026-01-03T06:00:00Z", reason: "double_failure" },
+    ];
+    expect(computeCooloffMembership(points, bands)).toEqual([true, false, true, false]);
+  });
+
+  it("never marks a sample with a null/unparseable ts", () => {
+    const points = pts([null, "not-a-date"]);
+    const bands: CooloffBand[] = [
+      { start: "2026-01-01T00:00:00Z", end: "2030-01-01T00:00:00Z", reason: "failure" },
+    ];
+    expect(computeCooloffMembership(points, bands)).toEqual([false, false]);
+  });
+
+  it("skips malformed bands (unparseable bounds or start>end) without poisoning the curve", () => {
+    const points = pts(["2026-01-02T00:00:00Z"]);
+    const bands = [
+      { start: "garbage", end: "2026-01-03T00:00:00Z", reason: "failure" },
+      { start: "2026-01-03T00:00:00Z", end: "2026-01-01T00:00:00Z", reason: "success" }, // inverted
+    ] as CooloffBand[];
+    // Both bands are invalid → the only sample is never in a band.
+    expect(computeCooloffMembership(points, bands)).toEqual([false]);
+  });
+});
+
+describe("buildCooloffChartData (OFF parity)", () => {
+  const rows = [
+    { label: "1/1", equity: 100, drawdown: 0 },
+    { label: "1/2", equity: 110, drawdown: 0 },
+    { label: "1/3", equity: 105, drawdown: -4.5 },
+  ];
+
+  it("returns the SAME array by reference when no row is in a band (byte-identical pre-feature chart)", () => {
+    const out = buildCooloffChartData(rows, [false, false, false], 200);
+    // Referential identity is the load-bearing OFF-parity proof: recharts receives
+    // the untouched series, so the chart renders exactly as before the feature.
+    expect(out).toBe(rows);
+  });
+
+  it("returns the same array when the flags list is empty/shorter", () => {
+    expect(buildCooloffChartData(rows, [], 200)).toBe(rows);
+  });
+
+  it("attaches cooloffBand=maxEquity for in-band rows and null elsewhere", () => {
+    const out = buildCooloffChartData(rows, [false, true, true], 200) as Array<
+      (typeof rows)[number] & { cooloffBand?: number | null }
+    >;
+    expect(out).not.toBe(rows); // a new array
+    expect(out[0].cooloffBand).toBeNull();
+    expect(out[1].cooloffBand).toBe(200);
+    expect(out[2].cooloffBand).toBe(200);
+    // original fields preserved
+    expect(out[1].equity).toBe(110);
+  });
+
+  it("does not mutate the input rows", () => {
+    const snapshot = JSON.parse(JSON.stringify(rows));
+    buildCooloffChartData(rows, [true, false, false], 200);
+    expect(rows).toEqual(snapshot);
+  });
+});
+
+describe("EquityCurveChart cool-off bands", () => {
+  const points: EquityPoint[] = [
+    { ts: "2026-01-01T00:00:00Z", equity: 10000 },
+    { ts: "2026-01-02T00:00:00Z", equity: 10200 },
+    { ts: "2026-01-03T00:00:00Z", equity: 10100 },
+  ];
+
+  it("renders the chart unchanged when no cool-off bands are supplied (OFF parity)", () => {
+    render(<EquityCurveChart equityCurve={points} />);
+    expect(screen.getByTestId("equity-curve-chart")).toBeInTheDocument();
+  });
+
+  it("renders without crashing when cool-off bands are supplied", () => {
+    const bands: CooloffBand[] = [
+      { start: "2026-01-02T00:00:00Z", end: "2026-01-02T23:59:00Z", reason: "failure" },
+    ];
+    render(<EquityCurveChart equityCurve={points} cooloffBands={bands} />);
+    expect(screen.getByTestId("equity-curve-chart")).toBeInTheDocument();
+  });
+
+  it("treats an empty cool-off band array as no shading", () => {
+    render(<EquityCurveChart equityCurve={points} cooloffBands={[]} />);
+    expect(screen.getByTestId("equity-curve-chart")).toBeInTheDocument();
   });
 });

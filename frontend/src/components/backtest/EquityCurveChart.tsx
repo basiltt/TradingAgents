@@ -15,6 +15,9 @@ import {
   prepareEquitySeries,
   equityDomain,
   buildBuyHoldSeries,
+  computeCooloffMembership,
+  buildCooloffChartData,
+  type CooloffBand,
 } from "./equityCurveData";
 
 // AI-CONTEXT: Pure data-shaping helpers (formatTsLabel, prepareEquitySeries,
@@ -30,6 +33,10 @@ export interface EquityCurveChartProps {
   /** Final value of a buy & hold benchmark over the same window. When provided,
    * a dashed reference line is interpolated from the starting equity to here. */
   buyHoldFinalValue?: number | null;
+  /** Cool-off pause windows from `results.summary.cooloff_bands`. When present and
+   * non-empty, the samples that fall inside a window are shaded as full-height
+   * bands behind the equity line. Absent/empty → no shading (the pre-feature look). */
+  cooloffBands?: CooloffBand[] | null;
 }
 
 export function EquityCurveChart({
@@ -37,10 +44,21 @@ export function EquityCurveChart({
   height = 320,
   showDrawdown = true,
   buyHoldFinalValue,
+  cooloffBands,
 }: EquityCurveChartProps) {
   const gradId = useId().replace(/:/g, "");
   // ~2000 points → memoize the map + domain so resize/tab re-renders don't rebuild both charts.
   const data = useMemo(() => prepareEquitySeries(equityCurve), [equityCurve]);
+
+  // Per-row cool-off membership, parallel to `data`. The equity x-axis is
+  // categorical (dataKey="label"), so we shade via a full-height Area keyed off a
+  // boolean-derived value rather than timestamp-anchored ReferenceAreas (which
+  // would not align with irregular sample spacing). See computeCooloffMembership.
+  const cooloffFlags = useMemo(
+    () => computeCooloffMembership(equityCurve, cooloffBands),
+    [equityCurve, cooloffBands],
+  );
+  const hasCooloff = useMemo(() => cooloffFlags.some(Boolean), [cooloffFlags]);
 
   const dataWithBenchmark = useMemo(
     () => buildBuyHoldSeries(data, buyHoldFinalValue),
@@ -57,6 +75,14 @@ export function EquityCurveChart({
     }
     return [lo, hi];
   }, [data, buyHoldFinalValue]);
+
+  // Attach a per-row cool-off overlay value: full-height (maxEquity) for in-band
+  // samples, null elsewhere. When no row is in a band, buildCooloffChartData returns
+  // dataWithBenchmark BY REFERENCE — byte-for-byte the pre-feature chart.
+  const chartData = useMemo(
+    () => buildCooloffChartData(dataWithBenchmark, cooloffFlags, maxEquity),
+    [dataWithBenchmark, cooloffFlags, maxEquity],
+  );
 
   if (data.length === 0) {
     return (
@@ -84,7 +110,7 @@ export function EquityCurveChart({
     <div data-testid="equity-curve-chart">
       <div role="img" aria-label={ariaSummary}>
         <ResponsiveContainer width="100%" height={height}>
-          <AreaChart data={dataWithBenchmark} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+          <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <defs>
             <linearGradient id={`eq-${gradId}`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="var(--neu-accent)" stopOpacity={0.32} />
@@ -124,6 +150,23 @@ export function EquityCurveChart({
               return [usd, name === "Buy & Hold" ? "Buy & Hold" : "Equity"];
             }}
           />
+          {hasCooloff ? (
+            <Area
+              type="stepAfter"
+              dataKey="cooloffBand"
+              baseValue={minEquity}
+              stroke="none"
+              fill="var(--neu-warning)"
+              fillOpacity={0.14}
+              dot={false}
+              activeDot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+              tooltipType="none"
+              legendType="none"
+              name="cooloff"
+            />
+          ) : null}
           <Area
             type="monotone"
             dataKey="equity"
