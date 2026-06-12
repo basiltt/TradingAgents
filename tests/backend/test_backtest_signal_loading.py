@@ -201,7 +201,15 @@ class TestLoadSignals:
         assert signals[0]["analysis_completed_at"] == analysis_done
 
     @pytest.mark.asyncio
-    async def test_schedule_mode_filters_scans_before_submitted_config_was_active(self, mock_db):
+    async def test_schedule_mode_retains_pre_activation_scans_but_tracks_matches(self, mock_db):
+        """Pre-activation scans are RETAINED (fresh capital starts flat), while the
+        match result is still computed so matched scans get live-clock timing anchors.
+
+        Previously the loader dropped 'scan-before-dad' because its snapshot config did
+        not contain the submitted selector. That made results non-monotonic. Now every
+        scan in the window is simulated; the filter metadata reports zero scans dropped
+        but still records which scans matched (matched_scan_count) for timing fidelity.
+        """
         from backend.services.backtest_service import BacktestService
 
         service = BacktestService(db=mock_db)
@@ -253,10 +261,14 @@ class TestLoadSignals:
             config,
         )
 
-        assert [s["scan_id"] for s in signals] == ["scan-with-dad", "scan-with-trend-default"]
-        assert [s["ticker"] for s in signals] == ["ARKMUSDT", "EIGENUSDT"]
-        assert config["_schedule_config_filter"]["filtered_scan_count"] == 1
-        assert config["_schedule_config_filter"]["eligible_scan_count"] == 2
+        # ALL scans retained — the pre-activation scan is no longer dropped.
+        assert [s["scan_id"] for s in signals] == [
+            "scan-before-dad", "scan-with-dad", "scan-with-trend-default",
+        ]
+        assert [s["ticker"] for s in signals] == ["OLDUSDT", "ARKMUSDT", "EIGENUSDT"]
+        # Nothing dropped, but matches are still tracked for timing anchors.
+        assert config["_schedule_config_filter"]["filtered_scan_count"] == 0
+        assert config["_schedule_config_filter"]["matched_scan_count"] == 2
 
     @pytest.mark.asyncio
     async def test_schedule_mode_keeps_full_window_for_hypothetical_config(self, mock_db):
@@ -293,6 +305,157 @@ class TestLoadSignals:
 
         assert [s["scan_id"] for s in signals] == ["scan-1"]
         assert "_schedule_config_filter" not in config
+
+    @pytest.mark.asyncio
+    async def test_schedule_mode_keeps_all_scans_when_config_activates_midwindow(self, mock_db):
+        """Fresh-capital schedule backtests must simulate the FULL requested window.
+
+        REGRESSION: when the submitted config matched some scans (it went live
+        mid-window), the loader used to DROP every earlier, non-matching scan and
+        simulate only the matched tail. A from-scratch backtest starts flat, so the
+        "don't inherit live positions from older scans" rationale does not apply —
+        dropping the early scans silently discards days of signals and makes results
+        non-monotonic (extending the end date can erase earlier profit). All scans in
+        the window must be retained.
+        """
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        pre_time = datetime(2026, 6, 4, 19, 58, tzinfo=timezone.utc)
+        match1_time = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
+        match2_time = datetime(2026, 6, 12, 1, 0, tzinfo=timezone.utc)
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-pre-activation",
+                    "started_at": datetime(2026, 6, 4, 18, 43, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 18, "max_trades": 3}]},
+                },
+                {
+                    "scan_id": "scan-matched-1",
+                    "started_at": datetime(2026, 6, 11, 8, 31, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 22, "max_trades": 3}]},
+                },
+                {
+                    "scan_id": "scan-matched-2",
+                    "started_at": datetime(2026, 6, 12, 0, 34, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 22, "max_trades": 3}]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "OLDUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": pre_time, "scan_id": "scan-pre-activation",
+                 "signal_source": "structured", "analysis_price": None},
+                {"id": 2, "ticker": "ARKMUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": match1_time, "scan_id": "scan-matched-1",
+                 "signal_source": "structured", "analysis_price": None},
+                {"id": 3, "ticker": "EIGENUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": match2_time, "scan_id": "scan-matched-2",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 22,
+            "max_trades": 3,
+        }
+
+        signals = await service._load_signals(
+            config["scan_source"],
+            (datetime(2026, 6, 4, tzinfo=timezone.utc),
+             datetime(2026, 6, 12, tzinfo=timezone.utc)),
+            config,
+        )
+
+        # The pre-activation scan must NOT be dropped.
+        assert [s["scan_id"] for s in signals] == [
+            "scan-pre-activation", "scan-matched-1", "scan-matched-2",
+        ]
+        # Nothing was filtered out of the window.
+        assert config["_schedule_config_filter"]["filtered_scan_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_schedule_window_extension_is_monotonic(self, mock_db):
+        """Extending date_range_end must only ADD scans, never remove earlier ones.
+
+        Models the exact user-reported bug: run A ends just before the config went
+        live (no scan matches -> full window); run B extends one day past activation
+        (some scans match). Run B's scan set must be a superset of run A's — extending
+        the window cannot retroactively delete the early, profitable scans.
+        """
+        from backend.services.backtest_service import BacktestService
+
+        service = BacktestService(db=mock_db)
+        early = datetime(2026, 6, 4, 19, 58, tzinfo=timezone.utc)
+        matched = datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc)
+
+        # Run A: window ends BEFORE activation -> only the early scan exists, no match.
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-early",
+                    "started_at": datetime(2026, 6, 4, 18, 43, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 18, "max_trades": 3}]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "OLDUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": early, "scan_id": "scan-early",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config_a = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 22, "max_trades": 3,
+        }
+        signals_a = await service._load_signals(
+            config_a["scan_source"],
+            (datetime(2026, 6, 4, tzinfo=timezone.utc),
+             datetime(2026, 6, 11, 6, 7, tzinfo=timezone.utc)),
+            config_a,
+        )
+        scan_ids_a = {s["scan_id"] for s in signals_a}
+
+        # Run B: window extends PAST activation -> early scan + matched scan.
+        mock_db.pool.fetch = AsyncMock(side_effect=[
+            [
+                {
+                    "scan_id": "scan-early",
+                    "started_at": datetime(2026, 6, 4, 18, 43, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 18, "max_trades": 3}]},
+                },
+                {
+                    "scan_id": "scan-matched",
+                    "started_at": datetime(2026, 6, 11, 8, 31, tzinfo=timezone.utc),
+                    "config": {"auto_trade_configs": [{"capital_pct": 22, "max_trades": 3}]},
+                },
+            ],
+            [
+                {"id": 1, "ticker": "OLDUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": early, "scan_id": "scan-early",
+                 "signal_source": "structured", "analysis_price": None},
+                {"id": 2, "ticker": "ARKMUSDT", "direction": "sell", "confidence": "high",
+                 "score": -8, "signal_time": matched, "scan_id": "scan-matched",
+                 "signal_source": "structured", "analysis_price": None},
+            ],
+        ])
+        config_b = {
+            "scan_source": {"mode": "schedule", "schedule_id": "sched-1"},
+            "capital_pct": 22, "max_trades": 3,
+        }
+        signals_b = await service._load_signals(
+            config_b["scan_source"],
+            (datetime(2026, 6, 4, tzinfo=timezone.utc),
+             datetime(2026, 6, 12, 6, 7, tzinfo=timezone.utc)),
+            config_b,
+        )
+        scan_ids_b = {s["scan_id"] for s in signals_b}
+
+        # The earlier window's scans must all survive the extension.
+        assert scan_ids_a.issubset(scan_ids_b), (
+            f"window extension dropped earlier scans: {scan_ids_a - scan_ids_b}"
+        )
+        assert "scan-early" in scan_ids_b
 
     @pytest.mark.asyncio
     async def test_schedule_context_loads_account_free_adaptive_history(self, mock_db):

@@ -1539,20 +1539,25 @@ class BacktestService:
             })
 
         if schedule_config_filter is not None:
-            eligible_scan_ids = schedule_config_filter.get("eligible_scan_ids") or set()
+            # Fresh-capital schedule backtests start FLAT, so the live rationale for
+            # dropping pre-activation scans (don't inherit positions from scans the
+            # config never ran for) does not apply: there are no inherited positions to
+            # protect against. Dropping the earlier scans silently discarded days of
+            # signals and made results NON-MONOTONIC — extending date_range_end past the
+            # config's mid-window activation flipped this filter on and erased the
+            # earlier, profitable scans. We therefore keep EVERY scan in the requested
+            # window and use the match result only to anchor per-scan live-clock timing
+            # for the scans that did match. Coverage (which scans run) and timing
+            # fidelity (when matched scans trade) are now decoupled.
             before_scan_ids = {str(s["scan_id"]) for s in signals if s.get("scan_id")}
-            signals = [
-                s for s in signals
-                if str(s.get("scan_id") or "") in eligible_scan_ids
-            ]
-            after_scan_ids = {str(s["scan_id"]) for s in signals if s.get("scan_id")}
+            after_scan_ids = before_scan_ids
             config["_schedule_config_filter"] = {
                 "matched_scan_count": schedule_config_filter.get("matched_scan_count", 0),
                 "eligible_scan_count": schedule_config_filter.get("eligible_scan_count", 0),
                 "total_scan_count": schedule_config_filter.get("total_scan_count", 0),
                 "inspectable_scan_count": schedule_config_filter.get("inspectable_scan_count", 0),
-                "filtered_scan_count": max(0, len(before_scan_ids) - len(after_scan_ids)),
-                "filtered_signal_count": max(0, len(rows) - len(signals)),
+                "filtered_scan_count": 0,
+                "filtered_signal_count": 0,
                 "first_match_started_at": (
                     schedule_config_filter["first_match_started_at"].isoformat()
                     if isinstance(schedule_config_filter.get("first_match_started_at"), datetime)
