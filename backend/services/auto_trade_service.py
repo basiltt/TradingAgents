@@ -93,6 +93,9 @@ class AutoTradeExecutor:
         # AI manager / close loop acting on the same position concurrently.
         self._position_lock_registry = position_lock_registry
         self._ai_manager_enabled_accounts: set = set()
+        # account_id -> list of capability flags a per-scan override turned OFF, so the
+        # scan summary can surface a reduced-protection run.
+        self._ai_manager_disabled_caps: Dict[str, List[str]] = {}
         self._recorder = recorder
         self._debug_ctx = debug_ctx
         # Regime Multi-Strategy: scan-time context (set by scanner_service before a
@@ -875,6 +878,9 @@ class AutoTradeExecutor:
                      "order_id": e.order_id, "error": e.error}
                     for e in state.executions
                 ],
+                "ai_manager_disabled_capabilities": self._ai_manager_disabled_caps.get(
+                    state.config["account_id"], []
+                ),
             }
             for state in self._state.values()
         ]
@@ -1689,6 +1695,96 @@ class AutoTradeExecutor:
         # No registry wired (e.g. tests) — place without the shared lock.
         return await self._do_place(state, result, direction, cfg, account_id, symbol, phase, mr_fade, ctx)
 
+    async def _maybe_enable_ai_manager(
+        self, account_id: str, cfg: Dict[str, Any], *, strategy_kind: str
+    ) -> None:
+        """Auto-enable the AI Manager for an account on first placement of this scan.
+
+        Applies a per-scan capability override (without persisting) when
+        cfg['ai_manager_capabilities'] is present; otherwise enables with the
+        account's saved config (persist=True, legacy path). No-op for
+        mean-reversion placements (their positions are excluded from AI management).
+
+        Enablement is attempted exactly once per executor lifetime per account: the
+        account is added to the guard set up-front and is NOT rolled back on failure,
+        so a persistent error (e.g. DB down) does not re-attempt — and re-log/re-write —
+        on every subsequent placement in the scan.
+        """
+        if strategy_kind == "mean_reversion":
+            return
+        if not cfg.get("ai_manager_enabled"):
+            return
+        if account_id in self._ai_manager_enabled_accounts:
+            return
+        self._ai_manager_enabled_accounts.add(account_id)
+        if not self._ai_manager_service:
+            return
+        try:
+            # Preserve any existing config — only use defaults if none exists yet.
+            existing_config = None
+            try:
+                existing_dict = await self._ai_manager_service.get_config(account_id)
+                existing_config = _AIMConfig(**existing_dict)
+            except Exception:
+                pass
+            config_to_use = existing_config or _AIMConfig()
+            config_to_use.auto_enabled = True
+
+            # Resolve the per-scan capability override (if any). A malformed override
+            # must NOT leave the account unmanaged — fall back to enabling with the
+            # account's own config so open positions still get AI management.
+            persist = True
+            capabilities = cfg.get("ai_manager_capabilities")
+            if capabilities is not None:
+                from backend.services.ai_manager_capability_map import (
+                    apply_capability_overrides,
+                )
+                try:
+                    # model_copy preserves auto_enabled=True; the helper only touches
+                    # the 8 capability flags.
+                    config_to_use = apply_capability_overrides(config_to_use, capabilities)
+                    persist = False
+                except Exception as cap_err:
+                    logger.warning(
+                        "ai_manager_capability_override_invalid",
+                        extra={"account_id": account_id, "error": str(cap_err)[:200]},
+                    )
+                    # persist stays True → enable with the safe account config.
+
+            await self._ai_manager_service.enable(account_id, config_to_use, persist=persist)
+            # Forensic record of which capabilities a per-scan override turned OFF —
+            # especially the crash-protection ones (emergency_close / sweep_defense) —
+            # so a disabled safety net is auditable after the fact, not just a UI hint.
+            disabled_caps: list[str] = []
+            if not persist:
+                from backend.services.ai_manager_capability_map import (
+                    extract_capability_toggles,
+                )
+                disabled_caps = [
+                    key for key, on in extract_capability_toggles(config_to_use).items()
+                    if not on
+                ]
+            if disabled_caps:
+                self._ai_manager_disabled_caps[account_id] = disabled_caps
+            log_level = logging.WARNING if disabled_caps else logging.INFO
+            logger.log(
+                log_level,
+                "ai_manager_auto_enabled",
+                extra={
+                    "account_id": account_id,
+                    "capability_override": not persist,
+                    "disabled_capabilities": disabled_caps,
+                },
+            )
+        except Exception as e:
+            # A failed enable must not abort the placement (the trade already opened).
+            # The account stays in the guard set (see docstring) so we don't spam
+            # retries; the next scan cycle gets a fresh executor and another attempt.
+            logger.warning(
+                "ai_manager_auto_enable_failed",
+                extra={"account_id": account_id, "error": str(e)[:200]},
+            )
+
     async def _do_place(
         self, state: "_AccountState", result: Dict[str, Any], direction: str,
         cfg: Dict[str, Any], account_id: str, symbol: str, phase: str,
@@ -1829,31 +1925,8 @@ class AutoTradeExecutor:
                 "side": execution.side, "order_id": execution.order_id,
             })
 
-            # Enable AI Manager for this account if configured.
-            # FR-052: a mean-reversion placement must NOT auto-enable the AI manager
-            # (MR positions are excluded from AI management — they have their own
-            # fast/tight exits and the AI's logic would fight them).
-            if (strategy_kind != "mean_reversion"
-                    and cfg.get("ai_manager_enabled")
-                    and account_id not in self._ai_manager_enabled_accounts):
-                self._ai_manager_enabled_accounts.add(account_id)
-                if self._ai_manager_service:
-                    try:
-                        # Preserve any existing config — only use defaults if no config exists yet
-                        existing_config = None
-                        try:
-                            existing_dict = await self._ai_manager_service.get_config(account_id)
-                            existing_config = _AIMConfig(**existing_dict)
-                        except Exception:
-                            pass
-                        config_to_use = existing_config or _AIMConfig()
-                        config_to_use.auto_enabled = True
-                        await self._ai_manager_service.enable(account_id, config_to_use)
-                        logger.info("ai_manager_auto_enabled", extra={"account_id": account_id})
-                    except Exception as e:
-                        logger.warning("ai_manager_auto_enable_failed", extra={
-                            "account_id": account_id, "error": str(e)[:200],
-                        })
+            # Enable AI Manager for this account if configured (FR-052: MR excluded).
+            await self._maybe_enable_ai_manager(account_id, cfg, strategy_kind=strategy_kind)
 
             return execution
 

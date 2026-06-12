@@ -190,6 +190,19 @@ async def _do_enrichment(state: Dict[str, Any]) -> Dict[str, Any]:
     """Perform actual enrichment (memory, patterns, regime from indicators)."""
     from backend.services.ai_manager_regime import compute_regime
 
+    config = state.get("config", {})
+    # regime_enhanced gates the enhanced regime classification. When off, skip
+    # compute_regime entirely and fall back to a neutral default with no
+    # regime_detail — so the capability toggle actually changes runtime behavior
+    # (and the enhanced detail never reaches the LLM prompt).
+    if not config.get("regime_enhanced", True):
+        return {
+            "regime": "ranging",
+            "session": validate_market_session(state.get("_raw_session", "unknown")),
+            "episodic_memory": state.get("episodic_memory", []),
+            "patterns": state.get("patterns", []),
+        }
+
     indicators = state.get("indicators", {})
     mtf_data = state.get("mtf", {})
 

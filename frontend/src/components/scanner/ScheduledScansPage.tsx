@@ -27,6 +27,7 @@ import { exportSingle, exportAll, parseImportFile } from "./scheduled-scan-io";
 import { AgentModelOverrides, loadOverrides, filterOverridesForAssetType } from "@/components/analysis/AgentModelOverrides";
 import { AutoTradeSection } from "@/components/scanner/AutoTradeSection";
 import { cooloffGateValid, collectCooloffGateErrors } from "@/components/scanner/cooloffValidation";
+import { allCapabilitiesOn } from "@/components/scanner/aiManagerCapabilities";
 import { NeuSwitch } from "@/design-system/neumorphism";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/badge";
@@ -936,7 +937,17 @@ function ScheduleFormDialog({
         setAgentModelOverrides(sc.agent_model_overrides as Record<string, string>);
       }
       if (Array.isArray(sc.auto_trade_configs)) {
-        setAutoTradeConfigs(sc.auto_trade_configs as import("@/api/client").AutoTradeConfig[]);
+        // Normalize legacy jobs: if the AI Manager is on but capabilities were never
+        // chosen (pre-feature job), seed all-on so the form's displayed state matches
+        // what gets submitted — otherwise an edit+save would post `undefined` and the
+        // backend would run with no explicit capability selection.
+        const normalized = (sc.auto_trade_configs as import("@/api/client").AutoTradeConfig[]).map((c) => ({
+          ...c,
+          ai_manager_capabilities: c.ai_manager_enabled
+            ? (c.ai_manager_capabilities ?? allCapabilitiesOn())
+            : (c.ai_manager_capabilities ?? null),
+        }));
+        setAutoTradeConfigs(normalized);
       }
     }
   }, [editData, editingId]);

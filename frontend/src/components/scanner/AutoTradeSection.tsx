@@ -14,6 +14,8 @@ import { NeuSwitch } from "@/design-system/neumorphism";
 import { RegimeStrategyFields } from "./RegimeStrategyFields";
 import { CooloffFields } from "./CooloffFields";
 import { CooloffBadge } from "./CooloffBadge";
+import { AICapabilityPanel } from "./AICapabilityPanel";
+import { allCapabilitiesOn } from "./aiManagerCapabilities";
 
 const STORAGE_KEY = "tradingagents_auto_trade_configs";
 
@@ -37,6 +39,7 @@ const DEFAULT_CONFIG: Omit<AutoTradeConfig, "account_id"> = {
   breakeven_timeout_hours: null,
   max_trade_duration_hours: null,
   ai_manager_enabled: false,
+  ai_manager_capabilities: null,
   symbol_blacklist: null,
   symbol_whitelist: null,
   max_signal_age_minutes: null,
@@ -774,7 +777,15 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
             />
             <ToggleRow
               checked={config.ai_manager_enabled ?? false}
-              onChange={(checked) => onChange({ ai_manager_enabled: checked })}
+              onChange={(checked) =>
+                onChange({
+                  ai_manager_enabled: checked,
+                  // Seed all-on when turning on (if not already chosen); clear when off.
+                  ai_manager_capabilities: checked
+                    ? (config.ai_manager_capabilities ?? allCapabilitiesOn())
+                    : null,
+                })
+              }
               title="AI Position Manager"
               description="Automatically monitor and close positions using AI-driven analysis (trend reversals, profit preservation, abnormal conditions)."
               trailing={
@@ -783,6 +794,12 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountId
                 ) : null
               }
             />
+            {config.ai_manager_enabled ? (
+              <AICapabilityPanel
+                value={config.ai_manager_capabilities ?? allCapabilitiesOn()}
+                onChange={(next) => onChange({ ai_manager_capabilities: next })}
+              />
+            ) : null}
           </div>
 
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">

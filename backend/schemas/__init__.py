@@ -443,6 +443,27 @@ class TradeCloseRequest(BaseModel):
         return v
 
 
+class AIManagerCapabilityToggles(BaseModel):
+    """Per-scan selection of which AI Manager capabilities run.
+
+    Presence on AutoTradeConfig (non-null) means the user made an explicit
+    per-scan choice; absence (null) means "didn't choose" and the account's
+    saved AIManagerConfig is used unchanged (legacy behavior). Every flag
+    defaults True so the literal "enable all" model holds.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mtf: bool = True
+    orderbook: bool = True
+    sweep_defense: bool = True
+    correlation: bool = True
+    regime_enhanced: bool = True
+    event_driven: bool = True
+    trailing: bool = True
+    emergency_close: bool = True
+
+
 class AutoTradeConfig(BaseModel):
     """Per-account auto-trade configuration for market scans."""
 
@@ -468,6 +489,11 @@ class AutoTradeConfig(BaseModel):
     breakeven_timeout_hours: Optional[float] = Field(None, gt=0, le=720, description="Hours after entry to begin a breakeven watch; once total open PnL covers fees, close all positions.")
     max_trade_duration_hours: Optional[float] = Field(None, gt=0, le=720)
     ai_manager_enabled: bool = False
+    # Per-scan AI Manager capability selection. None = "didn't choose" → the
+    # account's saved AIManagerConfig is used unchanged (legacy behavior).
+    # Non-null = explicit override applied (without persisting) when the AI
+    # Manager auto-enables for this scan. Only consulted when ai_manager_enabled.
+    ai_manager_capabilities: Optional[AIManagerCapabilityToggles] = None
     symbol_blacklist: Optional[List[str]] = None
     symbol_whitelist: Optional[List[str]] = None
     max_signal_age_minutes: Optional[int] = Field(None, gt=0, le=1440)

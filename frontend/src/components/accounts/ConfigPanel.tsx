@@ -30,7 +30,46 @@ interface FormState {
   maxSingleLoss: string;
   excludedSymbols: string;
   lockedPositions: string;
+  capabilities: Record<AICapabilityFlag, boolean>;
 }
+
+// Account-level (persisted) capability toggles. Keyed by the AIManagerConfig FIELD
+// name (what the PATCH endpoint accepts), with display copy aligned to the scan-form
+// capability panel. This is the persisted control surface; the scan form sets a
+// per-scan, non-persisting override of the same flags.
+type AICapabilityFlag =
+  | "mtf_enabled"
+  | "orderbook_enabled"
+  | "sweep_defense_enabled"
+  | "correlation_enabled"
+  | "regime_enhanced"
+  | "event_driven_enabled"
+  | "trailing_enabled"
+  | "emergency_close_enabled";
+
+const ACCOUNT_CAPABILITIES: { flag: AICapabilityFlag; title: string }[] = [
+  { flag: "mtf_enabled", title: "Multi-Timeframe Analysis" },
+  { flag: "orderbook_enabled", title: "Order Book Monitoring" },
+  { flag: "sweep_defense_enabled", title: "Sweep / Stop-Hunt Defense" },
+  { flag: "correlation_enabled", title: "Correlation & Clustering" },
+  { flag: "regime_enhanced", title: "Regime Enhancement" },
+  { flag: "event_driven_enabled", title: "Event-Driven Evaluation" },
+  { flag: "trailing_enabled", title: "Trailing TP/SL" },
+  { flag: "emergency_close_enabled", title: "Emergency Close" },
+];
+
+// AIManagerConfig defaults for these flags (matches backend ai_manager_schemas.py):
+// all True except trailing_enabled. Used when a saved config omits a flag.
+const CAPABILITY_DEFAULTS: Record<AICapabilityFlag, boolean> = {
+  mtf_enabled: true,
+  orderbook_enabled: true,
+  sweep_defense_enabled: true,
+  correlation_enabled: true,
+  regime_enhanced: true,
+  event_driven_enabled: true,
+  trailing_enabled: false,
+  emergency_close_enabled: true,
+};
 
 const DEFAULT_FORM: FormState = {
   confidence: "0.7",
@@ -46,6 +85,7 @@ const DEFAULT_FORM: FormState = {
   maxSingleLoss: "3.0",
   excludedSymbols: "",
   lockedPositions: "",
+  capabilities: { ...CAPABILITY_DEFAULTS },
 };
 
 const VALID_RISK_LEVELS = ["conservative", "moderate", "aggressive"] as const;
@@ -81,6 +121,10 @@ function configToForm(saved: Record<string, unknown>): FormState {
     maxSingleLoss: String(saved.max_single_decision_loss_pct ?? DEFAULT_FORM.maxSingleLoss),
     excludedSymbols: ((saved.excluded_symbols as string[]) || []).join(", "),
     lockedPositions: ((saved.locked_positions as string[]) || []).join(", "),
+    capabilities: ACCOUNT_CAPABILITIES.reduce((acc, { flag }) => {
+      acc[flag] = saved[flag] != null ? Boolean(saved[flag]) : CAPABILITY_DEFAULTS[flag];
+      return acc;
+    }, {} as Record<AICapabilityFlag, boolean>),
   };
 }
 
@@ -185,6 +229,12 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
     const lockedRejected = lockedRaw.filter((s) => !SYMBOL_PATTERN.test(s));
     if (lockedRejected.length > 0) errors.push(`Invalid locked positions: ${lockedRejected.join(", ")}`);
     updates.locked_positions = locked;
+
+    // Persisted capability toggles — write each flag straight through (the PATCH
+    // schema accepts these AIManagerConfig field names).
+    for (const { flag } of ACCOUNT_CAPABILITIES) {
+      updates[flag] = form.capabilities[flag];
+    }
 
     if (errors.length > 0) {
       toast.error(`Cannot save — fix ${errors.length} field${errors.length === 1 ? "" : "s"}`, {
@@ -350,6 +400,33 @@ export function ConfigPanel({ accountId }: ConfigPanelProps) {
         <input type="checkbox" checked={form.dryRun} onChange={(e) => updateField("dryRun", e.target.checked)} />
         Dry Run (log only, no execution)
       </label>
+
+      <div className="space-y-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Capabilities</span>
+        <div className="grid grid-cols-2 gap-2">
+          {ACCOUNT_CAPABILITIES.map(({ flag, title }) => (
+            <label key={flag} className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                data-testid={`account-cap-${flag}`}
+                checked={form.capabilities[flag]}
+                onChange={(e) =>
+                  updateField("capabilities", { ...form.capabilities, [flag]: e.target.checked })
+                }
+              />
+              {title}
+            </label>
+          ))}
+        </div>
+        {(!form.capabilities.emergency_close_enabled || !form.capabilities.sweep_defense_enabled) && (
+          <p className="text-[11px] text-red-400">
+            Crash protection reduced: {!form.capabilities.emergency_close_enabled ? "Emergency Close" : ""}
+            {!form.capabilities.emergency_close_enabled && !form.capabilities.sweep_defense_enabled ? " and " : ""}
+            {!form.capabilities.sweep_defense_enabled ? "Sweep / Stop-Hunt Defense" : ""} disabled for this account.
+          </p>
+        )}
+      </div>
+
       <Button size="sm" disabled={loading} onClick={handleSave}>
         Save Config
       </Button>

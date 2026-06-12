@@ -312,6 +312,50 @@ async def test_context_enrichment_timeout_defaults():
 
 
 @pytest.mark.asyncio
+async def test_enrichment_regime_enhanced_on_computes_regime():
+    """regime_enhanced=True (default) runs compute_regime and yields regime_detail."""
+    from backend.services.ai_manager_graph import _do_enrichment
+    from unittest.mock import patch
+
+    state = {
+        "config": {"regime_enhanced": True},
+        "symbol": "BTCUSDT",
+        "indicators": {"BTCUSDT": {"adx": 30}},
+        "mtf": {},
+        "episodic_memory": [],
+        "patterns": [],
+    }
+    sentinel = {"regime": "trending_up", "regime_detail": {"confidence": 0.9, "adx": 30, "atr_ratio": 1.0, "bbw_percentile": 0.5, "trend_alignment": 1.0, "ema_distance_pct": 2.0}}
+    with patch("backend.services.ai_manager_regime.compute_regime", return_value=sentinel) as m:
+        result = await _do_enrichment(state)
+    m.assert_called_once()
+    assert result["regime"] == "trending_up"
+    assert result["regime_detail"]["confidence"] == 0.9
+
+
+@pytest.mark.asyncio
+async def test_enrichment_regime_enhanced_off_skips_compute_and_detail():
+    """regime_enhanced=False must NOT call compute_regime and must omit regime_detail,
+    so disabling the capability actually changes runtime behavior (not a no-op)."""
+    from backend.services.ai_manager_graph import _do_enrichment
+    from unittest.mock import patch
+
+    state = {
+        "config": {"regime_enhanced": False},
+        "symbol": "BTCUSDT",
+        "indicators": {"BTCUSDT": {"adx": 30}},
+        "mtf": {},
+        "episodic_memory": [],
+        "patterns": [],
+    }
+    with patch("backend.services.ai_manager_regime.compute_regime") as m:
+        result = await _do_enrichment(state)
+    m.assert_not_called()
+    assert result["regime"] == "ranging"          # neutral default
+    assert result.get("regime_detail") is None      # no enhanced detail leaks to the prompt
+
+
+@pytest.mark.asyncio
 async def test_risk_validation_blocks_sweep():
     from backend.services.ai_manager_graph import risk_validation_node
     state = {

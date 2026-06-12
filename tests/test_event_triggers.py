@@ -404,3 +404,41 @@ class TestCheckAllTriggers:
         assert len(results) == 1
         assert results[0][0] == "ETHUSDT"
         assert "new_position" in results[0][1]
+
+
+class TestRegimeEnhancedGating:
+    """WF-R2-1: when regime_enhanced=False the decision graph forces a static regime,
+    so the regime-change trigger must be gated off — otherwise it compares the real
+    computed regime against the static stored value and fires on every cooldown."""
+
+    def _detector(self, regime_enhanced: bool):
+        return EventTriggerDetector(
+            price_move_pct=1.5, drawdown_from_peak_pct=25.0, pnl_velocity_pct=1.5,
+            volume_anomaly_multiplier=3.0, staleness_alarm_s=600,
+            funding_rate_threshold=0.0005, regime_enhanced=regime_enhanced,
+        )
+
+    def test_regime_change_fires_when_enhanced_on(self):
+        det = self._detector(regime_enhanced=True)
+        det.mark_evaluated([_make_position()], regime="ranging")
+        det._last_regime_check_time = 0.0  # bypass cooldown
+        with patch(
+            "backend.services.ai_manager_event_triggers._compute_regime_label",
+            return_value="trending_up",
+        ):
+            triggered, reason = det.check_triggers([_make_position()], indicators={"BTCUSDT": {"adx": 30}})
+        assert triggered is True
+        assert "regime_change" in (reason or "")
+
+    def test_regime_change_suppressed_when_enhanced_off(self):
+        det = self._detector(regime_enhanced=False)
+        det.mark_evaluated([_make_position()], regime="ranging")
+        det._last_regime_check_time = 0.0  # bypass cooldown
+        with patch(
+            "backend.services.ai_manager_event_triggers._compute_regime_label",
+            return_value="trending_up",
+        ) as m:
+            triggered, reason = det.check_triggers([_make_position()], indicators={"BTCUSDT": {"adx": 30}})
+        # No regime_change trigger, and compute is skipped entirely (no hot-path cost).
+        assert not (triggered and "regime_change" in (reason or ""))
+        m.assert_not_called()

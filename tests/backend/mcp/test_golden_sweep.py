@@ -84,6 +84,7 @@ def test_allow_list_fail_on_new_autotradeconfig_field():
         "account_id",          # identity
         "ai_manager_enabled",  # AI-manager toggle (out of scope for sweep)
         "ai_pause_cycles",
+        "ai_manager_capabilities",  # per-scan AI-manager capability selection (out of scope for sweep)
         "symbol_blacklist",    # large/free-form lists — not swept
         "symbol_whitelist",
         # ── Regime Multi-Strategy fields (merged after the MCP optimizer was

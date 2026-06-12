@@ -69,6 +69,17 @@ class AIAccountManagerService:
         self._singleton_conn: Optional[Any] = None
         self._circuit_breaker = AIManagerCircuitBreaker(repo=ai_manager_repo)
         self._degradation = DegradationTierManager(repo=ai_manager_repo)
+        # Per-scan capability overrides (enable(persist=False)). Stores ONLY the 8
+        # capability toggles (not the whole config), kept in-memory so the account's
+        # saved AIManagerConfig is never rewritten. In-process respawns (health sweep,
+        # kill-switch reset, dead-task respawn) re-apply these toggles onto a FRESHLY
+        # loaded DB config — so current values for everything else (locked_positions,
+        # patched limits, ...) are preserved rather than resurrecting a stale snapshot.
+        # Set/cleared only via _set_/_clear_ephemeral_capabilities; read in _spawn_task.
+        # Empty after a process restart by design — the driving scan/executor is gone
+        # too, and the fallback to the saved config is in the safe direction whenever
+        # the saved config is at least as protective.
+        self._ephemeral_capability_overrides: Dict[str, dict] = {}
         # Set externally (main.py) when an LLM provider is configured.
         self._llm_callable: Optional[Callable] = None  # async (system_prompt, context_prompt) -> str
         self._pattern_llm_callable: Optional[Callable] = None
@@ -234,15 +245,67 @@ class AIAccountManagerService:
             self._account_locks[account_id] = asyncio.Lock()
         return self._account_locks[account_id]
 
-    async def enable(self, account_id: str, config: AIManagerConfig) -> None:
-        """Enable AI Manager for an account — spawns the decision loop task."""
+    def _set_ephemeral_capabilities(self, account_id: str, config: AIManagerConfig) -> None:
+        """Record the per-scan capability selection (8 bools) read off `config`, so
+        in-process respawns re-apply it onto fresh DB config. Call sites must hold the
+        account lock."""
+        from backend.services.ai_manager_capability_map import extract_capability_toggles
+        self._ephemeral_capability_overrides[account_id] = extract_capability_toggles(config)
+
+    def _clear_ephemeral_capabilities(self, account_id: str) -> None:
+        """Drop any per-scan capability override for the account (idempotent)."""
+        self._ephemeral_capability_overrides.pop(account_id, None)
+
+    def _reload_task_with_ephemeral(self, account_id: str, config: "AIManagerConfig") -> None:
+        """Hot-reload the live task with `config`, re-applying any active per-scan
+        capability override on top — so the running task stays consistent with what a
+        respawn would produce (instead of transiently reverting capabilities to the DB
+        values until the next respawn). Call sites must hold the account lock."""
+        task = self._tasks.get(account_id)
+        if not task:
+            return
+        caps = self._ephemeral_capability_overrides.get(account_id)
+        if caps is not None:
+            from backend.services.ai_manager_capability_map import apply_capability_overrides
+            try:
+                config = apply_capability_overrides(config, caps)
+            except Exception:
+                logger.warning(
+                    "Failed to re-apply ephemeral capabilities on reload for %s", account_id
+                )
+        task.reload_config(config)
+
+    async def enable(
+        self,
+        account_id: str,
+        config: AIManagerConfig,
+        *,
+        persist: bool = True,
+    ) -> None:
+        """Enable AI Manager for an account — spawns the decision loop task.
+
+        persist=True (default) writes `config` to the DB (unchanged legacy
+        behavior). persist=False spawns/reloads the task with `config` in-memory
+        only — used for per-scan capability overrides that must not overwrite the
+        account's stored config.
+        """
         lock = self._get_account_lock(account_id)
         async with lock:
+            # Track (or clear) the ephemeral capability override so in-process respawns
+            # re-apply it rather than reverting to the account's saved config. A
+            # persisting enable re-establishes the DB config as the source of truth.
+            if persist:
+                self._clear_ephemeral_capabilities(account_id)
+            else:
+                self._set_ephemeral_capabilities(account_id, config)
             existing_task = self._tasks.get(account_id)
             if existing_task and not existing_task.is_dead():
-                # Task is alive — just sync config if it changed
-                if getattr(existing_task._config, "auto_enabled", False) != config.auto_enabled:
-                    await self._repo.sync_config_columns(account_id, config.model_dump())
+                # Task is alive — sync config if auto_enabled changed OR an
+                # explicit non-persisting override was supplied.
+                changed = getattr(existing_task._config, "auto_enabled", False) != config.auto_enabled
+                if changed or not persist:
+                    if persist:
+                        await self._repo.sync_config_columns(account_id, config.model_dump())
                     existing_task.reload_config(config)
                 return
             # No task or dead task — (re)spawn
@@ -251,8 +314,9 @@ class AIAccountManagerService:
                 existing_task.cancel()
                 self._tasks.pop(account_id, None)
             await self._repo.upsert_state(account_id, enabled=True, fsm_state="sleeping")
-            await self._repo.sync_config_columns(account_id, config.model_dump())
-            await self._spawn_task(account_id)
+            if persist:
+                await self._repo.sync_config_columns(account_id, config.model_dump())
+            await self._spawn_task(account_id, config_override=None if persist else config)
             source = "auto" if config.auto_enabled else "manual"
             await self._repo.insert_log(account_id, "info", "lifecycle", f"AI Manager enabled ({source})")
 
@@ -263,6 +327,7 @@ class AIAccountManagerService:
             task = self._tasks.pop(account_id, None)
             if task:
                 task.cancel()
+            self._clear_ephemeral_capabilities(account_id)
             await self._repo.upsert_state(
                 account_id, enabled=False, fsm_state="sleeping",
                 emergency_ref_equity=None, emergency_cooldown_until=None,
@@ -573,9 +638,14 @@ class AIAccountManagerService:
                     raw_config[key] = val
             config = AIManagerConfig(**raw_config)
             await self._repo.sync_config_columns(account_id, config.model_dump())
-            task = self._tasks.get(account_id)
-            if task:
-                task.reload_config(config)
+            # If the operator explicitly edits a capability flag via this persisting
+            # path, drop any per-scan ephemeral override for those flags so it doesn't
+            # silently re-apply (revert the edit) on the next respawn. The edit is now
+            # the persisted source of truth.
+            from backend.services.ai_manager_capability_map import CAPABILITY_FLAG_MAP
+            if any(flag in updates for flag in CAPABILITY_FLAG_MAP.values()):
+                self._clear_ephemeral_capabilities(account_id)
+            self._reload_task_with_ephemeral(account_id, config)
 
     async def lock_position(self, account_id: str, symbol: str) -> None:
         """Add symbol to locked_positions — prevents AI from closing it."""
@@ -593,9 +663,7 @@ class AIAccountManagerService:
             raw_config["locked_positions"] = sorted(locked)
             config = AIManagerConfig(**raw_config)
             await self._repo.sync_config_columns(account_id, config.model_dump())
-            task = self._tasks.get(account_id)
-            if task:
-                task.reload_config(config)
+            self._reload_task_with_ephemeral(account_id, config)
 
     async def unlock_position(self, account_id: str, symbol: str) -> None:
         """Remove symbol from locked_positions — allows AI to manage it again."""
@@ -613,9 +681,7 @@ class AIAccountManagerService:
             raw_config["locked_positions"] = sorted(locked)
             config = AIManagerConfig(**raw_config)
             await self._repo.sync_config_columns(account_id, config.model_dump())
-            task = self._tasks.get(account_id)
-            if task:
-                task.reload_config(config)
+            self._reload_task_with_ephemeral(account_id, config)
 
     async def get_decisions(
         self, account_id: str, limit: int = 50, cursor: Optional[str] = None, outcome_filter: Optional[str] = None
@@ -874,20 +940,49 @@ class AIAccountManagerService:
             logger.warning("Failed to resolve per-account LLM callable for %s", account_id[:8])
         return None, None, None
 
-    async def _spawn_task(self, account_id: str) -> None:
+    async def _spawn_task(
+        self,
+        account_id: str,
+        *,
+        config_override: "AIManagerConfig | None" = None,
+    ) -> None:
         from backend.services.ai_manager_task import AIManagerTask
 
         state = await self._repo.get_state(account_id)
         if not state or not state.get("enabled", False):
             return
-        try:
-            raw_config = state.get("config") or {}
-            if isinstance(raw_config, str):
-                raw_config = _json.loads(raw_config)
-            config = AIManagerConfig(**raw_config)
-        except Exception:
-            logger.warning("Invalid config for %s, using defaults", account_id)
-            config = AIManagerConfig()
+        # Precedence: explicit override arg > (fresh DB config + ephemeral capability
+        # toggles re-applied) > fresh DB config. The explicit arg is the live per-scan
+        # config passed straight from enable(). On a respawn with no arg (health sweep,
+        # kill-switch reset), we load the CURRENT DB config and re-apply only the 8
+        # stored capability toggles — so locked_positions, patched limits, etc. reflect
+        # current state rather than a stale snapshot, while the per-scan capability
+        # selection is preserved.
+        if config_override is not None:
+            config = config_override
+        else:
+            try:
+                raw_config = state.get("config") or {}
+                if isinstance(raw_config, str):
+                    raw_config = _json.loads(raw_config)
+                config = AIManagerConfig(**raw_config)
+            except Exception:
+                logger.warning("Invalid config for %s, using defaults", account_id)
+                config = AIManagerConfig()
+            caps = self._ephemeral_capability_overrides.get(account_id)
+            if caps is not None:
+                from backend.services.ai_manager_capability_map import (
+                    apply_capability_overrides,
+                )
+                try:
+                    config = apply_capability_overrides(config, caps)
+                except Exception:
+                    # A stored override should already be valid; never let it block a
+                    # respawn — fall back to the DB config as-is.
+                    logger.warning(
+                        "Failed to re-apply ephemeral capabilities for %s; using DB config",
+                        account_id,
+                    )
 
         # Load circuit breaker state from DB
         await self._circuit_breaker.load_from_db(

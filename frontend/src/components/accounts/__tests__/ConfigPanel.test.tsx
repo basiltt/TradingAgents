@@ -4,11 +4,10 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import React from "react";
 
-// AI-CONTEXT: This suite guards the ConfigPanel validate-and-block behavior added
-// during hardening (previously out-of-range fields were silently dropped and the
-// save appeared to succeed). NOTE: ConfigPanel is not currently mounted anywhere in
-// the app (tracked as a dead-code decision); this test still protects the validation
-// logic so it can't regress if/when the panel is wired into the UI.
+// AI-CONTEXT: This suite guards the ConfigPanel validate-and-block behavior and the
+// persisted capability toggles. ConfigPanel is mounted in AIMonitorPanel (the account
+// "AI Monitor" tab), so this protects the validation logic and the capability PATCH
+// payload from regressing.
 
 const { toastError, patchConfig, fetchConfigFn } = vi.hoisted(() => ({
   toastError: vi.fn(),
@@ -72,5 +71,31 @@ describe("ConfigPanel validation", () => {
     fireEvent.click(saveBtn);
     await waitFor(() => expect(patchConfig).toHaveBeenCalled());
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("persists capability toggles in the PATCH payload", async () => {
+    renderPanel();
+    const saveBtn = await screen.findByRole("button", { name: /save config/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+
+    // Default-on; turn emergency_close OFF.
+    const emergency = screen.getByTestId("account-cap-emergency_close_enabled") as HTMLInputElement;
+    expect(emergency.checked).toBe(true);
+    fireEvent.click(emergency);
+    expect(emergency.checked).toBe(false);
+
+    fireEvent.click(saveBtn);
+    await waitFor(() => expect(patchConfig).toHaveBeenCalled());
+    // aiManagerApi.patchConfig is called as (accountId, updates)
+    const updates = patchConfig.mock.calls[0][1] as Record<string, unknown>;
+    expect(updates.emergency_close_enabled).toBe(false);
+    expect(updates.mtf_enabled).toBe(true); // untouched stays on
+  });
+
+  it("shows a crash-protection warning when emergency_close is disabled", async () => {
+    renderPanel();
+    await screen.findByRole("button", { name: /save config/i });
+    fireEvent.click(screen.getByTestId("account-cap-emergency_close_enabled"));
+    expect(screen.getByText(/crash protection reduced/i)).toBeTruthy();
   });
 });

@@ -344,6 +344,7 @@ export interface AutoTradeConfig {
   breakeven_timeout_hours?: number | null;
   max_trade_duration_hours?: number | null;
   ai_manager_enabled?: boolean;
+  ai_manager_capabilities?: AIManagerCapabilities | null;
   symbol_blacklist?: string[] | null;
   symbol_whitelist?: string[] | null;
   max_signal_age_minutes?: number | null;
@@ -425,6 +426,17 @@ export interface CooloffStatus {
   tiers_enabled?: boolean;
 }
 
+export interface AIManagerCapabilities {
+  mtf: boolean;
+  orderbook: boolean;
+  sweep_defense: boolean;
+  correlation: boolean;
+  regime_enhanced: boolean;
+  event_driven: boolean;
+  trailing: boolean;
+  emergency_close: boolean;
+}
+
 export interface ScanRequest {
   analysis_date: string;
   asset_type?: AssetType;
@@ -479,6 +491,7 @@ export interface AutoTradeSummary {
   stopped_reason?: string | null;
   close_rule_id?: string | null;
   drawdown_rule_id?: string | null;
+  ai_manager_disabled_capabilities?: string[];
 }
 
 export interface ScanStatus {

@@ -143,6 +143,7 @@ class AIManagerTask:
             volume_anomaly_multiplier=config.event_volume_anomaly_multiplier,
             staleness_alarm_s=config.staleness_alarm_s,
             funding_rate_threshold=config.event_funding_rate_threshold,
+            regime_enhanced=config.regime_enhanced,
         )
         self._event_trigger_fired = asyncio.Event()
         self._last_trigger_reason: Optional[str] = None
@@ -276,7 +277,13 @@ class AIManagerTask:
 
     def reload_config(self, config: AIManagerConfig) -> None:
         """Hot-reload configuration without restarting the task."""
+        # Capture the prior trailing flag before swapping — a True->False transition
+        # (e.g. a per-scan capability override disabling trailing on a live task) must
+        # cancel in-flight trailing loops, not just block new ones.
+        was_trailing_enabled = getattr(self._config, "trailing_enabled", False)
         self._config = config
+        if was_trailing_enabled and not config.trailing_enabled:
+            self._cancel_all_trailing()
         self._correlation_analyzer = CorrelationAnalyzer(
             correlation_threshold=config.correlation_threshold,
         )
@@ -295,6 +302,7 @@ class AIManagerTask:
             volume_anomaly_multiplier=config.event_volume_anomaly_multiplier,
             staleness_alarm_s=config.staleness_alarm_s,
             funding_rate_threshold=config.event_funding_rate_threshold,
+            regime_enhanced=config.regime_enhanced,
         )
         self._event_trigger._last_eval_prices = old_prices
         self._event_trigger._last_regime = old_regime

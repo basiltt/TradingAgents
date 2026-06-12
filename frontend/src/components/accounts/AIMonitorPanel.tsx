@@ -26,6 +26,7 @@ const CapabilitiesGrid = lazy(() => import("./ai-manager/CapabilitiesGrid"));
 const MarketInsightsPanel = lazy(() => import("./ai-manager/MarketInsightsPanel"));
 const AttentionSection = lazy(() => import("./ai-manager/AttentionSection"));
 const SummarySection = lazy(() => import("./ai-manager/SummarySection"));
+const ConfigPanel = lazy(() => import("./ConfigPanel").then((m) => ({ default: m.ConfigPanel })));
 
 interface AIMonitorPanelProps {
   accountId: string;
@@ -924,6 +925,16 @@ export function AIMonitorPanel({ accountId }: AIMonitorPanelProps) {
 
       <Suspense fallback={<div className="h-32 rounded-2xl animate-pulse bg-muted/10" />}>
         <CapabilitiesGrid accountId={accountId} />
+      </Suspense>
+
+      {/* Persisted AI Manager configuration (capabilities + risk/limits). The
+          capability toggles here are the durable per-account defaults; the scan
+          form applies a non-persisting per-scan override on top. */}
+      <Suspense fallback={<div className="h-32 rounded-2xl animate-pulse bg-muted/10" />}>
+        <div className="rounded-2xl p-5" style={{ background: "var(--neu-surface-base)", boxShadow: "var(--neu-shadow-pill)" }}>
+          <h4 className="text-xs uppercase tracking-widest font-semibold text-muted-foreground/80 mb-4">Configuration</h4>
+          <ConfigPanel accountId={accountId} />
+        </div>
       </Suspense>
     </div>
   );

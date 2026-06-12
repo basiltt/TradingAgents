@@ -48,6 +48,7 @@ class EventTriggerDetector:
         volume_anomaly_multiplier: float = 3.0,
         staleness_alarm_s: int = 600,
         funding_rate_threshold: float = 0.0005,
+        regime_enhanced: bool = True,
     ):
         self._price_move_pct = price_move_pct
         self._drawdown_from_peak_pct = drawdown_from_peak_pct
@@ -55,6 +56,11 @@ class EventTriggerDetector:
         self._volume_anomaly_multiplier = volume_anomaly_multiplier
         self._staleness_alarm_s = staleness_alarm_s
         self._funding_rate_threshold = funding_rate_threshold
+        # When regime detection is disabled (regime_enhanced=False), the decision graph
+        # forces a static regime, so the regime-change trigger would compare the real
+        # computed regime against that static value and fire on every cooldown forever.
+        # Gate the regime-change trigger off entirely in that case.
+        self._regime_enhanced = regime_enhanced
 
         # State tracked since last evaluation
         self._last_eval_prices: Dict[str, float] = {}
@@ -174,7 +180,8 @@ class EventTriggerDetector:
         # 7. Regime change — compute current regime (with cooldown to avoid hot-path overhead)
         now = time.monotonic()
         if (
-            self._last_regime is not None
+            self._regime_enhanced
+            and self._last_regime is not None
             and indicators
             and (now - self._last_regime_check_time) >= self._REGIME_CHECK_COOLDOWN_S
         ):
@@ -355,7 +362,8 @@ class EventTriggerDetector:
         # Regime change is account-wide — assign to the first position symbol
         now = time.monotonic()
         if (
-            self._last_regime is not None
+            self._regime_enhanced
+            and self._last_regime is not None
             and indicators
             and (now - self._last_regime_check_time) >= self._REGIME_CHECK_COOLDOWN_S
         ):
