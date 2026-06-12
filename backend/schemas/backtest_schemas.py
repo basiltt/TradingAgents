@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ScanSource(BaseModel):
@@ -39,6 +39,12 @@ class ScanSource(BaseModel):
 
 class BacktestCreateRequest(BaseModel):
     """Request schema for creating a new backtest run."""
+
+    # Reject unknown fields so a misspelled cool-off (or any) setting fails loudly
+    # rather than silently running a backtest WITHOUT the intended config (the whole
+    # point of a backtest is to validate the real config before live). Mirrors
+    # AutoTradeConfig's extra="forbid". (P1R-F4)
+    model_config = ConfigDict(extra="forbid")
 
     # Backtest-specific fields
     starting_capital: float = Field(..., gt=0, le=100_000_000)
@@ -98,6 +104,16 @@ class BacktestCreateRequest(BaseModel):
     adaptive_blacklist_max_win_rate: float = Field(default=30.0, ge=0, le=100)
     adaptive_blacklist_lookback_hours: int = Field(default=48, ge=1, le=720)
 
+    # ── Cool Off Time (mirror of AutoTradeConfig; 4 optional tiers, all default-off) ──
+    cooloff_on_success_enabled: bool = False
+    cooloff_on_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_failure_enabled: bool = False
+    cooloff_on_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_success_enabled: bool = False
+    cooloff_on_double_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_failure_enabled: bool = False
+    cooloff_on_double_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+
     # ── Regime Multi-Strategy (F1/F2/F3) — accepted so the backtester can validate
     # these features on historical data BEFORE live funding. Defaults mirror
     # production AutoTradeConfig exactly (all default-off / inherit), so a backtest
@@ -138,6 +154,16 @@ class BacktestCreateRequest(BaseModel):
     regime_staleness_minutes: int = Field(default=30, ge=5, le=240)
     regime_volatile_atr: float = Field(default=2.0, gt=0, le=10)
     regime_trend_ema_dist_pct: float = Field(default=1.0, ge=0, le=50)
+
+    @model_validator(mode="after")
+    def validate_cooloff(self) -> "BacktestCreateRequest":
+        # Mirrors AutoTradeConfig.validate_cooloff (FR-002).
+        for tier in ("success", "failure", "double_success", "double_failure"):
+            if getattr(self, f"cooloff_on_{tier}_enabled") and getattr(self, f"cooloff_on_{tier}_minutes") is None:
+                raise ValueError(
+                    f"cooloff_on_{tier}_minutes is required when cooloff_on_{tier}_enabled is True"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_session_exclusive(self) -> "BacktestCreateRequest":

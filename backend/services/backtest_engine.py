@@ -209,6 +209,17 @@ class SimulationState:
     # charging funding more than once per 0/8/16h event regardless of candle density
     # (so a finer interval than 5m can't multi-charge a single boundary).
     last_funding_boundary: Optional[tuple] = None
+    # ── Cool Off Time (sim). All inert + unread unless cooloff_enabled, so an OFF
+    # backtest is byte-identical to pre-feature output (CO-BT-5/FR-020/D52). ──
+    cooloff_enabled: bool = False
+    cooloff_until: Optional[datetime] = None
+    cooloff_reason: Optional[str] = None
+    cooloff_wins: int = 0
+    cooloff_losses: int = 0
+    cooloff_last_flat_idx: int = 0  # high-water mark into closed_trades
+    cooloff_bands: list = field(default_factory=list)  # {start, end, reason}
+    cooloff_skipped: int = 0
+    cooloff_skipped_by_reason: dict = field(default_factory=dict)
 
 
 class BacktestEngine:
@@ -283,6 +294,25 @@ class BacktestEngine:
             wallet_balance=starting_capital,
             sizing_capital=starting_capital,
             slippage_bps=config.get("slippage_bps", 2),
+        )
+
+        # ── Cool Off Time (sim) — build the settings + enabled flag ONCE. All cool-off
+        # code below is gated on state.cooloff_enabled so an OFF run is byte-identical.
+        from backend.services.cooloff_core import CooloffSettings as _CoolSettings
+        self._cooloff_settings = _CoolSettings(
+            success_enabled=bool(config.get("cooloff_on_success_enabled")),
+            success_minutes=config.get("cooloff_on_success_minutes"),
+            failure_enabled=bool(config.get("cooloff_on_failure_enabled")),
+            failure_minutes=config.get("cooloff_on_failure_minutes"),
+            double_success_enabled=bool(config.get("cooloff_on_double_success_enabled")),
+            double_success_minutes=config.get("cooloff_on_double_success_minutes"),
+            double_failure_enabled=bool(config.get("cooloff_on_double_failure_enabled")),
+            double_failure_minutes=config.get("cooloff_on_double_failure_minutes"),
+        )
+        state.cooloff_enabled = (
+            self._cooloff_settings.success_enabled or self._cooloff_settings.failure_enabled
+            or self._cooloff_settings.double_success_enabled
+            or self._cooloff_settings.double_failure_enabled
         )
 
         warnings: list[str] = []
@@ -423,16 +453,21 @@ class BacktestEngine:
             if live_selection is not None:
                 if live_selection:
                     self._force_close_for_live_selection(scan_config, klines, state, selection_time)
-                    self._open_scan_signals(
-                        scan_config,
-                        scan_signals,
-                        klines,
-                        state,
-                        selection_time,
-                        scan_execution_mode,
-                        selection_mode="live_selection",
-                        live_selection=live_selection,
-                    )
+                    # Cool Off gate (after force-close so a flat can still arm; only the
+                    # open is suppressed). instant = selection_time for this branch.
+                    if self._cooloff_blocks(state, selection_time):
+                        self._cooloff_record_skip(state, len(scan_signals))
+                    else:
+                        self._open_scan_signals(
+                            scan_config,
+                            scan_signals,
+                            klines,
+                            state,
+                            selection_time,
+                            scan_execution_mode,
+                            selection_mode="live_selection",
+                            live_selection=live_selection,
+                        )
                 else:
                     state.signals_filtered += len(scan_signals)
 
@@ -464,21 +499,30 @@ class BacktestEngine:
                         on_progress(min(pct, 99))
                     continue
                 _maybe_start_report_window(post_recheck_time)
-                self._open_scan_signals(
-                    scan_config,
-                    scan_signals,
-                    klines,
-                    state,
-                    post_recheck_time,
-                    scan_execution_mode,
-                    selection_mode="post_scan_recheck",
-                )
+                # Cool Off gate (instant = post_recheck_time for this branch). Suppress the
+                # open; carried positions are still evaluated below over [post_recheck_time, next].
+                if self._cooloff_blocks(state, post_recheck_time):
+                    self._cooloff_record_skip(state, len(scan_signals))
+                else:
+                    self._open_scan_signals(
+                        scan_config,
+                        scan_signals,
+                        klines,
+                        state,
+                        post_recheck_time,
+                        scan_execution_mode,
+                        selection_mode="post_scan_recheck",
+                    )
                 evaluate_from_time = post_recheck_time
             else:
                 _maybe_start_report_window(selection_time)
-                self._open_scan_signals(
-                    scan_config, scan_signals, klines, state, selection_time, scan_execution_mode
-                )
+                # Cool Off gate (instant = selection_time for the normal branch).
+                if self._cooloff_blocks(state, selection_time):
+                    self._cooloff_record_skip(state, len(scan_signals))
+                else:
+                    self._open_scan_signals(
+                        scan_config, scan_signals, klines, state, selection_time, scan_execution_mode
+                    )
 
             # Evaluate open positions until the next scan START, because live
             # init_balances observes positions at that instant.
@@ -585,18 +629,27 @@ class BacktestEngine:
         if diag.get("equity_values_sanitized"):
             warnings.append(f"metrics_sanitized_{diag['equity_values_sanitized']}_non_finite_equity_values")
 
+        filter_stats = {
+            "signals_total": len(signals),
+            "signals_filtered": state.signals_filtered,
+            "signals_entered": state.signals_entered,
+            "signals_no_kline": state.signals_no_kline,
+            "signals_no_kline_symbols": sorted(state.no_kline_symbols),
+        }
+        # Cool Off Time: emit skipped-count + bands ONLY when enabled (absent when OFF
+        # -> filter_stats byte-identical to pre-feature -> golden holds, CO-BT-5/D34).
+        if state.cooloff_enabled:
+            filter_stats["cooloff_signals_skipped"] = state.cooloff_skipped
+            filter_stats["cooloff_skipped_by_reason"] = dict(state.cooloff_skipped_by_reason)
+            filter_stats["cooloff_bands"] = self._cooloff_finalize_bands(
+                state.cooloff_bands, report_start, report_end,
+            )
         return SimulationResult(
             trades=result_trades,
             equity_curve=state.equity_curve,
             metrics=metrics,
             warnings=warnings,
-            filter_stats={
-                "signals_total": len(signals),
-                "signals_filtered": state.signals_filtered,
-                "signals_entered": state.signals_entered,
-                "signals_no_kline": state.signals_no_kline,
-                "signals_no_kline_symbols": sorted(state.no_kline_symbols),
-            },
+            filter_stats=filter_stats,
         )
 
     # --- Filter chain implementation ---
@@ -2044,9 +2097,20 @@ class BacktestEngine:
             "strategy_kind": position.strategy_kind,
         }
         state.closed_trades.append(trade_record)
+        # Cool Off Time: persist funding_paid on the record ONLY when enabled (kept absent
+        # when OFF so the golden trade_record dict is byte-identical). The cohort net uses
+        # pnl + funding_paid to be funding-EXCLUDED (recorded pnl is funding-inclusive).
+        if state.cooloff_enabled:
+            trade_record["funding_paid"] = position.funding_paid
 
         # Remove from open positions
         state.open_positions.remove(position)
+
+        # Cool Off Time ARM hook: when this close leaves the book flat, classify the just-
+        # completed episode and (maybe) arm a cool-off. Gated on cooloff_enabled and skips
+        # the end-of-sim force-close (no future scan to block). D33/D44/D45/CO-BT-15/16.
+        if state.cooloff_enabled and close_reason != "backtest_end" and not state.open_positions:
+            self._cooloff_arm_on_flat(state, exit_time)
 
         # Record a realized-equity point at each close so the equity curve has
         # intermediate samples (not just start/end). This is the per-trade equity
@@ -2059,6 +2123,80 @@ class BacktestEngine:
             "equity": state.wallet_balance,
             "drawdown_pct": 0.0,
         })
+
+    def _cooloff_arm_on_flat(self, state: SimulationState, exit_time: datetime) -> None:
+        """Classify the just-completed flat episode and (maybe) arm a sim cool-off.
+
+        Cohort = closed_trades since the last flat high-water mark. Net = sum(pnl +
+        funding_paid) (funding-EXCLUDED, fees-included — D33, parity with live SUM(net_pnl)).
+        Uses the shared cooloff_core.decide so live + backtest agree. cooloff_until is
+        anchored at exit_time (the flat instant), max-rearm never shortens. The high-water
+        idx advances on EVERY flat (incl. neutral) so a neutral cohort isn't re-counted.
+        """
+        from backend.services import cooloff_core
+        cohort = state.closed_trades[state.cooloff_last_flat_idx:]
+        net = sum(float(t.get("pnl") or 0.0) + float(t.get("funding_paid") or 0.0) for t in cohort)
+        outcome = cooloff_core.classify_outcome(net)
+        decision = cooloff_core.decide(
+            cooloff_core.StreakState(state.cooloff_wins, state.cooloff_losses),
+            outcome, self._cooloff_settings,
+        )
+        state.cooloff_wins = decision.streaks.consecutive_wins
+        state.cooloff_losses = decision.streaks.consecutive_losses
+        state.cooloff_last_flat_idx = len(state.closed_trades)  # advance on every flat
+        if decision.arm and decision.duration_minutes is not None:
+            until = exit_time + timedelta(minutes=decision.duration_minutes)
+            # max-rearm: never shorten an already-active window
+            if state.cooloff_until is None or until > state.cooloff_until:
+                state.cooloff_until = until
+                state.cooloff_reason = decision.reason
+            # Build the band from the AUTHORITATIVE (until, reason) pair so a (defensive)
+            # shorter re-arm can never record a mismatched reason (P5R-F3).
+            state.cooloff_bands.append({
+                "start": exit_time, "end": state.cooloff_until, "reason": state.cooloff_reason,
+            })
+
+    def _cooloff_blocks(self, state: SimulationState, open_instant: datetime) -> bool:
+        """True if a sim cool-off is active at the prospective open instant (FR-017).
+
+        Inert/False when the feature is OFF. Strict `<` so an open exactly at cooloff_until
+        is allowed (parity with the live pure-time gate, FR-029/AC-016).
+        """
+        if not state.cooloff_enabled or state.cooloff_until is None:
+            return False
+        return open_instant < state.cooloff_until
+
+    def _cooloff_record_skip(self, state: SimulationState, n_signals: int) -> None:
+        state.cooloff_skipped += n_signals
+        reason = state.cooloff_reason or "unknown"
+        state.cooloff_skipped_by_reason[reason] = state.cooloff_skipped_by_reason.get(reason, 0) + n_signals
+
+    @staticmethod
+    def _cooloff_finalize_bands(bands, report_start, report_end):
+        """Clamp bands to [report_start, report_end], drop degenerate/out-of-window ones,
+        sort by start, and merge overlapping/abutting bands (the later band's reason wins).
+        Returns ISO-serialized {start, end, reason} dicts (deterministic, CO-BT-10)."""
+        lo = report_start
+        hi = report_end
+        cleaned = []
+        for b in bands:
+            s, e, reason = b["start"], b["end"], b.get("reason")
+            if lo is not None and s < lo:
+                s = lo
+            if hi is not None and e > hi:
+                e = hi
+            if s >= e:
+                continue  # degenerate / fully out of window
+            cleaned.append((s, e, reason))
+        cleaned.sort(key=lambda x: x[0])
+        merged: list = []
+        for s, e, reason in cleaned:
+            if merged and s <= merged[-1][1]:  # overlap/abut with previous
+                prev_s, prev_e, _prev_reason = merged[-1]
+                merged[-1] = (prev_s, max(prev_e, e), reason)  # later reason wins
+            else:
+                merged.append((s, e, reason))
+        return [{"start": s.isoformat(), "end": e.isoformat(), "reason": r} for s, e, r in merged]
 
     def _full_book_fine_window(
         self, state: SimulationState, candle_time: datetime
