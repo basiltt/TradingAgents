@@ -809,10 +809,14 @@ async def clear_cooloff(
     request: Request,
     account_id: str,
     reset_streak: bool = Query(False, description="Also reset the consecutive win/loss streak"),
+    disable_settings: bool = Query(False, description="Also disable all cool-off tiers for this account (definitive per-account turn-off)"),
 ):
-    """Manually end an active cool-off (Resume now).
+    """Manually end an active cool-off (Resume now), and optionally disable cool-off
+    entirely for the account.
 
-    Does NOT reset the streak unless reset_streak=true. Idempotent. Audited.
+    Does NOT reset the streak unless reset_streak=true. With disable_settings=true also
+    turns OFF all 4 tiers — the authoritative per-account disable that works regardless
+    of which surface (manual / scheduled) enabled cool-off. Idempotent. Audited.
     """
     _validate_account_id(account_id)
     svc = _get_service(request)
@@ -821,7 +825,7 @@ async def clear_cooloff(
         return JSONResponse({"detail": "Account not found", "code": "NOT_FOUND"}, 404)
     repo = _get_cooloff_repo(request)
     before = await repo.read_status(account_id)
-    cleared = await repo.clear(account_id, reset_streak=reset_streak)
+    cleared = await repo.clear(account_id, reset_streak=reset_streak, disable_settings=disable_settings)
     after = await repo.read_status(account_id)
     logger.info(
         "cooloff_cleared",
@@ -829,6 +833,7 @@ async def clear_cooloff(
             "account_id": account_id,
             "actor": request.client.host if request.client else None,
             "reset_streak": reset_streak,
+            "disable_settings": disable_settings,
             "cleared": bool(cleared),
             "before_cooloff_until": before.get("cooloff_until").isoformat()
                 if before.get("cooloff_until") is not None else None,

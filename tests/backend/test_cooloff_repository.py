@@ -320,6 +320,38 @@ def test_clear_with_reset_streak(db, repo, event_loop):
     event_loop.run_until_complete(_t())
 
 
+def test_clear_with_disable_settings_turns_off_all_tiers(db, repo, event_loop):
+    """disable_settings=True zeroes the 8 tier columns AND clears the active pause —
+    the authoritative per-account turn-off (manual-surface disable path)."""
+    async def _t():
+        acc = "cooloff-clear-disable"
+        await _ensure_account(db, acc)
+        try:
+            future = datetime.now(timezone.utc) + timedelta(hours=1)
+            await db.pool.execute(
+                "INSERT INTO account_cooloff_state (account_id, cooloff_until, cooloff_reason, "
+                "consecutive_losses, failure_enabled, failure_minutes, success_enabled, success_minutes) "
+                "VALUES ($1,$2,'failure',2, true, 60, true, 30)", acc, future,
+            )
+            await repo.clear(acc, reset_streak=True, disable_settings=True)
+            row = await repo.get_state(acc)
+            # pause + streak cleared
+            assert row["cooloff_until"] is None and row["cooloff_reason"] is None
+            assert row["consecutive_losses"] == 0
+            # ALL tiers disabled + minutes nulled
+            assert row["failure_enabled"] is False and row["failure_minutes"] is None
+            assert row["success_enabled"] is False and row["success_minutes"] is None
+            assert row["double_success_enabled"] is False
+            assert row["double_failure_enabled"] is False
+            # status now reports tiers_enabled False
+            status = await repo.read_status(acc)
+            assert status["tiers_enabled"] is False
+            assert status["cooling"] is False
+        finally:
+            await _cleanup(db, acc)
+    event_loop.run_until_complete(_t())
+
+
 # ── count_open_scanner ───────────────────────────────────────────────────────
 
 async def _insert_trade(db, account_id, *, status, source, closed_at=None, net_pnl=None,

@@ -19,6 +19,23 @@ def test_grid_count_equals_product():
     assert all(c["capital_pct"] == 5.0 for c in combos)
 
 
+def test_rejects_cooloff_fields_in_sweep_space():
+    """Cool Off Time tiers are deny-from-sweep (risk pacing, stripped at apply time).
+    Sweeping one would crown a winner whose edge came from a dimension that won't be
+    applied → misleading uplift / empty diff. generate_combos must reject it up front."""
+    with pytest.raises(ComboGenerationError, match="cool-off"):
+        generate_combos({"leverage": [5, 10], "cooloff_on_failure_enabled": [True, False]}, strategy="grid")
+    with pytest.raises(ComboGenerationError, match="cool-off"):
+        generate_combos({"cooloff_on_success_minutes": [30, 60]}, strategy="grid")
+    # Holding a cool-off field FIXED in base is fine (not swept).
+    combos = generate_combos(
+        {"leverage": [5, 10]}, strategy="grid",
+        base={"cooloff_on_failure_enabled": True, "cooloff_on_failure_minutes": 60},
+    )
+    assert len(combos) == 2
+    assert all(c["cooloff_on_failure_enabled"] is True for c in combos)
+
+
 def test_grid_no_duplicates_and_deterministic():
     space = {"leverage": [5, 10, 20], "min_score": [0, 1]}
     a = generate_combos(space, strategy="grid")

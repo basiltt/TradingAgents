@@ -187,7 +187,27 @@ class CooloffClassifier:
             while True:
                 open_count = await self._repo.count_open_scanner(conn, account_id)
                 if open_count > 0:
-                    return  # not flat — episode still in progress (CO-DET-5)
+                    # Not flat — episode still in progress (CO-DET-5). But guard against a
+                    # position stuck open far longer than any real trade: it would block
+                    # arming for this account indefinitely and silently. Surface it as an
+                    # ERROR (operator signal) rather than fabricating flatness — we must
+                    # NOT arm a cool-off while a genuine position is still open, so this
+                    # alerts without changing the decision (the reconciler closes orphans).
+                    try:
+                        oldest = await self._repo.oldest_open_scanner_opened_at(conn, account_id)
+                        if oldest is not None:
+                            if oldest.tzinfo is None:
+                                oldest = oldest.replace(tzinfo=timezone.utc)
+                            if oldest < self._now_fn() - timedelta(minutes=STALE_MIN_MINUTES):
+                                logger.error(
+                                    "cooloff_open_trade_stuck_blocking_arming",
+                                    extra={"account_id": account_id,
+                                           "oldest_open_opened_at": oldest.isoformat(),
+                                           "open_count": open_count},
+                                )
+                    except Exception:  # noqa: BLE001 — never let the alert path break classify
+                        pass
+                    return
 
                 # re-read state inside the loop so streak/high-water reflect prior iterations
                 cur = await self._repo.get_state_conn(conn, account_id)

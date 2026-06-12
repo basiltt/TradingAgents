@@ -419,6 +419,10 @@ export interface CooloffStatus {
   consecutive_wins: number;
   consecutive_losses: number;
   cooloff_remaining_seconds: number;
+  /** True if any tier is persisted-enabled for this account (may be true even when not
+   * actively cooling) — drives the per-account "disable cool-off" affordance. Optional
+   * for backward-compat with older API responses that predate the field. */
+  tiers_enabled?: boolean;
 }
 
 export interface ScanRequest {
@@ -1009,10 +1013,10 @@ export const accountsApi = {
     request<CooloffStatus>(`/api/v1/accounts/${encodeURIComponent(id)}/cooloff`, undefined, signal),
 
   /** POST /api/v1/accounts/:id/cooloff/clear — Resume now (end an active cool-off). */
-  clearCooloff: (id: string, resetStreak = false) =>
+  clearCooloff: (id: string, resetStreak = false, disableSettings = false) =>
     mutate<{ cleared: boolean; cooloff_until: null }>(
       "POST",
-      `/api/v1/accounts/${encodeURIComponent(id)}/cooloff/clear?reset_streak=${resetStreak}`,
+      `/api/v1/accounts/${encodeURIComponent(id)}/cooloff/clear?reset_streak=${resetStreak}&disable_settings=${disableSettings}`,
     ),
 
   /** GET /api/v1/portfolio/summary — fetch aggregate portfolio summary. */

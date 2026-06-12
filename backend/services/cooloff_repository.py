@@ -84,6 +84,7 @@ class CooloffRepository:
                 "cooloff_until": None, "cooloff_reason": None,
                 "consecutive_wins": 0, "consecutive_losses": 0,
                 "cooloff_remaining_seconds": 0, "cooling": False,
+                "tiers_enabled": False,
             }
         until = row.get("cooloff_until")
         reason = row.get("cooloff_reason")
@@ -111,6 +112,13 @@ class CooloffRepository:
             "consecutive_losses": int(row.get("consecutive_losses") or 0),
             "cooloff_remaining_seconds": remaining,
             "cooling": cooling,
+            # True if any tier is persisted-enabled — lets the UI offer a per-account
+            # "disable cool-off" affordance even when not actively cooling (the manual-only
+            # disable escape hatch, since the manual prepass never writes all-OFF).
+            "tiers_enabled": bool(
+                row.get("success_enabled") or row.get("failure_enabled")
+                or row.get("double_success_enabled") or row.get("double_failure_enabled")
+            ),
         }
 
     async def _best_effort_clear(self, account_id: str, expected_until: datetime) -> None:
@@ -152,21 +160,32 @@ class CooloffRepository:
 
     # ── clear (guarded) ────────────────────────────────────────────────────────
 
-    async def clear(self, account_id: str, reset_streak: bool = False) -> bool:
-        """Clear an active cool-off (null until/reason). Optionally reset the streak.
+    async def clear(self, account_id: str, reset_streak: bool = False,
+                    disable_settings: bool = False) -> bool:
+        """Clear an active cool-off (null until/reason). Optionally reset the streak
+        and/or DISABLE all tier settings.
 
         Idempotent. Returns True if a row existed (whether or not it was active).
         Takes the per-account advisory lock inside its own transaction so a manual
         clear is ordered against a concurrent classifier arm (SR-F10/P2R-F1) — a
         clear and an in-flight arm can no longer interleave their writes.
+
+        disable_settings=True also zeroes the 8 tier columns (all *_enabled=false,
+        *_minutes=NULL) — the authoritative per-account "turn cool-off off" that works
+        regardless of which surface enabled it. This is the manual-surface disable path:
+        the manual scanner's settings prepass deliberately never writes all-OFF (so a
+        transient manual scan can't wipe a scheduled policy), so unchecking every tier in
+        the manual UI alone cannot disable; this flag gives the manual UI an explicit,
+        intentional disable that the prepass guard would otherwise swallow.
         """
+        set_parts = ["cooloff_until = NULL", "cooloff_reason = NULL"]
         if reset_streak:
-            set_clause = (
-                "cooloff_until = NULL, cooloff_reason = NULL, "
-                "consecutive_wins = 0, consecutive_losses = 0, updated_at = NOW()"
-            )
-        else:
-            set_clause = "cooloff_until = NULL, cooloff_reason = NULL, updated_at = NOW()"
+            set_parts += ["consecutive_wins = 0", "consecutive_losses = 0"]
+        if disable_settings:
+            set_parts += [f"{c} = FALSE" for c in _SETTING_COLS if c.endswith("_enabled")]
+            set_parts += [f"{c} = NULL" for c in _SETTING_COLS if c.endswith("_minutes")]
+        set_parts.append("updated_at = NOW()")
+        set_clause = ", ".join(set_parts)
         async with self._pool.acquire() as conn, conn.transaction():
             await conn.fetchval(
                 "SELECT pg_advisory_xact_lock($1, hashtext($2))",
@@ -200,6 +219,19 @@ class CooloffRepository:
             "AND status IN ('pending','open','partially_filled','closing','partially_closed')",
             account_id,
         ))
+
+    async def oldest_open_scanner_opened_at(self, conn: Any, account_id: str):
+        """The opened_at of the OLDEST still-open scanner trade (or None if flat).
+
+        Used by the classifier to detect a position stuck open far longer than any real
+        trade should last — a never-flat account would otherwise silently block cool-off
+        arming forever. This only drives an ERROR alert (it never fabricates flatness, so
+        a genuinely-open position can't be misclassified as a completed episode)."""
+        return await conn.fetchval(
+            "SELECT MIN(opened_at) FROM trades WHERE account_id = $1 AND source = 'scanner' "
+            "AND status IN ('pending','open','partially_filled','closing','partially_closed')",
+            account_id,
+        )
 
     async def fetch_unprocessed_closed(
         self, conn: Any, account_id: str, mark_at: Optional[datetime], mark_id: Optional[str]

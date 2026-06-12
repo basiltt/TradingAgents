@@ -1691,6 +1691,12 @@ class BacktestService:
                 # Surface any excluded/missing trades so a truncated comparison is never
                 # silent (AI-Manager/non-scanner trades and unresolved scan rows).
                 warnings = [f"replay_mode_account_{account_id}"]
+                # Replay reconstructs the account's ACTUAL live trades; it does not re-run
+                # the cool-off gate. If the config enabled cool-off, say so explicitly so a
+                # user doesn't assume the replay reflects cool-off-gated entries.
+                if any(config.get(f"cooloff_on_{t}_enabled") for t in
+                       ("success", "failure", "double_success", "double_failure")):
+                    warnings.append("cooloff_not_simulated_in_replay")
                 exc_counts = comparison.get("excluded_trades") or {}
                 n_excluded = sum(int(v) for v in exc_counts.values())
                 if n_excluded:

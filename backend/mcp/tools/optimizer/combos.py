@@ -64,6 +64,18 @@ def generate_combos(
     if not space or any(not vals for vals in space.values()):
         raise ComboGenerationError("search space is empty")
 
+    # Reject deny-listed fields (e.g. Cool Off Time tiers) from the swept space. These
+    # are risk config that apply/sanitize strips from any proposal, so sweeping them would
+    # crown a winner whose edge came from a dimension that won't be applied — misleading
+    # uplift, or an empty diff at apply time. Hold them constant in `base` instead.
+    from backend.mcp.tools.optimizer.apply import COOLOFF_DENY_FIELDS
+    denied = sorted(set(space.keys()) & COOLOFF_DENY_FIELDS)
+    if denied:
+        raise ComboGenerationError(
+            f"cannot sweep non-optimizable cool-off fields: {', '.join(denied)} — "
+            f"hold them fixed in the base config instead"
+        )
+
     keys = sorted(space.keys())
 
     if strategy == "grid":

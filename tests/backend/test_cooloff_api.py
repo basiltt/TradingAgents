@@ -119,7 +119,7 @@ def test_clear_default_no_reset(client, mock_cooloff_repo):
     assert r.status_code == 200
     assert r.json()["cleared"] is True
     assert r.json()["cooloff_until"] is None
-    mock_cooloff_repo.clear.assert_awaited_once_with(_ACC, reset_streak=False)
+    mock_cooloff_repo.clear.assert_awaited_once_with(_ACC, reset_streak=False, disable_settings=False)
 
 
 def test_clear_with_reset_streak(client, mock_cooloff_repo):
@@ -130,7 +130,20 @@ def test_clear_with_reset_streak(client, mock_cooloff_repo):
     mock_cooloff_repo.clear = AsyncMock(return_value=True)
     r = client.post(f"/accounts/{_ACC}/cooloff/clear?reset_streak=true")
     assert r.status_code == 200
-    mock_cooloff_repo.clear.assert_awaited_once_with(_ACC, reset_streak=True)
+    mock_cooloff_repo.clear.assert_awaited_once_with(_ACC, reset_streak=True, disable_settings=False)
+
+
+def test_clear_with_disable_settings(client, mock_cooloff_repo):
+    """disable_settings=true is the per-account turn-off (manual-surface disable path)."""
+    mock_cooloff_repo.read_status = AsyncMock(return_value={
+        "cooloff_until": None, "cooloff_reason": None,
+        "consecutive_wins": 0, "consecutive_losses": 0, "cooloff_remaining_seconds": 0,
+        "cooling": False, "tiers_enabled": False,
+    })
+    mock_cooloff_repo.clear = AsyncMock(return_value=True)
+    r = client.post(f"/accounts/{_ACC}/cooloff/clear?reset_streak=true&disable_settings=true")
+    assert r.status_code == 200
+    mock_cooloff_repo.clear.assert_awaited_once_with(_ACC, reset_streak=True, disable_settings=True)
 
 
 def test_clear_idempotent_no_row(client, mock_cooloff_repo):

@@ -258,11 +258,18 @@ export function AutoTradeSection({ value, onChange }: AutoTradeSectionProps) {
           <div className="space-y-4">
             {value.map((config, idx) => (
               <AutoTradeCard
-                key={config.account_id || `new-${idx}`}
+                // Composite key: account_id alone collides if two rows transiently share
+                // an account (e.g. before the user picks a distinct one); the index keeps
+                // each row's instance (and its CooloffFields/CooloffBadge state) distinct.
+                key={`${config.account_id || "new"}-${idx}`}
                 config={config}
                 index={idx}
                 accounts={accounts}
                 accountsLoading={accountsLoading}
+                // Accounts already chosen by OTHER rows — excluded from this row's picker
+                // so two rows can't end up bound to the same account (which would collide
+                // the per-account cool-off badge query + state).
+                usedAccountIds={value.filter((_, i) => i !== idx).map((c) => c.account_id).filter(Boolean)}
                 onChange={(partial) => updateConfig(idx, partial)}
                 onDuplicate={() => duplicateConfig(idx)}
                 onRemove={() => removeConfig(idx)}
@@ -287,12 +294,14 @@ interface CardProps {
   index: number;
   accounts: TradingAccount[];
   accountsLoading: boolean;
+  /** account_ids bound to OTHER rows — filtered out of this row's account picker. */
+  usedAccountIds: string[];
   onChange: (partial: Partial<AutoTradeConfig>) => void;
   onDuplicate: () => void;
   onRemove: () => void;
 }
 
-function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onDuplicate, onRemove }: CardProps) {
+function AutoTradeCard({ config, index, accounts, accountsLoading, usedAccountIds, onChange, onDuplicate, onRemove }: CardProps) {
   const [expanded, setExpanded] = useState(!config.account_id);
   const selectedAccount = accounts.find((a) => a.id === config.account_id);
   const leverageNum = config.leverage || 1;
@@ -375,11 +384,16 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
               <SelectValue placeholder={accountsLoading ? "Loading accounts..." : "Select account"} />
             </SelectTrigger>
             <SelectContent>
-              {accounts.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.label} ({a.account_type})
-                </SelectItem>
-              ))}
+              {accounts
+                // Hide accounts already bound to another row (prevents two rows sharing an
+                // account → colliding per-account cool-off badge/state); always keep this
+                // row's own current selection visible.
+                .filter((a) => a.id === config.account_id || !usedAccountIds.includes(a.id))
+                .map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.label} ({a.account_type})
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
           {!config.account_id && !accountsLoading ? (

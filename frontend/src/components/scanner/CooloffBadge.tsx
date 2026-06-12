@@ -117,14 +117,64 @@ export function CooloffBadge({ accountId, tiersEnabled }: Props) {
     },
   });
 
-  // Render only when we have status saying the account is cooling. We deliberately
-  // do NOT gate on the query's isError: a COLD error leaves data undefined →
-  // !data?.cooling → null (fail-open, correct). But a WARM refetch error (a transient
-  // poll blip after a successful cooling:true) keeps the last-good data while flipping
-  // isError true — gating on isError there would silently hide an ACTIVE pause + its
-  // Resume-now button for ~15s (violates the never-hide-an-active-cooldown invariant).
-  // The countdown is anchored to the absolute cooloff_until, so the retained badge
-  // stays honest until the next successful poll.
+  // Per-account "disable cool-off" — turns OFF all tiers (and clears any active pause)
+  // regardless of which surface enabled them. This is the manual-only disable escape
+  // hatch: the manual prepass never persists all-OFF, so unchecking tiers in the manual
+  // UI alone can't disable; this gives an explicit, definitive turn-off.
+  const disable = useMutation({
+    mutationFn: () => accountsApi.clearCooloff(accountId, true, true),
+    onMutate: () => {
+      queryClient.setQueryData<CooloffStatus>(["account-cooloff", accountId], (prev) =>
+        prev
+          ? { ...prev, cooling: false, cooloff_until: null, cooloff_remaining_seconds: 0, tiers_enabled: false }
+          : prev,
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["account-cooloff", accountId] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+
+  const onDisableClick = () => {
+    if (disable.isPending) return;
+    if (window.confirm("Disable Cool Off Time for this account? This turns off all tiers and ends any active pause.")) {
+      disable.mutate();
+    }
+  };
+
+  const tiersEnabledServer = !!data?.tiers_enabled;
+
+  // Not cooling, but cool-off IS armed for the account → show a compact "armed" chip
+  // with a Disable affordance (the only manual-surface way to turn it off).
+  if (!cooling && tiersEnabledServer) {
+    return (
+      <div
+        className="inline-flex items-center gap-2 rounded-full border border-[var(--neu-stroke-soft)] bg-[var(--neu-surface-sunken)] px-3 py-1 text-[11px] text-[var(--neu-text-muted)]"
+        role="status"
+      >
+        <span aria-hidden>🌙</span>
+        <span>Cool-off armed</span>
+        <button
+          type="button"
+          onClick={onDisableClick}
+          disabled={disable.isPending}
+          className="ml-1 rounded-full border border-[var(--neu-stroke-soft)] px-2 py-0.5 text-[10px] font-medium hover:bg-[var(--neu-surface-muted)] disabled:opacity-50"
+        >
+          {disable.isPending ? "Disabling…" : "Disable"}
+        </button>
+      </div>
+    );
+  }
+
+  // Render the cooling badge only when actually cooling. We deliberately do NOT gate on
+  // the query's isError: a COLD error leaves data undefined → !data?.cooling → null
+  // (fail-open, correct). But a WARM refetch error (a transient poll blip after a
+  // successful cooling:true) keeps the last-good data while flipping isError true —
+  // gating on isError there would silently hide an ACTIVE pause + its Resume-now button
+  // for ~15s (violates the never-hide-an-active-cooldown invariant). The countdown is
+  // anchored to the absolute cooloff_until, so the retained badge stays honest until the
+  // next successful poll. (The not-cooling-but-armed case returned above.)
   if (!data?.cooling) return null;
 
   const reasonText = data.cooloff_reason ? REASON_LABEL[data.cooloff_reason] ?? data.cooloff_reason : "";
@@ -161,6 +211,15 @@ export function CooloffBadge({ accountId, tiersEnabled }: Props) {
         className="ml-1 rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium hover:bg-amber-500/[0.18] disabled:opacity-50"
       >
         {resume.isPending ? "Resuming…" : "Resume now"}
+      </button>
+      <button
+        type="button"
+        onClick={onDisableClick}
+        disabled={disable.isPending}
+        title="Turn off all cool-off tiers for this account"
+        className="ml-1 rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium hover:bg-amber-500/[0.18] disabled:opacity-50"
+      >
+        {disable.isPending ? "Disabling…" : "Disable"}
       </button>
     </div>
   );

@@ -8,6 +8,7 @@ import { formatUsd, formatPct, formatRatio, formatInt, pnlColorClass, TH_CLASS, 
 import { EquityOverlayChart } from "./EquityOverlayChart";
 import { OVERLAY_COLORS, type EquityDataset } from "./equityOverlayData";
 import { bestRunIndex } from "./backtestCompare";
+import { extractCooloff } from "./cooloffResults";
 import { MAX_COMPARE_RUNS } from "./comparisonBasket";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +83,16 @@ const ROWS: CompareRow[] = [
     format: (v) => formatPct(v, { sign: true }),
     colorize: true,
     better: "high",
+  },
+  {
+    // Cool-off telemetry: null (→ "—") when the run had no cool-off enabled, so a
+    // cool-off run vs an OFF run is no longer indistinguishable in the comparison.
+    label: "Signals skipped (cool-off)",
+    value: (r) => {
+      const c = extractCooloff(r.results?.summary as Record<string, unknown> | undefined);
+      return c.present ? c.signalsSkipped : null;
+    },
+    format: (v) => (v == null ? "—" : formatInt(v)),
   },
 ];
 

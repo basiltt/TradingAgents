@@ -40,6 +40,8 @@ const WARNING_LABELS: Record<string, string> = {
     "Mean-reversion side/geometry use the next-bar-open fill price (no look-ahead), which can differ slightly from live trading’s scan-time mark.",
   btc_vol_uses_historical_klines_at_scan_time:
     "The BTC volatility filter is evaluated from historical klines as of each scan time.",
+  cooloff_not_simulated_in_replay:
+    "Cool Off Time is not simulated in replay mode — this reconstructs the account’s actual live trades, so cool-off-gated entries are not modeled here.",
 };
 
 function warningLabel(code: string): string {

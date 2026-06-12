@@ -253,6 +253,40 @@ def test_classify_skips_when_position_still_open(db, repo, event_loop):
     event_loop.run_until_complete(_t())
 
 
+def test_classify_alerts_when_open_trade_stuck_but_does_not_arm(db, repo, event_loop, caplog):
+    """A scanner position stuck open far longer than STALE_MIN must NOT be misclassified
+    as flat (no arm), but it MUST surface an ERROR alert so it isn't silently blocking
+    cool-off arming forever (the reconciler closes orphans; this just makes it visible)."""
+    import logging
+    from backend.services.cooloff_core import STALE_MIN_MINUTES
+
+    async def _t():
+        acc = "cls-stuck-" + uuid.uuid4().hex[:8]
+        await _ensure_account(db, acc)
+        try:
+            await _enable_failure_cooloff(repo, acc)
+            t0 = datetime(2024, 6, 4, tzinfo=timezone.utc)
+            # an OPEN scanner position opened long ago (older than STALE_MIN)
+            await db.pool.execute(
+                "INSERT INTO trades (id, account_id, symbol, side, qty, leverage, status, source, opened_at) "
+                "VALUES ($1,$2,'ETHUSDT','Buy',1,1,'open','scanner',$3)",
+                uuid.uuid4(), acc, t0,
+            )
+            now = t0 + timedelta(minutes=STALE_MIN_MINUTES + 60)  # well past stale
+            clf = CooloffClassifier(db, repo, now_fn=lambda: now)
+            with caplog.at_level(logging.ERROR):
+                await clf.maybe_classify(acc)
+            # still NOT armed (a genuine open position is never treated as flat)
+            row = await repo.get_state(acc)
+            assert row.get("cooloff_until") is None
+            assert (row.get("consecutive_losses") or 0) == 0
+            # but the stuck-open condition IS surfaced
+            assert any("cooloff_open_trade_stuck_blocking_arming" in r.message for r in caplog.records)
+        finally:
+            await _cleanup(db, acc)
+    event_loop.run_until_complete(_t())
+
+
 def test_classify_defers_unsettled_then_classifies_after_settle(db, repo, event_loop):
     async def _t():
         acc = "cls-defer-" + uuid.uuid4().hex[:8]

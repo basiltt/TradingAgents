@@ -57,6 +57,20 @@ SWEEPABLE_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+# Cool Off Time tiers are risk PACING, not a performance dimension to optimize: they are
+# deliberately absent from SWEEPABLE_FIELDS, so apply/sanitize already strips them from a
+# proposal. But the SWEEP INPUT must also reject them — otherwise a sweep could VARY a
+# cool-off tier, crown a "winner" whose edge came partly from it, then silently drop it at
+# apply time (misleading uplift) or produce an empty diff. generate_combos enforces this.
+COOLOFF_DENY_FIELDS: frozenset[str] = frozenset(
+    {
+        "cooloff_on_success_enabled", "cooloff_on_success_minutes",
+        "cooloff_on_failure_enabled", "cooloff_on_failure_minutes",
+        "cooloff_on_double_success_enabled", "cooloff_on_double_success_minutes",
+        "cooloff_on_double_failure_enabled", "cooloff_on_double_failure_minutes",
+    }
+)
+
 # Absolute, non-overridable sanity bounds (independent of agent + user guardrails).
 _MAX_LEVERAGE = 50
 _MIN_STOP_LOSS_PCT = 1.0  # SL must keep at least this much distance
