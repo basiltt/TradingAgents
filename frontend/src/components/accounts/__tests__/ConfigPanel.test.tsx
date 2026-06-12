@@ -4,11 +4,10 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import React from "react";
 
-// AI-CONTEXT: This suite guards the ConfigPanel validate-and-block behavior added
-// during hardening (previously out-of-range fields were silently dropped and the
-// save appeared to succeed). NOTE: ConfigPanel is not currently mounted anywhere in
-// the app (tracked as a dead-code decision); this test still protects the validation
-// logic so it can't regress if/when the panel is wired into the UI.
+// AI-CONTEXT: This suite guards the ConfigPanel validate-and-block behavior and the
+// persisted capability toggles. ConfigPanel is mounted in AIMonitorPanel (the account
+// "AI Monitor" tab), so this protects the validation logic and the capability PATCH
+// payload from regressing.
 
 const { toastError, patchConfig, fetchConfigFn } = vi.hoisted(() => ({
   toastError: vi.fn(),
