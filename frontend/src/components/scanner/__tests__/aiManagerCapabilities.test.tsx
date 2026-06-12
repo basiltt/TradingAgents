@@ -1,10 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import {
   AI_MANAGER_CAPABILITIES,
   AI_CAPABILITY_KEYS,
   allCapabilitiesOn,
   type AICapabilityKey,
 } from "../aiManagerCapabilities";
+import { AICapabilityPanel } from "../AICapabilityPanel";
 
 const EXPECTED_KEYS: AICapabilityKey[] = [
   "mtf", "orderbook", "sweep_defense", "correlation",
@@ -46,10 +48,6 @@ describe("allCapabilitiesOn", () => {
     );
   });
 });
-
-import { render, screen, fireEvent } from "@testing-library/react";
-import { vi } from "vitest";
-import { AICapabilityPanel } from "../AICapabilityPanel";
 
 describe("AICapabilityPanel", () => {
   it("renders a toggle for each of the 8 capabilities", () => {

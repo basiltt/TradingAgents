@@ -1660,7 +1660,7 @@ class AutoTradeExecutor:
             # Forensic record of which capabilities a per-scan override turned OFF —
             # especially the crash-protection ones (emergency_close / sweep_defense) —
             # so a disabled safety net is auditable after the fact, not just a UI hint.
-            disabled_caps: list = []
+            disabled_caps: list[str] = []
             if not persist:
                 from backend.services.ai_manager_capability_map import (
                     extract_capability_toggles,
