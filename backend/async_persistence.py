@@ -1056,6 +1056,46 @@ async def _migrate_v62_cooloff_fk_cascade(conn) -> None:
     )
 
 
+async def _migrate_v63_cooloff_index_and_checks(conn) -> None:
+    """v63 — Cool Off Time hardening: tuned episode index + enabled-needs-minutes CHECKs.
+
+    (1) Partial index supporting CooloffClassifier.fetch_unprocessed_closed, which seeks
+        (closed_at, id) ASC over an account's CLOSED SCANNER trades. The existing
+        idx_trades_account_closed is DESC and carries no source/status keys, so without
+        this the query filters in-heap and degrades as `trades` grows. ASC + the partial
+        predicate turns the source/status filters into an index condition.
+    (2) Per-tier CHECK that an enabled tier has a non-null minutes — DB-level
+        defense-in-depth behind validate_cooloff (API) + the frontend gate. Added with
+        NOT VALID so it never scans/validates existing rows at migration time (the table
+        is app-written only and already satisfies it), then VALIDATE separately.
+
+    Discrete statements (the runner splits SQL strings on ';'); each ADD CONSTRAINT is
+    guarded against re-run via a pg_constraint existence check (idempotent).
+    """
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trades_cooloff_episode "
+        "ON trades (account_id, closed_at, id) "
+        "WHERE source = 'scanner' AND status = 'closed'"
+    )
+    tiers = ("success", "failure", "double_success", "double_failure")
+    for tier in tiers:
+        cname = f"chk_cooloff_{tier}_enabled_needs_minutes"
+        exists = await conn.fetchval(
+            "SELECT 1 FROM pg_constraint WHERE conname = $1 "
+            "AND conrelid = 'account_cooloff_state'::regclass",
+            cname,
+        )
+        if exists:
+            continue
+        await conn.execute(
+            f"ALTER TABLE account_cooloff_state ADD CONSTRAINT {cname} "
+            f"CHECK (NOT {tier}_enabled OR {tier}_minutes IS NOT NULL) NOT VALID"
+        )
+        await conn.execute(
+            f"ALTER TABLE account_cooloff_state VALIDATE CONSTRAINT {cname}"
+        )
+
+
 _MIGRATIONS: list[tuple[int, _MigrationSQL]] = [
     (1, _SCHEMA_V1),
     (2, "ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS asset_type TEXT NOT NULL DEFAULT 'stock' CHECK(asset_type IN ('stock','crypto'))"),
@@ -1648,6 +1688,15 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # Idempotent: drops whatever FK currently points account_cooloff_state.account_id at
     # trading_accounts (named or auto-named), then adds the cascading one.
     (62, _migrate_v62_cooloff_fk_cascade),
+    # Cool Off Time hardening (post-ship review): (1) a tuned partial index for the
+    # classifier's episode query (account_id + closed_at,id ASC, filtered to closed
+    # scanner trades) so it can't degrade as `trades` grows — mirrors the v49
+    # idx_trades_f2_breaker precedent; (2) DB-level CHECK that an ENABLED tier has a
+    # non-null duration (defense-in-depth behind the Pydantic validators + frontend gate;
+    # cooloff_core.decide already refuses to arm on a null, so this only blocks a bad
+    # WRITE, never a read). Callable: per-tier ADD CONSTRAINT + CREATE INDEX as discrete
+    # statements (the runner splits SQL strings on ';').
+    (63, _migrate_v63_cooloff_index_and_checks),
 ]
 
 
@@ -2388,6 +2437,26 @@ class AsyncAnalysisDB:
             deleted_at, account_id,
         )
         return int(result.split()[-1]) > 0
+
+    async def clear_account_cooloff_state(self, account_id: str) -> None:
+        """Delete an account's Cool Off Time state row (state + settings).
+
+        Called when an account is soft-deleted or deactivated. The v62 FK is
+        ON DELETE CASCADE, but the app only SOFT-deletes accounts (UPDATE, never
+        DELETE), so the cascade never fires — without this, a deactivated/soft-deleted
+        account keeps its streak + an active cooloff_until, which would RESURRECT a
+        phantom cool-off (or mis-fire a "double" tier on the first loss) if the account
+        is later reactivated. Best-effort: the table may not exist on a fresh/partial
+        deploy, so swallow errors (mirrors the scheduled-scan cleanup pattern).
+        """
+        try:
+            await self.pool.execute(
+                "DELETE FROM account_cooloff_state WHERE account_id = $1", account_id
+            )
+        except Exception:
+            logger.warning(
+                "clear_account_cooloff_state_failed", extra={"account_id": account_id}
+            )
 
     async def remove_account_from_scheduled_scans(self, account_id: str) -> List[str]:
         """Remove an account from all scheduled scan auto_trade_configs. Returns list of modified schedule IDs."""

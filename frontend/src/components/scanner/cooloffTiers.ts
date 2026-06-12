@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the four Cool Off Time tiers.
  *
- * Consumed by CoolOffFields (the editor), cooloffValidation (the Launch/Save gate),
+ * Consumed by CooloffFields (the editor), cooloffValidation (the Launch/Save gate),
  * and the backtest configSchema (cross-field Zod refine) so the tier list, its
  * field-name pairs, and the duration bounds can never drift between the three.
  *

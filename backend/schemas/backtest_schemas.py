@@ -8,6 +8,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.services.cooloff_core import COOLOFF_MIN_MINUTES, COOLOFF_MAX_MINUTES
+
 
 class ScanSource(BaseModel):
     """Defines which historical scan results to use for backtesting."""
@@ -106,13 +108,13 @@ class BacktestCreateRequest(BaseModel):
 
     # ── Cool Off Time (mirror of AutoTradeConfig; 4 optional tiers, all default-off) ──
     cooloff_on_success_enabled: bool = False
-    cooloff_on_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_success_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
     cooloff_on_failure_enabled: bool = False
-    cooloff_on_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_failure_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
     cooloff_on_double_success_enabled: bool = False
-    cooloff_on_double_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_success_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
     cooloff_on_double_failure_enabled: bool = False
-    cooloff_on_double_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_failure_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
 
     # ── Regime Multi-Strategy (F1/F2/F3) — accepted so the backtester can validate
     # these features on historical data BEFORE live funding. Defaults mirror

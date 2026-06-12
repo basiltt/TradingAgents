@@ -45,7 +45,7 @@ function fromMinutes(minutes: number, unit: Unit): string {
  * Market Scan and the Scheduled Market Scan forms. Minutes are the canonical stored
  * unit; the Min/Hr selector is sticky per-card edit state (FR-021, DS24).
  */
-export function CoolOffFields({ config, onChange }: Props) {
+export function CooloffFields({ config, onChange }: Props) {
   const errId = useId();
   // Sticky per-tier unit. Initialise to Hr when the stored value is a clean
   // multiple of 60 (and >= 60), else Min — then the user's choice persists.

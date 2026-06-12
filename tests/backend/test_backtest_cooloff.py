@@ -151,29 +151,63 @@ def test_carried_position_closes_during_cooloff():
 # ── live <-> backtest parity (AC-007/019): shared core + funding-excluded net ─
 
 def test_funding_excluded_net_matches_live_definition():
-    """The backtest cohort net (pnl + funding_paid) equals the live episode net
-    (realized_pnl - fees == net_pnl), funding-EXCLUDED, for the same economic trade —
-    so classify_outcome gives the same sign in both engines (no epsilon)."""
-    from backend.services.cooloff_core import classify_outcome
-    # backtest records: pnl = price_pnl - entry_fee - exit_fee - funding_paid (funding-incl)
-    price_pnl, entry_fee, exit_fee, funding_paid = -20.0, 1.0, 1.0, 3.0
-    bt_recorded_pnl = price_pnl - entry_fee - exit_fee - funding_paid  # -25.0
-    bt_cohort_net = bt_recorded_pnl + funding_paid  # backtest funding-excluded = -22.0
-    # live: net_pnl = closedPnl(=price_pnl) - fees(entry+exit), funding excluded
-    live_net = price_pnl - (entry_fee + exit_fee)  # -22.0
-    assert bt_cohort_net == pytest.approx(live_net, rel=1e-9)
-    assert classify_outcome(bt_cohort_net) == classify_outcome(live_net) == "failure"
+    """ENGINE-DRIVEN parity lock: a trade's cool-off cohort component (pnl + funding_paid)
+    must be FUNDING-FREE, matching the live definition net_pnl = closedPnl - fees.
+
+    Rather than re-deriving literals (which can't catch a regression in the engine's
+    recorded_pnl formula at _close_position), this runs the SAME backtest twice — once
+    with funding OFF, once with a large fixed funding rate — and asserts every trade's
+    (pnl + funding_paid) is IDENTICAL across the two runs. If a future edit makes
+    recorded_pnl funding-exclusive (or otherwise breaks the pnl+funding_paid = gross-fees
+    identity), the funding run's cohort net diverges and this fails. Also asserts the
+    funding run actually applied non-zero funding, so the test can't pass vacuously."""
+    # A trade that stays open long enough to cross >=1 funding interval (8h). Use a TP
+    # far away and ~11h of 5-min candles so funding is actually charged before close.
+    # Cool-off is ENABLED so the engine persists funding_paid on the trade record
+    # (it's deliberately omitted when cool-off is OFF — the OFF byte-identical invariant);
+    # the cohort net (pnl + funding_paid) is exactly what the classifier reads.
+    on = dict(cooloff_on_success_enabled=True, cooloff_on_success_minutes=30,
+              take_profit_pct=400.0, stop_loss_pct=900.0)
+    cfg_no_funding = _config(funding_rate_model="none", **on)
+    cfg_funding = _config(funding_rate_model="fixed_8h", funding_rate_fixed_pct=0.05, **on)
+    kl = _rising_klines(n=140)  # 140 * 5min ≈ 11.6h → crosses the 08:00 funding boundary
+    sig = [_signal()]
+
+    r_off = BacktestEngine().run(cfg_no_funding, sig, kl)
+    r_on = BacktestEngine().run(cfg_funding, sig, kl)
+
+    assert r_off.trades and r_on.trades, "both runs must produce at least one trade"
+    assert len(r_off.trades) == len(r_on.trades)
+
+    # The funding run must actually have charged funding (else the parity check is vacuous).
+    total_funding = sum(abs(t.get("funding_paid") or 0.0) for t in r_on.trades)
+    assert total_funding > 0.0, "funding run applied no funding — test would be vacuous"
+
+    # Per-trade: the funding-excluded cohort net (pnl + funding_paid) is invariant to funding.
+    for t_off, t_on in zip(r_off.trades, r_on.trades):
+        net_off = (t_off["pnl"] or 0.0) + (t_off.get("funding_paid") or 0.0)
+        net_on = (t_on["pnl"] or 0.0) + (t_on.get("funding_paid") or 0.0)
+        assert net_on == pytest.approx(net_off, rel=REL_TOL), (
+            f"cohort net diverged with funding: {net_on} vs {net_off}"
+        )
 
 
-def test_funding_excluded_net_negative_funding_received():
-    """Negative funding (received) is added back the same way; sign parity holds."""
-    from backend.services.cooloff_core import classify_outcome
-    price_pnl, entry_fee, exit_fee, funding_paid = 1.5, 1.0, 1.0, -2.0  # funding received
-    bt_recorded_pnl = price_pnl - entry_fee - exit_fee - funding_paid  # 1.5
-    bt_cohort_net = bt_recorded_pnl + funding_paid  # -0.5
-    live_net = price_pnl - (entry_fee + exit_fee)  # -0.5
-    assert bt_cohort_net == pytest.approx(live_net, rel=1e-9)
-    assert classify_outcome(bt_cohort_net) == classify_outcome(live_net)
+def test_funding_excluded_net_arms_same_tier_regardless_of_funding():
+    """End-to-end: whether a losing cycle ARMS a failure cool-off must not depend on
+    funding (the cool-off decision uses the funding-excluded net). Same losing trade,
+    funding OFF vs ON, both must arm a failure band of the same duration."""
+    base = dict(cooloff_on_failure_enabled=True, cooloff_on_failure_minutes=60,
+                take_profit_pct=900.0, stop_loss_pct=3.0)  # SL hit -> a loss
+    kl = _falling_klines(n=30)
+    sig = [_signal()]
+    r_off = BacktestEngine().run(_config(funding_rate_model="none", **base), sig, kl)
+    r_on = BacktestEngine().run(
+        _config(funding_rate_model="fixed_8h", funding_rate_fixed_pct=0.05, **base), sig, kl,
+    )
+    bands_off = r_off.filter_stats.get("cooloff_bands", [])
+    bands_on = r_on.filter_stats.get("cooloff_bands", [])
+    assert len(bands_off) == len(bands_on) == 1
+    assert bands_off[0]["reason"] == bands_on[0]["reason"] == "failure"
 
 
 def test_band_merge_overlapping():

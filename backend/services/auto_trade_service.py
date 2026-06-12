@@ -395,17 +395,13 @@ class AutoTradeExecutor:
 
     @staticmethod
     def _cooloff_settings_from_config(config: Dict[str, Any]) -> dict:
-        """Extract the 8 cool-off settings columns from an auto-trade config dict."""
-        return {
-            "success_enabled": bool(config.get("cooloff_on_success_enabled")),
-            "success_minutes": config.get("cooloff_on_success_minutes"),
-            "failure_enabled": bool(config.get("cooloff_on_failure_enabled")),
-            "failure_minutes": config.get("cooloff_on_failure_minutes"),
-            "double_success_enabled": bool(config.get("cooloff_on_double_success_enabled")),
-            "double_success_minutes": config.get("cooloff_on_double_success_minutes"),
-            "double_failure_enabled": bool(config.get("cooloff_on_double_failure_enabled")),
-            "double_failure_minutes": config.get("cooloff_on_double_failure_minutes"),
-        }
+        """Extract the 8 cool-off settings columns from an auto-trade config dict.
+
+        Delegates to the shared cooloff_core mappers so the config→columns translation
+        is defined in ONE place (used identically by the classifier + backtest engine).
+        """
+        from backend.services import cooloff_core
+        return cooloff_core.settings_to_columns(cooloff_core.settings_from_config(config))
 
     @staticmethod
     def _cooloff_any_enabled(settings: dict) -> bool:

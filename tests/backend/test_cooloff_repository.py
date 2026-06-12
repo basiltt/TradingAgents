@@ -148,6 +148,44 @@ def test_migration_v62_account_fk_cascades_on_delete(db, event_loop):
     event_loop.run_until_complete(_t())
 
 
+def test_migration_v63_enabled_tier_requires_minutes(db, event_loop):
+    """Migration v63: a DB-level CHECK rejects an ENABLED tier with NULL minutes
+    (defense-in-depth behind the Pydantic validators + frontend gate)."""
+    async def _t():
+        acc = "cooloff-v63-chk-1"
+        await _ensure_account(db, acc)
+        try:
+            # enabled + NULL minutes -> rejected by chk_cooloff_failure_enabled_needs_minutes
+            with pytest.raises(asyncpg.PostgresError):
+                await db.pool.execute(
+                    "INSERT INTO account_cooloff_state (account_id, failure_enabled, failure_minutes) "
+                    "VALUES ($1, true, NULL)", acc,
+                )
+            # enabled + valid minutes -> accepted
+            await db.pool.execute(
+                "INSERT INTO account_cooloff_state (account_id, failure_enabled, failure_minutes) "
+                "VALUES ($1, true, 60)", acc,
+            )
+            # disabled + NULL minutes -> accepted (the common all-OFF disable row)
+            await db.pool.execute(
+                "UPDATE account_cooloff_state SET failure_enabled = false, failure_minutes = NULL "
+                "WHERE account_id = $1", acc,
+            )
+        finally:
+            await _cleanup(db, acc)
+    event_loop.run_until_complete(_t())
+
+
+def test_migration_v63_episode_index_exists(db, event_loop):
+    """Migration v63: the tuned partial index for the classifier's episode query exists."""
+    async def _t():
+        idx = await db.pool.fetchval(
+            "SELECT to_regclass('public.idx_trades_cooloff_episode')"
+        )
+        assert idx is not None
+    event_loop.run_until_complete(_t())
+
+
 # ── upsert_settings: column-scoped, no state clobber ─────────────────────────
 
 def test_upsert_settings_does_not_clobber_state(db, repo, event_loop):

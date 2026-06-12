@@ -24,7 +24,7 @@ export interface CooloffValidationError {
  * checks: (1) the model validator — an ENABLED tier requires a duration; and (2) the
  * field constraint `Field(None, ge=1, le=43200)` — ANY non-null minutes (even on a
  * disabled tier) must be in [1, 43200], or the backend 422s on a field the disabled
- * UI doesn't show. Returns the list of errors (empty = valid). Shared by CoolOffFields
+ * UI doesn't show. Returns the list of errors (empty = valid). Shared by CooloffFields
  * (inline error) and the host pages (Save/Launch disable gate) so they never diverge (DS15).
  */
 export function validateCooloff(config: AutoTradeConfig): CooloffValidationError[] {

@@ -64,6 +64,12 @@ class TradeService:
         itself is wrapped so it can never raise into the (already-committed) close path
         (NFR-001/002, D40). maybe_classify is itself fully fail-open. The task ref is held
         and discarded on done so the task isn't garbage-collected mid-flight.
+
+        NOT a single chokepoint: this is called from each close site as a LATENCY
+        optimization. The authoritative driver is CooloffSweep (60s), which re-classifies
+        every active account regardless of which close path ran — so a future close path
+        that forgets to call this only delays arming by <=60s, it does not skip it. (The
+        gate-time maybe_classify in auto_trade_service is a third backstop.)
         """
         classifier = self._cooloff_classifier
         if classifier is None:

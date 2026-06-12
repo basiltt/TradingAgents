@@ -23,10 +23,27 @@ from typing import Literal, Optional
 # CLAMP_MAX_DAYS: a cooloff_until further out than this is treated as corrupt (D27/D7).
 # DOUBLE_THRESHOLD: consecutive count at which a "double" tier becomes eligible.
 # STREAK_CLAMP: streak counters are bounded here (only >=2 matters; keeps state small).
+# COOLOFF_MIN/MAX_MINUTES: the canonical per-tier duration bounds (1 minute .. 30 days).
+#   Single source of truth for the Python side — referenced by the Pydantic Field
+#   constraints (AutoTradeConfig + BacktestCreateRequest) and the DB CHECK comment, so
+#   the bound can't drift between layers. The TS side mirrors these in cooloffTiers.ts
+#   (cross-language constants can't be shared; keep the two in sync if ever changed).
 STALE_MIN_MINUTES = 1560  # 26 hours
 CLAMP_MAX_DAYS = 31
 DOUBLE_THRESHOLD = 2
 STREAK_CLAMP = 2
+COOLOFF_MIN_MINUTES = 1
+COOLOFF_MAX_MINUTES = 43200  # 30 days
+
+# The four tiers, as (config_enabled_key, config_minutes_key, settings_enabled_attr,
+# settings_minutes_attr). Single source for the config→CooloffSettings mapping so the
+# live gate, scheduled writer, classifier, and backtest engine can't drift (FR-013).
+_TIER_FIELD_MAP = (
+    ("cooloff_on_success_enabled", "cooloff_on_success_minutes", "success_enabled", "success_minutes"),
+    ("cooloff_on_failure_enabled", "cooloff_on_failure_minutes", "failure_enabled", "failure_minutes"),
+    ("cooloff_on_double_success_enabled", "cooloff_on_double_success_minutes", "double_success_enabled", "double_success_minutes"),
+    ("cooloff_on_double_failure_enabled", "cooloff_on_double_failure_minutes", "double_failure_enabled", "double_failure_minutes"),
+)
 
 Outcome = Literal["success", "failure", "neutral"]
 CooloffReason = Literal["success", "failure", "double_success", "double_failure"]
@@ -92,6 +109,36 @@ def any_tier_enabled(settings: CooloffSettings) -> bool:
         or settings.double_success_enabled
         or settings.double_failure_enabled
     )
+
+
+def settings_from_config(config: dict) -> CooloffSettings:
+    """Build CooloffSettings from an AutoTradeConfig-shaped dict (the cooloff_on_* keys).
+
+    Single shared mapper used by the live gate (auto_trade_service), the live classifier,
+    and the backtest engine, so the config→settings translation can't drift across the
+    four call sites (FR-013, DP-cooloff). Missing enabled keys default False; missing
+    minutes default None. Driven by _TIER_FIELD_MAP so adding a tier touches one place.
+    """
+    kwargs: dict = {}
+    for enabled_key, minutes_key, enabled_attr, minutes_attr in _TIER_FIELD_MAP:
+        kwargs[enabled_attr] = bool(config.get(enabled_key))
+        kwargs[minutes_attr] = config.get(minutes_key)
+    return CooloffSettings(**kwargs)
+
+
+def settings_to_columns(settings: CooloffSettings) -> dict:
+    """Map CooloffSettings → the account_cooloff_state column dict (bare names) used by
+    the repository upsert + the scheduled-scan writer, so both write identical shapes."""
+    return {
+        "success_enabled": settings.success_enabled,
+        "success_minutes": settings.success_minutes,
+        "failure_enabled": settings.failure_enabled,
+        "failure_minutes": settings.failure_minutes,
+        "double_success_enabled": settings.double_success_enabled,
+        "double_success_minutes": settings.double_success_minutes,
+        "double_failure_enabled": settings.double_failure_enabled,
+        "double_failure_minutes": settings.double_failure_minutes,
+    }
 
 
 def _clamp(n: int) -> int:

@@ -88,16 +88,14 @@ class ScanSchedulerService:
             account_id = cfg.get("account_id")
             if not account_id:
                 continue
-            settings = {
-                "success_enabled": bool(cfg.get("cooloff_on_success_enabled")),
-                "success_minutes": cfg.get("cooloff_on_success_minutes"),
-                "failure_enabled": bool(cfg.get("cooloff_on_failure_enabled")),
-                "failure_minutes": cfg.get("cooloff_on_failure_minutes"),
-                "double_success_enabled": bool(cfg.get("cooloff_on_double_success_enabled")),
-                "double_success_minutes": cfg.get("cooloff_on_double_success_minutes"),
-                "double_failure_enabled": bool(cfg.get("cooloff_on_double_failure_enabled")),
-                "double_failure_minutes": cfg.get("cooloff_on_double_failure_minutes"),
-            }
+            # Shared mapper (cooloff_core) so the scheduled writer and the live gate
+            # produce byte-identical column dicts from the same config keys.
+            from backend.services import cooloff_core
+            settings = cooloff_core.settings_to_columns(cooloff_core.settings_from_config(cfg))
+            # NOTE: intentionally NO all-OFF clobber guard here (unlike the manual prepass
+            # in auto_trade_service). A scheduled save is the authoritative, durable policy
+            # declaration, so all-OFF MUST persist (it's how a user disables the feature).
+            # Do not add a guard here or disabling cool-off on the scheduled surface breaks.
             try:
                 await repo.upsert_settings(account_id, settings)
             except Exception:

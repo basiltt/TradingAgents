@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { useState } from "react";
-import { CoolOffFields } from "../CoolOffFields";
+import { CooloffFields } from "../CooloffFields";
 import type { AutoTradeConfig } from "@/api/client";
 
 function baseConfig(overrides: Partial<AutoTradeConfig> = {}): AutoTradeConfig {
@@ -21,7 +21,7 @@ function baseConfig(overrides: Partial<AutoTradeConfig> = {}): AutoTradeConfig {
 
 /**
  * Host that owns config state and merges partial onChange patches — mirrors how
- * AutoTradeSection drives CoolOffFields, so unit conversion and enable/default
+ * AutoTradeSection drives CooloffFields, so unit conversion and enable/default
  * behavior are exercised through a real controlled-component round trip.
  */
 function Harness({
@@ -33,7 +33,7 @@ function Harness({
 }) {
   const [config, setConfig] = useState<AutoTradeConfig>(baseConfig(initial));
   return (
-    <CoolOffFields
+    <CooloffFields
       config={config}
       onChange={(patch) => {
         onChangeSpy?.(patch);
@@ -43,7 +43,7 @@ function Harness({
   );
 }
 
-describe("CoolOffFields", () => {
+describe("CooloffFields", () => {
   it("renders all four tiers grouped into Single trade and Win/loss streak", () => {
     render(<Harness />);
     expect(screen.getByText("Single trade")).toBeInTheDocument();

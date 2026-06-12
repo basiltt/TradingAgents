@@ -64,6 +64,7 @@ def db():
     mock_db.list_accounts = AsyncMock(side_effect=_list_accounts)
     mock_db.update_account = AsyncMock(side_effect=_update_account)
     mock_db.soft_delete_account = AsyncMock(side_effect=_soft_delete)
+    mock_db.clear_account_cooloff_state = AsyncMock(return_value=None)
     mock_db.get_account_credentials = AsyncMock(side_effect=_get_credentials)
     mock_db.rotate_account_credentials = AsyncMock(return_value=True)
     mock_db.insert_closed_pnl_records = AsyncMock(return_value=0)
@@ -147,6 +148,27 @@ async def test_delete_account(svc):
     assert await svc.delete_account(account["id"]) is True
     assert await svc.get_account(account["id"]) is None
     assert await svc.list_accounts() == []
+    # Cool-off state is cleared on soft-delete (the FK CASCADE can't fire on a soft
+    # delete), so a future reactivation can't resurrect a stale streak / active pause.
+    svc._db.clear_account_cooloff_state.assert_awaited_with(account["id"])
+
+
+@pytest.mark.asyncio
+async def test_deactivate_account_clears_cooloff_state(svc):
+    with patch("backend.services.accounts_service.BybitClient") as MockClient:
+        instance = MockClient.return_value
+        instance.test_connection = AsyncMock(return_value={"success": True, "uid": "u1", "error": None})
+        instance.close = AsyncMock()
+        account = await svc.create_account("Deact", "demo", "apikey12345678", "secret12345678")
+
+    svc._db.clear_account_cooloff_state.reset_mock()
+    await svc.update_account(account["id"], is_active=False)
+    svc._db.clear_account_cooloff_state.assert_awaited_once_with(account["id"])
+
+    # Re-activating must NOT clear (no resurrection concern; nothing to clear).
+    svc._db.clear_account_cooloff_state.reset_mock()
+    await svc.update_account(account["id"], is_active=True)
+    svc._db.clear_account_cooloff_state.assert_not_awaited()
 
 
 @pytest.mark.asyncio

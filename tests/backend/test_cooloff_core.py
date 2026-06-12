@@ -15,12 +15,16 @@ from backend.services.cooloff_core import (
     CLAMP_MAX_DAYS,
     DOUBLE_THRESHOLD,
     STREAK_CLAMP,
+    COOLOFF_MIN_MINUTES,
+    COOLOFF_MAX_MINUTES,
     ArmDecision,
     CooloffSettings,
     StreakState,
     any_tier_enabled,
     classify_outcome,
     decide,
+    settings_from_config,
+    settings_to_columns,
 )
 
 
@@ -31,6 +35,38 @@ def test_module_constants():
     assert CLAMP_MAX_DAYS == 31
     assert DOUBLE_THRESHOLD == 2
     assert STREAK_CLAMP == 2
+    assert COOLOFF_MIN_MINUTES == 1
+    assert COOLOFF_MAX_MINUTES == 43200
+
+
+# ── shared mappers (config <-> settings <-> columns) ────────────────────────
+
+def test_settings_from_config_roundtrip_and_defaults():
+    cfg = {
+        "cooloff_on_success_enabled": True, "cooloff_on_success_minutes": 30,
+        "cooloff_on_double_failure_enabled": True, "cooloff_on_double_failure_minutes": 120,
+        # failure + double_success omitted entirely -> default off/None
+    }
+    s = settings_from_config(cfg)
+    assert (s.success_enabled, s.success_minutes) == (True, 30)
+    assert (s.failure_enabled, s.failure_minutes) == (False, None)
+    assert (s.double_success_enabled, s.double_success_minutes) == (False, None)
+    assert (s.double_failure_enabled, s.double_failure_minutes) == (True, 120)
+    cols = settings_to_columns(s)
+    assert cols["success_minutes"] == 30 and cols["double_failure_minutes"] == 120
+    assert cols["failure_enabled"] is False and cols["failure_minutes"] is None
+
+
+def test_setting_cols_and_keys_agree_with_mapper():
+    """The repository's _SETTING_COLS, the classifier's _SETTING_KEYS, and the shared
+    settings_to_columns output must all carry the SAME 8 column names — a single point
+    of drift if a tier is ever added/renamed."""
+    from backend.services.cooloff_repository import _SETTING_COLS
+    from backend.services.cooloff_classifier import _SETTING_KEYS
+    mapper_keys = set(settings_to_columns(settings_from_config({})).keys())
+    assert set(_SETTING_COLS) == mapper_keys
+    assert set(_SETTING_KEYS) == mapper_keys
+    assert tuple(_SETTING_COLS) == tuple(_SETTING_KEYS)  # same order too
 
 
 # ── classify_outcome (FR-005) ───────────────────────────────────────────────

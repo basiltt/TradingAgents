@@ -32,9 +32,9 @@ interface Props {
  * cooling. Reason + a client-ticked countdown anchored on the server's
  * cooloff_remaining_seconds; a Resume-now button calls the clear endpoint (FR-022).
  * Rendered ONLY by AutoTradeSection when an account_id is present — never inside
- * CoolOffFields (which the backtest form reuses without an account).
+ * CooloffFields (which the backtest form reuses without an account).
  */
-export function CoolOffBadge({ accountId, tiersEnabled }: Props) {
+export function CooloffBadge({ accountId, tiersEnabled }: Props) {
   const queryClient = useQueryClient();
   const { data } = useQuery<CooloffStatus>({
     queryKey: ["account-cooloff", accountId],

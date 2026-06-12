@@ -298,17 +298,10 @@ class BacktestEngine:
 
         # ── Cool Off Time (sim) — build the settings + enabled flag ONCE. All cool-off
         # code below is gated on state.cooloff_enabled so an OFF run is byte-identical.
-        from backend.services.cooloff_core import CooloffSettings as _CoolSettings
-        self._cooloff_settings = _CoolSettings(
-            success_enabled=bool(config.get("cooloff_on_success_enabled")),
-            success_minutes=config.get("cooloff_on_success_minutes"),
-            failure_enabled=bool(config.get("cooloff_on_failure_enabled")),
-            failure_minutes=config.get("cooloff_on_failure_minutes"),
-            double_success_enabled=bool(config.get("cooloff_on_double_success_enabled")),
-            double_success_minutes=config.get("cooloff_on_double_success_minutes"),
-            double_failure_enabled=bool(config.get("cooloff_on_double_failure_enabled")),
-            double_failure_minutes=config.get("cooloff_on_double_failure_minutes"),
-        )
+        from backend.services import cooloff_core
+        # Shared config→settings mapper so the backtest reads the cool-off config
+        # identically to the live gate + classifier (no drift across engines).
+        self._cooloff_settings = cooloff_core.settings_from_config(config)
         state.cooloff_enabled = (
             self._cooloff_settings.success_enabled or self._cooloff_settings.failure_enabled
             or self._cooloff_settings.double_success_enabled

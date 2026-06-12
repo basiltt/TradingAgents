@@ -10,7 +10,7 @@ vi.mock("@/api/client", () => ({
 }));
 
 import { accountsApi, type CooloffStatus } from "@/api/client";
-import { CoolOffBadge } from "../CoolOffBadge";
+import { CooloffBadge } from "../CooloffBadge";
 
 const getStatus = accountsApi.getCooloffStatus as unknown as ReturnType<typeof vi.fn>;
 const clearCooloff = accountsApi.clearCooloff as unknown as ReturnType<typeof vi.fn>;
@@ -34,12 +34,12 @@ function renderBadge(tiersEnabled = true, accountId = "acct-1") {
   });
   return render(
     <QueryClientProvider client={client}>
-      <CoolOffBadge accountId={accountId} tiersEnabled={tiersEnabled} />
+      <CooloffBadge accountId={accountId} tiersEnabled={tiersEnabled} />
     </QueryClientProvider>,
   );
 }
 
-describe("CoolOffBadge", () => {
+describe("CooloffBadge", () => {
   beforeEach(() => {
     getStatus.mockReset();
     clearCooloff.mockReset();
@@ -116,7 +116,7 @@ describe("CoolOffBadge", () => {
     });
     render(
       <QueryClientProvider client={client}>
-        <CoolOffBadge accountId="acct-1" tiersEnabled />
+        <CooloffBadge accountId="acct-1" tiersEnabled />
       </QueryClientProvider>,
     );
     const badge = await screen.findByRole("status");
@@ -179,7 +179,7 @@ describe("CoolOffBadge", () => {
     try {
       render(
         <QueryClientProvider client={client}>
-          <CoolOffBadge accountId="acct-1" tiersEnabled />
+          <CooloffBadge accountId="acct-1" tiersEnabled />
         </QueryClientProvider>,
       );
       // Flush the resolved query + mount the countdown.
@@ -248,7 +248,7 @@ describe("CoolOffBadge", () => {
     try {
       render(
         <QueryClientProvider client={client}>
-          <CoolOffBadge accountId="acct-1" tiersEnabled />
+          <CooloffBadge accountId="acct-1" tiersEnabled />
         </QueryClientProvider>,
       );
       await act(async () => {

@@ -14,6 +14,8 @@ except ImportError:
     _croniter_cls = None
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.services.cooloff_core import COOLOFF_MIN_MINUTES, COOLOFF_MAX_MINUTES
+
 TICKER_RE = re.compile(r"^[A-Z0-9.\-^]{1,15}$")
 CRYPTO_TICKER_RE = re.compile(r"^[A-Z0-9]{2,20}$")
 MODEL_ID_RE = re.compile(r"^[a-zA-Z0-9._:/-]{1,100}$")
@@ -485,13 +487,13 @@ class AutoTradeConfig(BaseModel):
     # cycle's net realized P&L sign decides success/failure; an enabled tier then pauses
     # new auto-entries for the configured minutes. Account-specific; live + backtest.
     cooloff_on_success_enabled: bool = False
-    cooloff_on_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_success_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
     cooloff_on_failure_enabled: bool = False
-    cooloff_on_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_failure_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
     cooloff_on_double_success_enabled: bool = False
-    cooloff_on_double_success_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_success_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
     cooloff_on_double_failure_enabled: bool = False
-    cooloff_on_double_failure_minutes: Optional[int] = Field(None, ge=1, le=43200)
+    cooloff_on_double_failure_minutes: Optional[int] = Field(None, ge=COOLOFF_MIN_MINUTES, le=COOLOFF_MAX_MINUTES)
 
     # ── Regime Multi-Strategy (3 optional features, all default-off) ──
     # F1 — Regime/Session Entry Filter

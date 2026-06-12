@@ -566,6 +566,10 @@ class AccountsService:
         await self._db.update_account(account_id, **fields)
         if is_active is False:
             await self.discard_client(account_id)
+            # Deactivating clears any cool-off state so a later reactivation doesn't
+            # resurrect a stale streak / phantom active cool-off (the FK CASCADE never
+            # fires — accounts are only soft-deleted, never hard-deleted).
+            await self._db.clear_account_cooloff_state(account_id)
         return await self._db.get_account(account_id)
 
     async def rotate_credentials(
@@ -602,6 +606,10 @@ class AccountsService:
             await self.discard_client(account_id)
             if self._ws_manager:
                 asyncio.ensure_future(self._ws_manager.stop_account(account_id))
+            # Drop any Cool Off Time state. Soft-delete is an UPDATE (not a DELETE), so
+            # the v62 ON DELETE CASCADE never fires; without this the row lingers and a
+            # reactivated account would resurrect a stale streak / active cool-off.
+            await self._db.clear_account_cooloff_state(account_id)
             try:
                 modified_ids = await self._db.remove_account_from_scheduled_scans(account_id)
                 if modified_ids:

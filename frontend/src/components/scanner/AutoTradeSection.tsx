@@ -12,8 +12,8 @@ import { cn } from "@/lib/utils";
 import { clampNumber, clampNumberOrNull } from "@/lib/number";
 import { NeuSwitch } from "@/design-system/neumorphism";
 import { RegimeStrategyFields } from "./RegimeStrategyFields";
-import { CoolOffFields } from "./CoolOffFields";
-import { CoolOffBadge } from "./CoolOffBadge";
+import { CooloffFields } from "./CooloffFields";
+import { CooloffBadge } from "./CooloffBadge";
 
 const STORAGE_KEY = "tradingagents_auto_trade_configs";
 
@@ -324,7 +324,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
 
         <div className="ml-auto flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           {config.account_id ? (
-            <CoolOffBadge
+            <CooloffBadge
               accountId={config.account_id}
               tiersEnabled={
                 !!config.cooloff_on_success_enabled || !!config.cooloff_on_failure_enabled ||
@@ -845,7 +845,7 @@ function AutoTradeCard({ config, index, accounts, accountsLoading, onChange, onD
         </div>
 
         <RegimeStrategyFields config={config} onChange={onChange} />
-        <CoolOffFields config={config} onChange={onChange} />
+        <CooloffFields config={config} onChange={onChange} />
       </div>
     </article>
   );

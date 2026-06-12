@@ -46,11 +46,13 @@ def test_migration_versions_contiguous_and_unique():
     # v58 — sealed-day manifest columns on kline_cache_coverage (backtest perf RC-3 fix).
     assert 58 in by_ver and callable(by_ver[58])
     # v61 — account_cooloff_state table (Cool Off Time, string DDL); v62 — its FK made
-    # ON DELETE CASCADE (callable: a DO $$ block would be ';'-split by the runner).
-    # v62 is the current head of the migration list.
+    # ON DELETE CASCADE; v63 — tuned episode index + enabled-needs-minutes CHECKs (both
+    # callables: DO $$ / multi-statement DDL would be ';'-split by the runner).
+    # v63 is the current head of the migration list.
     assert 61 in by_ver and isinstance(by_ver[61], str)
     assert 62 in by_ver and callable(by_ver[62])
-    assert max(versions) == 62
+    assert 63 in by_ver and callable(by_ver[63])
+    assert max(versions) == 63
 
 
 async def _apply_all(conn):
