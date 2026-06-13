@@ -16,6 +16,24 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
+
+def _signal_skew_from_counts(*, short: int, long: int, window: int) -> Dict[str, Any]:
+    """Pure reduction of short/long signal counts → skew dict (FR-2.3).
+
+    Account-agnostic; returns percentages of the sampled (short+long) total.
+    Kept module-level and side-effect-free so it is unit-testable without a DB.
+    """
+    sample_n = int(short) + int(long)
+    if sample_n <= 0:
+        return {"short_pct": 0.0, "long_pct": 0.0, "sample_n": 0, "window": int(window)}
+    return {
+        "short_pct": short / sample_n * 100.0,
+        "long_pct": long / sample_n * 100.0,
+        "sample_n": sample_n,
+        "window": int(window),
+    }
+
+
 # ── Schema & Migrations (identical to persistence.py) ──────────────────
 
 _SCHEMA_V1 = """
@@ -1706,6 +1724,10 @@ CREATE TABLE IF NOT EXISTS account_cooloff_state (
     # surface it (a silent 'failed' was undebuggable). Idempotent; needed for DBs
     # already past v52 (where mcp_sweep_jobs was created) on upgrade.
     (64, "ALTER TABLE mcp_sweep_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"),
+    # Index supports get_recent_signal_skew()'s ORDER BY completed_at DESC scan
+    # (regime-context injection). Partial index on actionable rows keeps it small.
+    (65, "CREATE INDEX IF NOT EXISTS idx_scan_results_completed_at "
+         "ON scan_results(completed_at DESC) WHERE ABS(score) >= 6"),
 ]
 
 
@@ -2206,6 +2228,35 @@ class AsyncAnalysisDB:
             _analysis_price,
         )
         return row["id"] if row else None
+
+    async def get_recent_signal_skew(
+        self,
+        *,
+        exclude_scan_id: Optional[str] = None,
+        window: int = 200,
+        min_abs_score: int = 6,
+    ) -> Dict[str, Any]:
+        """Account-agnostic recent-signal short/long skew over scan_results (FR-2.3).
+
+        Looks at the most recent ``window`` actionable rows (``ABS(score) >=
+        min_abs_score``), optionally excluding the in-flight ``exclude_scan_id``,
+        and returns ``{short_pct, long_pct, sample_n, window}``. ``scan_results``
+        has no ``account_id`` column, so this is account-agnostic by construction.
+        Negative score = short signal, positive = long.
+        """
+        rows = await self.pool.fetch(
+            "SELECT score FROM scan_results "
+            "WHERE ABS(score) >= $1 "
+            "  AND ($2::text IS NULL OR scan_id <> $2) "
+            "ORDER BY completed_at DESC NULLS LAST, id DESC "
+            "LIMIT $3",
+            min_abs_score,
+            exclude_scan_id,
+            window,
+        )
+        short = sum(1 for r in rows if (r["score"] or 0) < 0)
+        long = sum(1 for r in rows if (r["score"] or 0) > 0)
+        return _signal_skew_from_counts(short=short, long=long, window=window)
 
     async def get_scan(self, scan_id: str) -> Optional[Dict[str, Any]]:
         """Return a scan with its results (ordered by |score|), or None if not found.
