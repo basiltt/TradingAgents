@@ -88,8 +88,6 @@ describe("BacktestConfigForm", () => {
   it("toggling a close-rule switch off submits null (not 0) for its field", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    // Open the collapsed Close Rules section.
-    fireEvent.click(screen.getByText("Close Rules"));
     // The "Trailing profit stop" toggle seeds 2.0 when on, then null when off.
     const toggle = screen.getByText("Trailing profit stop");
     fireEvent.click(toggle); // on -> 2.0
@@ -97,6 +95,23 @@ describe("BacktestConfigForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].trailing_profit_pct).toBeNull();
+  });
+
+  it("keeps the duration-limits group open while typing a leading 0 (no reveal-gate collapse)", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    // Enable the group (seeds breakeven 4 / force-close 8, both fields revealed).
+    fireEvent.click(screen.getByText("Trade duration limits"));
+    const breakeven = screen.getByLabelText("Close all at breakeven after (hours)") as HTMLInputElement;
+    const forceClose = screen.getByLabelText("Force close after (hours)") as HTMLInputElement;
+    // Clear force-close to empty (null) so ONLY breakeven keeps the group open, then
+    // type a leading "0" into breakeven. Under the reverted `> 0` gate this collapses
+    // (0 is not > 0, force-close is null) and the inputs unmount; under the shipped
+    // `!= null` gate the group stays open mid-edit. Clearing force-close first is what
+    // makes this discriminate the two gates (a non-zero sibling would mask the bug).
+    fireEvent.change(forceClose, { target: { value: "" } });
+    fireEvent.change(breakeven, { target: { value: "0" } });
+    expect(screen.getByLabelText("Close all at breakeven after (hours)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Force close after (hours)")).toBeInTheDocument();
   });
 
   it("shows a schedule-required error when schedule mode has no schedule", async () => {
@@ -354,28 +369,23 @@ describe("BacktestConfigForm", () => {
     expect((screen.getByLabelText("Leverage") as HTMLInputElement).value).toBe("20");
   });
 
-  it("auto-opens a collapsed section that contains a validation error", async () => {
+  it("reveals a validation error on an out-of-range close rule after submit", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    // Close Rules starts collapsed; put an out-of-range value in it, then submit.
-    fireEvent.click(screen.getByText("Close Rules")); // open
+    // Sections are always open now; put an out-of-range value in Close Rules and submit.
     const dd = screen.getByLabelText("Max drawdown %") as HTMLInputElement;
     fireEvent.change(dd, { target: { value: "500" } }); // > max 100
-    fireEvent.click(screen.getByText("Close Rules")); // collapse again
-    expect(screen.queryByLabelText("Max drawdown %")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
-    // The section should auto-reveal so the error is visible.
+    // The field stays visible and its error surfaces in the summary.
     await waitFor(() => expect(screen.getByLabelText("Max drawdown %")).toBeInTheDocument());
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("shows a visible summary and opens target goal when close-on-profit needs a goal value", async () => {
+  it("shows a visible summary when close-on-profit needs a goal value", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
 
-    fireEvent.click(screen.getByText("Close Rules"));
     fireEvent.click(screen.getByText("Close and re-trade on profit"));
-    expect(screen.queryByLabelText("Goal Value")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
 
@@ -398,7 +408,6 @@ describe("BacktestConfigForm", () => {
   it("parses a comma-separated symbol blacklist into an uppercased array", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    fireEvent.click(screen.getByText("Symbol Filters")); // expand section
     const field = screen.getByLabelText("Blacklist (never these)") as HTMLInputElement;
     fireEvent.change(field, { target: { value: "btcusdt, eth usdt , solusdt" } });
     fireEvent.blur(field);
@@ -415,7 +424,6 @@ describe("BacktestConfigForm", () => {
   it("deduplicates and uppercases symbols in the blacklist", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} />);
-    fireEvent.click(screen.getByText("Symbol Filters"));
     const field = screen.getByLabelText("Blacklist (never these)") as HTMLInputElement;
     // Duplicates (case-insensitive) must collapse so the 200-cap counts uniques.
     fireEvent.change(field, { target: { value: "BTC, btc, ETH, eth, BTC" } });
@@ -427,18 +435,31 @@ describe("BacktestConfigForm", () => {
 
   it("exposes the advanced engine-level and target-goal config sections", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    // Target Goal lives on the Risk & Exits tab; Advanced lives on Filters & Advanced.
+    // keepMounted keeps both in the DOM, so headings resolve without switching tabs.
     expect(screen.getByText("Advanced (engine-level)")).toBeInTheDocument();
     expect(screen.getByText("Target Goal")).toBeInTheDocument();
-    // Expand advanced section and confirm its fields exist.
-    fireEvent.click(screen.getByText("Advanced (engine-level)"));
+    // Adaptive-blacklist dependent fields are HIDDEN until the toggle is enabled.
+    expect(screen.queryByLabelText("Min trades")).toBeNull();
+    // Enabling the blacklist reveals them.
+    fireEvent.click(screen.getByText("Enable adaptive blacklist"));
     expect(screen.getByLabelText("Min trades")).toBeInTheDocument();
     expect(screen.getByLabelText("Max win rate %")).toBeInTheDocument();
     expect(screen.getByLabelText("Lookback (hours)")).toBeInTheDocument();
   });
 
+  it("hides cool-off duration inputs until their tier is enabled", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    // No cool-off minutes input visible by default (all tiers off).
+    expect(screen.queryByText("Win cool off (min)")).toBeNull();
+    // Enabling a tier reveals an inline minutes input seeded with a default.
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    const inputs = screen.getAllByRole("spinbutton");
+    expect(inputs.length).toBeGreaterThan(0);
+  });
+
   it("exposes the regime section and shows the F2-long danger note when enabled", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
-    fireEvent.click(screen.getByText("Market Regime & Strategy (F1/F2/F3)"));
     // F3 cohort select is uniquely labeled; confirms the section rendered.
     expect(screen.getByLabelText("Strategy cohort (F3)")).toBeInTheDocument();
     // The negative-expectancy note appears only after enabling the long side. The
@@ -507,5 +528,165 @@ describe("BacktestConfigForm", () => {
     await waitFor(() =>
       expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("25000"),
     );
+  });
+
+  it("opening with a seed does NOT overwrite the user's saved draft on mount", async () => {
+    // A user builds a draft (auto-saved) then leaves without submitting.
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Initial Balance ($)"), { target: { value: "73210" } });
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("tradingagents_backtest_draft") ?? "{}").starting_capital).toBe("73210"),
+    );
+    unmount();
+    // They open a "Backtest these settings" seed. The mount must NOT clobber the draft.
+    const seeded = render(<BacktestConfigForm onSubmit={vi.fn()} seed={{ starting_capital: 25000 }} />);
+    // Draft still holds the user's value, not the seed (regression guard for the
+    // former mount-time tab-persist effect that overwrote it).
+    expect(JSON.parse(localStorage.getItem("tradingagents_backtest_draft") ?? "{}").starting_capital).toBe("73210");
+    seeded.unmount();
+    // Reopening with no seed restores the user's draft, proving it survived.
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Initial Balance ($)") as HTMLInputElement).value).toBe("73210"),
+    );
+  });
+
+  it("disabling a cool-off tier submits null minutes (no phantom seeded value)", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enable (seeds 60) then disable the same tier.
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.cooloff_on_success_enabled).toBe(false);
+    expect(req.cooloff_on_success_minutes).toBeNull();
+  });
+
+  it("disabling adaptive blacklist resets its fields so an invalid value can't soft-lock submit", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enable, type an out-of-range value (min is 1), then disable — the field hides.
+    fireEvent.click(screen.getByText("Enable adaptive blacklist"));
+    fireEvent.change(screen.getByLabelText("Min trades"), { target: { value: "0" } });
+    fireEvent.click(screen.getByText("Enable adaptive blacklist"));
+    // The disabled group's field was reset to its default, so submit is not blocked.
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    expect(req.adaptive_blacklist_enabled).toBe(false);
+    expect(req.adaptive_blacklist_min_trades).toBe(5);
+  });
+
+  it("sanitizes an out-of-range adaptive-blacklist value from a disabled seed (no load-time soft-lock)", async () => {
+    const onSubmit = vi.fn();
+    // A seed/draft carrying a disabled feature with an out-of-range hidden value
+    // (min is 1) must not block submit from a control that is not in the DOM.
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        seed={{ adaptive_blacklist_enabled: false, adaptive_blacklist_min_trades: 0 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    // The invalid hidden value was normalized to its default on load.
+    expect(onSubmit.mock.calls[0][0].adaptive_blacklist_min_trades).toBe(5);
+  });
+
+  it("sanitizes an out-of-range cool-off value from a disabled seed (no load-time soft-lock)", async () => {
+    const onSubmit = vi.fn();
+    // A disabled cool-off tier carrying an out-of-range leftover minutes (>43200)
+    // must not block submit from its hidden input.
+    render(
+      <BacktestConfigForm
+        onSubmit={onSubmit}
+        seed={{ cooloff_on_success_enabled: false, cooloff_on_success_minutes: 99999 }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].cooloff_on_success_minutes).toBeNull();
+  });
+
+  it("shows a validation error on an enabled Close-on-profit toggle that needs a goal value", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enabling close-on-profit without a target goal triggers a cross-field refine.
+    // The ToggleNumberField must surface that error inline (it previously swallowed it).
+    fireEvent.click(screen.getByText("Close and re-trade on profit"));
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("backtest-validation-summary")).toHaveTextContent(
+        /Close on Profit requires a Goal Value/i,
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("renders four lifecycle tabs and defaults to Setup", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: /setup/i })).toHaveAttribute("data-active");
+    expect(screen.getByRole("tab", { name: /strategy/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /risk & exits/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /filters & advanced/i })).toBeInTheDocument();
+  });
+
+  it("switches tabs on click and persists the active tab to the draft", async () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: /risk & exits/i }));
+    await waitFor(() => {
+      const raw = localStorage.getItem("tradingagents_backtest_draft");
+      expect(JSON.parse(raw ?? "{}").active_tab).toBe("risk");
+    });
+  });
+
+  it("restores the active tab from a saved draft on remount", async () => {
+    const { unmount } = render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: /strategy/i }));
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("tradingagents_backtest_draft") ?? "{}").active_tab).toBe("strategy"),
+    );
+    unmount();
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /strategy/i })).toHaveAttribute("data-active"),
+    );
+  });
+
+  it("auto-switches to the errored tab and badges it on failed submit", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Start on Setup. Put an invalid value on the Strategy tab's Leverage (min 1, max 125).
+    // keepMounted means the Strategy field is reachable without switching first.
+    fireEvent.change(screen.getByLabelText("Leverage"), { target: { value: "9999" } });
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    // Auto-switches to Strategy.
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /strategy/i })).toHaveAttribute("data-active"),
+    );
+    // Strategy tab shows an error count badge.
+    expect(screen.getByRole("tab", { name: /strategy/i })).toHaveTextContent(/1/);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("submits the same payload regardless of which tab is active (keepMounted invariance)", async () => {
+    const onSubmit = vi.fn();
+    render(<BacktestConfigForm onSubmit={onSubmit} />);
+    // Enable a cool-off tier on the Filters tab (its minutes seeds to 60).
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    // Switch back to Setup so a non-owning tab is active at submit time.
+    fireEvent.click(screen.getByRole("tab", { name: /setup/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run backtest/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const req = onSubmit.mock.calls[0][0];
+    // The enabled tier + its seeded duration both made it into the payload.
+    expect(req.cooloff_on_success_enabled).toBe(true);
+    expect(req.cooloff_on_success_minutes).toBe(60);
+    // Untouched defaults are intact (proves no field was dropped by tab hiding).
+    expect(req.leverage).toBe(20);
+    expect(req.simulation_interval).toBe("5m");
+    expect(req.max_drawdown_pct).toBe(100);
   });
 });

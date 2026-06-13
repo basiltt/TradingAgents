@@ -353,14 +353,30 @@ Each phase keeps the form working and tests green (incremental, low-risk):
 | Draft from before redesign lacks `active_tab` | Falls back to `setup`; additive field only. |
 | Large refactor regresses untested behavior | Phase 1 establishes green baseline; every phase re-runs tests; payload invariance pins semantics. |
 
-## Open Decisions (defer to plan, sensible defaults chosen)
+## Resolved Decisions (settled during implementation + review)
 
-- **Cool-off toggle-off value handling:** when a cool-off toggle is switched off,
-  leave the `_minutes` value in place (hidden) vs. null it. Default: **leave in
-  place** so re-enabling restores the prior value within a session; the `_enabled`
-  boolean is what the backend honors, so a stale minutes value is harmless.
-- **Badge styling:** exact badge size/color — defer to implementation, using the
-  existing `--neu-danger` token and the `badge.tsx` primitive if it fits.
+- **Cool-off toggle-off value handling — RESOLVED: null the `_minutes` on disable.**
+  The original draft proposed leaving the value in place. Implementation + adversarial
+  review changed this: leaving a stale value in place (a) diverged from the
+  pre-redesign form, which submitted `null` for an untouched disabled tier, and (b)
+  could carry an out-of-range value into a hidden control and block submit. Nulling on
+  disable is inert for results — the backtest engine reads `_minutes` only when the
+  tier is enabled (`cooloff_core.decide` gates on `*_enabled`). The same applies to
+  the adaptive-blacklist deps, which reset to their valid defaults on disable. Re-
+  enabling re-seeds a sensible default.
+- **`normalizeDisabledGroups` (added during review).** A load-time sanitizer applied
+  to every config entry path that can carry external/stored values (seed, restored
+  draft, "Reference"/"Optimized" presets). It nulls disabled cool-off minutes and
+  resets disabled adaptive-blacklist deps to valid defaults, so a stale/out-of-range
+  value behind a disable toggle can never soft-lock submit from a control that isn't
+  in the DOM. Because the engine ignores these fields when their feature is disabled,
+  the normalization changes no backtest behavior. This is the single exception to the
+  strict payload-invariance claim below: literal bytes may differ for *disabled*
+  groups carrying invalid leftovers, but the result is semantically identical and the
+  invariance test holds for all enabled/active fields.
+- **Badge styling:** uses the existing `--neu-danger` token with `text-white`
+  (the codebase's established on-danger idiom); rendered as an inline count span on
+  each tab trigger.
 
 ## Success Criteria
 
@@ -369,8 +385,10 @@ Each phase keeps the form working and tests green (incremental, low-risk):
   blank dead inputs; each toggle is visually bound to its value.
 - Invalid submit routes the user to the errored tab with a visible badge.
 - `tsc --noEmit`, the test suite, and `npm run build` all pass.
-- `toCreateRequest` output is unchanged for identical inputs (payload invariance
-  test passes).
+- `toCreateRequest` output is unchanged for identical inputs to all enabled/active
+  fields (payload invariance test passes). The only deliberate exception is
+  `normalizeDisabledGroups` sanitizing invalid leftovers behind disable toggles,
+  which the engine ignores (see Resolved Decisions).
 - `BacktestConfigForm.tsx` is a thin shell; tab content lives in focused,
   independently-readable components.
 
