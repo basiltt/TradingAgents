@@ -97,6 +97,18 @@ describe("BacktestConfigForm", () => {
     expect(onSubmit.mock.calls[0][0].trailing_profit_pct).toBeNull();
   });
 
+  it("keeps the duration-limits group open while typing a leading 0 (no reveal-gate collapse)", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    // Enable the group (seeds breakeven 4 / force-close 8, both fields revealed).
+    fireEvent.click(screen.getByText("Trade duration limits"));
+    const breakeven = screen.getByLabelText("Close all at breakeven after (hours)") as HTMLInputElement;
+    // Typing a leading "0" (e.g. starting "0.5") must NOT collapse the group — the
+    // reveal gates on null, not `> 0`, so the inputs stay mounted mid-edit.
+    fireEvent.change(breakeven, { target: { value: "0" } });
+    expect(screen.getByLabelText("Close all at breakeven after (hours)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Force close after (hours)")).toBeInTheDocument();
+  });
+
   it("shows a schedule-required error when schedule mode has no schedule", async () => {
     const onSubmit = vi.fn();
     render(<BacktestConfigForm onSubmit={onSubmit} schedules={[{ value: "s1", label: "S1" }]} />);
