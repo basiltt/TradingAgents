@@ -57,6 +57,14 @@ wrapper around the existing field JSX.
 | Auto-trade | Wrapped as-is in its own tab (Scheduled form); stays below tabs on Scanner page |
 | Code approach | Reorganize JSX only — preserve all useState logic |
 | Scanner results | Gets its own tab set (Results / Progress / Config) once a scan runs |
+| AgentModelOverrides visibility | Currently always-visible; moves into the Analysis tab (shown only when that tab is active) — accepted UX change |
+| Results auto-switch | Running→completed auto-switch to Results is NEW behavioral logic (a `useRef` rising-edge + `useEffect`), not pure JSX-moving — small, explicitly in scope |
+
+> **Two things this redesign adds beyond moving JSX (called out so they aren't
+> under-estimated or left untested):** (1) the `useTabPersistence` hook, and (2) the
+> Scanner results running→completed auto-switch. Everything else is re-parenting
+> existing JSX into tab panels.
+
 
 ---
 
@@ -71,22 +79,41 @@ layout-only wrapper.
 Under `frontend/src/components/scanner/form-tabs/`:
 
 ```
-scanTabs.ts          // Tab id unions + ordered lists + labels for each tab set:
+scanTabs.ts          // Tab id unions + ordered lists + labels for each tab set.
+                     // Tab ids are kebab-case lowercase; labels are human-readable:
                      //   SCANNER_CONFIG_TABS  = ["scan","analysis","models"]
                      //   SCANNER_RESULT_TABS  = ["results","progress","config"]
                      //   SCHEDULED_TABS       = ["schedule","scan","analysis","models","autotrade"]
-                     //   plus *_LABELS maps. One source of truth for order + labels.
+                     //   *_LABELS maps each id → title, e.g.
+                     //     scan→"Scan", analysis→"Analysis",
+                     //     models→"Models & Connection"  (SAME label in both forms),
+                     //     schedule→"Schedule", autotrade→"Auto-trade",
+                     //     results→"Results", progress→"Progress", config→"Config"
+                     // One source of truth for order + labels. No React.
 useTabPersistence.ts // Hook: const [tab, setTab] = useTabPersistence(storageKey, tabOrder, fallback?)
-                     //   - reads the stored id on mount (falls back to fallback ?? tabOrder[0]
+                     //   - reads the stored id ONCE on mount (falls back to fallback ?? tabOrder[0]
                      //     when missing OR not in tabOrder)
-                     //   - setTab writes to localStorage on the SAME call (interaction-driven;
-                     //     never a mount-time write — mirrors the backtest fix)
+                     //   - setTab(next) updates state AND writes localStorage in the SAME call
+                     //     (interaction-driven; never a mount-time write — the backtest lesson)
+                     //   - returns [tab, setTab]; the SETTER is also used imperatively by callers
+                     //     that need to force a tab (e.g. the dialog forcing "schedule" on open-for-new,
+                     //     or the results view auto-switching to "results" on completion). Those
+                     //     imperative setTab calls persist too, which is correct.
 ```
 
+> **Models label:** both forms use the label **"Models & Connection"** for the
+> `models` tab (the earlier draft inconsistently shortened the Scheduled one to
+> "Models"). Identical labels reinforce the "same family" goal.
+
+
 **Reused as-is:** `Tabs / TabsList / TabsTrigger / TabsContent` from
-`@/components/ui/tabs` (base-ui, the same primitive the backtest form and
-BacktestResultsPage use). `TabsContent` supports `keepMounted`, which this design
-relies on (see Risks).
+`@/components/ui/tabs` (base-ui 1.4.1, the same primitive the backtest form and
+BacktestResultsPage use). `TabsContent` exposes `keepMounted` (verified) and our
+wrapper forwards it. **Every tab panel in every tab set uses `keepMounted`** — see
+the keepMounted rationale in Risks (it is NOT about losing input values, since all
+inputs are parent-`useState`-controlled; it is about preserving focus/typing
+continuity, internal sub-component state, and open dropdowns/popovers across tab
+switches).
 
 ### What does NOT change
 
@@ -133,8 +160,15 @@ panel header stays above the tab bar.
 | Tab (`id`) | Existing sections moved in (current ScannerPage regions) |
 |-----------|-----------|
 | **Scan** (`scan`) | Analysis date · Kline interval · LLM provider (top grid, ~L644-677) · Workflow mode segmented control + Smart pre-screen toggle + threshold (~L679-730) · Analyst team chips (~L733-771) |
-| **Analysis** (`analysis`) | The "Workflow settings" collapsible body: Research depth slider, Output language, Max debate rounds, Max risk rounds, Max recursion limit, Max parallel analyses (~L798-1050) · `<AgentModelOverrides>` (~L1053-1058) |
-| **Models & Connection** (`models`) | The "LLM and proxy settings" collapsible body: Backend URL / proxy endpoint, API key, Deep think model, Quick think model, LLM concurrency limit, Min spacing (~L911-1048) |
+| **Analysis** (`analysis`) | The "Workflow settings" collapsible body (~L798-885): Research depth slider, Output language, Max debate rounds, Max risk rounds, Max recursion limit, Max parallel analyses, **Checkpointing toggle (`checkpointEnabled`, ~L864), Prompt-cache toggle (`promptCacheEnabled`, ~L871)** · `<AgentModelOverrides>` (~L1053) |
+| **Models & Connection** (`models`) | The "LLM and proxy settings" collapsible body (~L907-1048): Backend URL / proxy endpoint, API key, Deep think model, Quick think model, LLM concurrency limit, Min spacing |
+
+> **Field-inventory note:** the Analysis tab MUST include the `checkpointEnabled`
+> and `promptCacheEnabled` toggles — they are real submitted fields
+> (`checkpoint_enabled` / `prompt_cache_enabled` in the start payload) and were
+> easy to miss because they sit deep in the Workflow-settings collapsible. Output
+> language stays in **Analysis** (see cross-form consistency note below).
+
 
 > The current ad-hoc collapse toggles (`showWorkflow`, `showLlm`) are replaced by
 > the tabs — those two `useState` flags and their toggle buttons are removed
@@ -164,16 +198,43 @@ Inside the existing `ScheduleFormDialog` `<DialogContent>`. The dialog title and
 the Save/Create + Cancel footer stay outside the tabs (always visible).
 
 ```
-[ Schedule ]   [ Scan ]   [ Analysis ]   [ Models ]   [ Auto-trade ]
+[ Schedule ]   [ Scan ]   [ Analysis ]   [ Models & Connection ]   [ Auto-trade ]
 ```
 
 | Tab (`id`) | Content (current ScheduledScansPage dialog regions) |
 |-----------|-----------|
 | **Schedule** (`schedule`) | Schedule Name · Schedule Type (Once / Interval / Weekly / Cron segmented) · type-specific params (Date&Time / Interval minutes / Time + Days / Day of Week / Cron expression) · Timezone (~L1114-1213) |
-| **Scan** (`scan`) | LLM Provider · Kline Interval · Output Language · Workflow Mode · TA pre-screen + threshold · Analyst Team (~L1218-1314) |
-| **Analysis** (`analysis`) | Research Depth · Max Debate Rounds · Max Risk Rounds · Max Recursion Limit · Max Parallel Analyses (~L1316-1370) |
-| **Models** (`models`) | Backend URL / Proxy · API Key · Deep Think Model · Quick Think Model · LLM Concurrency Limit · Min Spacing (~L1373-1470) |
-| **Auto-trade** (`autotrade`) | `<AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />` (~L1475), wrapped in this tab, unchanged |
+| **Scan** (`scan`) | LLM Provider · Kline Interval · Workflow Mode · TA pre-screen + threshold · Analyst Team (from the "Scan Configuration" `CollapsibleSection`, ~L1215-1311) |
+| **Analysis** (`analysis`) | Research Depth · **Output Language** (moved here for cross-form consistency) · Max Debate Rounds · Max Risk Rounds · Max Recursion Limit · Max Parallel Analyses · **Checkpointing toggle, Prompt-cache toggle** · `<AgentModelOverrides>` (~L1472) (from the "Workflow Settings" `CollapsibleSection`, ~L1314-1367) |
+| **Models & Connection** (`models`) | Backend URL / Proxy · API Key · Deep Think Model · Quick Think Model · LLM Concurrency Limit · Min Spacing (from the "LLM & Proxy Settings" `CollapsibleSection`, ~L1370-1469) |
+| **Auto-trade** (`autotrade`) | `<AutoTradeSection value={autoTradeConfigs} onChange={setAutoTradeConfigs} />` (~L1475), wrapped in this tab, unchanged. The tab panel uses `keepMounted` (see Risks). |
+
+> **Field-inventory note (Scheduled):** the dialog ALSO has `checkpointEnabled`,
+> `promptCacheEnabled` (state ~L827-828, submitted as `checkpoint_enabled` /
+> `prompt_cache_enabled`) and `<AgentModelOverrides>` (~L1472, currently rendered
+> directly after the LLM section, NOT inside a CollapsibleSection). All three go in
+> the **Analysis** tab, matching the Scanner form. Output Language moves from the
+> dialog's Scan Configuration section into **Analysis** so the Scan/Analysis split is
+> identical across both forms.
+
+> **Existing collapsibles to remove (Scheduled):** the dialog currently wraps its
+> Scan / Workflow / LLM groups in a local `CollapsibleSection` component
+> (`ScheduledScansPage.tsx:1498`) driven by `showScanConfig`, `showWorkflowSettings`,
+> `showLlmSettings`. The tabs replace these: remove those **three** `useState`
+> flags, their reset lines in `handleOpenChange`, and the `CollapsibleSection`
+> wrappers, moving each section's children directly into its tab panel. Delete the
+> now-unused `CollapsibleSection` component if nothing else references it.
+>
+> **DO NOT remove `showEndpoints`.** It is NOT a section-collapse flag — it drives
+> the backend-URL endpoint-picker dropdown (state L838-839, click-outside ref
+> L869-875, `selectEndpoint` L877, dropdown trigger/list L1380-1420). It moves into
+> the **Models & Connection** tab intact (with `endpoints`, the ref effect,
+> `selectEndpoint`, the dropdown JSX, and its `handleOpenChange` reset line),
+> mirroring the identical dropdown the Scanner page keeps. Removing it would delete
+> a working feature and create the exact cross-form inconsistency this redesign
+> exists to eliminate.
+
+
 
 **Consistency:** the **Scan / Analysis / Models** tabs are conceptually identical
 across both forms (same field groupings, same labels), so the two forms feel like
@@ -197,6 +258,15 @@ running/results view today. That view gets its **own, separate** tab set:
 | **Progress** (`progress`) | Progress header (status icon + `ScanDurationBadge`), progress bar, stats row (buy/sell/hold/skipped counts ~L1169-1177), account-status summaries (~L1208-1223), AI-Manager reduced-protection notices (~L1225-1239) |
 | **Config** (`config`) | The `ScanConfigBanner` read-only summary (~L1150-1153) |
 
+> **Nested collapsibles (Progress tab):** the account-status, auto-trade-results,
+> and AI-Manager notice blocks the Progress tab absorbs are currently wrapped in
+> `MobileCollapse` (`ScannerPage.tsx:1278-1379`, 4 instances). Inside a tab panel a
+> `MobileCollapse` is a redundant second layer of collapsing. Default: **keep the
+> `MobileCollapse` wrappers as-is** (they only collapse on mobile via their own
+> breakpoint logic and are harmless on desktop) to keep this a pure JSX move; an
+> implementer MAY flatten them if it reads better, but that is optional and not
+> required for correctness.
+
 - **Cancel** (while running) and **New Scan** stay in the page header/action area —
   not inside a tab.
 - This is a **separate** tab set from the config tabs. Config tabs show before a
@@ -206,6 +276,38 @@ running/results view today. That view gets its **own, separate** tab set:
   **Results** once `scan.status === "completed"`. (A failed/cancelled scan stays on
   Progress.) After the first auto-switch, the user's manual tab choice is respected
   and persisted.
+
+### Results auto-switch algorithm (new behavioral logic)
+
+A one-shot, rising-edge switch from Progress → Results on completion, then the user
+is in control. Concretely:
+
+```tsx
+const [resultsTab, setResultsTab] = useTabPersistence(
+  "tradingagents_scanner_results_tab", SCANNER_RESULT_TABS, "progress",
+);
+const didAutoSwitch = React.useRef(false);
+const prevStatus = React.useRef<string | undefined>(undefined);
+React.useEffect(() => {
+  // Rising edge: running → completed, fire at most once per scan.
+  if (prevStatus.current === "running" && scan?.status === "completed" && !didAutoSwitch.current) {
+    setResultsTab("results");
+    didAutoSwitch.current = true;
+  }
+  prevStatus.current = scan?.status;
+}, [scan?.status, setResultsTab]);
+// Reset the one-shot guard when a NEW scan begins (activeScanId changes), so the
+// next scan's completion auto-switches again.
+React.useEffect(() => { didAutoSwitch.current = false; }, [activeScanId]);
+```
+
+- It fires **once** (guarded by `didAutoSwitch`), only on the running→completed
+  transition; subsequent re-renders do not re-switch.
+- The `activeScanId`-keyed effect resets the guard so each new scan re-arms it.
+- The auto-switch persists (`setResultsTab` writes localStorage), which is the
+  intended "remember Results after completion" behavior; the user can still click
+  back to Progress afterward and that choice persists.
+
 
 ## Tab Persistence Behavior
 
@@ -225,12 +327,31 @@ running/results view today. That view gets its **own, separate** tab set:
   reloads.
 - **Scanner results tabs** (`tradingagents_scanner_results_tab`): persist across
   reloads; the running→completed auto-switch to Results overrides the stored value
-  once, then user choice wins.
-- **Scheduled dialog tabs** (`tradingagents_scheduled_form_tab`): restored when the
-  dialog reopens. **Exception:** opening the dialog to **create a new** schedule
-  starts on the **Schedule** tab (ignoring the stored value); opening to **edit** an
-  existing schedule restores the last-used tab. (Rationale: a new schedule needs its
-  name/type set first; editing is usually to tweak a specific known area.)
+  once, then user choice wins (see algorithm above).
+- **Scheduled dialog tabs** (`tradingagents_scheduled_form_tab`): the active tab is
+  remembered while the page is open and across reloads.
+
+> **CRITICAL — dialog lifecycle (verified):** `ScheduleFormDialog` is rendered
+> **unconditionally** by its parent (`ScheduledScansPage.tsx:711`, `open={dialogOpen}`)
+> — it **never unmounts**. So `useTabPersistence`'s mount-time read fires only once
+> per page load, NOT per dialog open. This means:
+> - "Restored when the dialog reopens" is satisfied by the always-mounted React
+>   state itself (the tab simply stays where it was); localStorage only matters
+>   across full page reloads.
+> - The "new schedule → start on Schedule tab" rule therefore CANNOT rely on a
+>   mount read. Implement it as an effect keyed on the dialog's `open` prop that
+>   forces the tab when opening for create:
+>   ```tsx
+>   // editingId == null  ⇒  creating a new schedule (verified signal, L341/L794)
+>   React.useEffect(() => {
+>     if (open && editingId == null) setActiveTab("schedule");
+>   }, [open, editingId]);  // setActiveTab persists, which is fine
+>   ```
+>   Opening to **edit** (`editingId != null`) leaves the remembered tab as-is. Note
+>   the dialog shows a loading spinner while edit data fetches (`editingId && editLoading`,
+>   ~L1102); the force-effect targets the create path only, so the spinner delay is
+>   irrelevant to it.
+
 
 ---
 
@@ -250,15 +371,25 @@ focuses on the shared tab pieces + render-level preservation:
    arrays contain only known ids (no orphans/dupes).
 3. **Market Scanner render tests:** the 3 config tabs render; clicking each switches
    the visible panel; a representative field from EACH tab is reachable (e.g.
-   "Analysis date" on Scan, "Research depth" on Analysis, "Backend URL" on Models);
-   the Auto-trade section and Start button remain present below the tabs; the active
-   config tab persists across remount.
-4. **Scheduled dialog render tests:** the 5 tabs render; opening for "new" starts on
-   Schedule; a representative field per tab is reachable; the AutoTradeSection
-   renders under the Auto-trade tab; the Save footer is always present.
-5. **Behavior-preservation:** the existing sub-component tests (CooloffFields,
+   "Analysis date" on Scan, "Research depth" on Analysis, "Backend URL" on Models) —
+   **including the easy-to-miss Analysis fields: the Checkpointing toggle, the
+   Prompt-cache toggle, and `AgentModelOverrides`**; the Auto-trade section and Start
+   button remain present below the tabs; the active config tab persists across remount.
+4. **Scheduled dialog render tests:** the 5 tabs render; **opening for "new"
+   (`editingId == null`) forces the Schedule tab even if a different tab was
+   remembered** (the C1 behavior); a representative field per tab is reachable
+   (incl. the moved Output Language, checkpoint/prompt-cache toggles, and
+   AgentModelOverrides on Analysis); the AutoTradeSection renders under the
+   Auto-trade tab; the Save footer is always present.
+5. **Results auto-switch test:** simulate a scan going running→completed and assert
+   the results view switches to the Results tab exactly once; assert a manual switch
+   back to Progress afterward is NOT overridden on the next render; assert a new
+   `activeScanId` re-arms the one-shot.
+6. **Behavior-preservation:** the existing sub-component tests (CooloffFields,
    RegimeStrategyFields, aiManagerCapabilities, CooloffBadge) must stay green —
-   they exercise logic this change does not touch.
+   they exercise logic this change does not touch. The cool-off launch gate on the
+   Scanner page must still disable Start under the same conditions.
+
 
 **Validation gates before completion (run and read full output):**
 - `cd frontend && npx tsc --noEmit`
@@ -271,27 +402,33 @@ focuses on the shared tab pieces + render-level preservation:
 
 | Risk | Mitigation |
 |------|------------|
-| Moving JSX drops a field or breaks a `value`/`onChange` binding | Each field keeps its exact existing binding (move, don't rewrite); render tests assert a representative field per tab is present and editable |
-| A `useState`-bound input unmounts when its tab is inactive, losing focus / interrupting typing | All config panels render with the Tabs primitive's `keepMounted` so hidden panels stay in the DOM (no Controller/input unmount) — the exact lesson from the backtest redesign |
-| Scheduled dialog tab state leaks between create and edit | `useTabPersistence` keyed per-form; the dialog forces the Schedule tab when opening for create |
-| Removing `showWorkflow`/`showLlm` collapse toggles breaks something referencing them | These are UI-only booleans; grep confirms they gate only the collapsible bodies now becoming tabs — remove the state + toggle buttons together with their panels' re-parenting |
-| Results auto-switch (running→Results) fights the persisted value | Auto-switch fires once on the running→completed transition; afterward the persisted user choice wins (tracked via a "did auto-switch" ref, like backtest's rising-edge pattern) |
-| The two large files get even larger | Acceptable per scope (user chose "reorganize JSX only", not extract components); the net line delta is small since JSX is moved, not added |
+| Moving JSX drops a field or breaks a `value`/`onChange` binding | Each field keeps its exact existing binding (move, don't rewrite); render tests assert a representative field per tab is present and editable; the field-inventory notes call out the easy-to-miss fields (`checkpointEnabled`, `promptCacheEnabled`, `AgentModelOverrides`) |
+| Switching tabs interrupts typing, drops focus, resets a sub-component's internal state, or closes an open dropdown | Apply `keepMounted` to **every** tab panel in **every** tab set (config, results, AND the Auto-trade tab). NOTE: this is NOT about losing input values — all inputs are parent-`useState`-controlled, so an unmounted panel's values survive in the parent regardless. It is about (a) focus/typing continuity, (b) `AutoTradeSection`'s internal `useQuery(accounts)` + per-card `useState`/`AICapabilityPanel` state resetting on each switch, and (c) the backend-URL endpoint dropdown's click-outside ref (`ScannerPage.tsx:916`). `keepMounted` keeps all panels in the DOM so none of these reset. |
+| Scheduled dialog never unmounts → tab persistence / new-vs-edit reset behaves unexpectedly | Verified: dialog is always-mounted (`open={dialogOpen}`). Use an `open`+`editingId`-keyed effect to force the Schedule tab on open-for-create; "restore on reopen" is satisfied by the always-mounted React state. (See Tab Persistence Behavior.) |
+| Removing collapse state breaks something referencing it | Scanner: `showWorkflow`/`showLlm` are UI-only and NOT in the `tradingagents_scanner` settings blob (verified) — safe to delete with their toggle buttons. Scheduled: remove ONLY `showScanConfig`/`showWorkflowSettings`/`showLlmSettings` + the local `CollapsibleSection` component, together with their reset lines in `handleOpenChange`; grep for remaining references before deleting `CollapsibleSection`. **Keep `showEndpoints`** — it drives the backend-URL endpoint dropdown (not a collapse); move it into the Models tab intact, mirroring Scanner. |
+| Results auto-switch (running→Results) fights the persisted value | Auto-switch fires once on the running→completed transition (rising-edge `useRef` guard), re-armed per new `activeScanId`; afterward the persisted user choice wins. Full algorithm specified in Scanner Results Tabs. |
+| Nested `MobileCollapse` inside the Progress tab reads oddly | The 4 `MobileCollapse` blocks (`ScannerPage.tsx:1278-1379`) only collapse at a mobile breakpoint; harmless inside a desktop tab. Keep as-is (pure move); flattening is optional. |
+| `keepMounted` puts all panels in the DOM at once → duplicate `id`/`htmlFor` collisions | Audit for `id`/`htmlFor` collisions when all panels co-exist (e.g. `schedule-name`, `scanner_ta_threshold`); the existing ids are already unique per form, but verify after the move. |
+| The two large files get even larger | Acceptable per scope (user chose "reorganize JSX only", not extract components); the net line delta is small since JSX is moved, not added. The realistic effort is non-trivial (~30 fields across two ~1500-line files) — budget accordingly; it is not a 10-minute "wrap in TabsContent". |
 
 ## Success Criteria
 
 - Market Scanner config renders as 3 tabs (Scan / Analysis / Models & Connection);
   Auto-trade + Start button stay below, always visible.
-- Scheduled Scan dialog renders as 5 tabs (Schedule / Scan / Analysis / Models /
-  Auto-trade); Save footer always visible.
-- Scanner running/results view renders as 3 tabs (Results / Progress / Config).
-- Each form remembers its selected tab across reload / dialog reopen (with the
+- Scheduled Scan dialog renders as 5 tabs (Schedule / Scan / Analysis / Models &
+  Connection / Auto-trade); Save footer always visible; opening for a NEW schedule
+  starts on the Schedule tab.
+- Scanner running/results view renders as 3 tabs (Results / Progress / Config);
+  Progress is active while running and auto-switches to Results on completion.
+- Each form remembers its selected tab across reload / dialog session (with the
   new-schedule → Schedule-tab exception).
-- Every field present before is present after, with identical behavior; the scan
+- Every field present before is present after, with identical behavior — including
+  `checkpointEnabled`, `promptCacheEnabled`, and `AgentModelOverrides`; the scan
   start gate (cool-off) and dialog save behave exactly as before.
 - `tsc --noEmit`, the test suite, and `npm run build` all pass; existing
   sub-component tests stay green.
 - No changes to `AutoTradeSection` or any backend/API.
+
 
 
 
