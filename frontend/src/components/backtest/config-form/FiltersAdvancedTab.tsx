@@ -1,4 +1,7 @@
-import { CheckField, NumberField, SymbolListField, Section, GRID } from "./fields";
+import { Controller } from "react-hook-form";
+import { Checkbox } from "@/components/ui/checkbox";
+import { NumberField, SymbolListField, Section, Hint, GRID } from "./fields";
+import { ToggleNumberPairField } from "./ToggleNumberPairField";
 import type { TabProps } from "./tabProps";
 
 export function FiltersAdvancedTab({ control, fieldError }: TabProps) {
@@ -19,30 +22,45 @@ export function FiltersAdvancedTab({ control, fieldError }: TabProps) {
           <NumberField control={control} name="max_price_drift_pct" label="Max price drift %" nullable hint="Engine-level · skip a signal if price moved this % since the scan" error={fieldError("max_price_drift_pct")} />
           <NumberField control={control} name="max_same_sector" label="Max positions same sector" nullable hint="Not simulated · sector data is live-only, no effect on results" error={fieldError("max_same_sector")} />
         </div>
-        <div className="mb-2 mt-4">
-          <CheckField control={control} name="adaptive_blacklist_enabled" label="Enable adaptive blacklist" hint="Engine-level · auto-skip symbols whose recent win rate is poor" />
+
+        {/* Adaptive blacklist — reveal group: checkbox header + dependent fields shown only when on. */}
+        <div className="mt-4 rounded-[var(--neu-radius-md)] border border-[color:var(--neu-stroke-soft)]/40 px-3 py-2.5">
+          <Controller
+            control={control}
+            name="adaptive_blacklist_enabled"
+            render={({ field }) => {
+              const on = field.value === true;
+              return (
+                <>
+                  <label className="flex cursor-pointer items-start gap-2.5 text-[0.85rem] text-[var(--neu-text-strong)]">
+                    <Checkbox checked={on} onCheckedChange={(c) => field.onChange(c === true)} className="mt-0.5" />
+                    <span className="flex flex-col">
+                      Enable adaptive blacklist
+                      <Hint text="Engine-level · auto-skip symbols whose recent win rate is poor" />
+                    </span>
+                  </label>
+                  {on ? (
+                    <div className={`${GRID} mt-3`}>
+                      <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Engine-level · min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
+                      <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Engine-level · blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
+                      <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Engine-level · win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />
+                    </div>
+                  ) : null}
+                </>
+              );
+            }}
+          />
         </div>
-        <div className={GRID}>
-          <NumberField control={control} name="adaptive_blacklist_min_trades" label="Min trades" hint="Engine-level · min trades before blacklisting" error={fieldError("adaptive_blacklist_min_trades")} />
-          <NumberField control={control} name="adaptive_blacklist_max_win_rate" label="Max win rate %" hint="Engine-level · blacklist below this win rate" error={fieldError("adaptive_blacklist_max_win_rate")} />
-          <NumberField control={control} name="adaptive_blacklist_lookback_hours" label="Lookback (hours)" hint="Engine-level · win-rate lookback window" error={fieldError("adaptive_blacklist_lookback_hours")} />
-        </div>
-        <div className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+
+        {/* Cool Off Time — 2-column matrix of self-contained reveal-when-on cards. */}
+        <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--neu-text-muted)]">
           Cool Off Time
         </div>
-        <div className="mb-2">
-          <CheckField control={control} name="cooloff_on_success_enabled" label="Cool off after a win" hint="Engine-level · pause new entries after a winning cycle" />
-        </div>
-        <div className={GRID}>
-          <NumberField control={control} name="cooloff_on_success_minutes" label="Win cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_success_minutes")} />
-          <CheckField control={control} name="cooloff_on_failure_enabled" label="Cool off after a loss" hint="Engine-level · pause after a losing cycle" />
-          <NumberField control={control} name="cooloff_on_failure_minutes" label="Loss cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_failure_minutes")} />
-        </div>
-        <div className={GRID}>
-          <CheckField control={control} name="cooloff_on_double_success_enabled" label="Cool off after 2 wins" hint="Engine-level · 2 consecutive wins" />
-          <NumberField control={control} name="cooloff_on_double_success_minutes" label="2-win cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_double_success_minutes")} />
-          <CheckField control={control} name="cooloff_on_double_failure_enabled" label="Cool off after 2 losses" hint="Engine-level · 2 consecutive losses" />
-          <NumberField control={control} name="cooloff_on_double_failure_minutes" label="2-loss cool off (min)" nullable hint="1–43200 minutes" error={fieldError("cooloff_on_double_failure_minutes")} />
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <ToggleNumberPairField control={control} enabledName="cooloff_on_success_enabled" valueName="cooloff_on_success_minutes" title="Cool off after a win" description="pause new entries after a winning cycle" enabledValue={60} unit="min" error={fieldError("cooloff_on_success_minutes")} />
+          <ToggleNumberPairField control={control} enabledName="cooloff_on_failure_enabled" valueName="cooloff_on_failure_minutes" title="Cool off after a loss" description="pause after a losing cycle" enabledValue={60} unit="min" error={fieldError("cooloff_on_failure_minutes")} />
+          <ToggleNumberPairField control={control} enabledName="cooloff_on_double_success_enabled" valueName="cooloff_on_double_success_minutes" title="Cool off after 2 wins" description="2 consecutive wins" enabledValue={120} unit="min" error={fieldError("cooloff_on_double_success_minutes")} />
+          <ToggleNumberPairField control={control} enabledName="cooloff_on_double_failure_enabled" valueName="cooloff_on_double_failure_minutes" title="Cool off after 2 losses" description="2 consecutive losses" enabledValue={480} unit="min" error={fieldError("cooloff_on_double_failure_minutes")} />
         </div>
       </Section>
     </div>

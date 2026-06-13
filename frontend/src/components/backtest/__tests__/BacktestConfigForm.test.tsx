@@ -415,12 +415,27 @@ describe("BacktestConfigForm", () => {
 
   it("exposes the advanced engine-level and target-goal config sections", () => {
     render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    // Target Goal lives on the Risk & Exits tab; Advanced lives on Filters & Advanced.
+    // keepMounted keeps both in the DOM, so headings resolve without switching tabs.
     expect(screen.getByText("Advanced (engine-level)")).toBeInTheDocument();
     expect(screen.getByText("Target Goal")).toBeInTheDocument();
-    // Adaptive-blacklist fields (redesigned in a later task) confirm the section.
+    // Adaptive-blacklist dependent fields are HIDDEN until the toggle is enabled.
+    expect(screen.queryByLabelText("Min trades")).toBeNull();
+    // Enabling the blacklist reveals them.
+    fireEvent.click(screen.getByText("Enable adaptive blacklist"));
     expect(screen.getByLabelText("Min trades")).toBeInTheDocument();
     expect(screen.getByLabelText("Max win rate %")).toBeInTheDocument();
     expect(screen.getByLabelText("Lookback (hours)")).toBeInTheDocument();
+  });
+
+  it("hides cool-off duration inputs until their tier is enabled", () => {
+    render(<BacktestConfigForm onSubmit={vi.fn()} />);
+    // No cool-off minutes input visible by default (all tiers off).
+    expect(screen.queryByText("Win cool off (min)")).toBeNull();
+    // Enabling a tier reveals an inline minutes input seeded with a default.
+    fireEvent.click(screen.getByText("Cool off after a win"));
+    const inputs = screen.getAllByRole("spinbutton");
+    expect(inputs.length).toBeGreaterThan(0);
   });
 
   it("exposes the regime section and shows the F2-long danger note when enabled", () => {
